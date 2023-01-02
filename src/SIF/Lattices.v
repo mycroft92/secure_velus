@@ -1,0 +1,5 @@
+(*******************************************************************)
+(* Lattices properties only                                        *)
+(* Idea is to have an actual lattice inherit from this module type *)
+(* Proofs only need the results from here                          *)
+(*******************************************************************)
