@@ -13,7 +13,7 @@ From Coq Require Import Recdef.
 Inductive nonCanonST : Type :=
 | Bot  : nonCanonST
 | Var  : ident -> nonCanonST
-| Lub  : nonCanonST -> nonCanonST -> nonCanonST
+| Lub  : nonCanonST -> nonCanonST  -> nonCanonST
 | Ref  : nonCanonST -> uConstraint -> nonCanonST
 with uConstraint: Type := 
 | CNil : uConstraint
