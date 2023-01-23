@@ -128,3 +128,8 @@ src/ClightToAsm.v
 src/Instantiator.v
 src/NLCorrectness.v
 src/VelusCorrectness.v
+
+src/SIF/SIFTactics.v
+src/SIF/Helpers.v
+src/SIF/SecLattice.v
+src/SIF/SecTypes.v
