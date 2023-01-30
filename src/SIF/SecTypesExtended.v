@@ -23,7 +23,7 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
 
   Fixpoint hm_ext (delta: ident -> Lat.t ) (xs: ST): Lat.t := 
     match xs with
-    | nil   => Lat.bottom
+    | nil    => Lat.bottom
     | x::xs' => join  (delta x) (hm_ext delta xs')
     end.
   
@@ -31,11 +31,10 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
   Definition st_mem    := my_set_mem. *)
   (*Local hint data bases from Lattices*)
   Hint Immediate eq_sym.
-  Hint Resolve merge_nil merge_nil2 merge_comm intersect_nil intersect_nil2 intersect_comm eq_refl eq_trans eqb_refl
-               order_refl order_antisym order_trans
-               join_bound1 join_bound2 join_least_upper_bound
-               meet_bound1 meet_bound2 meet_greatest_lower_bound
-               bottom_is_bottom top_is_top.
+
+  Hint Resolve merge_nil merge_nil2 merge_comm intersect_nil intersect_nil2 intersect_comm eq_refl eq_trans   
+    eqb_refl order_refl order_antisym order_trans join_bound1 join_bound2 join_least_upper_bound
+    meet_bound1 meet_bound2 meet_greatest_lower_bound bottom_is_bottom top_is_top.
 
   Lemma hm_ext_list_in1 : forall dlt st d,
     In d st -> dlt d ⊑ hm_ext dlt st.
@@ -84,8 +83,8 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
     destruct (ident_eq_dec d_0 a) as [Heq|Hneq] eqn:E;  intros;simpl.
       - subst a. rewrite E.  apply join_upper_bound_r in H; auto.
       - rewrite E. apply set_rm_lub_r in H as H'. 
-       eapply join_least_upper_bound. eapply set_rm_lub_l in H; eassumption. 
-       apply IHst. auto.
+        eapply join_least_upper_bound. eapply set_rm_lub_l in H; eassumption. 
+        apply IHst. auto.
   Qed.
 
   Hint Resolve  set_rm_lub_l set_rm_lub_r hm_ext_list_in1 hm_ext_list_in2 set_rm_lub2
@@ -112,7 +111,7 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
 
 
   Lemma hm_ext_concat_l : forall dlt a b,
-     hm_ext dlt a ⊑ hm_ext dlt (a ⊔ b).
+    hm_ext dlt a ⊑ hm_ext dlt (a ⊔ b).
   Proof.
     intros dlt a. induction a as [|a_0 a IHa]; auto.
     intros. apply join_least_upper_bound.
@@ -164,7 +163,7 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
     Forall (fun '(s,x) => satisfiable dlt s x) cns.
 
   Hint Unfold satisfiable listSatisfiable.
-   
+  
   Print NoDup.
   Example NoDup_1:  (NoDup [[1];[2]]).
   Proof. apply NoDup_cons. 
@@ -267,7 +266,7 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
           ** subst cns'. unfold listSatisfiable in *. apply Forall_cons. 
             (*Newly generated constraint after subbing d is sat*)
             ++ remember (subST l d v) as st_0 eqn:Hst_0. symmetry in Hst_0. 
-               apply Forall_inv in H_2 as H_2'. apply (subST_correct Δ l [d_0] d v st_0); auto.
+                apply Forall_inv in H_2 as H_2'. apply (subST_correct Δ l [d_0] d v st_0); auto.
             (*induction case*)
             ++ remember (subAll cns d v) as cns_0 eqn:Hcns_0. inversion  H_2; auto.
         (*r has more than one elem, no substitution happens*)
