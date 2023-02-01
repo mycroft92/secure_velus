@@ -238,6 +238,7 @@ Module MergeFacts.
  
     Qed.
 
+    (* The proofs are horrible, need to tidy them up*)
     Ltac pos_handler :=
       match goal with
       | [H:  (?x < ?y)%positive,
