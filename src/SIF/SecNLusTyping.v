@@ -9,7 +9,7 @@ From Velus Require Import CoindToIndexed.
 
 From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SymTypes.
-
+(* Fixpoint and wt_exp definitions*)
 Module Type SEC_NLUSTRE_TYPING 
     (Import Ids   : IDS)
     (Import Op    : OPERATORS)
@@ -21,4 +21,8 @@ Module Type SEC_NLUSTRE_TYPING
     (Import NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE)
     (Import Lat   : Lattice).
     
+
+    (* Inductive wst_exp: ctxt *)
+
+
 End SEC_NLUSTRE_TYPING.
