@@ -33,7 +33,7 @@ Locate ident_eq_dec.
 (* Function to substitute in the security type*)
 Fixpoint subst_ident_in_type (ty: ST) (x: ident) (v: ident): ST :=
     match ty with
-    | [] => []
+    | []      => []
     | x'::ty' => if ident_eq_dec x x' then v :: (subst_ident_in_type ty' x v)
                  else x' :: (subst_ident_in_type ty' x v)
     end.
@@ -44,3 +44,18 @@ Definition subst_ident_in_constraint (c: constraint) (x: ident) (v: ident): cons
     let (l,h) := c in
     (subst_ident_in_type l x v, subst_ident_in_type h x v).
 
+Check List.map.
+
+Definition subst_ident_in_constraints (cs: list constraint) (x: ident) (v:ident)
+    : list constraint :=
+    List.map (fun c => subst_ident_in_constraint c x v) cs.
+
+Check fold_left.
+
+Fixpoint subst_idents_in_constraints (cs: list constraint) (xv: list (ident* ident)): list constraint :=
+    match xv with
+    | []           => cs
+    | (x,v) :: xv' => subst_idents_in_constraints (subst_ident_in_constraints cs x v) xv'
+    end.
+
+(* Definition subst_signature (sig: signature) (n_in_map n_out_map: list (ident*ident)) (n_reset n_clk: ) *)
