@@ -4,6 +4,7 @@ From Velus Require Import Operators.
 From Velus Require Import Clocks.
 From Velus Require Import NLustre.
 From Velus Require Import CoindToIndexed.
+From Velus Require Import Environment.
 (* Imports from VELUS*)
 
 
@@ -20,8 +21,10 @@ Module Type SEC_NLUSTRE_TYPING
     (Import CE    : COREEXPR    Ids Op OpAux      IStr)
     (Import NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE)
     (Import Lat   : Lattice).
+    Check env.
     
-
+    (* Context maps idents to idents*)
+    Local Definition Ctxt := Env.t ident. 
     (* Inductive wst_exp: ctxt *)
 
 
