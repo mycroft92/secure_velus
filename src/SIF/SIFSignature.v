@@ -59,3 +59,26 @@ Fixpoint subst_idents_in_constraints (cs: list constraint) (xv: list (ident* ide
     end.
 
 (* Definition subst_signature (sig: signature) (n_in_map n_out_map: list (ident*ident)) (n_reset n_clk: ) *)
+
+Local Fixpoint find_ident (out_map: list (ident*ident)) (x v: ident): option (ident*ident):=
+    match out_map with
+    | [] => None
+    | (x', v'):: out' => if ident_eq_dec x x' then Some (v',v) else find_ident out' x v
+    end.
+(* 
+Local Definition find_ident' (cons_map: ident*ident) (x v: ident): option (ident*ident) :=
+let (x',v') := cons_map in
+if ident_eq_dec x x' then Some (v', v) else None.
+
+Check omap.
+
+Local Definition find_ident (cons_map: list (ident* ident)) (x v: ident): op *)
+
+(* this function generates the hash that subst_ident functions can use.
+    We generate a new context everytime a node is analyzed hence we need to replace the idents in the constraints of the signature.
+    [(x,\alpha)] [(x,\alpha')] generates output [(\alpha,\alpha')] *)
+Fixpoint generate_subst_map (in_map cons_map acc: list (ident*ident)): option (list (ident*ident)) :=
+    match in_map with
+    | [] => acc
+    | (x,v) :: in_map' => 
+        let 
