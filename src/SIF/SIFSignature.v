@@ -27,6 +27,7 @@ Record signature := mkSig {
     constraints : list constraint; (*constraints*)
 }.
 
+Local Open Scope option_monad_scope. (* for the monadic notations*)
 Print ST.
 Locate ident_eq_dec.
 
@@ -52,6 +53,7 @@ Definition subst_ident_in_constraints (cs: list constraint) (x: ident) (v:ident)
 
 Check fold_left.
 
+(* foreach (x,v) in xv, substitute x with v in cs.*)
 Fixpoint subst_idents_in_constraints (cs: list constraint) (xv: list (ident* ident)): list constraint :=
     match xv with
     | []           => cs
@@ -65,20 +67,16 @@ Local Fixpoint find_ident (out_map: list (ident*ident)) (x v: ident): option (id
     | [] => None
     | (x', v'):: out' => if ident_eq_dec x x' then Some (v',v) else find_ident out' x v
     end.
-(* 
-Local Definition find_ident' (cons_map: ident*ident) (x v: ident): option (ident*ident) :=
-let (x',v') := cons_map in
-if ident_eq_dec x x' then Some (v', v) else None.
-
-Check omap.
-
-Local Definition find_ident (cons_map: list (ident* ident)) (x v: ident): op *)
 
 (* this function generates the hash that subst_ident functions can use.
     We generate a new context everytime a node is analyzed hence we need to replace the idents in the constraints of the signature.
-    [(x,\alpha)] [(x,\alpha')] generates output [(\alpha,\alpha')] *)
+    (in_map: [(x,\alpha')]) (cons_map: [(x,\alpha)]) generates output [(\alpha,\alpha')] *)
+
 Fixpoint generate_subst_map (in_map cons_map acc: list (ident*ident)): option (list (ident*ident)) :=
     match in_map with
-    | [] => acc
+    | [] => Some acc
     | (x,v) :: in_map' => 
-        let 
+        do r <- find_ident cons_map x v;
+        generate_subst_map in_map' cons_map (acc ++ [r])
+    end.
+
