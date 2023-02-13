@@ -82,7 +82,10 @@ Fixpoint generate_subst_map' (in_map cons_map acc: list (ident*ident)): option (
 Definition generate_subst_map in_map cons_map := generate_subst_map' in_map cons_map [].
 
 
-Definition subst_constraints (node: signature) (inputs_map outputs_map: list (ident*ident)) (reset_type clk_type: ident): option (list constraint) :=
+Definition subst_constraints 
+    (node: signature) 
+    (inputs_map outputs_map: list (ident*ident)) 
+    (reset_type clk_type: ident): option (list constraint) :=
     do  inp_subst_map <- generate_subst_map inputs_map node.(n_in);
     do  out_subst_map <- generate_subst_map outputs_map node.(n_out);
         Some (subst_idents_in_constraints node.(constraints) (inp_subst_map ++ out_subst_map ++ [(node.(n_reset), reset_type); (node.(n_clk), clk_type)])).
