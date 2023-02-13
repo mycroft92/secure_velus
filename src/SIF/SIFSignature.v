@@ -71,12 +71,18 @@ Local Fixpoint find_ident (out_map: list (ident*ident)) (x v: ident): option (id
 (* this function generates the hash that subst_ident functions can use.
     We generate a new context everytime a node is analyzed hence we need to replace the idents in the constraints of the signature.
     (in_map: [(x,\alpha')]) (cons_map: [(x,\alpha)]) generates output [(\alpha,\alpha')] *)
-
-Fixpoint generate_subst_map (in_map cons_map acc: list (ident*ident)): option (list (ident*ident)) :=
+Fixpoint generate_subst_map' (in_map cons_map acc: list (ident*ident)): option (list (ident*ident)) :=
     match in_map with
     | [] => Some acc
     | (x,v) :: in_map' => 
         do r <- find_ident cons_map x v;
-        generate_subst_map in_map' cons_map (acc ++ [r])
+        generate_subst_map' in_map' cons_map (acc ++ [r])
     end.
 
+Definition generate_subst_map in_map cons_map := generate_subst_map' in_map cons_map [].
+
+
+Definition subst_constraints (node: signature) (inputs_map outputs_map: list (ident*ident)) (reset_type clk_type: ident): option (list constraint) :=
+    do  inp_subst_map <- generate_subst_map inputs_map node.(n_in);
+    do  out_subst_map <- generate_subst_map outputs_map node.(n_out);
+        Some (subst_idents_in_constraints node.(constraints) (inp_subst_map ++ out_subst_map ++ [(node.(n_reset), reset_type); (node.(n_clk), clk_type)])).
