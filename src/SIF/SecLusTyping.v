@@ -21,5 +21,8 @@ Module Type SEC_LUSTRE_TYPING
     (Import L     : LUSTRE  Ids Op OpAux CStr IStr)
     (Import Lat   : Lattice).
     Check env.
+    
+    Section Lustre_Sec_Typing.
+    Inductive 
 
 End SEC_LUSTRE_TYPING.
