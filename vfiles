@@ -134,3 +134,4 @@ src/SIF/Helpers.v
 src/SIF/SecLattice.v
 src/SIF/SymTypes.v
 src/SIF/SecTypes.v
+src/SIF/SIFSignature.v
