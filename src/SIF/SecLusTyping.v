@@ -22,8 +22,10 @@ Module Type SEC_LUSTRE_TYPING
     (Import L     : LUSTRE  Ids Op OpAux CStr IStr)
     (Import Lat   : Lattice).
     Check env.
-    
+    (* Predicate takes Ordered list of nodes with signatures and assigns types/constraints to expressions/statemets*)
     Section Lustre_Sec_Typing.
-    Inductive 
+    Variable G: global.
+
+    End Lustre_Sec_Typing.
 
 End SEC_LUSTRE_TYPING.

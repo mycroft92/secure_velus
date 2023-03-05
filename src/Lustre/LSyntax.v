@@ -205,7 +205,9 @@ Module Type LSYNTAX
         n_defd     : Permutation (vars_defined n_eqs)
                                  (map fst (n_vars ++ n_out));
         n_nodup    : NoDupMembers (n_in ++ n_vars ++ n_out ++ anon_in_eqs n_eqs);
-        n_good     :  Forall (AtomOrGensym n_prefixes) (map fst (n_in ++ n_vars ++ n_out ++ anon_in_eqs n_eqs)) /\ atom n_name
+        n_good     :  Forall (AtomOrGensym n_prefixes) (map fst (n_in ++ n_vars ++ n_out ++ anon_in_eqs n_eqs)) /\ atom n_name;
+        (*Madded*)
+        (* n_sig      :  *)
       }.
 
   (** ** Program *)
