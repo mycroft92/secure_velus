@@ -18,6 +18,14 @@ src/Common/Common.v
 src/Common/CompCertLib.v
 src/AcyGraph.v
 
+
+src/SIF/Helpers.v
+src/SIF/SecLattice.v
+src/SIF/SymTypes.v
+src/SIF/SIFTactics.v
+src/SIF/SIFSignature.v
+
+
 src/Lustre/LSemantics.v
 src/Lustre/LSyntax.v
 src/Lustre/Parser/LustreParser.v
@@ -129,9 +137,7 @@ src/Instantiator.v
 src/NLCorrectness.v
 src/VelusCorrectness.v
 
-src/SIF/SIFTactics.v
-src/SIF/Helpers.v
-src/SIF/SecLattice.v
-src/SIF/SymTypes.v
+
+
+
 src/SIF/SecTypes.v
-src/SIF/SIFSignature.v

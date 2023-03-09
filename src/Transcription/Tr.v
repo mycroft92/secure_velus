@@ -282,7 +282,9 @@ Module Type TR
           NL.n_defd     := _;
           NL.n_vout     := _;
           NL.n_nodup    := _;
-          NL.n_good     := _
+          NL.n_good     := _;
+          (*Madded*)
+          NL.n_sig      := (L.n_sig n);
         |}
     | Error e => Error e
     end.

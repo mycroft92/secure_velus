@@ -1,6 +1,8 @@
 From Velus Require Import Common.
 From Velus Require Import Operators.
 From Velus Require Import Clocks.
+(*Madded*)
+From Velus Require Import SIF.SIFSignature.
 From Coq Require Import PArith.
 From Coq Require Import Sorting.Permutation.
 From Coq Require Import Setoid Morphisms.
@@ -207,7 +209,7 @@ Module Type LSYNTAX
         n_nodup    : NoDupMembers (n_in ++ n_vars ++ n_out ++ anon_in_eqs n_eqs);
         n_good     :  Forall (AtomOrGensym n_prefixes) (map fst (n_in ++ n_vars ++ n_out ++ anon_in_eqs n_eqs)) /\ atom n_name;
         (*Madded*)
-        (* n_sig      :  *)
+        n_sig      :  signature
       }.
 
   (** ** Program *)
