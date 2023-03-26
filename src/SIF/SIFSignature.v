@@ -22,8 +22,10 @@ Record signature := mkSig {
     n_name : ident; (*node name*)
     n_in   : list (ident*ident); (*ordered list of input security types*)
     n_out  : list (ident*ident); (*ordered list of output security types*)
+
     n_reset: ident;
     n_clk  : ident; (*The base clock is always empty list*)
+    (* We already have that Gamma \rel forall inp. inp, because the clock rules give us this directly. No need to have an additional \Gamma = GLB (inputs) *)
     constraints : list constraint; (*constraints*)
 }.
 
