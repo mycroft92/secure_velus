@@ -29,6 +29,7 @@ Record signature := mkSig {
     constraints : list constraint; (*constraints*)
 }.
 
+(* Definition  *)
 Local Open Scope option_monad_scope. (* for the monadic notations*)
 Print ST.
 Locate ident_eq_dec.

@@ -275,7 +275,8 @@ Module Type STC2OBCTYPING
     - apply exists_reset_method.
     - constructor.
     - simpl; constructor.
-    - simpl; constructor.
+    (*Madded*)
+    (* - simpl; constructor. *)
   Qed.
 
   Lemma reset_wt:
