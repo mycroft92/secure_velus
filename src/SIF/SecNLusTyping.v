@@ -23,6 +23,7 @@ Module Type SEC_NLUSTRE_TYPING
     (Import Lat   : Lattice).
     Check env.
     
+    Variable G: global.
     (* Context maps idents to idents*)
     Local Definition Ctxt := Env.t ident. 
     (* Inductive wst_exp: ctxt *)
