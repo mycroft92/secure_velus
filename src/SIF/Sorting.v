@@ -65,6 +65,30 @@ Section MergeIdentList.
         end)
       end) in merge_aux l2.
 (* Need to do final mergesort*)
+  Lemma merge_lt: forall (x1 x2: ident) r1 r2,
+    Pos.compare x1 x2 = Lt -> 
+      mergeType (x1::r1) (x2::r2) = x1:: mergeType r1 (x2::r2).
+  Proof.
+    intros. simpl.
+    destruct (Pos.compare x1 x2); (try inversion H; auto).
+    (* - inversion H; auto.
+    - auto.
+    - inversion H; auto. *)
+  Qed.
+
+  Lemma merge_eq: forall (x1 x2: ident) r1 r2,
+    Pos.compare x1 x2 = Eq -> 
+      mergeType (x1::r1) (x2::r2) = x1:: mergeType r1 r2.
+  Proof.
+    intros. simpl.
+    destruct (Pos.compare x1 x2); (try inversion H; auto).
+    (* - inversion H; auto.
+    - auto.
+    - inversion H; auto. *)
+  Qed.
+
+
+  Fixpoint mergesort (l1 l2: list ident) : 
 
     
       
@@ -86,7 +110,7 @@ Section ConstraintOrdering.
         | GT => GT
         | EQ => ident_list_compare l1'' l2''
         end 
-    end 
+    end.
 
 
 
