@@ -355,3 +355,30 @@ Module SecTypes (Lat: Lattice) <: SECTYPES Lat.
 End SecTypes.
 
 Print SecTypes.
+
+(*
+meeting notes: 08-06-2023.
+Types:
+- descending ordered sets (for ease of constraint ordering)
+- Constraints are also ordered descindingly (lexicographic ordering).
+
+Properties needed:
+- \alpha \rel \delta, \beta \rel \delta <=> \alpha \lub \beta \rel \delta
+- \alpha \lub \beta \rel \beta <=> \alpha \rel \beta.
+- confluence.
+
+- Document the decisions (including the descending order.)
+
+Perhaps:
+ - Constraints with this ordering should be shown.
+
+Simplify:
+- maintains that if there is only single constraint 
+- Most general type (every solution for original constraint is also a solution of the new simplified one.)
+
+Typing on Lustre and NLustre to be done:
+
+To send a mail to DRC on registration.
+
+
+*)
