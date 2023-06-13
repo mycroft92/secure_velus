@@ -14,7 +14,7 @@ Inductive nonCanonST : Type :=
 | Bot  : nonCanonST
 | Var  : ident -> nonCanonST
 | Lub  : nonCanonST -> nonCanonST  -> nonCanonST
-| Ref  : nonCanonST -> uConstraint -> nonCanonST
+| Qual  : nonCanonST -> uConstraint -> nonCanonST
 with uConstraint: Type := 
 | CNil : uConstraint
 | Cns  : (nonCanonST * nonCanonST) -> uConstraint -> uConstraint.
@@ -58,18 +58,18 @@ Inductive EqNL : nonCanonST -> nonCanonST -> Prop :=
 | refl_case: forall α, EqNL  α α
 | lub_assoc: forall α β θ, EqNL (Lub (Lub α β) θ) (Lub α (Lub β θ))
 | lub_var_refl : forall α, EqNL (Lub (Var α) (Var α)) (Var α)
-| ref_base : forall α, EqNL (Ref α CNil) α
+| ref_base : forall α, EqNL (Qual α CNil) α
 | ref_lub  : forall α_1 α_2 ρ_1 ρ_2, 
-   EqNL (Lub (Ref α_1 ρ_1) (Ref α_2 ρ_2)) (Ref (Lub α_1 α_2) (gatherCns ρ_1 ρ_2))
-| ref_ref  : forall α ρ_1 ρ_2, EqNL (Ref (Ref α ρ_1) ρ_2) (Ref α (gatherCns ρ_1 ρ_2))
+   EqNL (Lub (Qual α_1 ρ_1) (Qual α_2 ρ_2)) (Qual (Lub α_1 α_2) (gatherCns ρ_1 ρ_2))
+| ref_ref  : forall α ρ_1 ρ_2, EqNL (Qual (Qual α ρ_1) ρ_2) (Qual α (gatherCns ρ_1 ρ_2))
 (* | ref_lub_assocl: forall α_1 α_2 ρ, 
-            EqNL (Lub (Ref α_1 ρ) (Var α_2)) (Ref (Lub α_1 α_2) ρ)
+            EqNL (Lub (Qual α_1 ρ) (Var α_2)) (Qual (Lub α_1 α_2) ρ)
 | ref_lub_assocr: forall α_1 α_2 ρ, 
-            EqNL (Lub (Var α_1) (Ref α_2 ρ) ) (Ref (Lub α_1 α_2) ρ) *)
+            EqNL (Lub (Var α_1) (Qual α_2 ρ) ) (Qual (Lub α_1 α_2) ρ) *)
 | ref_lub_assocl: forall α_1 α_2 ρ, 
-            EqNL (Lub α_1 (Ref α_2 ρ) ) (Ref (Lub α_1 α_2) ρ)
+            EqNL (Lub α_1 (Qual α_2 ρ) ) (Qual (Lub α_1 α_2) ρ)
 | ref_lub_assocr: forall α_1 α_2 ρ, 
-            EqNL (Lub (Ref α_1 ρ) α_2) (Ref (Lub α_1 α_2) ρ).
+            EqNL (Lub (Qual α_1 ρ) α_2) (Qual (Lub α_1 α_2) ρ).
 
     
 (*Cool trick on decreasing arguments*)
@@ -400,7 +400,7 @@ Fixpoint canon (x:nonCanonST): (ST*(list constraint)) :=
       let (st1,ρ_1):= canon α_1 in
       let (st2,ρ_2):= canon α_2 in
       (merge st1 st2, ρ_1 ++ ρ_2)
-  | Ref i ρ => 
+  | Qual i ρ => 
       let (st, ρ') := canon i in
       let ρ'' := unfurl ρ in 
       (st, ρ''++ρ') (* I need to change this to ordering append but this works for now*)

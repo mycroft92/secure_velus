@@ -26,7 +26,14 @@ Inductive sortedNoDup : (list ident) -> Prop :=
   -> sortedNoDup (i2::l)
   -> sortedNoDup (i1::i2::l)) %positive.
 
-Hint Constructors sortedNoDup.
+(* We are changing the order to decreasing*)
+Inductive sortedDecNoDup : (list ident) -> Prop :=
+| sort_nil  : sortedDecNoDup []
+| sort_1    : forall i1, sortedDecNoDup [i1]
+| sort_cons : forall (i1 i2: ident) (l: list ident), (i1 > i2  
+  -> sortedDecNoDup (i2::l)
+  -> sortedDecNoDup (i1::i2::l)) %positive.  
+Hint Constructors sortedNoDup sortedDecNoDup.
 
 
 
