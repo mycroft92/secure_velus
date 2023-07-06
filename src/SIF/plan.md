@@ -4,7 +4,15 @@
 1. Finish the properties of lattices
 2. Type system on NLustre
 3. Proof of Non-interference
-4. 
+
+- Change the order to descending and reprove the types lemmas, merge sort, constraint ordering
+- Check Simplify still holds
+- Confluence
+- Typing of NLustre
+- Typing of Lustre
+
+
+
 
 
 ## Manuscirpt Plan

@@ -13,7 +13,7 @@ Inductive nonCanonST: Type :=
     | Bot : nonCanonST
     | Var : ident -> nonCanonST
     | Lub : nonCanonST -> nonCanonST -> nonCanonST
-    | Ref : nonCanonST -> uConstraint -> nonCanonST
+    | Qual : nonCanonST -> uConstraint -> nonCanonST
 with uConstraint: Type :=
     | CNil : uConstraint
     (* This version takes an ident. I need a way to escalate it to nonCanonST level *)
@@ -58,7 +58,7 @@ Fixpoint canonicalizeType (nc: nonCanonST): (ST* (list constraint)) :=
     | Lub x1 x2 => let (s2, c2) := canonicalizeType x2 in
                    let (s1, c1)  := canonicalizeType x1 in
                     (s1 ++ s2, c1 ++ c2)
-    | Ref x c   => let c2 := canonicalizeConstraints c in
+    | Qual x c   => let c2 := canonicalizeConstraints c in
                    let (s1, c1)  := canonicalizeType x in  
                     (s1, c1++c2)
     end 

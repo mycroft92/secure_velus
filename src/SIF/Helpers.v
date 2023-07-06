@@ -28,9 +28,9 @@ Inductive sortedNoDup : (list ident) -> Prop :=
 
 (* We are changing the order to decreasing*)
 Inductive sortedDecNoDup : (list ident) -> Prop :=
-| sort_nil  : sortedDecNoDup []
-| sort_1    : forall i1, sortedDecNoDup [i1]
-| sort_cons : forall (i1 i2: ident) (l: list ident), (i1 > i2  
+| sort_nild  : sortedDecNoDup []
+| sort_1d    : forall i1, sortedDecNoDup [i1]
+| sort_consd : forall (i1 i2: ident) (l: list ident), (i1 > i2  
   -> sortedDecNoDup (i2::l)
   -> sortedDecNoDup (i1::i2::l)) %positive.  
 Hint Constructors sortedNoDup sortedDecNoDup.
@@ -50,6 +50,20 @@ Proof.
       + now apply  Pos.lt_irrefl in Hi1a.
       + eauto.
 Qed.
+
+Lemma sortedDecNoDup_in: forall i1 l i2, (i1 < i2 -> sortedDecNoDup (i2::l) -> ~In i1 (i2::l))%positive.
+Proof.
+
+  unfold not . induction l.
+  - intros * H Hs contra. inversion contra. subst; apply Pos.lt_irrefl in H; auto. inversion H0.
+  - intros * H Hs Hi. inversion Hs. subst. assert (i1<a)%positive as Hi1a. { lia. }
+    inversion Hi.
+    * subst. now apply Pos.lt_irrefl in H.
+    * inversion H0; subst. 
+      + now apply  Pos.lt_irrefl in Hi1a.
+      + eauto.
+Qed.
+
 
 Hint Constructors NoDup.
 Hint Resolve sortedNoDup_in.
