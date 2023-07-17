@@ -13,6 +13,7 @@ From Velus Require Import SIF.SymTypes.
 Module Type SECTYPESEXTENDED(Import Lat: Lattice).
     Import ListNotations.
     Import MergeFacts.
+    (** Upgrading to Helper-Sorting stuff*)
   
   Hint Resolve my_set_mem_correct.
   (* Hint Unfold my_set_union. *)

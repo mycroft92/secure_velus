@@ -58,16 +58,17 @@ Section MergeIdentList.
       | [], _ => l2
       | _, [] => l1
       | a1::l1', a2::l2' => 
+      (* Changed the order to greater than equals *)
         (match Pos.compare a1 a2 with
-        | Lt => a1::(mergeType l1' l2)
+        | Lt => a2::(mergeType l1' l2)
         | Eq => a1::(mergeType l1' l2')
-        | Gt => a2::(merge_aux l2')
+        | Gt => a1::(merge_aux l2')
         end)
       end) in merge_aux l2.
 (* Need to do final mergesort*)
   Lemma merge_lt: forall (x1 x2: ident) r1 r2,
     Pos.compare x1 x2 = Lt -> 
-      mergeType (x1::r1) (x2::r2) = x1:: mergeType r1 (x2::r2).
+      mergeType (x1::r1) (x2::r2) = x2:: mergeType r1 (x2::r2).
   Proof.
     intros. simpl.
     destruct (Pos.compare x1 x2); (try inversion H; auto).

@@ -5,7 +5,7 @@ From Velus Require Import Common.
 From Coq Require Import Lia.
 
 From Velus Require Export SIF.SecLattice.
-
+(** Outdated file, not used currently*)
 
 Module Type SECTYPES(Import Lat: Lattice).
     Import ListNotations.
