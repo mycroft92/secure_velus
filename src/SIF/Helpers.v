@@ -51,12 +51,12 @@ Proof.
       + eauto.
 Qed.
 
-Lemma sortedDecNoDup_in: forall i1 l i2, (i1 < i2 -> sortedDecNoDup (i2::l) -> ~In i1 (i2::l))%positive.
+Lemma sortedDecNoDup_in: forall i1 l i2, (i2 < i1 -> sortedDecNoDup (i2::l) -> ~In i1 (i2::l))%positive.
 Proof.
 
   unfold not . induction l.
   - intros * H Hs contra. inversion contra. subst; apply Pos.lt_irrefl in H; auto. inversion H0.
-  - intros * H Hs Hi. inversion Hs. subst. assert (i1<a)%positive as Hi1a. { lia. }
+  - intros * H Hs Hi. inversion Hs. subst. assert (a < i1)%positive as Hi1a. { lia. }
     inversion Hi.
     * subst. now apply Pos.lt_irrefl in H.
     * inversion H0; subst. 
