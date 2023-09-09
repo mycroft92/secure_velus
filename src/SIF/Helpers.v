@@ -51,22 +51,23 @@ Proof.
       + eauto.
 Qed.
 
-Lemma sortedDecNoDup_in: forall i1 l i2, (i2 < i1 -> sortedDecNoDup (i2::l) -> ~In i1 (i2::l))%positive.
+
+Lemma sortedDecNoDup_in: forall i1 l i2, (i1 > i2 -> sortedDecNoDup (i2::l) -> ~In i1 (i2::l))%positive.
 Proof.
 
   unfold not . induction l.
-  - intros * H Hs contra. inversion contra. subst; apply Pos.lt_irrefl in H; auto. inversion H0.
-  - intros * H Hs Hi. inversion Hs. subst. assert (a < i1)%positive as Hi1a. { lia. }
+  - intros * H Hs contra. inversion contra. subst. rewrite Pos.gt_lt_iff in H. apply Pos.lt_irrefl in H; auto. inversion H0.
+  - intros * H Hs Hi. inversion Hs. subst. assert (i1 > a)%positive as Hi1a. { lia. }
     inversion Hi.
-    * subst. now apply Pos.lt_irrefl in H.
+    * subst. rewrite Pos.gt_lt_iff in H. now apply Pos.lt_irrefl in H.
     * inversion H0; subst. 
-      + now apply  Pos.lt_irrefl in Hi1a.
+      + rewrite Pos.gt_lt_iff in Hi1a. now apply  Pos.lt_irrefl in Hi1a.
       + eauto.
 Qed.
 
 
 Hint Constructors NoDup.
-Hint Resolve sortedNoDup_in.
+Hint Resolve sortedNoDup_in sortedDecNoDup_in.
 
 
 Lemma sortedNoDup_NoDup: forall l, sortedNoDup l -> NoDup l.
@@ -76,11 +77,27 @@ Proof.
   apply NoDup_cons; auto.
 Qed.
 
+Lemma sortedDecNoDup_NoDup: forall l, sortedDecNoDup l -> NoDup l.
+Proof.
+  induction l; intros; auto.
+  inversion H; subst.
+  - auto.
+  - apply NoDup_cons; auto.
+Qed.
+
+
 Lemma sortedNoDup_helper: forall l a b , sortedNoDup (a::b::l) -> sortedNoDup (a::l).
 Proof.
   induction l as [|i l IHl]; auto.
   intros. inversion H; subst. inversion H4; subst.
   apply sort_cons; auto; try lia...
+Qed.
+
+Lemma sortedDecNoDup_helper: forall l a b , sortedDecNoDup (a::b::l) -> sortedDecNoDup (a::l).
+Proof.
+  induction l as [|i l IHl]; auto.
+  intros. inversion H; subst. inversion H4; subst.
+  apply sort_consd; auto; try lia...
 Qed.
 
 Lemma sortedNoDup_correct: (forall l i, sortedNoDup (i::l) -> forall a, In a l -> a > i) %positive.
@@ -93,7 +110,23 @@ Proof.
     * specialize (IHl i). eauto using sortedNoDup_helper.
 Qed.
 
+Lemma sortedDecNoDup_correct: (forall l i, sortedDecNoDup (i::l) -> forall a, In a l ->  a < i) %positive.
+Proof.
+  induction l; intros.
+  - inversion H0.
+  - inversion H; subst.
+    inversion H0.
+    * subst. lia.
+    * specialize (IHl i). eauto using sortedDecNoDup_helper.
+Qed.
+
 Lemma sortedNoDup_easy: forall l a, sortedNoDup (a::l) -> sortedNoDup l.
+Proof.
+  induction l; intros; auto.
+  inversion H; auto.
+Qed.
+
+Lemma sortedDecNoDup_easy: forall l a, sortedDecNoDup (a::l) -> sortedDecNoDup l.
 Proof.
   induction l; intros; auto.
   inversion H; auto.
@@ -105,10 +138,24 @@ Proof.
  
 Qed.
 
+Lemma sortedDecNoDup_hard: forall l a b, (sortedDecNoDup (a::l) -> b > a -> sortedDecNoDup (b:: a:: l))%positive.
+Proof.
+  induction l; intros; auto.
+ 
+Qed.
+
 Lemma sortedNoDup_hard2: forall l a b, (sortedNoDup (a::l) -> b <= a -> sortedNoDup (b:: l))%positive.
 Proof.
   induction l; intros; auto.
   inversion H; subst. assert (b < a)%positive. { lia. }
+  auto.
+ 
+Qed.
+
+Lemma sortedDecNoDup_hard2: forall l a b, (sortedDecNoDup (a::l) -> b >= a -> sortedDecNoDup (b:: l))%positive.
+Proof.
+  induction l; intros; auto.
+  inversion H; subst. assert (b > a)%positive. { lia. }
   auto.
  
 Qed.

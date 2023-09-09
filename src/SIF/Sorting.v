@@ -67,15 +67,15 @@ Section MergeIdentList.
       | a1::l1', a2::l2' => 
       (* Changed the order to greater than equals *)
         (match Pos.compare a1 a2 with
-        | Lt => a2::(mergeType l1' l2)
+        | Lt => a2::(merge_aux l2')
         | Eq => a1::(mergeType l1' l2')
-        | Gt => a1::(merge_aux l2')
+        | Gt => a1::(mergeType l1' l2)
         end)
       end) in merge_aux l2.
 (* Need to do final mergesort*)
   Lemma merge_lt: forall (x1 x2: ident) r1 r2,
     Pos.compare x1 x2 = Lt -> 
-      mergeType (x1::r1) (x2::r2) = x2:: mergeType r1 (x2::r2).
+      mergeType (x1::r1) (x2::r2) = x2:: mergeType (x1::r1) r2.
   Proof.
     intros. simpl.
     destruct (Pos.compare x1 x2); (try inversion H; auto).
@@ -96,6 +96,11 @@ Section MergeIdentList.
   Qed.
 
   Lemma merge_nil_l: forall l, mergeType [] l = l.
+  Proof.
+    intros. simpl. destruct l; auto.
+  Qed.
+
+  Lemma merge_nil_r: forall l, mergeType l [] = l.
   Proof.
     intros. simpl. destruct l; auto.
   Qed.
@@ -122,34 +127,66 @@ Section MergeIdentList.
      
   Check mergesort_equation.
 (* need to properly replace these with ident symbols and prove correctness*) 
-(* Lemma sorted_merge1: forall x x1 l1 x2 l2, 
-    x > x1 -> x > x2 -> sorted (mergeType (x1::l1) (x2::l2)) -> sorted (x::mergeType (x1::l1) (x2::l2)).*)
+  Lemma sorted_merge1: (forall x x1 l1 x2 l2, 
+    x > x1 -> x > x2 -> sortedDecNoDup (mergeType (x1::l1) (x2::l2)) -> sortedDecNoDup (x::mergeType (x1::l1) (x2::l2)))%positive.
+  Proof.
+    intros. simpl in *. destruct (x1 ?= x2)%positive eqn:Heqn.
+    - apply Pos.compare_eq_iff in Heqn; subst.  now apply sort_consd.
+    - rewrite Pos.compare_lt_iff in Heqn. now apply sort_consd.
+    - rewrite Pos.compare_gt_iff in Heqn. now apply sort_consd.
+  Qed.  
 
-(* Lemma sorted_merge: forall l1, sorted l1 -> forall l2, sorted l2 -> sorted (mergeType l1 l2).*)
+   Lemma sorted_merge: forall l1, sortedDecNoDup l1 -> forall l2, sortedDecNoDup l2 -> sortedDecNoDup (mergeType l1 l2).
+   Proof.
+     induction l1; intros.
+     - now rewrite merge_nil_l.
+     - induction l2.
+        + now rewrite merge_nil_r.
+        Admitted.  
 
   Lemma mergesort_correct: forall l, sortedDecNoDup (mergesort l).
   Proof.
-      Admitted.
+      apply mergesort_ind; intros; auto.
+      now apply sorted_merge.
+  Qed.
+
 End MergeIdentList.
 
-
+(*To yet prove the NoDuplication but first..*)
 Section ConstraintOrdering.
 (*do we assume the lists are sorted?*)
-  Fixpoint ident_list_compare (l1 l2: list ident): comparison :=
+  Definition ident_list_compare (l1 l2: list ident): comparison :=
     let l1' := mergesort l1 in
     let l2' := mergesort l2 in
-    match l1',l2' with
-    | [], [] => EQ
-    | [], _  => LT
-    | _, []  => GT
+    (fix compare' (l1 l2: list ident): comparison :=
+    match l1,l2 with
+    | [], [] => Eq
+    | [], _  => Lt
+    | _, []  => Gt
     | a1::l1'', a2::l2'' => 
         match Pos.compare a1 a2 with
-        | LT => LT
-        | GT => GT
-        | EQ => ident_list_compare l1'' l2''
+        | Lt => Lt
+        | Gt => Gt
+        | Eq => compare' l1'' l2''
         end 
-    end.
+    end) l1' l2'.
 
+  Definition ident_sorted_list_compare (l1 l2: list ident): comparison :=
+    (fix compare' (l1 l2: list ident): comparison :=
+    match l1,l2 with
+    | [], [] => Eq
+    | [], _  => Lt
+    | _, []  => Gt
+    | a1::l1'', a2::l2'' => 
+        match Pos.compare a1 a2 with
+        | Lt => Lt
+        | Gt => Gt
+        | Eq => compare' l1'' l2''
+        end 
+    end) l1 l2.
+
+
+End ConstraintOrdering.
 
 
     (* Do I need split?*)
