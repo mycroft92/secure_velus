@@ -10,9 +10,9 @@ From Coq Require Import Recdef.
 
 
 Inductive nonCanonST: Type :=
-    | Bot : nonCanonST
-    | Var : ident -> nonCanonST
-    | Lub : nonCanonST -> nonCanonST -> nonCanonST
+    | Bot  : nonCanonST
+    | Var  : ident -> nonCanonST
+    | Lub  : nonCanonST -> nonCanonST -> nonCanonST
     | Qual : nonCanonST -> uConstraint -> nonCanonST
 with uConstraint: Type :=
     | CNil : uConstraint
@@ -45,20 +45,20 @@ Qed.
   (*for now this is just a plain append*)
 Fixpoint gatherCns (c1 c2:uConstraint): uConstraint:=
   match c1 with
-  | CNil => c2
+  | CNil      => c2
   | Cns x c1' => Cns x (gatherCns c1' c2)
   end.
 
-  (* Do a merge sortt like operation not simple ++: Sanjiva*)
+  (* Do a merge sort like operation not simple ++: Sanjiva*)
   (* Maybe assume sortedness and do the typing*)
-Fixpoint canonicalizeType (nc: nonCanonST): (ST* (list constraint)) :=
+Fixpoint canonicalizeType (nc: nonCanonST): (ST * (list constraint)) :=
     match nc with
     | Bot       => ([],  [])
     | Var x     => ([x], [])
     | Lub x1 x2 => let (s2, c2) := canonicalizeType x2 in
                    let (s1, c1)  := canonicalizeType x1 in
-                    (s1 ++ s2, c1 ++ c2)
-    | Qual x c   => let c2 := canonicalizeConstraints c in
+                    (mergesort s1 s2, c1 ++ c2)
+    | Qual x c  => let c2 := canonicalizeConstraints c in
                    let (s1, c1)  := canonicalizeType x in  
                     (s1, c1++c2)
     end 
