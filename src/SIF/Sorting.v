@@ -1,4 +1,6 @@
-(* Need to do sorting of ST and constraints *)
+
+(*This module is ordered with greater than equals unlike other symtypes*)
+(* Need to do sorting of ST and constraints ??*)
 From Coq Require Import Lia.
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.
