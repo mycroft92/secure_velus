@@ -4,11 +4,13 @@ From Coq Require Import Lists.ListSet.
 From Velus Require Import Common.
 From Velus Require Import SIF.Helpers.
 From Coq Require Import Lia.
-
 Import ListNotations.
 From Coq Require Import Recdef.
+From compcert Require Import common.Errors.
 (* Require Import Coq.Program.Equality. *)
 (*Decoupling the symbolic types from the lattice in this module*)
+
+
 
 Inductive nonCanonST : Type :=
 | Bot  : nonCanonST
@@ -482,16 +484,3 @@ Fixpoint simplify (cns: list constraint) (ds: list ident) : list constraint :=
              end
   end.
 
-(*
-Items that I don't know how to do or have issues with:
-1. Constraint sorting is needlessly convoluted and is harder to get right
-2. Setting up correspondence between signatures of Lustre and Lustre via Fresh Monad
-3. Why is this complicated for such simple math on paper
-*)
-
-
-(*Plan of action
-1. Implement the full typing for Lustre and NLustre to dump constraints?? without the correctness
-2.  
-
-*)
