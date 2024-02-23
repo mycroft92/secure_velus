@@ -3,7 +3,7 @@ From Coq Require Import Lists.ListSet.
 (*From Coq Require Import Logic.Classical_Prop.*)
 From Velus Require Import Common.
 From Coq Require Import Lia.
-
+From Velus Require Import SIF.Helpers.
 Import ListNotations.
 From Coq Require Import Recdef.
 
@@ -57,7 +57,7 @@ Section MergeIdentList.
 
   (*This function is the auxiliary merge that merges two sorted lists*)
   (*Perhaps I can use an intermediate result of correctness on input *)
-  Fixpoint mergeType (l1 l2: list ident) {struct l1} : list ident :=
+  Fixpoint merge_type (l1 l2: list ident) {struct l1} : list ident :=
     let fix merge_aux l2 :=
       (match l1, l2 with
       | [], _ => l2
@@ -66,14 +66,14 @@ Section MergeIdentList.
       (* Changed the order to greater than equals *)
         (match Pos.compare a1 a2 with
         | Lt => a2::(merge_aux l2')
-        | Eq => a1::(mergeType l1' l2')
-        | Gt => a1::(mergeType l1' l2)
+        | Eq => a1::(merge_type l1' l2')
+        | Gt => a1::(merge_type l1' l2)
         end)
       end) in merge_aux l2.
 (* Need to do final mergesort*)
   Lemma merge_lt: forall (x1 x2: ident) r1 r2,
     Pos.compare x1 x2 = Lt -> 
-      mergeType (x1::r1) (x2::r2) = x2:: mergeType (x1::r1) r2.
+      merge_type (x1::r1) (x2::r2) = x2:: merge_type (x1::r1) r2.
   Proof.
     intros. simpl.
     destruct (Pos.compare x1 x2); (try inversion H; auto).
@@ -84,7 +84,7 @@ Section MergeIdentList.
 
   Lemma merge_eq: forall (x1 x2: ident) r1 r2,
     Pos.compare x1 x2 = Eq -> 
-      mergeType (x1::r1) (x2::r2) = x1:: mergeType r1 r2.
+      merge_type (x1::r1) (x2::r2) = x1:: merge_type r1 r2.
   Proof.
     intros. simpl.
     destruct (Pos.compare x1 x2); (try inversion H; auto).
@@ -93,12 +93,12 @@ Section MergeIdentList.
     - inversion H; auto. *)
   Qed.
 
-  Lemma merge_nil_l: forall l, mergeType [] l = l.
+  Lemma merge_nil_l: forall l, merge_type [] l = l.
   Proof.
     intros. simpl. destruct l; auto.
   Qed.
 
-  Lemma merge_nil_r: forall l, mergeType l [] = l.
+  Lemma merge_nil_r: forall l, merge_type l [] = l.
   Proof.
     intros. simpl. destruct l; auto.
   Qed.
@@ -109,7 +109,7 @@ Section MergeIdentList.
     match l with
     | []  => []
     | [a] => [a]
-    | _   => let (l1, l2) := split l in mergeType (mergesort l1) (mergesort l2)
+    | _   => let (l1, l2) := split l in merge_type (mergesort l1) (mergesort l2)
     end.
   Proof.
     (*Recursive calls on l1 and l2 terminate *)
@@ -126,7 +126,7 @@ Section MergeIdentList.
   Check mergesort_equation.
 (* need to properly replace these with ident symbols and prove correctness*) 
   Lemma sorted_merge1: (forall x x1 l1 x2 l2, 
-    x > x1 -> x > x2 -> sortedDecNoDup (mergeType (x1::l1) (x2::l2)) -> sortedDecNoDup (x::mergeType (x1::l1) (x2::l2)))%positive.
+    x > x1 -> x > x2 -> sortedDecNoDup (merge_type (x1::l1) (x2::l2)) -> sortedDecNoDup (x::merge_type (x1::l1) (x2::l2)))%positive.
   Proof.
     intros. simpl in *. destruct (x1 ?= x2)%positive eqn:Heqn.
     - apply Pos.compare_eq_iff in Heqn; subst.  now apply sort_consd.
@@ -134,7 +134,7 @@ Section MergeIdentList.
     - rewrite Pos.compare_gt_iff in Heqn. now apply sort_consd.
   Qed.  
 
-  Lemma sorted_merge: forall l1, sortedDecNoDup l1 -> forall l2, sortedDecNoDup l2 -> sortedDecNoDup (mergeType l1 l2).
+  Lemma sorted_merge: forall l1, sortedDecNoDup l1 -> forall l2, sortedDecNoDup l2 -> sortedDecNoDup (merge_type l1 l2).
    Proof.
      induction l1; intros.
      - now rewrite merge_nil_l.
@@ -188,6 +188,6 @@ End ConstraintOrdering.
 
 
 
-Notation "x ⊔ y" := (merge_type x y) (at level 40, left associativity).
+Notation "x ⊔ y"     := (merge_type x y) (at level 40, left associativity).
 Definition st_remove := List.remove ident_eq_dec.
 Definition st_mem    := my_set_mem.

@@ -6,7 +6,6 @@ From Velus Require Import SIF.Helpers.
 From Coq Require Import Lia.
 Import ListNotations.
 From Coq Require Import Recdef.
-From compcert Require Import common.Errors.
 (* Require Import Coq.Program.Equality. *)
 (*Decoupling the symbolic types from the lattice in this module*)
 
@@ -483,4 +482,3 @@ Fixpoint simplify (cns: list constraint) (ds: list ident) : list constraint :=
              | Some st => simplify (subAll cns d st) ds'
              end
   end.
-
