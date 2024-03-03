@@ -9,8 +9,8 @@ From Velus Require Import CoreExpr.CESyntax.
 From Coq Require Import PArith.
 From Velus Require Import SIF.SIFSignature. (* Is this required? *)
 From Velus Require Import SymTypes.
-
-
+From Coq Require Import List.
+Import ListNotations.
 
 
 Module Type SECCETYPING 
@@ -18,19 +18,60 @@ Module Type SECCETYPING
     (Import Op    : OPERATORS)
     (Import CESyn : CESYNTAX Op).
 
+  Open Scope option_monad_scope.  
+  
     (* *)
-    Section SecTypingCE.
-      Variable ctxt: Env.t ST.
-      Fixpoint assign_exp_type (e: exp) : option ST :=
-        match e with
-        | Econst const => Some []
-        | Evar x _     => Env.find x ctxt
-        | Ewhen exp x  =>
-           (match assign_exp_type exp with
-            | Some
-              
+  Section SecTypingCE.
+    Variable ctxt: Env.t ident.
+    
+    Inductive wst_exp : exp -> ST -> Prop :=
+      | wst_Econst : forall c,
+          wst_exp (Econst c) []
+      | wst_Evar   : forall x t ty,
+          Env.find x ctxt = Some ty ->
+          wst_exp (Evar x t) [ty]
+      | wst_Ewhen  : forall e x b xty ety,
+          Env.find x ctxt = Some xty ->
+          wst_exp e ety ->
+          wst_exp (Ewhen e x b) (ety ⊔ [xty])
+      | wst_Eunop  : forall o e ety t,
+          wst_exp e ety ->
+          wst_exp (Eunop o e t) ety
+      | wst_Ebinop : forall b e1 e2 e1ty e2ty t,
+          wst_exp e1 e1ty ->
+          wst_exp e2 e2ty ->
+          wst_exp (Ebinop b e1 e2 t) (e1ty ⊔ e2ty).
 
-       
+    Fixpoint assign_exp_type (e: exp) : option ST :=
+      match e with
+      | Econst const   => Some []
+      | Evar x _       => do xty <- Env.find x ctxt; Some [xty]
+      | Ewhen exp x _  => 
+          do ety <- assign_exp_type exp;
+          do xty <- Env.find x ctxt;
+          Some (ety ⊔ [xty])
+      | Eunop _ e' _     => assign_exp_type e'
+      | Ebinop _ e1 e2 _ => 
+          do e1ty <- assign_exp_type e1;
+          do e2ty <- assign_exp_type e2;
+          Some (e1ty ⊔ e2ty)
+      end.
+
+    Fixpoint assign_cexp_type (ce: cexp) : option ST :=
+      match ce with
+      | Emerge x ce1 ce2 =>
+          do xty  <- Env.find x ctxt;
+          do c1ty <- assign_cexp_type ce1;
+          do c2ty <- assign_cexp_type ce2;
+          Some ([xty] ⊔ c1ty ⊔ c2ty)
+      | Eite e cet cef  =>
+          do ety  <- assign_exp_type e;
+          do c1ty <- assign_cexp_type cet;
+          do c2ty <- assign_cexp_type cef;
+          Some (ety ⊔ c1ty ⊔ c2ty)
+      |  Eexp e    => assign_exp_type e
+      end.
+  End SecTypingCE. 
 
 
 End SECCETYPING.

@@ -13,6 +13,12 @@ Definition ST := list ident.
 Definition constraint := (ST*ident)%type.
 
 
+Fixpoint my_set_mem (a: ident) (st: ST) : bool :=
+    match st with
+    | [] => false
+    | a_0 :: st' => if ident_eqb a_0 a then true else my_set_mem a st'
+    end.
+
 Section ListIdentInd.
     Print nat_rect.
     Variable P : list ident -> Prop.
@@ -140,6 +146,8 @@ Section MergeIdentList.
      - now rewrite merge_nil_l.
      - induction l2.
         + now rewrite merge_nil_r.
+        + simpl. destruct (a ?= a0)%positive eqn:E.
+          * (* Needs to say that sortedDecNoDup merge_type (a::l0) l1 -> sortedDecNoDup a::(merge_type l0 l1)*)  
         Admitted.  
 
   Lemma mergesort_correct: forall l, sortedDecNoDup (mergesort l).
@@ -188,6 +196,6 @@ End ConstraintOrdering.
 
 
 
-Notation "x ⊔ y"     := (merge_type x y) (at level 40, left associativity).
+Notation   "x ⊔ y"   := (merge_type x y) (at level 40, left associativity).
 Definition st_remove := List.remove ident_eq_dec.
 Definition st_mem    := my_set_mem.

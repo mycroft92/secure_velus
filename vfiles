@@ -24,7 +24,7 @@ src/SIF/SecLattice.v
 src/SIF/SymTypes.v
 src/SIF/SIFTactics.v
 src/SIF/SIFSignature.v
-
+src/SIF/SimpleListTypes.v
 
 src/Lustre/LSemantics.v
 src/Lustre/LSyntax.v

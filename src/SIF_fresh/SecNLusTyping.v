@@ -4,11 +4,12 @@ From Velus Require Import SecLattice.
 
 From Velus Require Import CoindToIndexed.
 From Velus Require Import NLustre.
+From Velus Require Import SIF.SimpleListTypes.
 
 From Coq Require Import String. (*Required for Errors *)
 
 Open Scope list_scope.
-Definition msg_missing_ident (id : ident) : errmsg := MSG "Identifier: '" :: CTX id :: msg "' not found in context.".  
+(*Definition msg_missing_ident (id : ident) : errmsg := MSG "Identifier: '" :: CTX id :: msg "' not found in context.".  *)
 
 Module Type NLusTyping
        (Import Ids   : IDS)
