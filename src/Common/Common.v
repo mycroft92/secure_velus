@@ -155,6 +155,9 @@ Module Type IDS.
 
   Parameter step  : ident.
   Parameter reset : ident.
+  (*New idents for security analysis*)
+  Parameter sec_clk: ident.
+  Parameter sec_reset: ident.
 
   Parameter elab : ident.
   Parameter norm1 : ident.

@@ -23,7 +23,8 @@ Module Type SECCETYPING
     (* *)
   Section SecTypingCE.
     Variable ctxt: Env.t ident.
-    
+    Inductive wst_clock : clock -> ST -> Prop :=
+      . 
     Inductive wst_exp : exp -> ST -> Prop :=
       | wst_Econst : forall c,
           wst_exp (Econst c) []
@@ -41,6 +42,15 @@ Module Type SECCETYPING
           wst_exp e1 e1ty ->
           wst_exp e2 e2ty ->
           wst_exp (Ebinop b e1 e2 t) (e1ty ⊔ e2ty).
+
+    Fixpoint assign_clk_type (c: clock): option ST :=
+      match c with
+      | Cbase       => Env.find IDS.sec_clk ctxt
+      | Con ck' x _ => 
+          do ckty <- assign_clk_type ck';
+          do xty  <- Env.find x ctxt;
+          Some ([xty] ⊔ ckty)
+      end. 
 
     Fixpoint assign_exp_type (e: exp) : option ST :=
       match e with

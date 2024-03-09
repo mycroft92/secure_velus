@@ -77,6 +77,8 @@ Module Export Ids <: IDS.
   Definition main_sync_id: ident := str_to_pos "main_sync".
   Definition step := str_to_pos "step".
   Definition reset := str_to_pos "reset".
+  Definition sec_reset := str_to_pos "sec_reset".
+  Definition sec_clk   := str_to_pos "sec_clk".
   Definition glob := str_to_pos "glob".
   Definition elab := str_to_pos "elab".
   Definition norm1 := str_to_pos "norm1".
