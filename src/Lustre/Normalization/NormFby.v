@@ -815,7 +815,7 @@ Module Type NORMFBY
        n_ingt0 := n_ingt0 n;
        n_outgt0 := n_outgt0 n;
        (*Madded*)
-       n_sig    := (n_sig n);
+       (* n_sig    := (n_sig n); *)
     |}.
   Next Obligation.
     remember (fby_equations _ _ _) as eqs. destruct eqs as [eqs st']. symmetry in Heqeqs.

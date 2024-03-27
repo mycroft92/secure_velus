@@ -3,7 +3,7 @@ From Velus Require Import Operators.
 From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import Clocks.
 (*Madded*)
-From Velus Require Import SIF.SIFSignature.
+(* From Velus Require Import SIF.SIFSignature. *)
 From Coq Require Import PArith.
 From Coq Require Import Omega.
 From Coq Require Import Sorting.Permutation.
@@ -75,7 +75,7 @@ Module Type NLSYNTAX
         n_nodup  : NoDupMembers (n_in ++ n_vars ++ n_out);
         n_good   : Forall (AtomOrGensym (PSP.of_list gensym_prefs)) (map fst (n_in ++ n_vars ++ n_out)) /\ atom n_name;
         (*Madded*)
-        n_sig      :  signature
+        (* n_sig      :  signature *)
       }.
 
   (** ** Program *)

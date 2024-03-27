@@ -284,7 +284,7 @@ Module Type TR
           NL.n_nodup    := _;
           NL.n_good     := _;
           (*Madded*)
-          NL.n_sig      := (L.n_sig n);
+          (* NL.n_sig      := (L.n_sig n); *)
         |}
     | Error e => Error e
     end.

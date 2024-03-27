@@ -1491,8 +1491,9 @@ Section ElabDeclaration.
                        n_out      := xout;
                        n_vars     := xvar;
                        n_eqs      := eqs;
-                       n_prefixes := elab_prefs |} _;
-                       n_sig      := mkSig) (*Madded*)
+                       n_prefixes := elab_prefs |} _;)
+
+                       (* n_sig      := mkSig)*) (*Madded *)
                        (*We need to add our SIF logic here*)
       end
     end.

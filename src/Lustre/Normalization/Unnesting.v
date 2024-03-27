@@ -2744,8 +2744,8 @@ Module Type UNNESTING
        n_eqs := fst (proj1_sig eqs);
        n_ingt0 := (n_ingt0 n);
        n_outgt0 := (n_outgt0 n);
-       (*madded*)
-       n_sig := (n_sig n);
+       (*Madded*)
+       (* n_sig := (n_sig n); *)
     |}.
   Next Obligation.
     eapply unnest_equations_vars_perm with (st:=init_st) in Hwl. 2: eapply surjective_pairing.
