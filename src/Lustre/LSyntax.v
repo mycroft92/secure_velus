@@ -201,7 +201,7 @@ Module Type LSYNTAX
         n_vars     : list (ident * (type * clock));
         n_eqs      : list equation;
 
-        n_prefixes  : PS.t;
+        n_prefixes : PS.t;
         n_ingt0    : 0 < length n_in;
         n_outgt0   : 0 < length n_out;
         n_defd     : Permutation (vars_defined n_eqs)
