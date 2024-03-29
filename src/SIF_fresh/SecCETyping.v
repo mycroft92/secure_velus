@@ -24,7 +24,14 @@ Module Type SECCETYPING
   Section SecTypingCE.
     Variable ctxt: Env.t ident.
     Inductive wst_clock : clock -> ST -> Prop :=
-      . 
+      | wst_Base: forall ty,
+        Env.find sec_clk ctxt = Some ty ->
+        wst_clock Cbase [ty]
+      | wst_On: forall ck x b ckty xty,
+        wst_clock ck ckty ->
+        Env.find x ctxt = Some xty ->
+        wst_clock (Con ck x b) (ckty ⊔ [xty]).
+
     Inductive wst_exp : exp -> ST -> Prop :=
       | wst_Econst : forall c,
           wst_exp (Econst c) []
@@ -45,11 +52,16 @@ Module Type SECCETYPING
 
     Fixpoint assign_clk_type (c: clock): option ST :=
       match c with
-      | Cbase       => Env.find IDS.sec_clk ctxt
+      | Cbase       => 
+        (match Env.find sec_clk ctxt with
+          | Some cty => Some [cty]
+          | None     => None
+          end)
+
       | Con ck' x _ => 
           do ckty <- assign_clk_type ck';
           do xty  <- Env.find x ctxt;
-          Some ([xty] ⊔ ckty)
+          Some (ckty ⊔ [xty])
       end. 
 
     Fixpoint assign_exp_type (e: exp) : option ST :=
@@ -81,6 +93,18 @@ Module Type SECCETYPING
           Some (ety ⊔ c1ty ⊔ c2ty)
       |  Eexp e    => assign_exp_type e
       end.
+
+    Theorem assign_clk_correct: forall ck st, wst_clock ck st -> assign_clk_type ck = Some st.
+    Proof.
+      induction ck; intros.
+      - simpl. inversion H. destruct (Env.find sec_clk ctxt) eqn:E. 
+       * inversion H0; now subst.
+       * congruence.
+      - unfold assign_clk_type. fold assign_clk_type. inversion H; subst. 
+        assert (assign_clk_type ck = Some ckty) as H'. { now apply IHck. }
+      (** Now to prove that do statments push the type correctly*)
+    Admitted.
+       
   End SecTypingCE. 
 
 

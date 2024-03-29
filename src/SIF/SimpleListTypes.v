@@ -1,3 +1,8 @@
+(**
+* This file implements the merging, sorting of simple list types (after canonicalization)
+*
+*)
+
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.
 (*From Coq Require Import Logic.Classical_Prop.*)

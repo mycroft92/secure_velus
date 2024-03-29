@@ -25,6 +25,8 @@ src/SIF/SymTypes.v
 src/SIF/SIFTactics.v
 src/SIF/SIFSignature.v
 src/SIF/SimpleListTypes.v
+src/SIF_fresh/SecCETyping.v
+
 
 src/Lustre/LSemantics.v
 src/Lustre/LSyntax.v

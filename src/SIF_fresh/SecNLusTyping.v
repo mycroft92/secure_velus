@@ -5,6 +5,7 @@ From Velus Require Import SecLattice.
 From Velus Require Import CoindToIndexed.
 From Velus Require Import NLustre.
 From Velus Require Import SIF.SimpleListTypes.
+From Velus Require Import SIF_fresh.SecCETyping.
 
 From Coq Require Import String. (*Required for Errors *)
 
@@ -19,7 +20,8 @@ Module Type NLusTyping
        (Import IStr  : INDEXEDSTREAMS  Op OpAux)
        (Import CIStr : COINDTOINDEXED  Op OpAux CStr IStr)
        (Import CE    : COREEXPR    Ids Op OpAux      IStr)
-       (Import NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE).
+       (Import NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE)
+       (Import SECCETYPING: SECCETYPING Ids Op CE.Syn).
 
    (* sec typing expressions : mapping -> expression -> sec type *)
 
