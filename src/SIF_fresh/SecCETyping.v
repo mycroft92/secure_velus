@@ -101,9 +101,10 @@ Module Type SECCETYPING
       - simpl. inversion H. destruct (Env.find sec_clk ctxt) eqn:E. 
        * inversion H0; now subst.
        * congruence.
-      - unfold assign_clk_type. fold assign_clk_type. inversion H; subst. 
+      - unfold assign_clk_type. fold assign_clk_type. 
+        inversion H as [| ?????? H_find]. subst.
         assert (assign_clk_type ck = Some ckty) as H'. { now apply IHck. }
-        rewrite H',H5. reflexivity.
+        rewrite H',H_find. reflexivity.
     Qed.
        
   End SecTypingCE. 
