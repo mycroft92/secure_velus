@@ -12,7 +12,7 @@ From Coq Require Import String. (*Required for Errors *)
 Open Scope list_scope.
 (*Definition msg_missing_ident (id : ident) : errmsg := MSG "Identifier: '" :: CTX id :: msg "' not found in context.".  *)
 
-Module Type NLusTyping
+Module Type SECNLUSTYPING
        (Import Ids   : IDS)
        (Import Op    : OPERATORS)
        (Import OpAux : OPERATORS_AUX   Op)
@@ -36,4 +36,4 @@ Module Type NLusTyping
     * 3. Typing rules
     * 4. Do we assume that signatures are part of node records or are they seperate records?
     **) 
-End NLusTyping.
+End SECNLUSTYPING.

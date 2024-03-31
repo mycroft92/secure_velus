@@ -93,6 +93,7 @@ Module Type SECCETYPING
           Some (ety ⊔ c1ty ⊔ c2ty)
       |  Eexp e    => assign_exp_type e
       end.
+    Hint Constructors wst_clock.
 
     Theorem assign_clk_correct: forall ck st, wst_clock ck st -> assign_clk_type ck = Some st.
     Proof.
@@ -102,8 +103,8 @@ Module Type SECCETYPING
        * congruence.
       - unfold assign_clk_type. fold assign_clk_type. inversion H; subst. 
         assert (assign_clk_type ck = Some ckty) as H'. { now apply IHck. }
-      (** Now to prove that do statments push the type correctly*)
-    Admitted.
+        rewrite H',H5. reflexivity.
+    Qed.
        
   End SecTypingCE. 
 
