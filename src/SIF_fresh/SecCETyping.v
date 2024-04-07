@@ -106,7 +106,8 @@ Module Type SECCETYPING
         assert (assign_clk_type ck = Some ckty) as H'. { now apply IHck. }
         rewrite H',H_find. reflexivity.
     Qed.
-       
+    
+    (* Similar theorems needed for other syntactic levels*)
   End SecTypingCE. 
 
 
