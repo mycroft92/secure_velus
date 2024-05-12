@@ -8,18 +8,8 @@ Import ListNotations.
 From Coq Require Import Recdef.
 (* Require Import Coq.Program.Equality. *)
 (*Decoupling the symbolic types from the lattice in this module*)
-
-
-
-Inductive nonCanonST : Type :=
-| Bot  : nonCanonST
-| Var  : ident -> nonCanonST
-| Lub  : nonCanonST -> nonCanonST  -> nonCanonST
-| Qual  : nonCanonST -> uConstraint -> nonCanonST
-with uConstraint: Type := 
-| CNil : uConstraint
-| Cns  : (nonCanonST * nonCanonST) -> uConstraint -> uConstraint.
-
+(*This is finalized version of symbolic simple types for NLustre and beyond.
+ It also implements sorting algorithms for simple types and constraints.*)
 Definition ST := list ident.
 Definition constraint := (ST*ST)%type.
 
@@ -48,29 +38,6 @@ Proof.
           destruct H as [H1|H2]. elim (E H1). (*a0 = a*)
           now apply IHst.
 Qed.
-  (*for now this is just a plain append*)
-Fixpoint gatherCns (c1 c2:uConstraint): uConstraint:=
-  match c1 with
-  | CNil => c2
-  | Cns x c1' => Cns x (gatherCns c1' c2)
-  end.
-
-Inductive EqNL : nonCanonST -> nonCanonST -> Prop :=
-| refl_case: forall α, EqNL  α α
-| lub_assoc: forall α β θ, EqNL (Lub (Lub α β) θ) (Lub α (Lub β θ))
-| lub_var_refl : forall α, EqNL (Lub (Var α) (Var α)) (Var α)
-| ref_base : forall α, EqNL (Qual α CNil) α
-| ref_lub  : forall α_1 α_2 ρ_1 ρ_2, 
-   EqNL (Lub (Qual α_1 ρ_1) (Qual α_2 ρ_2)) (Qual (Lub α_1 α_2) (gatherCns ρ_1 ρ_2))
-| ref_ref  : forall α ρ_1 ρ_2, EqNL (Qual (Qual α ρ_1) ρ_2) (Qual α (gatherCns ρ_1 ρ_2))
-(* | ref_lub_assocl: forall α_1 α_2 ρ, 
-            EqNL (Lub (Qual α_1 ρ) (Var α_2)) (Qual (Lub α_1 α_2) ρ)
-| ref_lub_assocr: forall α_1 α_2 ρ, 
-            EqNL (Lub (Var α_1) (Qual α_2 ρ) ) (Qual (Lub α_1 α_2) ρ) *)
-| ref_lub_assocl: forall α_1 α_2 ρ, 
-            EqNL (Lub α_1 (Qual α_2 ρ) ) (Qual (Lub α_1 α_2) ρ)
-| ref_lub_assocr: forall α_1 α_2 ρ, 
-            EqNL (Lub (Qual α_1 ρ) α_2) (Qual (Lub α_1 α_2) ρ).
 
     
 (*Cool trick on decreasing arguments*)
@@ -348,7 +315,7 @@ Module MergeFacts.
    
 
 
-    Hint Constructors EqNL.
+
     (* Lemma StrongConfluence: forall α_1 α_2, EqNL α_1 α_2 -> canon α_1 = canon α_2.
     Proof.
       induction 1; auto.
@@ -375,7 +342,11 @@ Proof.
   -  intros.
     simpl in *. destruct (split l1) as [l1' l2'] eqn:E. inv teq1. simpl.
     destruct (split_len l1 l1' l2' E); lia.
-Qed.
+Defined.
+
+Notation "x ⊔ y" := (merge x y) (at level 40, left associativity).
+Definition st_remove := List.remove ident_eq_dec.
+Definition st_mem    := my_set_mem.
 
 
 (*needs a precondition that c1 and c2 are sorted*)
@@ -390,50 +361,8 @@ Fixpoint stEq (c1 c2: ST)  : Prop :=
   | x::c1', y::c2' => if ident_eqb x y then eqst c1' c2'  else False
   end) c1 c2.
   
-(*canonical type specification and correctness to be proved*)
 
-(*Need to write a new append for flat constraints like merge*)
-Fixpoint canon (x:nonCanonST): (ST*(list constraint)) :=
-  match x with
-  | Bot   => ([],[])
-  | Var i => ([i],[])
-  | Lub α_1 α_2 => 
-      let (st1,ρ_1):= canon α_1 in
-      let (st2,ρ_2):= canon α_2 in
-      (merge st1 st2, ρ_1 ++ ρ_2)
-  | Qual i ρ => 
-      let (st, ρ') := canon i in
-      let ρ'' := unfurl ρ in 
-      (st, ρ''++ρ') (* I need to change this to ordering append but this works for now*)
-  end 
-with unfurl (ρ: uConstraint): list constraint :=
-  match ρ with
-  | CNil => []
-  | Cns (α_1,α_2) ρ' => 
-      let (α_1', ρ_1) := canon α_1 in
-      let (α_2', ρ_2) := canon α_2 in
-      let ρ'' := unfurl ρ' in
-      (α_1',α_2') :: ρ_1 ++ ρ_2 ++ ρ'' (* I need to change this to ordering append but this works for now*)
-  end.
-  
-
-Lemma cannon_sortedNoDup: forall x, 
-              match canon x with
-              | (α,_) => sortedNoDup α
-              end .
-Proof.
-  induction x as [|? | α_1 IH1 α_2 IH2| α ρ IH]; simpl; auto.
-    - destruct (canon α_1). destruct (canon α_2). apply sortedNoDup_merge; auto.
-    - destruct (canon α). auto.
-Qed.
-
-
-Notation "x ⊔ y" := (merge x y) (at level 40, left associativity).
-Definition st_remove := List.remove ident_eq_dec.
-Definition st_mem    := my_set_mem.
-
-
-Fixpoint findST cns d: option ST :=
+  Fixpoint findST cns d: option ST :=
     match cns with
     | []  => None 
     | (st,[d'])::cns'  => if ident_eqb d' d then Some st else findST cns' d

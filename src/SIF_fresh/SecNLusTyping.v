@@ -56,11 +56,51 @@ Module Type SECNLUSTYPING
         let id := Ids.gensym Ids.sec n in
         OK (id, (Pos.succ n, sub1)).
 
+    
     (* Need a function to insert into the state and get the state itself*)
-
+    (* Definition insert_map (x v: ident): Sec unit :=
+      fun st => Env. *)
 
 
   End SecMonad.
+  (* Notations and mmap to be done*)
+  Module ElabNotations.
+
+    Notation "'do' X <- A ; B" :=
+      (bind A (fun X => B))
+        (at level 200, X ident, A at level 100, B at level 200).
+
+    Notation "'do' ( X , Y ) <- A ; B" :=
+      (bind2 A (fun X Y => B))
+        (at level 200, X ident, Y ident, A at level 100, B at level 200).
+
+  End ElabNotations.
+
+  Import ElabNotations.
+
+  Section mmap.
+    Context {A B : Type}.
+    Variable (f : A -> Elab B).
+
+    Fixpoint mmap (l: list A) {struct l} : Elab (list B) :=
+      match l with
+      | nil => ret nil
+      | hd :: tl => do hd' <- f hd; do tl' <- mmap tl; ret (hd' :: tl')
+      end.
+  End mmap.
+
+  Section mmap2.
+    Context {A B1 B2 : Type}.
+    Variable (f : A -> Elab (B1 * B2)).
+
+    Fixpoint mmap2 (l: list A) {struct l} : Elab (list B1 * list B2) :=
+      match l with
+      | nil => ret (nil, nil)
+      | hd :: tl => do (hd1, hd2) <- f hd;
+                  do (tl1, tl2) <- mmap2 tl;
+                  ret ((hd1::tl1), (hd2::tl2))
+      end.
+  End mmap2.
   (* sec typing expressions : mapping -> expression -> sec type *)
 
   (* sec typing equations   : mapping -> equation -> constraints  *)

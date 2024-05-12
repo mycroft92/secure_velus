@@ -7,7 +7,7 @@ From Velus Require Import CoreExpr.CESyntax.
 
 (* From Velus Require Import SIF.SecLattice. *)
 From Coq Require Import PArith.
-From Velus Require Import SIF.SIFSignature. (* Is this required? *)
+(* From Velus Require Import SIF.SIFSignature. Is this required? *)
 From Velus Require Import SymTypes.
 From Coq Require Import List.
 Import ListNotations.
@@ -95,7 +95,8 @@ Module Type SECCETYPING
       end.
     Hint Constructors wst_clock.
 
-    Theorem assign_clk_correct: forall ck st, wst_clock ck st -> assign_clk_type ck = Some st.
+    Theorem assign_clk_correct: 
+      forall ck st, wst_clock ck st -> assign_clk_type ck = Some st.
     Proof.
       induction ck; intros.
       - simpl. inversion H. destruct (Env.find sec_clk ctxt) eqn:E. 
@@ -106,7 +107,33 @@ Module Type SECCETYPING
         assert (assign_clk_type ck = Some ckty) as H'. { now apply IHck. }
         rewrite H',H_find. reflexivity.
     Qed.
+
+    Lemma assign_clk_inv: 
+      forall ck i b st,  assign_clk_type (Con ck i b) = Some st -> 
+       exists st' ty, st = st' ⊔ [ty] /\ assign_clk_type ck = Some st' /\ Env.find i ctxt = Some ty.
+    Proof.
+      intros. simpl in *. destruct (assign_clk_type ck) eqn:E1.
+        - exists s. destruct (Env.find i ctxt) eqn: E2.
+          + exists i0. simpl in H. now inversion H.
+          + simpl in H. discriminate H.
+        - simpl in H. discriminate H.
+    Qed.
+
+    Theorem assign_clk_correct2:
+      forall ck st, assign_clk_type ck = Some st -> wst_clock ck st.
+    Proof.
+      induction ck; intros.
+      - simpl in *. destruct (Env.find sec_clk ctxt) eqn:E.
+        + inversion H. now constructor.
+        + discriminate H.
+      - apply assign_clk_inv in H as [st' [ty [Hst [Hck Hfind]] ]].
+        apply IHck in Hck. rewrite -> Hst. now apply wst_On.
+    Qed.
     
+    Theorem assign_exp_correct:
+      forall e st, wst_exp e st <-> assign_exp_type e = Some st.
+    Proof.
+      Admitted.
     (* Similar theorems needed for other syntactic levels*)
   End SecTypingCE. 
 
