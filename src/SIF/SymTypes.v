@@ -11,7 +11,7 @@ From Coq Require Import Recdef.
 (*This is finalized version of symbolic simple types for NLustre and beyond.
  It also implements sorting algorithms for simple types and constraints.*)
 Definition ST := list ident.
-Definition constraint := (ST*ST)%type.
+Definition constraint := (ST*ident)%type.
 
 Definition wf_constraint (c: constraint): Prop :=  
   match c with
@@ -365,22 +365,25 @@ Fixpoint stEq (c1 c2: ST)  : Prop :=
   Fixpoint findST cns d: option ST :=
     match cns with
     | []  => None 
-    | (st,[d'])::cns'  => if ident_eqb d' d then Some st else findST cns' d
-    | _ :: cns'        => findST cns' d
+    | (st,d')::cns'  => if ident_eqb d' d then Some st else findST cns' d
+    (* | _ :: cns'        => findST cns' d *)
     end.
 
 Lemma find_correct : forall cs d v, 
-  findST cs d = Some v -> List.In (v,[d]) cs.
+  findST cs d = Some v -> List.In (v,d) cs.
 Proof.
   induction cs as [| (st',d') cs' IHcs]; intros d_0 v H; simpl in H. 
   - inversion H.
-  - destruct d'  as [|d_1 d''] eqn:E' in H. 
+  - destruct (ident_eqb d' d_0) eqn:E.
+    * apply ident_eqb_eq in E. inversion H.  simpl. subst. auto.
+    * simpl. right. now apply IHcs.
+  (* - destruct d'  as [|d_1 d''] eqn:E' in H. 
     * apply IHcs in H. simpl. right. auto.
     * destruct d''.
       + destruct (ident_eqb d_1 d_0) eqn:E in H.
         ** apply ident_eqb_eq in E. subst. inversion H. simpl. auto.
         ** simpl. right. apply IHcs. auto.
-      + apply IHcs in H. simpl. right. auto.
+      + apply IHcs in H. simpl. right. auto. *)
 Qed.
 
 (*Substitute an ident d in st wtih st'*)
@@ -397,10 +400,10 @@ Definition subST st d st' : ST :=
 Fixpoint subAll cns d st' : list constraint :=
   match cns with 
   | [] => []
-  | (st, [d'])::cns' => if ident_eqb d' d then 
+  | (st, d')::cns' => if ident_eqb d' d then 
                         subAll cns' d st'
-                      else ((subST st d st'),[d']):: (subAll cns' d st')
-  | _ :: cns'   => subAll cns' d st'
+                      else ((subST st d st'),d'):: (subAll cns' d st')
+  (* | _ :: cns'   => subAll cns' d st' *)
   end.
 
 Fixpoint simplify (cns: list constraint) (ds: list ident) : list constraint :=
