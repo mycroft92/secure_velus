@@ -1,4 +1,5 @@
 (*Describes security signature related properties.*)
+(* Change this implementation to work with res and Sec Monad*)
 From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import SIF.Helpers.
@@ -16,8 +17,6 @@ Import List.ListNotations.
 (* 1. How do I carry the constraints?
    2. How do I replace the vars in constraints with newly generated names? *)
 
-(* Plan is to finish the typing here and then move to typing Lustre *)
-(* Definition SecCtxt := Env.t ident.  *)
 Record signature := mkSig {
     n_name : ident; (*node name*)
     n_in   : list (ident*ident); (*ordered list of input security types*)
@@ -43,14 +42,14 @@ Fixpoint subst_ident_in_type (ty: ST) (x: ident) (v: ident): ST :=
 
 Definition subst_ident_in_constraint (c: constraint) (x: ident) (v: ident): constraint :=
     let (l,h) := c in
-    (subst_ident_in_type l x v, subst_ident_in_type h x v).
+    (subst_ident_in_type l x v, h).
 
 
 Definition subst_ident_in_constraints (cs: list constraint) (x: ident) (v:ident)
     : list constraint :=
     List.map (fun c => subst_ident_in_constraint c x v) cs.
 
-Check fold_left.
+(* Check fold_left. *)
 
 (* foreach (x,v) in xv, substitute x with v in cs.*)
 Fixpoint subst_idents_in_constraints (cs: list constraint) (xv: list (ident* ident)): list constraint :=
