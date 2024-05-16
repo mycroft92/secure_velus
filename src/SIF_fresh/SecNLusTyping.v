@@ -27,35 +27,16 @@ Module Type SECNLUSTYPING
   (Import SECCETYPING: SECCETYPING Ids Op CE.Syn).
   (* Check wst_exp. *)
 
-  (* Notations and mmap to be done*)
-  Import SECMONADNotations.
-
-  Section mmap.
-    Context {A B : Type}.
-    Variable (f : A -> Elab B).
-
-    Fixpoint mmap (l: list A) {struct l} : Elab (list B) :=
-      match l with
-      | nil => ret nil
-      | hd :: tl => do hd' <- f hd; do tl' <- mmap tl; ret (hd' :: tl')
-      end.
-  End mmap.
-
-  Section mmap2.
-    Context {A B1 B2 : Type}.
-    Variable (f : A -> Elab (B1 * B2)).
-
-    Fixpoint mmap2 (l: list A) {struct l} : Elab (list B1 * list B2) :=
-      match l with
-      | nil => ret (nil, nil)
-      | hd :: tl => do (hd1, hd2) <- f hd;
-                  do (tl1, tl2) <- mmap2 tl;
-                  ret ((hd1::tl1), (hd2::tl2))
-      end.
-  End mmap2.
+  (* expressions are already done in CETyping*)
   (* sec typing expressions : mapping -> expression -> sec type *)
+  Check assign_cexp_type.
+  Check assign_exp_type.
 
   (* sec typing equations   : mapping -> equation -> constraints  *)
+  Section SECEEQNTYPING.
+    Variable G: global.
+
+  End SECEEQNTYPING.
 
   (* sec typing nodes *) 
 
@@ -77,9 +58,10 @@ Module SecNLusTyping
 (IStr  : INDEXEDSTREAMS  Op OpAux)
 (CIStr : COINDTOINDEXED  Op OpAux CStr IStr)
 (CE    : COREEXPR    Ids Op OpAux      IStr)
-(NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE) <: SECNLUSTYPING Op SC OpAux CStr IStr CIStr CE NL.
+(NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE)
+(SECCETYPING: SECCETYPING Ids Op CE.Syn) <: SECNLUSTYPING Op SC OpAux CStr IStr CIStr CE NL SECCETYPING.
 
-Include SECNLUSTYPING Op SC OpAux CStr IStr CIStr CE NL.
+Include SECNLUSTYPING Op SC OpAux CStr IStr CIStr CE NL SECCETYPING.
 
 
 End SecNLusTyping.
