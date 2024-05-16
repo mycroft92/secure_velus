@@ -13,11 +13,11 @@ From Coq Require Import Recdef.
 Definition ST := list ident.
 Definition constraint := (ST*ident)%type.
 
-Definition wf_constraint (c: constraint): Prop :=  
+(* Definition wf_constraint (c: constraint): Prop :=  
   match c with
   | (s1,s2) => (List.length s2 = 1) /\ sortedNoDup s1
   end.
-
+ *)
 
 Fixpoint my_set_mem (a: ident) (st: ST) : bool :=
     match st with
