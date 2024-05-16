@@ -17,7 +17,7 @@ Import List.ListNotations.
    2. How do I replace the vars in constraints with newly generated names? *)
 
 (* Plan is to finish the typing here and then move to typing Lustre *)
-Definition SecCtxt := Env.t ident. 
+(* Definition SecCtxt := Env.t ident.  *)
 Record signature := mkSig {
     n_name : ident; (*node name*)
     n_in   : list (ident*ident); (*ordered list of input security types*)
@@ -31,8 +31,6 @@ Record signature := mkSig {
 
 (* Definition  *)
 Local Open Scope option_monad_scope. (* for the monadic notations*)
-Print ST.
-Locate ident_eq_dec.
 
 (* Function to substitute in the security type*)
 Fixpoint subst_ident_in_type (ty: ST) (x: ident) (v: ident): ST :=
@@ -42,13 +40,11 @@ Fixpoint subst_ident_in_type (ty: ST) (x: ident) (v: ident): ST :=
                  else x' :: (subst_ident_in_type ty' x v)
     end.
 
-Print constraint.
 
 Definition subst_ident_in_constraint (c: constraint) (x: ident) (v: ident): constraint :=
     let (l,h) := c in
     (subst_ident_in_type l x v, subst_ident_in_type h x v).
 
-Check List.map.
 
 Definition subst_ident_in_constraints (cs: list constraint) (x: ident) (v:ident)
     : list constraint :=

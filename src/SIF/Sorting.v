@@ -35,7 +35,6 @@ Section ListIdentInd.
 
 End ListIdentInd.
 
-Check list_ind2.
 
 (*first setup the ordering*)
 Section MergeIdentList.
@@ -126,8 +125,7 @@ Section MergeIdentList.
       destruct (split l1) as [l1' l2'] eqn:E; inv teq1; destruct (split_length _ _ _ E);
       simpl; lia.
   Defined.
-     
-  Check mergesort_equation.
+
 (* need to properly replace these with ident symbols and prove correctness*) 
   Lemma sorted_merge1: (forall x x1 l1 x2 l2, 
     x > x1 -> x > x2 -> sortedDecNoDup (mergeType (x1::l1) (x2::l2)) -> sortedDecNoDup (x::mergeType (x1::l1) (x2::l2)))%positive.

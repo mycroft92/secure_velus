@@ -5,8 +5,8 @@ From Coq Require Import Lia.
 From Velus Require Import Common.
 (* From Coq Require Import Arith.
 From Coq Require Import PArith. *)
-
-Compute  (Pos.compare (xO (xI xH)) (xO (xI xH))).
+(* 
+Compute  (Pos.compare (xO (xI xH)) (xO (xI xH))). *)
 
 
 Import ListNotations.
@@ -17,7 +17,6 @@ Proof.
    {apply RelationClasses.StrictOrder_Asymmetric. apply Pos.lt_strorder. }
   apply RelationClasses.asymmetry.
 Qed.
-
 
 Inductive sortedNoDup : (list ident) -> Prop :=
 | sort_nil  : sortedNoDup []
@@ -34,8 +33,6 @@ Inductive sortedDecNoDup : (list ident) -> Prop :=
   -> sortedDecNoDup (i2::l)
   -> sortedDecNoDup (i1::i2::l)) %positive.  
 Hint Constructors sortedNoDup sortedDecNoDup.
-
-
 
 
 Lemma sortedNoDup_in: forall i1 l i2, (i1 < i2 -> sortedNoDup (i2::l) -> ~In i1 (i2::l))%positive.

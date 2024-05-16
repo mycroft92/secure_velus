@@ -9,6 +9,7 @@ From Coq Require Import Recdef.
 From Velus Require Import SIF.SymTypes.
 (*These are types ued for Lustre typing, they are converted to simple types eventually.*)
 (*canonical type specification and correctness to be proved*)
+(* We will do this later*)
 
 
 

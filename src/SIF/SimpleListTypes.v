@@ -25,7 +25,7 @@ Fixpoint my_set_mem (a: ident) (st: ST) : bool :=
     end.
 
 Section ListIdentInd.
-    Print nat_rect.
+    (* Print nat_rect. *)
     Variable P : list ident -> Prop.
     Hypothesis PNill : P []. (* The property to prove is on lists*)
     Hypothesis PSingl : forall (a: ident), P [a].
@@ -41,8 +41,6 @@ Section ListIdentInd.
         end.
 
 End ListIdentInd.
-
-Check list_ind2.
 
 (*first setup the ordering*)
 Section MergeIdentList.
@@ -134,7 +132,6 @@ Section MergeIdentList.
       simpl; lia.
   Defined.
      
-  Check mergesort_equation.
 (* need to properly replace these with ident symbols and prove correctness*) 
   Lemma sorted_merge1: (forall x x1 l1 x2 l2, 
     x > x1 -> x > x2 -> sortedDecNoDup (merge_type (x1::l1) (x2::l2)) -> sortedDecNoDup (x::merge_type (x1::l1) (x2::l2)))%positive.
@@ -196,9 +193,7 @@ Section ConstraintOrdering.
         end 
     end) l1 l2.
 
-
 End ConstraintOrdering.
-
 
 
 Notation   "x ⊔ y"   := (merge_type x y) (at level 40, left associativity).
