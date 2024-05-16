@@ -8,7 +8,7 @@ From compcert Require Import common.Errors.
 
 Open Scope list_scope.
 
-Module SecMonad (Import Ids   : IDS).
+Module Type SECMONAD (Import Ids   : IDS).
 
 Section MySecMonad.
 Context {A : Type}.
@@ -48,9 +48,9 @@ Definition fresh_ident : Sec ident :=
 
 
 End MySecMonad.
-End SecMonad.
+End SECMONAD.
 
-Module ElabNotations.
+Module SECMONADNotations.
 
 Notation "'do' X <- A ; B" :=
   (bind A (fun X => B))
@@ -60,4 +60,10 @@ Notation "'do' ( X , Y ) <- A ; B" :=
   (bind2 A (fun X Y => B))
     (at level 200, X ident, Y ident, A at level 100, B at level 200).
 
-End ElabNotations.
+End SECMONADNotations.
+
+
+Module SecMonad (Ids   : IDS) <: SECMONAD Ids.
+Include SECMONAD Ids.
+
+End SecMonad.

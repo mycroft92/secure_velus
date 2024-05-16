@@ -17,7 +17,7 @@ Open Scope list_scope.
 Module Type SECNLUSTYPING
   (Import Ids   : IDS)
   (Import Op    : OPERATORS)
-  (Import SC    : SecContext Ids)
+  (Import SC    : SECMONAD Ids)
   (Import OpAux : OPERATORS_AUX   Op)
   (Import CStr  : COINDSTREAMS    Op OpAux)
   (Import IStr  : INDEXEDSTREAMS  Op OpAux)
@@ -28,19 +28,7 @@ Module Type SECNLUSTYPING
   (* Check wst_exp. *)
 
   (* Notations and mmap to be done*)
-  Module ElabNotations.
-
-    Notation "'do' X <- A ; B" :=
-      (bind A (fun X => B))
-        (at level 200, X ident, A at level 100, B at level 200).
-
-    Notation "'do' ( X , Y ) <- A ; B" :=
-      (bind2 A (fun X Y => B))
-        (at level 200, X ident, Y ident, A at level 100, B at level 200).
-
-  End ElabNotations.
-
-  Import ElabNotations.
+  Import SECMONADNotations.
 
   Section mmap.
     Context {A B : Type}.
@@ -79,3 +67,19 @@ Module Type SECNLUSTYPING
    * 4. Do we assume that signatures are part of node records or are they seperate records?
    **) 
 End SECNLUSTYPING.
+
+Module SecNLusTyping  
+(Ids   : IDS)
+(Op    : OPERATORS)
+(SC    : SECMONAD Ids)
+(OpAux : OPERATORS_AUX   Op)
+(CStr  : COINDSTREAMS    Op OpAux)
+(IStr  : INDEXEDSTREAMS  Op OpAux)
+(CIStr : COINDTOINDEXED  Op OpAux CStr IStr)
+(CE    : COREEXPR    Ids Op OpAux      IStr)
+(NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE) <: SECNLUSTYPING Op SC OpAux CStr IStr CIStr CE NL.
+
+Include SECNLUSTYPING Op SC OpAux CStr IStr CIStr CE NL.
+
+
+End SecNLusTyping.
