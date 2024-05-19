@@ -29,8 +29,8 @@ Record signature := mkSig {
     n_in   : list (ident*ident); (*ordered list of input security types*)
     n_out  : list (ident*ident); (*ordered list of output security types*)
 
-    n_reset: ident; (* In a generated signature, this will always be named sec_reset*)
-    n_clk  : ident; (* In a generated signature, this will always be named sec_clk*)(*The base clock is always empty list*)
+    n_reset: ident*ident; (* We generate the name for the reset type and its corresponding value*)
+    n_clk  : ident*ident; (* In a generated signature, this will always be named sec_clk*)(*The base clock is always empty list*)
     (* We already have that Gamma \rel forall inp. inp, because the clock rules give us this directly. No need to have an additional \Gamma = GLB (inputs) *)
     constraints : list constraint; (*constraints*)
 }.
@@ -85,11 +85,12 @@ Section Substitutions.
             ret ((v,v')::xs)
         end.
 
+    (* Don't know how to block sec_reset and sec_clk as restricted identifiers*)
     Definition subst_constraints (node: signature) (env: Env.t ident) : Sec (list constraint):=
         do inp_subst_map <- find_all_idents node.(n_in) env;
         do out_subst_map <- find_all_idents node.(n_out) env;
-        do reset_map     <- find Ids.sec_reset node.(n_reset) env;
-        do clk_map       <- find Ids.sec_clk   node.(n_clk) env;
+        do reset_map     <- find (fst node.(n_reset)) (snd node.(n_reset)) env;
+        do clk_map       <- find (fst node.(n_clk)) (snd node.(n_clk)) env;
         ret (subst_idents_in_constraints node.(constraints) (clk_map::reset_map::(inp_subst_map++out_subst_map))).
 
 End Substitutions. 
