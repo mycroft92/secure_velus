@@ -202,9 +202,15 @@ Module Export Ids <: IDS.
   Lemma obc2c_atom: atom obc2c.
   Proof. prove_atom. Qed.
 
+  Lemma sec_reset_atom: atom sec_reset.
+  Proof. prove_atom. Qed.
+
+  Lemma sec_clk_atom: atom sec_clk.
+  Proof. prove_atom. Qed.
+
   Hint Resolve step_atom reset_atom fun_id_atom sync_id_atom
        out_atom main_id_atom main_proved_id_atom main_sync_id_atom
-       self_atom glob_atom elab_atom norm1_atom norm2_atom obc2c_atom.
+       self_atom glob_atom elab_atom norm1_atom norm2_atom obc2c_atom sec_reset_atom sec_clk_atom.
 
   Axiom prefix : ident -> ident -> ident.
 
