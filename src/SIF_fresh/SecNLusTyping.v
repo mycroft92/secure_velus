@@ -7,6 +7,7 @@ From Velus Require Import NLustre.
 From Velus Require Import SIF.SimpleListTypes.
 From Velus Require Import SIF_fresh.SecCETyping.
 From Velus Require Import SIF_fresh.SecContext.
+From Velus Require Import SIF.SIFSignature.
 
 From Coq Require Import String. (*Required for Errors *)
 From compcert Require Import common.Errors.
@@ -24,6 +25,7 @@ Module Type SECNLUSTYPING
   (Import CIStr : COINDTOINDEXED  Op OpAux CStr IStr)
   (Import CE    : COREEXPR    Ids Op OpAux      IStr)
   (Import NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE)
+  (Import SIG   : SIGNATURE   Ids SC)
   (Import SECCETYPING: SECCETYPING Ids Op CE.Syn).
   (* Check wst_exp. *)
 
@@ -59,6 +61,7 @@ Module SecNLusTyping
 (CIStr : COINDTOINDEXED  Op OpAux CStr IStr)
 (CE    : COREEXPR    Ids Op OpAux      IStr)
 (NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE)
+(SIG   : SIGNATURE   Ids SC)
 (SECCETYPING: SECCETYPING Ids Op CE.Syn) <: SECNLUSTYPING Op SC OpAux CStr IStr CIStr CE NL SECCETYPING.
 
 Include SECNLUSTYPING Op SC OpAux CStr IStr CIStr CE NL SECCETYPING.
