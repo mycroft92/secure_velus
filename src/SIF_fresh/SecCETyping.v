@@ -23,9 +23,10 @@ Module Type SECCETYPING
     (* *)
   Section SecTypingCE.
     Variable ctxt: Env.t ident.
+    Variable bs_name: ident.
     Inductive wst_clock : clock -> ST -> Prop :=
       | wst_Base: forall ty,
-        Env.find sec_clk ctxt = Some ty ->
+        Env.find bs_name ctxt = Some ty ->
         wst_clock Cbase [ty]
       | wst_On: forall ck x b ckty xty,
         wst_clock ck ckty ->
@@ -53,7 +54,7 @@ Module Type SECCETYPING
     Fixpoint assign_clk_type (c: clock): option ST :=
       match c with
       | Cbase       => 
-        (match Env.find sec_clk ctxt with
+        (match Env.find bs_name ctxt with
           | Some cty => Some [cty]
           | None     => None
           end)
@@ -99,7 +100,7 @@ Module Type SECCETYPING
       forall ck st, wst_clock ck st -> assign_clk_type ck = Some st.
     Proof.
       induction ck; intros.
-      - simpl. inversion H. destruct (Env.find sec_clk ctxt) eqn:E. 
+      - simpl. inversion H. destruct (Env.find bs_name ctxt) eqn:E. 
        * inversion H0; now subst.
        * congruence.
       - unfold assign_clk_type. fold assign_clk_type. 
@@ -123,7 +124,7 @@ Module Type SECCETYPING
       forall ck st, assign_clk_type ck = Some st -> wst_clock ck st.
     Proof.
       induction ck; intros.
-      - simpl in *. destruct (Env.find sec_clk ctxt) eqn:E.
+      - simpl in *. destruct (Env.find bs_name ctxt) eqn:E.
         + inversion H. now constructor.
         + discriminate H.
       - apply assign_clk_inv in H as [st' [ty [Hst [Hck Hfind]] ]].

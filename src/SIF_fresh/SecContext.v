@@ -120,7 +120,18 @@ Section mmap2.
                  ret ((hd1::tl1), (hd2::tl2))
     end.
 End mmap2.
+
+Section option_to_sec.
+
+  Definition option_to_sec {A: Type} (x: option A) : Sec A :=
+    match x with
+    | Some x' => ret x'
+    | None    => error (msg "Nothing to convert")
+    end.
+End option_to_sec.
 End SECMONAD.
+
+
 
 
 

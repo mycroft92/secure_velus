@@ -34,6 +34,7 @@ Record signature := mkSig {
     (* We already have that Gamma \rel forall inp. inp, because the clock rules give us this directly. No need to have an additional \Gamma = GLB (inputs) *)
     constraints : list constraint; (*constraints*)
 }.
+Definition secglobal := list signature.
 
 Section Substitutions.
 

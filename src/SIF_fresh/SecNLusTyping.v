@@ -13,6 +13,7 @@ From Coq Require Import String. (*Required for Errors *)
 From compcert Require Import common.Errors.
 
 Open Scope list_scope.
+Import List.ListNotations.
 (*Definition msg_missing_ident (id : ident) : errmsg := MSG "Identifier: '" :: CTX id :: msg "' not found in context.".  *)
 
 Module Type SECNLUSTYPING
@@ -33,10 +34,15 @@ Module Type SECNLUSTYPING
   (* sec typing expressions : mapping -> expression -> sec type *)
   Check assign_cexp_type.
   Check assign_exp_type.
+  Locate global.
 
   (* sec typing equations   : mapping -> equation -> constraints  *)
   Section SECEEQNTYPING.
-    Variable G: global.
+    Variable G: secglobal.
+    Print equation.
+    Fixpoint assign_eqn_type (e: equation) (env: Env.t ident): Sec (list constraint) := 
+      match e with
+      | EqDef x ck cexp => .
 
   End SECEEQNTYPING.
 
