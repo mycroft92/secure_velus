@@ -12,7 +12,7 @@ From Velus Require Import SIF.SIFSignature.
 From Coq Require Import String. (*Required for Errors *)
 From compcert Require Import common.Errors.
 
-Open Scope list_scope.
+
 Import List.ListNotations.
 (*Definition msg_missing_ident (id : ident) : errmsg := MSG "Identifier: '" :: CTX id :: msg "' not found in context.".  *)
 
@@ -36,13 +36,35 @@ Module Type SECNLUSTYPING
   Check assign_exp_type.
   Locate global.
 
+  Import SECMONADNotations.
+
+  Definition find_env (x: ident) (env: Env.t ident): Sec ident :=
+    match Env.find x env with
+    | Some x' => ret x
+    | None    => error (MSG "Cannot find identifier in env: " :: [CTX x])
+    end.
+
   (* sec typing equations   : mapping -> equation -> constraints  *)
   Section SECEEQNTYPING.
     Variable G: secglobal.
+    Variable env: Env.t ident. 
+    Variable bs_name: ident.
+    Variable rst_name: ident.
+
+
+
     Print equation.
-    Fixpoint assign_eqn_type (e: equation) (env: Env.t ident): Sec (list constraint) := 
+    Check assign_cexp_type.
+    Check assign_clk_type.
+    Fixpoint assign_eqn_type (e: equation): Sec (list constraint) := 
       match e with
-      | EqDef x ck cexp => .
+      | EqDef x ck cexp =>
+          do expty <- option_to_sec (assign_cexp_type env cexp);
+          do ckty  <- option_to_sec (assign_clk_type  env bs_name ck);
+          do xty   <- find_env x env;
+          ret [(ckty ⊔ expty,xty)]
+      | _ => error (msg "unimplemented")
+      end.
 
   End SECEEQNTYPING.
 
