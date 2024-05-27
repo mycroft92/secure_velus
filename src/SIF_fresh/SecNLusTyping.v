@@ -32,11 +32,11 @@ Module Type SECNLUSTYPING
 
   (* expressions are already done in CETyping*)
   (* sec typing expressions : mapping -> expression -> sec type *)
-  Check assign_cexp_type.
-  Check assign_exp_type.
-  Locate global.
 
   Import SECMONADNotations.
+  
+  Local Definition find_signature (f : ident) : secglobal -> option signature :=
+    List.find (fun n=> ident_eqb n.(n_name) f).
 
   Definition find_env (x: ident) (env: Env.t ident): Sec ident :=
     match Env.find x env with
@@ -52,18 +52,33 @@ Module Type SECNLUSTYPING
     Variable rst_name: ident.
 
 
-
-    Print equation.
-    Check assign_cexp_type.
-    Check assign_clk_type.
-    Fixpoint assign_eqn_type (e: equation): Sec (list constraint) := 
+    Check mmap.
+    Definition assign_eqn_type (e: equation): Sec (list constraint) := 
       match e with
-      | EqDef x ck cexp =>
+      | EqDef x ck cexp  =>
           do expty <- option_to_sec (assign_cexp_type env cexp);
           do ckty  <- option_to_sec (assign_clk_type  env bs_name ck);
           do xty   <- find_env x env;
           ret [(ckty ⊔ expty,xty)]
-      | _ => error (msg "unimplemented")
+      | EqFby x  ck _ exp       => 
+          do expty <- option_to_sec (assign_exp_type  env exp);
+          do ckty  <- option_to_sec (assign_clk_type  env bs_name ck);
+          do xty   <- find_env x env;
+          ret [(ckty ⊔ expty, xty)]
+      | EqApp xs ck f exps None => 
+         (match find_signature f G with
+          | Some n => error (msg "unimplemented")
+          | None   => error (MSG "Signature not found for: ":: [CTX f])
+          end)
+      (*1. find the signature
+        2. compute the types of input expressions, clock and reset
+        3. find the types of output expressions 
+        4. substitute the types to generate fresh constraints*)
+      | EqApp xs ck f exps (Some (r,ckr)) => 
+         (match find_signature f G with
+          | Some n => error (msg "unimplemented")
+          | None   => error (MSG "Signature not found for: ":: [CTX f])
+          end)
       end.
 
   End SECEEQNTYPING.

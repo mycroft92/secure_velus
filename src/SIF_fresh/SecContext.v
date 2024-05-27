@@ -111,6 +111,8 @@ End mmap.
 Section mmap2.
   Context {A B1 B2 : Type}.
   Variable (f : A -> Sec (B1 * B2)).
+
+  
   
   Fixpoint mmap2 (l: list A) {struct l} : Sec (list B1 * list B2) :=
     match l with
@@ -120,6 +122,21 @@ Section mmap2.
                  ret ((hd1::tl1), (hd2::tl2))
     end.
 End mmap2.
+
+Section zipper.
+  Context  {A1 A2 B: Type}.
+  (* Variable (f: A1 -> A2 -> B). *)
+  Import List.ListNotations.
+  Fixpoint zip (l1: list A1) (l2: list A2) : Sec (list (A1*A2)) :=
+    match l1,l2 with
+    | [], [] => ret []
+    | _ , [] => error (msg "too many elements in l1")
+    | [], _  => error (msg "too many elements in l2")
+    | x1::l1', x2::l2' =>
+        do ls <- zip l1' l2';
+        ret ((x1,x2)::ls )
+    end.
+End zipper.
 
 Section option_to_sec.
 
