@@ -41,6 +41,7 @@ Definition find_signature (f : ident) : secglobal -> option signature :=
     List.find (fun n=> ident_eqb n.(n_name) f).
 
 Section Substitutions.
+    (*This deals with substituting types into a signature's constraints during nodecalls *)
 
     Fixpoint subst_ident_in_type (ty: ST) (x: ident) (v: ident): ST :=
         match ty with

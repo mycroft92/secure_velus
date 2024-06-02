@@ -82,19 +82,26 @@ Module SECMONADNotations.
         
 End SECMONADNotations.
 Import SECMONADNotations.
+Import List.ListNotations.
 
 (* To insert into the map*)
-Definition insert_ctxt : ident -> ident -> Sec unit :=
-  fun k v => (* Take key value*)
-    fun '(n, sub1) => (* insert into the map*)
-      let st:= Env.add k v sub1 in
-        OK (tt, (n, st)).
+Definition insert_env (k v: ident) (env: Env.t ident): Sec (Env.t ident) :=
+  let st:= Env.add k v env in
+    ret st.
 
-Definition fresh_insert : ident -> Sec ident :=
+Definition fresh_insert (k: ident) (env: Env.t ident): Sec (Env.t ident) :=
+  if Env.mem k env then
+   error (MSG "Key declared more than once ":: [CTX k])
+  else
+    do v <- fresh_ident; 
+    do e <- insert_env k v env;
+    ret e.
+
+(* Definition fresh_insert_with_key : ident -> Sec (ident*ident) :=
   fun k =>
     do v <- fresh_ident; 
     do _ <- insert_ctxt k v;
-    ret v.
+    ret (k,v). *)
 
 
 Section mmap.
@@ -107,6 +114,14 @@ Section mmap.
     | hd :: tl => do hd' <- f hd; do tl' <- mmap tl; ret (hd' :: tl')
     end.
 End mmap.
+
+Fixpoint insert_vars (xs: list ident) (env: Env.t ident): Sec (Env.t ident) :=
+    (match xs with
+    | nil    => ret env
+    | x::xs => 
+        do env' <- fresh_insert x env;
+        insert_vars xs env'
+    end).
 
 Section mmap2.
   Context {A B1 B2 : Type}.
