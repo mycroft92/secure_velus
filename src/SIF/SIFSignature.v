@@ -24,13 +24,24 @@ Module Type SIGNATURE
 (* 1. How do I carry the constraints?
    2. How do I replace the vars in constraints with newly generated names? *)
 Import SECMONADNotations.
-Record signature := mkSig {
+(* Record signature := mkSig {
     n_name : ident; (*node name*)
     n_in   : list (ident*ident); (*ordered list of input security types*)
     n_out  : list (ident*ident); (*ordered list of output security types*)
 
     n_reset: ident*ident; (* We generate the name for the reset type and its corresponding value*)
     n_clk  : ident*ident; (* In a generated signature, this will always be named sec_clk*)(*The base clock is always empty list*)
+    (* We already have that Gamma \rel forall inp. inp, because the clock rules give us this directly. No need to have an additional \Gamma = GLB (inputs) *)
+    constraints : list constraint; (*constraints*)
+}. *)
+(*simpler record*)
+Record signature := mkSig {
+    n_name : ident; (*node name*)
+    n_in   : list ident; (*ordered list of input security types*)
+    n_out  : list ident; (*ordered list of output security types*)
+
+    n_reset: ident; (* We generate the name for the reset type and its corresponding value*)
+    n_clk  : ident; (* In a generated signature, this will always be named sec_clk*)(*The base clock is always empty list*)
     (* We already have that Gamma \rel forall inp. inp, because the clock rules give us this directly. No need to have an additional \Gamma = GLB (inputs) *)
     constraints : list constraint; (*constraints*)
 }.
@@ -40,6 +51,7 @@ Definition secglobal := list signature.
 Definition find_signature (f : ident) : secglobal -> option signature :=
     List.find (fun n=> ident_eqb n.(n_name) f).
 
+(* The following is bad version*)
 (* Section Substitutions.
     (*This deals with substituting types into a signature's constraints during nodecalls *)
 
@@ -120,7 +132,7 @@ Section Type_Substitutions.
     end.
 
    (* forall c ∈ cs, c[v/x]*)
-   Local Definition subst_ident_in_constraints (cs: list constraint) (x: ident) (v:ST)
+   Definition subst_ident_in_constraints (cs: list constraint) (x: ident) (v: ST)
    : Sec (list constraint) :=
    mmap (fun c => subst_ident_in_constraint c x v) cs.
 
@@ -149,6 +161,29 @@ Section Type_Substitutions.
        else ret (subst_ident ty x v, [x'])
     | _  => error (msg "Malformed constraint")
     end.
+
+    Local Definition subst_ident_constraints (cs: list constraint) (x v: ident): Sec (list constraint) :=
+    mmap (fun c => subst_ident_constraint c x v) cs.
+
+    Fixpoint subst_constraints_out_map (cs: list constraint) (xs: list ident) (vs: list ident): Sec (list constraint) :=
+    match xs,vs with
+    | [], [] => ret cs
+    | x::xs, v::vs => 
+    (*Do we need additional help like x is not present in ANY vs?*)
+      do cs' <- subst_ident_constraints cs x v;
+      subst_constraints_out_map cs' xs vs
+    | _, _ => error (msg "Malformed replace map")
+    end.
+
+    Definition generate_constraints (node: signature) 
+      (inp: list ST) 
+      (clk: ST) 
+      (res: ST) 
+      (out: list ident): Sec (list constraint) :=
+      do inp_subst_constraints <- subst_constraints_inp_map node.(constraints) node.(n_in) inp;
+      do clk_subst_constraints <- subst_ident_in_constraints inp_subst_constraints node.(n_clk) clk;
+      do res_subst_constraints <- subst_ident_in_constraints clk_subst_constraints node.(n_reset) res;
+      subst_constraints_out_map res_subst_constraints node.(n_out) out.
    
 End Type_Substitutions.
 

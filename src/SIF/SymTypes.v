@@ -361,29 +361,36 @@ Fixpoint stEq (c1 c2: ST)  : Prop :=
   | x::c1', y::c2' => if ident_eqb x y then eqst c1' c2'  else False
   end) c1 c2.
   
-
   Fixpoint findST cns d: option ST :=
+    match cns with
+    | []  => None 
+    | (st,[d'])::cns'  => if ident_eqb d' d then Some st else findST cns' d
+    | _ :: cns'        => findST cns' d
+    end.
+
+  (* Fixpoint findST cns d: option ST :=
     match cns with
     | []  => None 
     | (st,d')::cns'  => if ident_eqb d' d then Some st else findST cns' d
     (* | _ :: cns'        => findST cns' d *)
-    end.
+    end. *)
 
 Lemma find_correct : forall cs d v, 
-  findST cs d = Some v -> List.In (v,d) cs.
+  findST cs d = Some v -> List.In (v,[d]) cs.
 Proof.
   induction cs as [| (st',d') cs' IHcs]; intros d_0 v H; simpl in H. 
   - inversion H.
-  - destruct (ident_eqb d' d_0) eqn:E.
+  (* - destruct (ident_eqb d' d_0) eqn:E.
     * apply ident_eqb_eq in E. inversion H.  simpl. subst. auto.
-    * simpl. right. now apply IHcs.
-  (* - destruct d'  as [|d_1 d''] eqn:E' in H. 
+    * simpl. right. now apply IHcs. *)
+  (* ^Case when the constraint rhs is ident, not list. *)
+  - destruct d'  as [|d_1 d''] eqn:E' in H. 
     * apply IHcs in H. simpl. right. auto.
     * destruct d''.
       + destruct (ident_eqb d_1 d_0) eqn:E in H.
         ** apply ident_eqb_eq in E. subst. inversion H. simpl. auto.
         ** simpl. right. apply IHcs. auto.
-      + apply IHcs in H. simpl. right. auto. *)
+      + apply IHcs in H. simpl. right. auto. 
 Qed.
 
 (*Substitute an ident d in st wtih st'*)
