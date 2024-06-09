@@ -40,7 +40,7 @@ Definition secglobal := list signature.
 Definition find_signature (f : ident) : secglobal -> option signature :=
     List.find (fun n=> ident_eqb n.(n_name) f).
 
-Section Substitutions.
+(* Section Substitutions.
     (*This deals with substituting types into a signature's constraints during nodecalls *)
 
     Fixpoint subst_ident_in_type (ty: ST) (x: ident) (v: ident): ST :=
@@ -55,7 +55,7 @@ Section Substitutions.
         let (l,h) := c in
         match ident_eqb h x with
         | true  => (subst_ident_in_type l x v, v)
-        | false =>(subst_ident_in_type l x v, h)
+        | false => (subst_ident_in_type l x v, h)
         end.
 
     (* forall c ∈ cs, c[v/x]*)
@@ -99,7 +99,58 @@ Section Substitutions.
         do clk_map       <- find (fst node.(n_clk)) (snd node.(n_clk)) env;
         ret (subst_idents_in_constraints node.(constraints) (clk_map::reset_map::(inp_subst_map++out_subst_map))).
 
-End Substitutions. 
+End Substitutions.  *)
+
+
+Section Type_Substitutions.
+    (* ty[v/x] substitution*)
+  Local Definition subst_ident_in_type (ty: ST) (x: ident) (v: ST): ST :=
+    match (my_set_mem x ty) with
+    | false =>  ty
+    | true  => (st_remove x ty) ⊔ (st_remove x v)
+    end.
+  
+  Local Definition subst_ident_in_constraint (c: constraint) (x: ident) (v: ST): Sec constraint :=
+    match c with
+    | (ty, [x']) => 
+      if ident_eqb x x' then
+        error (MSG "Something wrong with fresh_gen, ident is regenerated in an inner node. " :: [CTX x])
+      else ret (subst_ident_in_type ty x v, [x'])
+    | _ => error (msg "malformed constraint")
+    end.
+
+   (* forall c ∈ cs, c[v/x]*)
+   Local Definition subst_ident_in_constraints (cs: list constraint) (x: ident) (v:ST)
+   : Sec (list constraint) :=
+   mmap (fun c => subst_ident_in_constraint c x v) cs.
+
+   (*input types are to substituted by this function *)
+   Fixpoint subst_constraints_inp_map (cs: list constraint) (xs: list ident) (vs: list ST): Sec (list constraint) :=
+    match xs,vs with
+    | [], [] => ret cs
+    | x::xs, v::vs => 
+    (*Do we need additional help like x is not present in ANY vs?*)
+      do cs' <- subst_ident_in_constraints cs x v;
+      subst_constraints_inp_map cs' xs vs
+    | _, _ => error (msg "Malformed replace map")
+    end.
+
+    Local Definition subst_ident (ty: ST) (x v: ident): ST :=
+    match (my_set_mem x ty) with
+    | false =>  ty
+    | true  => (st_remove x ty) ⊔ [v]
+    end.
+
+    Local Definition subst_ident_constraint (c: constraint) (x v: ident): Sec constraint :=
+    match c with
+    | (ty, [x']) => 
+       if ident_eqb x x' then
+        ret (subst_ident ty x v, [v])
+       else ret (subst_ident ty x v, [x'])
+    | _  => error (msg "Malformed constraint")
+    end.
+   
+End Type_Substitutions.
 
 End SIGNATURE.
 (* What correctness criterion would be needed? *)

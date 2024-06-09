@@ -11,7 +11,7 @@ From Coq Require Import Recdef.
 (*This is finalized version of symbolic simple types for NLustre and beyond.
  It also implements sorting algorithms for simple types and constraints.*)
 Definition ST := list ident.
-Definition constraint := (ST*ident)%type.
+Definition constraint := (ST*ST)%type.
 
 (* Definition wf_constraint (c: constraint): Prop :=  
   match c with
@@ -394,10 +394,29 @@ Definition subST st d st' : ST :=
   end. 
 
 
+  (* Need to figure out a final constraint representation*)
+
+Fixpoint subAll cns d st' : list constraint :=
+  match cns with 
+  | [] => []
+  | (st, [d'])::cns' => if ident_eqb d' d then 
+                        subAll cns' d (st_remove d (st' ⊔ st) )
+                      else ((subST st d st'),[d']):: (subAll cns' d st')
+  | _ :: cns'   => subAll cns' d st'
+  end.
+
+Fixpoint simplify (cns: list constraint) (ds: list ident) : list constraint :=
+  match ds with 
+  | []    => cns
+  | d::ds' => match findST cns d with
+             | None    => simplify cns ds'
+             | Some st => simplify (subAll cns d st) ds'
+             end
+  end.
 (*Substituting ident: d with st' in a list of constraints cns  *)
 (*substitution also removes duplicate constraints with the     *)
 (*ident that is being removed(case 2), we only sub valid cns:3 *)
-Fixpoint subAll cns d st' : list constraint :=
+(* Fixpoint subAll cns d st' : list constraint :=
   match cns with 
   | [] => []
   | (st, d')::cns' => if ident_eqb d' d then 
@@ -413,4 +432,4 @@ Fixpoint simplify (cns: list constraint) (ds: list ident) : list constraint :=
              | None    => simplify cns ds'
              | Some st => simplify (subAll cns d st) ds'
              end
-  end.
+  end. *)
