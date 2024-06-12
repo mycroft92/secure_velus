@@ -344,6 +344,12 @@ Proof.
     destruct (split_len l1 l1' l2' E); lia.
 Defined.
 
+Lemma mergesort_correct: forall l, sortedNoDup (sortST l).
+  Proof.
+      apply sortST_ind; intros; auto.
+      now apply sortedNoDup_merge.
+  Qed.
+
 Notation "x ⊔ y" := (merge x y) (at level 40, left associativity).
 Definition st_remove := List.remove ident_eq_dec.
 Definition st_mem    := my_set_mem.
@@ -394,7 +400,7 @@ Proof.
 Qed.
 
 (*Substitute an ident d in st wtih st'*)
-Definition subST st d st' : ST := 
+Local Definition subST st d st' : ST := 
   match st_mem  d st with
   | false => st
   | true  => if st_mem d st' then (st_remove d st) ⊔ (st_remove d st') else (st_remove d st) ⊔ st'
@@ -420,6 +426,42 @@ Fixpoint simplify (cns: list constraint) (ds: list ident) : list constraint :=
              | Some st => simplify (subAll cns d st) ds'
              end
   end.
+
+(*To yet prove the NoDuplication but first..*)
+Section ConstraintOrdering.
+(*do we assume the lists are sorted?*)
+  Definition ident_list_compare (l1 l2: list ident): comparison :=
+    let l1' := sortST l1 in
+    let l2' := sortST l2 in
+    (fix compare' (l1 l2: list ident): comparison :=
+    match l1,l2 with
+    | [], [] => Eq
+    | [], _  => Lt
+    | _, []  => Gt
+    | a1::l1'', a2::l2'' => 
+        match Pos.compare a1 a2 with
+        | Lt => Lt
+        | Gt => Gt
+        | Eq => compare' l1'' l2''
+        end 
+    end) l1' l2'.
+
+  Definition ident_sorted_list_compare (l1 l2: list ident): comparison :=
+    (fix compare' (l1 l2: list ident): comparison :=
+    match l1,l2 with
+    | [], [] => Eq
+    | [], _  => Lt
+    | _, []  => Gt
+    | a1::l1'', a2::l2'' => 
+        match Pos.compare a1 a2 with
+        | Lt => Lt
+        | Gt => Gt
+        | Eq => compare' l1'' l2''
+        end 
+    end) l1 l2.
+
+End ConstraintOrdering.
+
 (*Substituting ident: d with st' in a list of constraints cns  *)
 (*substitution also removes duplicate constraints with the     *)
 (*ident that is being removed(case 2), we only sub valid cns:3 *)

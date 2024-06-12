@@ -1,6 +1,6 @@
 From Velus Require Import Common.
 From Velus Require Import Environment.
-From Velus Require Import SIF.SimpleListTypes.
+From Velus Require Import SIF.SymTypes.
 
 
 From Coq Require Import String. (*Required for Errors *)

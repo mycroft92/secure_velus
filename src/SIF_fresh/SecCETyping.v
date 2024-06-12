@@ -21,18 +21,72 @@ Module Type SECCETYPING
   Open Scope option_monad_scope.  
   
     (* *)
-  Section SecTypingCE.
+  Section SecClkTypingCE.
     Variable ctxt: Env.t ident.
-    Variable bs_name: ident.
+    Variable base_ty: ident.
     Inductive wst_clock : clock -> ST -> Prop :=
-      | wst_Base: forall ty,
-        Env.find bs_name ctxt = Some ty ->
-        wst_clock Cbase [ty]
+      | wst_Base: (*forall ty,*)
+        (* Env.find bs_name ctxt = Some ty -> *)
+        wst_clock Cbase [base_ty]
       | wst_On: forall ck x b ckty xty,
         wst_clock ck ckty ->
         Env.find x ctxt = Some xty ->
         wst_clock (Con ck x b) (ckty ⊔ [xty]).
+    Hint Constructors wst_clock.
 
+    Fixpoint assign_clk_type (c: clock): option ST :=
+      match c with
+      | Cbase       => Some [base_ty]
+        (* (match Env.find bs_name ctxt with
+          | Some cty => Some [cty]
+          | None     => None
+          end) *)
+      | Con ck' x _ => 
+          do ckty <- assign_clk_type ck';
+          do xty  <- Env.find x ctxt;
+          Some (ckty ⊔ [xty])
+      end. 
+
+    Theorem assign_clk_correct: 
+      forall ck st, wst_clock ck st -> assign_clk_type ck = Some st.
+    Proof.
+      induction ck; intros.
+      - simpl. inversion H. now subst.
+      (* destruct (Env.find bs_name ctxt) eqn:E.  
+       * inversion H0; now subst.
+       * congruence. *)
+      - unfold assign_clk_type. fold assign_clk_type. 
+        inversion H as [| ?????? H_find]. subst.
+        assert (assign_clk_type ck = Some ckty) as H'. { now apply IHck. }
+        rewrite H',H_find. reflexivity.
+    Qed.
+
+    Lemma assign_clk_inv: 
+      forall ck i b st,  assign_clk_type (Con ck i b) = Some st -> 
+       exists st' ty, st = st' ⊔ [ty] /\ assign_clk_type ck = Some st' /\ Env.find i ctxt = Some ty.
+    Proof.
+      intros. simpl in *. destruct (assign_clk_type ck) eqn:E1.
+        - exists s. destruct (Env.find i ctxt) eqn: E2.
+          + exists i0. simpl in H. now inversion H.
+          + simpl in H. discriminate H.
+        - simpl in H. discriminate H.
+    Qed.
+
+    Theorem assign_clk_correct2:
+      forall ck st, assign_clk_type ck = Some st -> wst_clock ck st.
+    Proof.
+      induction ck; intros.
+      - simpl in *. inversion H. now constructor.
+       (* destruct (Env.find bs_name ctxt) eqn:E.
+        + inversion H. now constructor.
+        + discriminate H. *)
+      - apply assign_clk_inv in H as [st' [ty [Hst [Hck Hfind]] ]].
+        apply IHck in Hck. rewrite -> Hst. now apply wst_On.
+    Qed.
+  End SecClkTypingCE.
+
+  Section SecExpTypingCE.
+    Variable ctxt: Env.t ident.
     Inductive wst_exp : exp -> ST -> Prop :=
       | wst_Econst : forall c,
           wst_exp (Econst c) []
@@ -50,20 +104,6 @@ Module Type SECCETYPING
           wst_exp e1 e1ty ->
           wst_exp e2 e2ty ->
           wst_exp (Ebinop b e1 e2 t) (e1ty ⊔ e2ty).
-
-    Fixpoint assign_clk_type (c: clock): option ST :=
-      match c with
-      | Cbase       => 
-        (match Env.find bs_name ctxt with
-          | Some cty => Some [cty]
-          | None     => None
-          end)
-
-      | Con ck' x _ => 
-          do ckty <- assign_clk_type ck';
-          do xty  <- Env.find x ctxt;
-          Some (ckty ⊔ [xty])
-      end. 
 
     Fixpoint assign_exp_type (e: exp) : option ST :=
       match e with
@@ -94,49 +134,15 @@ Module Type SECCETYPING
           Some (ety ⊔ c1ty ⊔ c2ty)
       |  Eexp e    => assign_exp_type e
       end.
-    Hint Constructors wst_clock.
+    
 
-    Theorem assign_clk_correct: 
-      forall ck st, wst_clock ck st -> assign_clk_type ck = Some st.
-    Proof.
-      induction ck; intros.
-      - simpl. inversion H. destruct (Env.find bs_name ctxt) eqn:E. 
-       * inversion H0; now subst.
-       * congruence.
-      - unfold assign_clk_type. fold assign_clk_type. 
-        inversion H as [| ?????? H_find]. subst.
-        assert (assign_clk_type ck = Some ckty) as H'. { now apply IHck. }
-        rewrite H',H_find. reflexivity.
-    Qed.
-
-    Lemma assign_clk_inv: 
-      forall ck i b st,  assign_clk_type (Con ck i b) = Some st -> 
-       exists st' ty, st = st' ⊔ [ty] /\ assign_clk_type ck = Some st' /\ Env.find i ctxt = Some ty.
-    Proof.
-      intros. simpl in *. destruct (assign_clk_type ck) eqn:E1.
-        - exists s. destruct (Env.find i ctxt) eqn: E2.
-          + exists i0. simpl in H. now inversion H.
-          + simpl in H. discriminate H.
-        - simpl in H. discriminate H.
-    Qed.
-
-    Theorem assign_clk_correct2:
-      forall ck st, assign_clk_type ck = Some st -> wst_clock ck st.
-    Proof.
-      induction ck; intros.
-      - simpl in *. destruct (Env.find bs_name ctxt) eqn:E.
-        + inversion H. now constructor.
-        + discriminate H.
-      - apply assign_clk_inv in H as [st' [ty [Hst [Hck Hfind]] ]].
-        apply IHck in Hck. rewrite -> Hst. now apply wst_On.
-    Qed.
     
     Theorem assign_exp_correct:
       forall e st, wst_exp e st <-> assign_exp_type e = Some st.
     Proof.
       Admitted.
     (* Similar theorems needed for other syntactic levels*)
-  End SecTypingCE. 
+  End SecExpTypingCE. 
 
 
 End SECCETYPING.

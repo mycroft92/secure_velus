@@ -1,5 +1,6 @@
 (**
 * This file implements the merging, sorting of simple list types (after canonicalization)
+* I shifted back to old model of sorting with lessthan operation since there were more results readily available.
 *
 *)
 
