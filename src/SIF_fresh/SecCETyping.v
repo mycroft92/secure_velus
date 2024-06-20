@@ -51,7 +51,7 @@ Module Type SECCETYPING
       forall ck st, wst_clock ck st -> assign_clk_type ck = Some st.
     Proof.
       induction ck; intros.
-      - simpl. inversion H. now subst.
+      - simpl. (*now*) inversion H. now subst. 
       (* destruct (Env.find bs_name ctxt) eqn:E.  
        * inversion H0; now subst.
        * congruence. *)
@@ -76,7 +76,7 @@ Module Type SECCETYPING
       forall ck st, assign_clk_type ck = Some st -> wst_clock ck st.
     Proof.
       induction ck; intros.
-      - simpl in *. inversion H. now constructor.
+      - simpl in *. inversion H. (*rewrite <- H1.*) now constructor.
        (* destruct (Env.find bs_name ctxt) eqn:E.
         + inversion H. now constructor.
         + discriminate H. *)

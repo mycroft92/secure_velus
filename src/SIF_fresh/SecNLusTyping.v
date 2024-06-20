@@ -70,7 +70,7 @@ Module Type SECNLUSTYPING
               do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do ckty   <- option_to_sec (assign_clk_type env base_ty ck);
               do outtyp <- mmap (fun x => find_env x env) xs;
-            generate_constraints n inptyp ckty [rst_ty] outtyp
+            generate_constraints n inptyp ckty rst_ty outtyp
           | None   => error (MSG "Signature not found for: ":: [CTX f])
           end)
       (*1. find the signature
