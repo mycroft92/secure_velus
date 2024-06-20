@@ -39,7 +39,10 @@ Proof.
           now apply IHst.
 Qed.
 
-    
+(* - Gazeted officer + id proof + Old pancard copy
+- write clarification form for change
+  -  Changes to be ignored for fathername  *)
+
 (*Cool trick on decreasing arguments*)
 Fixpoint merge (c1: ST) : ST -> ST :=
   fix merge' c2 :=

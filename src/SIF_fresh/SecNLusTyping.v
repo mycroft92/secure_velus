@@ -80,6 +80,13 @@ Module Type SECNLUSTYPING
       | EqApp xs ck f exps (Some (r,ckr)) => 
          (match find_signature f G with
           | Some n => error (msg "unimplemented")
+              (*I will add this once the proof goes through for no reset part*)
+              (* do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
+              do ckty   <- option_to_sec (assign_clk_type env base_ty ck);
+              do rty    <- find_env r env;
+              do rstty  <- option_to_sec (assign_clk_type env rst_ty ckr);
+              do outtyp <- mmap (fun x => find_env x env) xs;
+              generate_constraints n inptyp ckty ([rty] ⊔ rstty) outtyp *)
           | None   => error (MSG "Signature not found for: ":: [CTX f])
           end)
       end.
@@ -87,7 +94,32 @@ Module Type SECNLUSTYPING
   End SECEEQNTYPING.
 
   (* sec typing nodes *) 
+  Section SECNODETYPING.
+    Variable G: secglobal.
+    Variable env: Env.t ident. 
+    Variable base_ty: ident.
+    Variable rst_ty : ident.
 
+    (* Record signature := mkSig {
+    n_name : ident; (*node name*)
+    n_in   : list ident; (*ordered list of input security types*)
+    n_out  : list ident; (*ordered list of output security types*)
+
+    n_reset: ident; (* We generate the name for the reset type and its corresponding value*)
+    n_clk  : ident; (* In a generated signature, this will always be named sec_clk*)(*The base clock is always empty list*)
+    (* We already have that Gamma \rel forall inp. inp, because the clock rules give us this directly. No need to have an additional \Gamma = GLB (inputs) *)
+    constraints : list constraint; (*constraints*)
+    }. *)
+    (* For each node
+      * create new Env with inputs for type*)
+    (* Fixpoint generate_node_signature (n: node) : Sec signature := *)
+      
+
+  End SECNODETYPING.
+
+  Section SECGLOBALTYPING.
+
+  End SECGLOBALTYPING.
   (**
    * 1. New name generation scheme
    *   a. Check elab->fresh monad usage
