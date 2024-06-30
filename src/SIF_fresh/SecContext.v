@@ -89,13 +89,13 @@ Definition insert_env (k v: ident) (env: Env.t ident): Sec (Env.t ident) :=
   let st:= Env.add k v env in
     ret st.
 
-Definition fresh_insert (k: ident) (env: Env.t ident): Sec (Env.t ident) :=
+Definition fresh_insert (k: ident) (env: Env.t ident): Sec (Env.t ident*ident) :=
   if Env.mem k env then
    error (MSG "Key declared more than once ":: [CTX k])
   else
     do v <- fresh_ident; 
     do e <- insert_env k v env;
-    ret e.
+    ret (e, v).
 
 (* Definition fresh_insert_with_key : ident -> Sec (ident*ident) :=
   fun k =>
@@ -115,14 +115,15 @@ Section mmap.
     end.
 End mmap.
 
-Fixpoint insert_vars (xs: list ident) (env: Env.t ident): Sec (Env.t ident) :=
+Fixpoint insert_vars' (xs: list ident) (acc: list ident) (env: Env.t ident): Sec (Env.t ident * list ident) :=
     (match xs with
-    | nil    => ret env
+    | nil    => ret (env, acc)
     | x::xs => 
-        do env' <- fresh_insert x env;
-        insert_vars xs env'
+        do (env', v) <- fresh_insert x env;
+        insert_vars' xs (acc++[v]) env'
     end).
 
+Definition insert_vars xs env := insert_vars' xs [] env.
 Section mmap2.
   Context {A B1 B2 : Type}.
   Variable (f : A -> Sec (B1 * B2)).

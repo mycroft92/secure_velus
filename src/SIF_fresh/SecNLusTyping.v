@@ -52,7 +52,7 @@ Module Type SECNLUSTYPING
     Variable rst_ty : ident.
 
 
-    Definition assign_eqn_type (e: equation): Sec (list constraint) := 
+    Definition generate_eqn_constraint (e: equation): Sec (list constraint) := 
       match e with
       | EqDef x ck cexp  =>
           do expty <- option_to_sec (assign_cexp_type env cexp);
@@ -70,7 +70,7 @@ Module Type SECNLUSTYPING
               do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do ckty   <- option_to_sec (assign_clk_type env base_ty ck);
               do outtyp <- mmap (fun x => find_env x env) xs;
-            generate_constraints n inptyp ckty rst_ty outtyp
+            generate_constraints n inptyp ckty [rst_ty] outtyp
           | None   => error (MSG "Signature not found for: ":: [CTX f])
           end)
       (*1. find the signature
@@ -81,7 +81,8 @@ Module Type SECNLUSTYPING
          (match find_signature f G with
           | Some n => error (msg "unimplemented")
               (*I will add this once the proof goes through for no reset part*)
-              (* do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
+              (* 
+              do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do ckty   <- option_to_sec (assign_clk_type env base_ty ck);
               do rty    <- find_env r env;
               do rstty  <- option_to_sec (assign_clk_type env rst_ty ckr);
@@ -91,15 +92,25 @@ Module Type SECNLUSTYPING
           end)
       end.
 
+  Fixpoint generate_eqns_constraints (es: list equation) : Sec (list constraint) :=
+    match es with
+    | []     => ret []
+    | e::es' => 
+        do c  <- generate_eqn_constraint e;
+        do cs <- generate_eqns_constraints es';
+        ret (c++cs)
+    end.
+
+
   End SECEEQNTYPING.
 
+Check generate_eqns_constraints.
   (* sec typing nodes *) 
   Section SECNODETYPING.
     Variable G: secglobal.
-    Variable env: Env.t ident. 
-    Variable base_ty: ident.
-    Variable rst_ty : ident.
-
+    (* Variable env: Env.t ident.  *)
+    (* Variable base_ty: ident.
+    Variable rst_ty : ident. *)
     (* Record signature := mkSig {
     n_name : ident; (*node name*)
     n_in   : list ident; (*ordered list of input security types*)
@@ -111,9 +122,25 @@ Module Type SECNLUSTYPING
     constraints : list constraint; (*constraints*)
     }. *)
     (* For each node
-      * create new Env with inputs for type*)
+      * inputs : G, env 
+      * create new Env with inputs type vars, clock_ty, reset_ty, output type vars, localvars
+      * run simplify on localvars types*)
     (* Fixpoint generate_node_signature (n: node) : Sec signature := *)
       
+    Print node.
+    Check List.map.
+    (* This should just return signature, not in a monad*)
+    (* Definition generate_node_signature (n: node): res signature :=
+      do (env_in,  inp)  <- insert_vars (List.map fst n.(n_in)) (Env.empty _);
+      do (env_out, out)  <- insert_vars (List.map fst n.(n_out)) env_in;
+      do (env, locals) <- insert_vars (List.map fst n.(n_vars)) env_out;
+      do ck_id   <- fresh_ident;
+      do rst_id  <- fresh_ident;
+      do constraints' <- generate_eqns_constraints G env ck_id rst_id (n.(n_eqs)); *)
+
+    
+
+   
 
   End SECNODETYPING.
 
