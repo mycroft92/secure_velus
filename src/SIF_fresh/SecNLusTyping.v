@@ -36,7 +36,7 @@ Module Type SECNLUSTYPING
   Import SECMONADNotations.
   
   Local Definition find_signature (f : ident) : secglobal -> option signature :=
-    List.find (fun n=> ident_eqb n.(n_name) f).
+    List.find (fun n=> ident_eqb n.(s_name) f).
 
   Definition find_env (x: ident) (env: Env.t ident): Sec ident :=
     match Env.find x env with
@@ -129,14 +129,27 @@ Check generate_eqns_constraints.
       
     Print node.
     Check List.map.
+    Check insert_vars.
+    Check n_name.
+    Check generate_eqns_constraints.
     (* This should just return signature, not in a monad*)
-    (* Definition generate_node_signature (n: node): res signature :=
-      do (env_in,  inp)  <- insert_vars (List.map fst n.(n_in)) (Env.empty _);
-      do (env_out, out)  <- insert_vars (List.map fst n.(n_out)) env_in;
-      do (env, locals) <- insert_vars (List.map fst n.(n_vars)) env_out;
-      do ck_id   <- fresh_ident;
-      do rst_id  <- fresh_ident;
-      do constraints' <- generate_eqns_constraints G env ck_id rst_id (n.(n_eqs)); *)
+    Definition generate_node_signature (n: node): res signature :=
+      match  (do (env_in,  inp)  <- insert_vars (List.map fst (n.(n_in))) (Env.empty _);
+              do (env_out, out)  <- insert_vars (List.map fst n.(n_out)) env_in;
+              do (env, locals) <- insert_vars (List.map fst n.(n_vars)) env_out;
+              do ck_id   <- fresh_ident;
+              do rst_id  <- fresh_ident;
+              do constraints' <- generate_eqns_constraints G env ck_id rst_id (n.(n_eqs));
+              ret (n_name n, inp, out, rst_id, ck_id, simplify constraints' locals)) init_state with
+      | Error e => Error e
+      | OK ((name, inp, out, rst_id, ck_id, constraints),_) => 
+          OK {| s_name  := name;
+                s_in    := inp;
+                s_out   := out;
+                s_reset := rst_id;
+                s_clk   := ck_id;
+                s_constraints := constraints|}
+      end.
 
     
 
@@ -167,9 +180,9 @@ Module SecNLusTyping
 (CE    : COREEXPR    Ids Op OpAux      IStr)
 (NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE)
 (SIG   : SIGNATURE   Ids SC)
-(SECCETYPING: SECCETYPING Ids Op CE.Syn) <: SECNLUSTYPING Op SC OpAux CStr IStr CIStr CE NL SECCETYPING.
+(SECCETYPING: SECCETYPING Ids Op CE.Syn) <: SECNLUSTYPING Ids Op SC OpAux CStr IStr CIStr CE NL SIG SECCETYPING.
 
-Include SECNLUSTYPING Op SC OpAux CStr IStr CIStr CE NL SECCETYPING.
+Include SECNLUSTYPING Ids Op SC OpAux CStr IStr CIStr CE NL SIG SECCETYPING.
 
 
 End SecNLusTyping.
