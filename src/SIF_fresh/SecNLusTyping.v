@@ -136,10 +136,10 @@ Check generate_eqns_constraints.
     Definition generate_node_signature (n: node): res signature :=
       match  (do (env_in,  inp)  <- insert_vars (List.map fst (n.(n_in))) (Env.empty _);
               do (env_out, out)  <- insert_vars (List.map fst n.(n_out)) env_in;
-              do (env, locals) <- insert_vars (List.map fst n.(n_vars)) env_out;
-              do ck_id   <- fresh_ident;
-              do rst_id  <- fresh_ident;
-              do constraints' <- generate_eqns_constraints G env ck_id rst_id (n.(n_eqs));
+              do (env, locals)   <- insert_vars (List.map fst n.(n_vars)) env_out;
+              do ck_id           <- fresh_ident;
+              do rst_id          <- fresh_ident;
+              do constraints'    <- generate_eqns_constraints G env ck_id rst_id (n.(n_eqs));
               ret (n_name n, inp, out, rst_id, ck_id, simplify constraints' locals)) init_state with
       | Error e => Error e
       | OK ((name, inp, out, rst_id, ck_id, constraints),_) => 
