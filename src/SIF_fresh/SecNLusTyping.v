@@ -149,15 +149,21 @@ Check generate_eqns_constraints.
                 s_reset := rst_id;
                 s_clk   := ck_id;
                 s_constraints := constraints|}
-      end.
-
-    
-
-   
+      end.   
 
   End SECNODETYPING.
 
   Section SECGLOBALTYPING.
+    Open Scope error_monad_scope.
+    Fixpoint generate_signatures' (acc: list signature) (node_list: global): res (list signature) :=
+      match node_list with
+      | [] => OK acc
+      | n::ns => 
+        do sig <- generate_node_signature acc n;
+        generate_signatures' (acc++[sig]) ns
+      end.
+
+    Definition generate_signatures (node_list: global) := generate_signatures' [] node_list.
 
   End SECGLOBALTYPING.
   (**
