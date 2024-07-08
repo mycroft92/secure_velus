@@ -136,13 +136,13 @@ Check generate_eqns_constraints.
     Definition generate_node_signature (n: node): res signature :=
       match  (do (env_in,  inp)  <- insert_vars (List.map fst (n.(n_in))) (Env.empty _);
               do (env_out, out)  <- insert_vars (List.map fst n.(n_out)) env_in;
-              do (env, locals)   <- insert_vars (List.map fst n.(n_vars)) env_out;
               do ck_id           <- fresh_ident;
               do rst_id          <- fresh_ident;
+              do (env, locals)   <- insert_vars (List.map fst n.(n_vars)) env_out;
               do constraints'    <- generate_eqns_constraints G env ck_id rst_id (n.(n_eqs));
-              ret (n_name n, inp, out, rst_id, ck_id, simplify constraints' locals)) init_state with
+              ret (n_name n, inp, out, rst_id, ck_id, simplify constraints' locals, env_out)) init_state with
       | Error e => Error e
-      | OK ((name, inp, out, rst_id, ck_id, constraints),_) => 
+      | OK ((name, inp, out, rst_id, ck_id, constraints, _),_) => 
           OK {| s_name  := name;
                 s_in    := inp;
                 s_out   := out;
@@ -150,6 +150,11 @@ Check generate_eqns_constraints.
                 s_clk   := ck_id;
                 s_constraints := constraints|}
       end.   
+
+      (*How will type preservation here look like?*)
+      (*a. If env generated is same for inputs, ouputs, clock and reset, then the constraints produced after simplify are equisatisfiable?
+          - Requires generate_node_signature to take an environment that fixes inputs, outputs etc.. (except local vars)
+        b. Assume that env holds same ident when starting in same state? This might give us the exact equivalence of constraints*)
 
   End SECNODETYPING.
 
