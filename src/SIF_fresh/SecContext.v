@@ -173,3 +173,38 @@ Module SecMonad (Ids   : IDS) <: SECMONAD Ids.
 Include SECMONAD Ids.
 
 End SecMonad.
+
+
+Module MonadLaws (Ids  : IDS)
+  (SC: SECMONAD Ids).
+  Import SC.
+
+  
+  Section laws.
+    Variable A B C: Type.
+    Lemma ret_helper: forall (x:A) st, ret x st = OK (x,st).
+    Proof.
+      easy.
+    Qed.
+
+    (* return a >>= k                  =  k a *)
+    Theorem left_unital_law: forall (x: A) (f: A -> Sec B) st, bind (ret x) f st = f x st.  
+    Proof.
+      intros. unfold bind. 
+      destruct (ret x st) eqn:E; rewrite ret_helper in E; now inversion E.
+    Qed.
+
+    (*m        >>= return             =  m*)
+    Theorem right_unital_law: forall (m: Sec A) st, bind m ret st = m st.
+    Proof.
+      intros. unfold bind. now destruct (m st) as [(a & st')|] eqn:E . 
+    Qed.
+
+    (* m        >>= (\x -> k x >>= h)  =  (m >>= k) >>= h *)
+    Theorem composition_law: forall (m: Sec A) (k: A -> Sec B) (h: B -> Sec C) st,
+      bind m (fun x => bind (k x) h) st = bind (bind m k) h st.
+    Proof.
+      intros. unfold bind. now destruct (m st) as [(a,st')|] eqn:E.
+    Qed.
+  End laws.
+ End MonadLaws.
