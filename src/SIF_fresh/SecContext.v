@@ -122,7 +122,7 @@ Fixpoint insert_vars' (xs: list ident) (acc: list ident) (env: Env.t ident): Sec
         do (env', v) <- fresh_insert x env;
         insert_vars' xs (acc++[v]) env'
     end).
-
+(** Inserts mappings for xs into env, returns newly generated mappings in order and the env*)
 Definition insert_vars xs env := insert_vars' xs [] env.
 Section mmap2.
   Context {A B1 B2 : Type}.
@@ -191,7 +191,7 @@ Module MonadLaws (Ids  : IDS)
     Theorem left_unital_law: forall (x: A) (f: A -> Sec B) st, bind (ret x) f st = f x st.  
     Proof.
       intros. unfold bind. 
-      destruct (ret x st) eqn:E; rewrite ret_helper in E; now inversion E.
+      destruct (ret x st) as [(a,st')|] eqn:E; rewrite ret_helper in E; now inversion E.
     Qed.
 
     (*m        >>= return             =  m*)

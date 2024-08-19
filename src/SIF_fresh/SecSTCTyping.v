@@ -3,7 +3,7 @@ From Velus Require Import Common.
 From Velus Require Import SecLattice.
 From Velus Require Import Environment.
 From Velus Require Import CoindToIndexed.
-From Velus Require Import NLustre.
+From Velus Require Import Stc.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF_fresh.SecCETyping.
 From Velus Require Import SIF_fresh.SecContext.
@@ -16,16 +16,14 @@ From compcert Require Import common.Errors.
 Import List.ListNotations.
 (*Definition msg_missing_ident (id : ident) : errmsg := MSG "Identifier: '" :: CTX id :: msg "' not found in context.".  *)
 
-Module Type SECSTCTYPING.
+Module Type SECSTCTYPING
   (Import Ids   : IDS)
   (Import Op    : OPERATORS)
   (Import SC    : SECMONAD Ids)
   (Import OpAux : OPERATORS_AUX   Op)
-  (Import CStr  : COINDSTREAMS    Op OpAux)
-  (Import IStr  : INDEXEDSTREAMS  Op OpAux)
-  (Import CIStr : COINDTOINDEXED  Op OpAux CStr IStr)
-  (Import CE    : COREEXPR    Ids Op OpAux      IStr)
-  (Import NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE)
+  (Import Str   : INDEXEDSTREAMS Op OpAux)
+  (Import CE    : COREEXPR Ids   Op OpAux Str)
+  (Import STC   : STC      Ids Op OpAux Str CE)
   (Import SIG   : SIGNATURE   Ids SC)
   (Import SECCETYPING: SECCETYPING Ids Op CE.Syn).
   (* Check wst_exp. *)
@@ -44,27 +42,47 @@ Module Type SECSTCTYPING.
     | None    => error (MSG "Cannot find identifier in env: " :: [CTX x])
     end.
 
+  Section RESETHANDLER.
+  (***
+    This section collects all reset statements and assigns reset variables for their calls.
+  *)
+  Fixpoint collect_reset_stmts' (trl: list trconstr) (acc: list trconstr) : list trconstr :=
+    match trl with
+    | [] => acc
+    | tr::trl' => 
+      (match tr with
+        | TcReset _ _ _ => collect_reset_stmts' trl' (acc ++ [tr])
+        | _             => collect_reset_stmts' trl' acc
+        end)
+    end.
+
+  Definition collect_reset_stmts trl := collect_reset_stmts' trl [].
+
+  End RESETHANDLER.
+
   (* sec typing equations   : mapping -> equation -> constraints  *)
   Section SECEEQNTYPING.
     Variable G: secglobal.
     Variable env: Env.t ident. 
+    Variable reset_env: Env.t ident. (* context of resets*)
     Variable base_ty: ident.
     Variable rst_ty : ident.
-
-
-    Definition generate_eqn_constraint (e: equation): Sec (list constraint) := 
+    Print trconstr.
+    (* We need a context of resets*)
+    Definition generate_trconstr_constraint (e: trconstr): Sec (list constraint) := 
       match e with
-      | EqDef x ck cexp  =>
+      | TcDef x ck cexp  =>
           do expty <- option_to_sec (assign_cexp_type env cexp);
           do ckty  <- option_to_sec (assign_clk_type  env base_ty ck);
           do xty   <- find_env x env;
           ret [(ckty ⊔ expty, [xty])]
-      | EqFby x  ck _ exp       => 
+      | TcNext x  ck exp       => 
           do expty <- option_to_sec (assign_exp_type  env exp);
           do ckty  <- option_to_sec (assign_clk_type  env base_ty ck);
           do xty   <- find_env x env;
           ret [(ckty ⊔ expty, [xty])]
-      | EqApp xs ck f exps None => 
+          (* TcCall needs some throat clearing in args to compute *)
+      | TcCall f xs ck b exps None => 
          (match find_signature f G with
           | Some n => (*error (msg "unimplemented") *)
               do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
@@ -77,7 +95,7 @@ Module Type SECSTCTYPING.
         2. compute the types of input expressions, clock and reset
         3. find the types of output expressions 
         4. substitute the types to generate fresh constraints*)
-      | EqApp xs ck f exps (Some (r,ckr)) => 
+      (* | EqApp xs ck f exps (Some (r,ckr)) => 
          (match find_signature f G with
           | Some n => error (msg "unimplemented")
               (*I will add this once the proof goes through for no reset part*)
@@ -89,7 +107,7 @@ Module Type SECSTCTYPING.
               do outtyp <- mmap (fun x => find_env x env) xs;
               generate_constraints n inptyp ckty ([rty] ⊔ rstty) outtyp *)
           | None   => error (MSG "Signature not found for: ":: [CTX f])
-          end)
+          end) *)
       end.
 
   Fixpoint generate_eqns_constraints (es: list equation) : Sec (list constraint) :=

@@ -127,6 +127,7 @@ End Type_Substitutions.
 
 End SIGNATURE.
 (* What correctness criterion would be needed? *)
+(**)
 (*Need to write a bunch of axioms that the number of list node == number of signature, for every node there is a signature etc..*)
 
 Module Signature 
