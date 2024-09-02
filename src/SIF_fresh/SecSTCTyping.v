@@ -69,9 +69,17 @@ Module Type SECSTCTYPING
   Fixpoint generate_reset_env' (trl: list trconstr) (env: Env.t ident) (acc: list ident): Sec (Env.t ident * list ident) :=
     (* let trl' := collect_reset_stmts trl in *)
     match trl with
-    | [] => ret 
-    ret (env, []).
+    | [] => ret (env, acc)
+    | t :: trl => 
+       (match t with
+        | TcReset _ _ _ => 
+             do (env',i)   <- assign_reset_type  t env; 
+             generate_reset_env' trl env' (acc++[i])
+        | _  => generate_reset_env' trl env acc
+        end)
+     end.
 
+  Definition generate_reset_env trl : Sec (Env.t ident * list ident) := generate_reset_env' trl (Env.empty _) []. 
   End RESETHANDLER.
 
   (* sec typing equations   : mapping -> equation -> constraints  *)
@@ -96,13 +104,23 @@ Module Type SECSTCTYPING
           do xty   <- find_env x env;
           ret [(ckty ⊔ expty, [xty])]
           (* TcCall needs some throat clearing in args to compute *)
-      | TcCall f xs ck b exps None => 
+      | TcCall _ xs ck false f exps => 
          (match find_signature f G with
           | Some n => (*error (msg "unimplemented") *)
               do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do ckty   <- option_to_sec (assign_clk_type env base_ty ck);
               do outtyp <- mmap (fun x => find_env x env) xs;
             generate_constraints n inptyp ckty [rst_ty] outtyp
+          | None   => error (MSG "Signature not found for: ":: [CTX f])
+          end)
+
+      | TcCall _ xs ck true f exps => 
+         (match find_signature f G with
+          | Some n => error (msg "unimplemented") 
+              (*do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;*)
+              (*do ckty   <- option_to_sec (assign_clk_type env base_ty ck);*)
+              (*do outtyp <- mmap (fun x => find_env x env) xs;*)
+            (*generate_constraints n inptyp ckty [rst_ty] outtyp*)
           | None   => error (MSG "Signature not found for: ":: [CTX f])
           end)
       (*1. find the signature
