@@ -56,7 +56,21 @@ Module Type SECSTCTYPING
         end)
     end.
 
-  Definition collect_reset_stmts trl := collect_reset_stmts' trl [].
+  Definition collect_reset_stmts trl := collect_reset_stmts' trl []. (* first part of gather_reset function in paper*)
+
+  (* Inserts a new reset type for reset function call into environment env. Returns the environemnt and list of reset types generated*)
+  Definition assign_reset_type (tr: trconstr) (env: Env.t ident) : Sec (Env.t ident * ident) :=
+    match tr with
+    | TcReset x ck f => fresh_insert x env 
+    | _ => error (msg "Not a reset statement! ")
+    end. 
+
+  (* TcReset i r f *)
+  Fixpoint generate_reset_env' (trl: list trconstr) (env: Env.t ident) (acc: list ident): Sec (Env.t ident * list ident) :=
+    (* let trl' := collect_reset_stmts trl in *)
+    match trl with
+    | [] => ret 
+    ret (env, []).
 
   End RESETHANDLER.
 

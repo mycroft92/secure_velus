@@ -79,15 +79,15 @@ Module Type SECNLUSTYPING
         4. substitute the types to generate fresh constraints*)
       | EqApp xs ck f exps (Some (r,ckr)) => 
          (match find_signature f G with
-          | Some n => error (msg "unimplemented")
+          | Some n => 
+              (*error (msg "unimplemented")*)
               (*I will add this once the proof goes through for no reset part*)
-              (* 
               do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do ckty   <- option_to_sec (assign_clk_type env base_ty ck);
               do rty    <- find_env r env;
               do rstty  <- option_to_sec (assign_clk_type env rst_ty ckr);
               do outtyp <- mmap (fun x => find_env x env) xs;
-              generate_constraints n inptyp ckty ([rty] ⊔ rstty) outtyp *)
+              generate_constraints n inptyp ckty ([rty] ⊔ rstty) outtyp
           | None   => error (MSG "Signature not found for: ":: [CTX f])
           end)
       end.

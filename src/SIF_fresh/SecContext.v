@@ -167,8 +167,6 @@ End SECMONAD.
 
 
 
-
-
 Module SecMonad (Ids   : IDS) <: SECMONAD Ids.
 Include SECMONAD Ids.
 

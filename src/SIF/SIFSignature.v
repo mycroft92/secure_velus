@@ -112,7 +112,7 @@ Section Type_Substitutions.
       subst_constraints_out_map cs' xs vs
     | _, _ => error (msg "Malformed replace map")
     end.
-
+  (* We need lemmas that the substitution is happening correctly *)
     Definition generate_constraints (node: signature) 
       (inp: list ST) 
       (clk: ST) 
