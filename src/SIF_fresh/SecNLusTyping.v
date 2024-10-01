@@ -45,7 +45,7 @@ Module Type SECNLUSTYPING
     end.
 
   (* sec typing equations   : mapping -> equation -> constraints  *)
-  Section SECEEQNTYPING.
+  Section SECEQNTYPING.
     Variable G: secglobal.
     Variable env: Env.t ident. 
     Variable base_ty: ident.
@@ -102,7 +102,7 @@ Module Type SECNLUSTYPING
     end.
 
 
-  End SECEEQNTYPING.
+  End SECEQNTYPING.
 
 Check generate_eqns_constraints.
   (* sec typing nodes *) 
