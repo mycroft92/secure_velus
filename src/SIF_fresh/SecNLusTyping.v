@@ -2,8 +2,9 @@
 From Velus Require Import Common.
 From Velus Require Import SecLattice.
 From Velus Require Import Environment.
-From Velus Require Import CoindToIndexed.
-From Velus Require Import NLustre.
+From Velus Require Import Operators.
+From Velus Require Import NLustre.NLSyntax.
+From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF_fresh.SecCETyping.
 From Velus Require Import SIF_fresh.SecContext.
@@ -20,15 +21,10 @@ Module Type SECNLUSTYPING
   (Import Ids   : IDS)
   (Import Op    : OPERATORS)
   (Import SC    : SECMONAD Ids)
-  (Import OpAux : OPERATORS_AUX   Op)
-  (Import CStr  : COINDSTREAMS    Op OpAux)
-  (Import IStr  : INDEXEDSTREAMS  Op OpAux)
-  (Import CIStr : COINDTOINDEXED  Op OpAux CStr IStr)
-  (Import CE    : COREEXPR    Ids Op OpAux      IStr)
-  (Import NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE)
+  (Import CESyn : CESYNTAX      Op)
+  (Import SynNL : NLSYNTAX  Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
-  (Import SECCETYPING: SECCETYPING Ids Op CE.Syn).
-  (* Check wst_exp. *)
+  (Import SECCETYPING: SECCETYPING Ids Op CESyn).
 
   (* expressions are already done in CETyping*)
   (* sec typing expressions : mapping -> expression -> sec type *)
@@ -181,19 +177,15 @@ Check generate_eqns_constraints.
 End SECNLUSTYPING.
 
 Module SecNLusTyping  
-(Ids   : IDS)
-(Op    : OPERATORS)
-(SC    : SECMONAD Ids)
-(OpAux : OPERATORS_AUX   Op)
-(CStr  : COINDSTREAMS    Op OpAux)
-(IStr  : INDEXEDSTREAMS  Op OpAux)
-(CIStr : COINDTOINDEXED  Op OpAux CStr IStr)
-(CE    : COREEXPR    Ids Op OpAux      IStr)
-(NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE)
-(SIG   : SIGNATURE   Ids SC)
-(SECCETYPING: SECCETYPING Ids Op CE.Syn) <: SECNLUSTYPING Ids Op SC OpAux CStr IStr CIStr CE NL SIG SECCETYPING.
+  (Ids   : IDS)
+  (Op    : OPERATORS)
+  (SC    : SECMONAD Ids)
+  (CESyn : CESYNTAX      Op)
+  (SynNL : NLSYNTAX  Ids Op CESyn)
+  (SIG   : SIGNATURE   Ids SC)
+  (SECCETYPING: SECCETYPING Ids Op CESyn) <: SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING.
 
-Include SECNLUSTYPING Ids Op SC OpAux CStr IStr CIStr CE NL SIG SECCETYPING.
+Include SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING.
 
 
 End SecNLusTyping.

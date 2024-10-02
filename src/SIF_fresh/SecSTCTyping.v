@@ -2,8 +2,9 @@
 From Velus Require Import Common.
 From Velus Require Import SecLattice.
 From Velus Require Import Environment.
-From Velus Require Import CoindToIndexed.
-From Velus Require Import Stc.
+From Velus Require Import Operators.
+From Velus Require Import CoreExpr.CESyntax.
+From Velus Require Import Stc.StcSyntax.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF_fresh.SecCETyping.
 From Velus Require Import SIF_fresh.SecContext.
@@ -20,12 +21,10 @@ Module Type SECSTCTYPING
   (Import Ids   : IDS)
   (Import Op    : OPERATORS)
   (Import SC    : SECMONAD Ids)
-  (Import OpAux : OPERATORS_AUX   Op)
-  (Import Str   : INDEXEDSTREAMS Op OpAux)
-  (Import CE    : COREEXPR Ids   Op OpAux Str)
-  (Import STC   : STC      Ids Op OpAux Str CE)
+  (Import CESyn : CESYNTAX Op)
+  (Import SynStc: STCSYNTAX Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
-  (Import SECCETYPING: SECCETYPING Ids Op CE.Syn).
+  (Import SECCETYPING: SECCETYPING Ids Op CESyn).
   (* Check wst_exp. *)
 
   (* expressions are already done in CETyping*)
@@ -130,21 +129,20 @@ Module Type SECSTCTYPING
           ret [([rst_ty]  ⊔ rckty, [rst_inst])]
       end.
 
-  Fixpoint generate_eqns_constraints (es: list equation) : Sec (list constraint) :=
+  Fixpoint generate_trconstrs_constraints (es: list trconstr) : Sec (list constraint) :=
     match es with
     | []     => ret []
     | e::es' => 
-        do c  <- generate_eqn_constraint e;
-        do cs <- generate_eqns_constraints es';
+        do c  <- generate_trconstr_constraint e;
+        do cs <- generate_trconstrs_constraints es';
         ret (c++cs)
     end.
 
 
   End SECTRCONSTRTYPING.
 
-Check generate_eqns_constraints.
   (* sec typing nodes *) 
-  Section SECNODETYPING.
+  Section SECSYSTYPING.
     Variable G: secglobal.
     (* Variable env: Env.t ident.  *)
     (* Variable base_ty: ident.
@@ -214,19 +212,15 @@ Check generate_eqns_constraints.
 End SECSTCTYPING.
 
 Module SecSTCTyping  
-(Ids   : IDS)
-(Op    : OPERATORS)
-(SC    : SECMONAD Ids)
-(OpAux : OPERATORS_AUX   Op)
-(CStr  : COINDSTREAMS    Op OpAux)
-(IStr  : INDEXEDSTREAMS  Op OpAux)
-(CIStr : COINDTOINDEXED  Op OpAux CStr IStr)
-(CE    : COREEXPR    Ids Op OpAux      IStr)
-(NL    : NLUSTRE     Ids Op OpAux CStr IStr CIStr CE)
-(SIG   : SIGNATURE   Ids SC)
-(SECCETYPING: SECCETYPING Ids Op CE.Syn) <: SECSTCTYPING Ids Op SC OpAux CStr IStr CIStr CE NL SIG SECCETYPING.
+  (Ids   : IDS)
+  (Op    : OPERATORS)
+  (SC    : SECMONAD Ids)
+  (CESyn : CESYNTAX Op)
+  (SynStc: STCSYNTAX Ids Op CESyn)
+  (SIG   : SIGNATURE   Ids SC)
+  (SECCETYPING: SECCETYPING Ids Op CESyn) <: SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING.
 
-Include SECSTCTYPING Ids Op SC OpAux CStr IStr CIStr CE NL SIG SECCETYPING.
+Include SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING.
 
 
 End SecSTCTyping.
