@@ -163,14 +163,14 @@ Module Type SECSTCTYPING
       * run simplify on localvars types*)
     (* Fixpoint generate_node_signature (n: node) : Sec signature := *)
       
-    Check List.map.
+      (*Check List.map.
     Check insert_vars.
     Print signature.
     Print system.
     Check SynStc.s_name.
     (*Check n_name.*)
     Check generate_trconstrs_constraints.
-    Check generate_reset_env. 
+         Check generate_reset_env. *)
     (* This should just return signature, not in a monad*)
     Definition generate_node_signature (n: system): res signature :=
       match  (do (env_in,  inp)    <- insert_vars (List.map fst (n.(SynStc.s_in))) (Env.empty _);
@@ -178,9 +178,8 @@ Module Type SECSTCTYPING
               do (env, locals)     <- insert_vars (List.map fst n.(SynStc.s_vars)) env_out;
               do ck_id             <- fresh_ident;
               do rst_id            <- fresh_ident;
-              do (reset_env, rids) <- generate_reset_env n.(SynStc.s_tcs);  
-              (* Need to generate reset environment*)
-              do constraints'    <- generate_trconstrs_constraints G env reset_env ck_id rst_id (n.(SynStc.s_tcs));
+              do (reset_env, rids) <- generate_reset_env n.(SynStc.s_tcs); (* reset_env *) 
+              do constraints'      <- generate_trconstrs_constraints G env reset_env ck_id rst_id (n.(SynStc.s_tcs));
               ret (SynStc.s_name n, inp, out, rst_id, ck_id, simplify constraints' (locals ++ rids))) init_state with
       | Error e => Error e
       | OK ((name, inp, out, rst_id, ck_id, constraints),_) => 
