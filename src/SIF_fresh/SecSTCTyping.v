@@ -172,7 +172,7 @@ Module Type SECSTCTYPING
     Check generate_trconstrs_constraints.
          Check generate_reset_env. *)
     (* This should just return signature, not in a monad*)
-    Definition generate_node_signature (n: system): res signature :=
+    Definition generate_system_signature (n: system): res signature :=
       match  (do (env_in,  inp)    <- insert_vars (List.map fst (n.(SynStc.s_in))) (Env.empty _);
               do (env_out, out)    <- insert_vars (List.map fst n.(SynStc.s_out)) env_in;
               do (env, locals)     <- insert_vars (List.map fst n.(SynStc.s_vars)) env_out;
@@ -193,19 +193,19 @@ Module Type SECSTCTYPING
 
   End SECSYSTYPING.
 
-  Section SECGLOBALTYPING.
+  Section SECPROGRAMTYPING.
     Open Scope error_monad_scope.
-    Fixpoint generate_signatures' (acc: list signature) (node_list: global): res (list signature) :=
-      match node_list with
+    Fixpoint generate_signatures' (acc: list signature) (sys_list: program): res (list signature) :=
+      match sys_list with
       | [] => OK acc
       | n::ns => 
-        do sig <- generate_node_signature acc n;
+        do sig <- generate_system_signature acc n;
         generate_signatures' (acc++[sig]) ns
       end.
 
-    Definition generate_signatures (node_list: global) := generate_signatures' [] node_list.
+    Definition generate_signatures (sys_list: program) := generate_signatures' [] sys_list.
 
-  End SECGLOBALTYPING.
+  End SECPROGRAMTYPING.
   (**
    * 1. New name generation scheme
    *   a. Check elab->fresh monad usage
