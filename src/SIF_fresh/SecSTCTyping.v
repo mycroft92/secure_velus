@@ -126,6 +126,7 @@ Module Type SECSTCTYPING
       | TcReset x rck f => (*error (msg "Unimplemented")*)
           do rckty    <- option_to_sec (assign_clk_type env base_ty rck); (* κ''*)
           do rst_inst <- find_env x reset_env; (* κ⁰ in paper*)
+          (*Naming of types to be consistent*)
           ret [([rst_ty]  ⊔ rckty, [rst_inst])]
       end.
 
