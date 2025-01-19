@@ -39,9 +39,6 @@ Proof.
           now apply IHst.
 Qed.
 
-(* - Gazeted officer + id proof + Old pancard copy
-- write clarification form for change
-  -  Changes to be ignored for fathername  *)
 
 (*Cool trick on decreasing arguments*)
 Fixpoint merge (c1: ST) : ST -> ST :=
@@ -462,6 +459,31 @@ Section ConstraintOrdering.
         | Eq => compare' l1'' l2''
         end 
     end) l1 l2.
+
+  (*Constraint compare*)
+  Definition constraint_compare (c1 c2: constraint) : comparison :=
+    let (c1x, c1y) := (sortST (fst c1), snd c1) in
+    let (c2x, c2y) := (sortST (fst c2), snd c2) in
+    match (ident_sorted_list_compare c1y c2y) with
+    | Eq => ident_sorted_list_compare c1x c2x
+    | Lt => Lt
+    | Gt => Gt
+    end.
+
+  Fixpoint constraint_merge (c1s : list constraint) : list constraint -> list constraint :=
+  fix merge' c2s :=
+    match c1s,c2s with
+    | [], _ => c2s
+    | _, [] => c1s
+    | x::xs, y::ys => match constraint_compare x y with
+                      | Lt => x:: (constraint_merge xs c2s)
+                      | Eq => x:: (constraint_merge xs ys)
+                      | Gt => y:: (merge' ys)
+                      end
+    end.
+
+  (*what's needed for sort?*)
+  (* if l1 and l2 are sorted then l merged l2 is sorted for constraints*)
 
 End ConstraintOrdering.
 
