@@ -14,13 +14,41 @@ From Velus Require Import SIF.SymTypes.
 
 (* Canoncalize these and prove confluence*)
 Inductive nonCanonST : Type :=
-| Bot  : nonCanonST
-| Var  : ident -> nonCanonST
-| Lub  : nonCanonST -> nonCanonST  -> nonCanonST
+| Bot   : nonCanonST
+| Var   : ident -> nonCanonST
+| Lub   : nonCanonST -> nonCanonST  -> nonCanonST
 | Qual  : nonCanonST -> uConstraint -> nonCanonST
 with uConstraint: Type := 
-| CNil : uConstraint
-| Cns  : (nonCanonST * nonCanonST) -> uConstraint -> uConstraint.
+| CNil  : uConstraint
+| Cns   : (nonCanonST * nonCanonST) -> uConstraint -> uConstraint.
+
+Inductive ncST : Type :=
+| bot  : ncST
+| lubs : list ident -> ncST
+| qual : ncST -> ucons -> ncST
+with ucons: Type :=
+| cnil : ucons
+| cns  : (ncST * ncST) -> ucons -> ucons.
+
+Fixpoint canonicalizeT (ty: ncST) : (ST * (list constraint)):=
+  match ty with
+  | bot => ([], [])
+  | lubs ls => (ls, [])
+  | qual ty' cxs => 
+    let (cty, cns') := canonicalizeT ty' in
+    let cns'' := canonicalizeConstraints cxs in
+    (cty, constraint_merge cns' cns'')
+  end
+with canonicalizeConstraints cn : list constraint :=
+  match cn with
+  | cnil => []
+  | cns (lhs, rhs) cxs => 
+    let  cxs' := canonicalizeConstraints cxs in
+    let (s1, c1) := canonicalizeT lhs in
+    let (s2, c2) := canonicalizeT rhs in
+      constraint_merge [(s1,s2)] (constraint_merge (constraint_merge c1 c2) cxs') 
+  end.
+
 
 Print constraint.
 (* Needs to return a type and a constraint set *)
@@ -32,7 +60,9 @@ Fixpoint canonicalizeType (ty: nonCanonST) : (ST * (list constraint)) :=
     | Lub x y => let (x',xc) := (canonicalizeType x) in
                  let (y',yc) := (canonicalizeType y) in
                  (x' ⊔ y', xc ++yc)
-    | Qual x uc => ([],[])
+    | Qual x uc => let (x',xcs) := canonicalizeType x in
+                   let cs := canonicalizeConstraint uc in
+                   (x', constraint_merge cs xcs)
     end
 with canonicalizeConstraint (cons: uConstraint) : (list constraint) :=
   
@@ -40,7 +70,14 @@ with canonicalizeConstraint (cons: uConstraint) : (list constraint) :=
   | CNil => []
   | Cns (lhs, rhs) cxs => let  cxs' := canonicalizeConstraint cxs in
                           let (s1, c1) := canonicalizeType lhs in
-                          let (s2, c2)  := canonicalizeType rhs in
+                          let (s2, c2) := canonicalizeType rhs in
                           constraint_merge [(s1,s2)] (constraint_merge (constraint_merge c1 c2) cxs')
 
   end.
+
+
+(* Write the relation for constraint-type rewrite*)
+
+Inductive Rewrite_Rel (t: nonCanonST) (s: ST) : Prop :=.
+(* State and prove confluence for that relation*)
+(* Prove canonicalizeType satisfies the relation*)

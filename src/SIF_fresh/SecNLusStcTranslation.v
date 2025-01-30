@@ -16,6 +16,8 @@ From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF_fresh.SecNLusTyping.
 From Velus Require Import SIF_fresh.SecSTCTyping.
 From Velus Require Import NLustreToStc.Translation.
+From Velus Require Import SIF.SecLattice.
+From Velus Require Import SIF.SecTypes.
 
 From Coq Require Import String. (*Required for Errors *)
 From compcert Require Import common.Errors.
@@ -23,12 +25,14 @@ From compcert Require Import common.Errors.
 
 Module Type SECNLUSSTCTRANSLATION 
   (Import Ids   : IDS)
+  (Import Lat   : Lattice)
   (Import Op    : OPERATORS)
   (Import SC    : SECMONAD Ids)
-  (Import CESyn : CESYNTAX      Op)
-  (Import SynNL : NLSYNTAX  Ids Op CESyn)
-  (Import SynStc: STCSYNTAX Ids Op CESyn)
-  (Import Mem   : MEMORIES  Ids Op CESyn SynNL)
+  (Import SecTypes : SECTYPES Lat)
+  (Import CESyn    : CESYNTAX      Op)
+  (Import SynNL    : NLSYNTAX  Ids Op CESyn)
+  (Import SynStc   : STCSYNTAX Ids Op CESyn)
+  (Import Mem      : MEMORIES  Ids Op CESyn SynNL)
   (Import Translation  : TRANSLATION Ids Op CESyn SynNL SynStc Mem)
   (Import SIG          : SIGNATURE   Ids SC)
   (Import SECCETYPING  : SECCETYPING Ids Op CESyn)
@@ -45,36 +49,55 @@ Module Type SECNLUSSTCTRANSLATION
     - Need rst_env with goodness constraints
   *)
   Section SECEQNPRES.
-
+(* Check (generate_eqn_constraint _ _ _ _ _) _.
+Check res. *)
     (* Type preservation for each equation -> trconstr *)
-    (** G1 G2 are needed, how does the inductive argument work here?*)
+    (** G1 G2 are needed? how does the inductive argument work here?*)
     (** Do I need to bring in nodes and systems as well? Or is it just signatures? *)
-    (*  forall G eq tcs bk H M Is vars insts,
-      (forall f xss M yss,
-          msem_node G f xss M yss ->
-          sem_system_n (translate G) f M xss yss (next M)) ->
-      Ordered_nodes G ->
-      NL.Clo.wc_equation G vars eq ->
-      CE.Sem.sem_clocked_vars bk H vars ->
-      translate_eqn_nodup_subs eq tcs ->
-      (forall n, state_closed_insts (translate G) insts (Is n)) ->
-      (forall n, forall x, find_val x (Is n) = None) ->
-      msem_equation G bk H M eq ->
-      sem_trconstrs_n (translate G) bk H M Is (next M) tcs ->
-      exists Is',
-        sem_trconstrs_n (translate G) bk H M Is' (next M) (translate_eqn eq ++ tcs)
-        /\ (forall n, state_closed_insts (translate G) (gather_inst_eq eq ++ insts) (Is' n))
-       /\ forall n x, find_val x (Is' n) = None. *)
+    (* I don't need more than one G right?, I can say equivalence at node-system level?*)
+    (* Lemma eqn_trconstr_consitent: forall (e:equation) (trs: list trconstr), translate_eqn e = trs
+      -> forall (G: secglobal) 
+                (env rst_env: Env.t ident)
+                (base_ty rst_ty: ident),
+          (match generate_eqn_constraint G env base_ty rst_ty e init_state with
+          | OK _ => True
+          | Error _ => 
+            (match generate_trconstrs_constraints G env rst_env base_ty rst_ty trs init_state with 
+              | OK _ => False
+              | Error _ => True
+            end)
+          end).
+      Proof.
+        Admitted. *)
 
-    Theorem eqn_preservation: forall (e:equation) (trs: list trconstr), translate_eqn e = trs 
-      -> forall (G1 G2: secglobal)
-              (env: Env.t ident) 
-              (base_ty rst_ty: ident)
-              (nconst sconst: list constraint),
-          generate_eqn_constraint G1 env base_ty rst_ty e = nconst
-      ->  generate_trconstrs_constraints G2 env rst_env base_ty rst_ty trs = sconst. 
+    Theorem eqn_preserv: forall (e: equation) (trs: list trconstr), translate_eqn e = trs 
+      -> forall (G: secglobal) 
+                (env rst_env: Env.t ident)
+                (base_ty rst_ty: ident)
+                (nconst sconst: list constraint)
+                (init_state: sec_state),
+      (*Need to express that these generation two monads start in the same state*)
+         match generate_eqn_constraint G env base_ty rst_ty e init_state with
+         | OK (nconst ,_) => 
+            (match generate_trconstrs_constraints G env rst_env base_ty rst_ty trs init_state with
+            | OK (sconst, _) => forall (dlt: ident -> Lat.t), listSatisfiable dlt nconst -> listSatisfiable dlt sconst
+            | Error _ => False end)
+          | Error _ => True
+          end.
+      Proof.
+        intros. induction e; simpl in H; subst.
+        - 
+       
+
+        Admitted.
+      (* Qed. *)
+
 
   End SECEQNPRES. 
+
+  Section NODESYSPRES.
+
+  End NODESYSPRES.
 
 
 
@@ -83,8 +106,10 @@ End SECNLUSSTCTRANSLATION.
 
 Module SecNLusStcTranslation 
   (Ids   : IDS)
+  (Lat   : Lattice)
   (Op    : OPERATORS)
   (SC    : SECMONAD Ids)
+  (SecTypes : SECTYPES Lat)
   (CESyn : CESYNTAX Op)
   (SynNL : NLSYNTAX  Ids Op CESyn)
   (SynStc: STCSYNTAX Ids Op CESyn)
@@ -93,8 +118,8 @@ Module SecNLusStcTranslation
   (SIG          : SIGNATURE   Ids SC)
   (SECCETYPING  : SECCETYPING Ids Op CESyn)
   (SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING)
-  (SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING) <: SECNLUSSTCTRANSLATION Ids Op SC CESyn SynNL SynStc Mem Translation SIG SECCETYPING SECNLUSTYPING SECSTCTYPING.
+  (SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING) <: SECNLUSSTCTRANSLATION Ids Lat Op SC SecTypes CESyn SynNL SynStc Mem Translation SIG SECCETYPING SECNLUSTYPING SECSTCTYPING.
 
-  Include SECNLUSSTCTRANSLATION Ids Op SC CESyn SynNL SynStc Mem Translation SIG SECCETYPING SECNLUSTYPING SECSTCTYPING.
+  Include SECNLUSSTCTRANSLATION Ids Lat Op SC SecTypes CESyn SynNL SynStc Mem Translation SIG SECCETYPING SECNLUSTYPING SECSTCTYPING.
 End SecNLusStcTranslation.
 
