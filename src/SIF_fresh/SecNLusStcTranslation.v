@@ -86,7 +86,7 @@ Check res. *)
           end.
       Proof.
         intros. induction e; simpl in H; subst.
-        - 
+        - simpl.
        
 
         Admitted.
@@ -96,6 +96,26 @@ Check res. *)
   End SECEQNPRES. 
 
   Section NODESYSPRES.
+    Theorem node_preserv: forall (n : node) (s: system), translate_node n = s 
+      -> forall (G: secglobal) (nsig: signature), 
+            generate_node_signature G n = OK nsig 
+      -> forall (ssig: signature),
+            generate_system_signature G s = OK ssig
+      (*Interface types are the same*)
+      -> forall (dlt: ident -> Lat.t), listSatisfiable dlt (nsig.(s_constraints))
+      -> listSatisfiable dlt (ssig.(s_constraints)).
+      (* (match generate_node_signature G n with 
+       | OK nsig => forall (ssig: signature), 
+          (match generate_system_signature G s with
+           | OK ssig =>  forall (dlt: ident -> Lat.t), listSatisfiable dlt (nsig.(s_constraints))
+                    -> listSatisfiable dlt (ssig.(s_constraints))
+           | Error _ => False
+           end)
+       | Error _ => True
+       end). *)
+    Proof.
+      Admitted.
+
 
   End NODESYSPRES.
 
