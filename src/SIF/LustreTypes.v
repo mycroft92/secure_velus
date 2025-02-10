@@ -12,7 +12,12 @@ From Velus Require Import SIF.SymTypes.
 (* We will do this later*)
 
 
+
+
+
+(* 
 (* Canoncalize these and prove confluence*)
+(* Don't work with syntax, instead work with ST*list constraint format*)
 Inductive nonCanonST : Type :=
 | Bot   : nonCanonST
 | Var   : ident -> nonCanonST
@@ -80,4 +85,4 @@ with canonicalizeConstraint (cons: uConstraint) : (list constraint) :=
 
 Inductive Rewrite_Rel (t: nonCanonST) (s: ST) : Prop :=.
 (* State and prove confluence for that relation*)
-(* Prove canonicalizeType satisfies the relation*)
+Prove canonicalizeType satisfies the relation *)
