@@ -25,10 +25,10 @@ src/SIF/SymTypes.v
 src/SIF/SIFTactics.v
 src/SIF/SIFSignature.v
 src/SIF/SimpleListTypes.v
-src/SIF_fresh/SecContext.v
-src/SIF_fresh/SecCETyping.v
-src/SIF_fresh/SecNLusTyping.v
-src/SIF_fresh/SecSTCTyping.v
+src/SIF/SecContext.v
+src/SIF/SecCETyping.v
+src/SIF/SecNLusTyping.v
+src/SIF/SecSTCTyping.v
 
 
 src/Lustre/LSemantics.v
