@@ -6,8 +6,8 @@ From Velus Require Import Operators.
 From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import Stc.StcSyntax.
 From Velus Require Import SIF.SymTypes.
-From Velus Require Import SIF_fresh.SecCETyping.
-From Velus Require Import SIF_fresh.SecContext.
+From Velus Require Import SIF.SecCETyping.
+From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SIFSignature.
 
 From Coq Require Import String. (*Required for Errors *)

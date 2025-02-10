@@ -10,11 +10,11 @@ From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import Stc.StcSyntax.
 From Velus Require Import NLustre.Memories.
-From Velus Require Import SIF_fresh.SecCETyping.
-From Velus Require Import SIF_fresh.SecContext.
+From Velus Require Import SIF.SecCETyping.
+From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SIFSignature.
-From Velus Require Import SIF_fresh.SecNLusTyping.
-From Velus Require Import SIF_fresh.SecSTCTyping.
+From Velus Require Import SIF.SecNLusTyping.
+From Velus Require Import SIF.SecSTCTyping.
 From Velus Require Import NLustreToStc.Translation.
 From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SecTypes.

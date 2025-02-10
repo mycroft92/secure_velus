@@ -4,7 +4,7 @@ From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import SIF.Helpers.
 From Velus Require Import SIF.SymTypes. 
-From Velus Require Import SIF_fresh.SecContext.
+From Velus Require Import SIF.SecContext.
 From Coq   Require Import List Sorting.Permutation.
 From Coq Require Import String. (*for errors*)
 From compcert Require Import common.Errors.
