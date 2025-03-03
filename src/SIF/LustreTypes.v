@@ -12,7 +12,11 @@ From Velus Require Import SIF.SymTypes.
 (* We will do this later*)
 
 
+(**
+* (rho, cons) ++ (rho, cons) results in confluence
 
+
+*)
 
 
 (* 

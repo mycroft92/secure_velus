@@ -93,21 +93,21 @@ Module Type SECSTCTYPING
     Definition generate_trconstr_constraint (e: trconstr): Sec (list constraint) := 
       match e with
       | TcDef x ck cexp  =>
-          do expty <- option_to_sec (assign_cexp_type env cexp);
           do ckty  <- option_to_sec (assign_clk_type  env base_ty ck);
+          do expty <- option_to_sec (assign_cexp_type env cexp);
           do xty   <- find_env x env;
           ret [(ckty ⊔ expty, [xty])]
-      | TcNext x  ck exp       => 
-          do expty <- option_to_sec (assign_exp_type  env exp);
+      | TcNext x  ck exp       =>         
           do ckty  <- option_to_sec (assign_clk_type  env base_ty ck);
+          do expty <- option_to_sec (assign_exp_type  env exp);
           do xty   <- find_env x env;
           ret [(ckty ⊔ expty, [xty])]
           (* TcCall needs some throat clearing in args to compute *)
       | TcCall _ xs ck false f exps => 
          (match find_signature f G with
           | Some n => (*error (msg "unimplemented") *)
-              do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do ckty   <- option_to_sec (assign_clk_type env base_ty ck);
+              do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;              
               do outtyp <- mmap (fun x => find_env x env) xs;
             generate_constraints n inptyp ckty [rst_ty] outtyp
           | None   => error (MSG "Signature not found for: ":: [CTX f])
@@ -116,8 +116,8 @@ Module Type SECSTCTYPING
       | TcCall x0 xs ck true f exps => 
          (match find_signature f G with
           | Some n => (*error (msg "unimplemented")*) 
-              do inptyp   <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do ckty     <- option_to_sec (assign_clk_type env base_ty ck);
+              do inptyp   <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do outtyp   <- mmap (fun x => find_env x env) xs;
               do rst_inst <- find_env x0 reset_env;
             generate_constraints n inptyp ckty [rst_inst] outtyp

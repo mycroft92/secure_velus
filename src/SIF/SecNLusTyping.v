@@ -51,20 +51,20 @@ Module Type SECNLUSTYPING
     Definition generate_eqn_constraint (e: equation): Sec (list constraint) := 
       match e with
       | EqDef x ck cexp  =>
-          do expty <- option_to_sec (assign_cexp_type env cexp);
           do ckty  <- option_to_sec (assign_clk_type  env base_ty ck);
+          do expty <- option_to_sec (assign_cexp_type env cexp);
           do xty   <- find_env x env;
           ret [(ckty ⊔ expty, [xty])]
       | EqFby x  ck _ exp       => 
-          do expty <- option_to_sec (assign_exp_type  env exp);
           do ckty  <- option_to_sec (assign_clk_type  env base_ty ck);
+          do expty <- option_to_sec (assign_exp_type  env exp);
           do xty   <- find_env x env;
           ret [(ckty ⊔ expty, [xty])]
       | EqApp xs ck f exps None => 
          (match find_signature f G with
           | Some n => (*error (msg "unimplemented") *)
-              do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do ckty   <- option_to_sec (assign_clk_type env base_ty ck);
+              do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;              
               do outtyp <- mmap (fun x => find_env x env) xs;
             generate_constraints n inptyp ckty [rst_ty] outtyp
           | None   => error (MSG "Signature not found for: ":: [CTX f])
@@ -78,10 +78,10 @@ Module Type SECNLUSTYPING
           | Some n => 
               (*error (msg "unimplemented")*)
               (*I will add this once the proof goes through for no reset part*)
-              do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do ckty   <- option_to_sec (assign_clk_type env base_ty ck);
               do rty    <- find_env r env;
               do rstty  <- option_to_sec (assign_clk_type env rst_ty ckr);
+              do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;              
               do outtyp <- mmap (fun x => find_env x env) xs;
               generate_constraints n inptyp ckty ([rty] ⊔ rstty) outtyp
           | None   => error (MSG "Signature not found for: ":: [CTX f])

@@ -69,7 +69,7 @@ Check res. *)
           end).
       Proof.
         Admitted. *)
-
+Print equation.
     Theorem eqn_preserv: forall (e: equation) (trs: list trconstr), translate_eqn e = trs 
       -> forall (G: secglobal) 
                 (env rst_env: Env.t ident)
@@ -85,7 +85,7 @@ Check res. *)
           | Error _ => True
           end.
       Proof.
-        intros. induction e; simpl in H; subst.
+        intros. induction e as [x ck cexp| xs ck f es [[rst rck]|] | x ck c0 exp ]; simpl in H; subst; destruct (assign_clk_type env base_ty ck) eqn:ck_typ_eqn; simpl.
         - simpl.
        
 
