@@ -69,7 +69,52 @@ Check res. *)
           end).
       Proof.
         Admitted. *)
-Print equation.
+Locate find_env .
+Print error.
+Ltac monadInv :=
+    simpl in *;
+    unfold error in *;
+    match goal with
+    | H: OK _ = OK _ |- _ =>
+      inversion H; clear H; try subst
+    | H: Error _ = OK _ |- _ =>
+      discriminate
+    | H: ret _ _ = _ |- _ =>
+      unfold ret in H
+    | H: bind ?x ?f ?st = OK (?res, ?st') |- _ =>
+      let H1 := fresh "Hbind" in
+      let H2 := fresh "Hbind" in
+      eapply sec_bind_inv in H as [? [? [H1 H2]]]
+    | H: bind2 ?x ?f ?st = OK (?res, ?st') |- _ =>
+      let H1 := fresh "Hbind" in
+      let H2 := fresh "Hbind" in
+      eapply sec_bind2_inv in H as [? [? [? [H1 H2]]]]
+    end; simpl in *.
+
+
+    Lemma find_env_consistent: forall x env st1 st2 st3 st4 xty xty2, 
+      find_env x env st1 = OK (xty, st2) ->
+      find_env x env st3 = OK (xty2, st4) -> xty = xty2.
+    Proof.
+      intros. unfold find_env in *.
+      destruct (Env.find x env) eqn:findx1; inversion H; inversion H0.
+      now subst.
+    Qed.
+(* Need to say that find_env i env on same state gives same ident*)
+
+    Theorem eqn_preserv: forall (e: equation) (trs: list trconstr), translate_eqn e = trs 
+      -> forall (G: secglobal) 
+                (env rst_env: Env.t ident)
+                (base_ty rst_ty: ident)
+                (nconst sconst: list constraint)
+                (init_state st1 st2: sec_state),
+        (generate_eqn_constraint G env base_ty rst_ty e init_state) = OK (nconst, st1) ->
+        (generate_trconstrs_constraints G env rst_env base_ty rst_ty trs init_state) = OK (sconst, st2) ->
+        forall (dlt: ident -> Lat.t), listSatisfiable dlt nconst -> listSatisfiable dlt sconst.
+    Proof.
+      induction e; intros; repeat monadInv.
+      -
+
     Theorem eqn_preserv: forall (e: equation) (trs: list trconstr), translate_eqn e = trs 
       -> forall (G: secglobal) 
                 (env rst_env: Env.t ident)
@@ -85,8 +130,10 @@ Print equation.
           | Error _ => True
           end.
       Proof.
-        intros. induction e as [x ck cexp| xs ck f es [[rst rck]|] | x ck c0 exp ]; simpl in H; subst; destruct (assign_clk_type env base_ty ck) eqn:ck_typ_eqn; simpl.
-        - simpl.
+        intros. induction e as [x ck cexp| xs ck f es [[rst rck]|] | x ck c0 exp ]; simpl in H; subst; simpl;
+        destruct (assign_clk_type env base_ty ck) eqn:ck_typ_eqn; simpl.
+        - destruct (assign_cexp_type env cexp) eqn:cexp_typ_eqn; subst;simpl.
+          * destruct (SECNLUSTYPING.find_env x env) eqn:find_x_eqn; simpl.
        
 
         Admitted.
