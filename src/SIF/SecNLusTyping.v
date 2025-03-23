@@ -73,8 +73,8 @@ Module Type SECNLUSTYPING
         2. compute the types of input expressions, clock and reset
         3. find the types of output expressions 
         4. substitute the types to generate fresh constraints*)
-      | EqApp xs ck f exps (Some (r,ckr)) => 
-         (match find_signature f G with
+      | EqApp xs ck f exps (Some (r,ckr)) => error (msg "unimplemented")
+         (* (match find_signature f G with
           | Some n => 
               (*error (msg "unimplemented")*)
               (*I will add this once the proof goes through for no reset part*)
@@ -85,7 +85,7 @@ Module Type SECNLUSTYPING
               do outtyp <- mmap (fun x => find_env x env) xs;
               generate_constraints n inptyp ckty ([rty] ⊔ rstty) outtyp
           | None   => error (MSG "Signature not found for: ":: [CTX f])
-          end)
+          end) *)
       end.
 
   Fixpoint generate_eqns_constraints (es: list equation) : Sec (list constraint) :=
@@ -174,6 +174,11 @@ Check generate_eqns_constraints.
    * 3. Typing rules
    * 4. Do we assume that signatures are part of node records or are they seperate records?
    **) 
+
+  (*Security of node calls*)
+  Lemma security_node_calls_1: forall (G: secglobal) f n dlt, find_signature f G = Some n ->
+    listSatisfiable dlt (n.(s_constraints)) ->
+    
 End SECNLUSTYPING.
 
 Module SecNLusTyping  

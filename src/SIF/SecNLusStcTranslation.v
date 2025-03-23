@@ -103,6 +103,8 @@ Ltac monadInv :=
 Locate Env.
 (* Need to say that find_env i env on same state gives same ident*)
 
+(*Need security of calls lemma here for case 2*)
+
     Theorem eqn_preserv: forall (e: equation) (trs: list trconstr), translate_eqn e = trs 
       -> forall (G: secglobal) 
                 (env rst_env: Env.t ident)
@@ -115,9 +117,9 @@ Locate Env.
     Proof.
       induction e; intros. 
       - repeat monadInv. eapply find_env_consistent in Hbind0; eauto. subst. unfold option_to_sec in *. destruct (assign_clk_type env base_ty c) eqn:clkty; destruct (assign_cexp_type env c0) eqn:cexpty;repeat monadInv;  now subst.
-      - simpl in H. destruct o eqn:rsto. induction l; subst; simpl in H1.
+      - simpl in H. destruct o eqn:rsto. destruct l; subst; simpl in H1.
         * repeat monadInv. now unfold listSatisfiable. 
-        * (*Need some auxiliary result here for call preservation?*) destruct o eqn:rsto.
+        * destruct p. unfold generate_trconstrs_constraints in H1. repeat monadInv.  (*Need some auxiliary result here for call preservation?*)  
 
 
     Theorem eqn_preserv: forall (e: equation) (trs: list trconstr), translate_eqn e = trs 
