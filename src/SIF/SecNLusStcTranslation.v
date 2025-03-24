@@ -102,17 +102,19 @@ Ltac monadInv :=
     Qed.
 Locate Env.
 (* Need to say that find_env i env on same state gives same ident*)
+    Definition Signature_consistent (G1 G2: secglobal) : Prop :=
+      forall f n1 n2, find_signature f G1 = Some n1 -> (find_signature f G2 = Some n2) /\ n1.(s_in) = n2.(s_in) /\ n2.(s_out) = n2.(s_out) /\ (forall dlt, listSatisfiable dlt n1.(s_constraints) -> listSatisfiable dlt n2.(s_constraints)).
 
-(*Need security of calls lemma here for case 2*)
-
-    Theorem eqn_preserv: forall (e: equation) (trs: list trconstr), translate_eqn e = trs 
-      -> forall (G: secglobal) 
-                (env rst_env: Env.t ident)
-                (base_ty rst_ty: ident)
-                (nconst sconst: list constraint)
-                (init_state st1 st2: sec_state),
-        (generate_eqn_constraint G env base_ty rst_ty e init_state) = OK (nconst, st1) ->
-        (generate_trconstrs_constraints G env rst_env base_ty rst_ty trs init_state) = OK (sconst, st2) ->
+    Theorem eqn_preserv: 
+    (* The signature consistency should make it easier in node-sec level preservation*)
+    forall (G1 G2: secglobal), Signature_consistent G1 G2 ->
+    forall (e: equation) (trs: list trconstr), translate_eqn e = trs ->
+    forall (env rst_env: Env.t ident)
+           (base_ty rst_ty: ident)
+           (nconst sconst: list constraint)
+           (init_state st1 st2: sec_state),
+           (generate_eqn_constraint G1 env base_ty rst_ty e init_state) = OK (nconst, st1) ->
+           (generate_trconstrs_constraints G2 env rst_env base_ty rst_ty trs init_state) = OK (sconst, st2) ->
         forall (dlt: ident -> Lat.t), listSatisfiable dlt nconst -> listSatisfiable dlt sconst.
     Proof.
       induction e; intros; 
