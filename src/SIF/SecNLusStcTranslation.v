@@ -127,57 +127,40 @@ Locate Env.
       - simpl in H. destruct o eqn:rsto. destruct l; subst; simpl in H1.
         * repeat monadInv. now unfold listSatisfiable. 
         * destruct p. unfold generate_trconstrs_constraints in H1. repeat monadInv.  (*Need some auxiliary result here for call preservation?*)  
-        *
+    Admitted.
 
+    Lemma eqns_preserv: forall (G1 G2: secglobal), Signature_consistent G1 G2 ->
+    forall (es: list equation) (trs: list trconstr), translate_eqns es = trs ->
+    forall (env rst_env: Env.t ident)
+           (base_ty rst_ty: ident)
+           (nconst sconst: list constraint)
+           (init_state st1 st2: sec_state),
+           (generate_eqns_constraints G1 env base_ty rst_ty es init_state) = OK (nconst, st1) ->
+           (generate_trconstrs_constraints G2 env rst_env base_ty rst_ty trs init_state) = OK (sconst, st2) ->
+        forall (dlt: ident -> Lat.t), listSatisfiable dlt nconst -> listSatisfiable dlt sconst.
+    Proof.
+      induction es; intros. 
+      - repeat monadInv. unfold listSatisfiable. auto.
+      - unfold translate_eqns in H0. simpl in H0.  
+  (* Should I split trs into multiple parts and then have results on generate_trconstrs_constraints .... (trs++trs') .. = generate_trconstrs_constraints .... trs .. ++ generate_trconstrs_constraints .... trs' ..??*)
 
-    Theorem eqn_preserv: forall (e: equation) (trs: list trconstr), translate_eqn e = trs 
-      -> forall (G: secglobal) 
-                (env rst_env: Env.t ident)
-                (base_ty rst_ty: ident)
-                (nconst sconst: list constraint)
-                (init_state: sec_state),
-      (*Need to express that these generation two monads start in the same state*)
-         match generate_eqn_constraint G env base_ty rst_ty e init_state with
-         | OK (nconst ,_) => 
-            (match generate_trconstrs_constraints G env rst_env base_ty rst_ty trs init_state with
-            | OK (sconst, _) => forall (dlt: ident -> Lat.t), listSatisfiable dlt nconst -> listSatisfiable dlt sconst
-            | Error _ => False end)
-          | Error _ => True
-          end.
-      Proof.
-        intros. induction e as [x ck cexp| xs ck f es [[rst rck]|] | x ck c0 exp ]; simpl in H; subst; simpl;
-        destruct (assign_clk_type env base_ty ck) eqn:ck_typ_eqn; simpl.
-        - destruct (assign_cexp_type env cexp) eqn:cexp_typ_eqn; subst;simpl.
-          * destruct (SECNLUSTYPING.find_env x env) eqn:find_x_eqn; simpl.
-       
-
-        Admitted.
-      (* Qed. *)
 
 
   End SECEQNPRES. 
 
   Section NODESYSPRES.
     Theorem node_preserv: forall (n : node) (s: system), translate_node n = s 
-      -> forall (G: secglobal) (nsig: signature), 
-            generate_node_signature G n = OK nsig 
+      -> forall (G1 G2: secglobal), Signature_consistent G1 G2 
+      -> forall (nsig: signature), 
+            generate_node_signature G1 n = OK nsig 
       -> forall (ssig: signature),
-            generate_system_signature G s = OK ssig
+            generate_system_signature G2 s = OK ssig
       (*Interface types are the same*)
       -> forall (dlt: ident -> Lat.t), listSatisfiable dlt (nsig.(s_constraints))
       -> listSatisfiable dlt (ssig.(s_constraints)).
-      (* (match generate_node_signature G n with 
-       | OK nsig => forall (ssig: signature), 
-          (match generate_system_signature G s with
-           | OK ssig =>  forall (dlt: ident -> Lat.t), listSatisfiable dlt (nsig.(s_constraints))
-                    -> listSatisfiable dlt (ssig.(s_constraints))
-           | Error _ => False
-           end)
-       | Error _ => True
-       end). *)
     Proof.
+       unfold Signature_consistent. intros. unfold translate_node in H. 
       Admitted.
-
 
   End NODESYSPRES.
 
