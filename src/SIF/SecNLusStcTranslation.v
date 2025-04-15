@@ -101,12 +101,14 @@ Ltac monadInv :=
       now subst.
     Qed.
 Locate Env.
-(* Need to say that find_env i env on same state gives same ident*)
+(* Need to say that find_env i env on same state gives same ident, add clocks as well here*)
     Definition Signature_consistent (G1 G2: secglobal) : Prop :=
       forall f n1 n2, find_signature f G1 = Some n1 -> (find_signature f G2 = Some n2) /\ n1.(s_in) = n2.(s_in) /\ n2.(s_out) = n2.(s_out) /\ (forall dlt, listSatisfiable dlt n1.(s_constraints) -> listSatisfiable dlt n2.(s_constraints)).
 
     Theorem eqn_preserv: 
     (* The signature consistency should make it easier in node-sec level preservation*)
+    (* 1. Signatures consistency on inp, out, clk, rst.*)
+    (* 2. The inits need to be "aligned", it is not necessary that they match because stc's fresh names are different from nlus's *)
     forall (G1 G2: secglobal), Signature_consistent G1 G2 ->
     forall (e: equation) (trs: list trconstr), translate_eqn e = trs ->
     forall (env rst_env: Env.t ident)
@@ -126,7 +128,8 @@ Locate Env.
       
       - simpl in H. destruct o eqn:rsto. destruct l; subst; simpl in H1.
         * repeat monadInv. now unfold listSatisfiable. 
-        * destruct p. unfold generate_trconstrs_constraints in H1. repeat monadInv.  (*Need some auxiliary result here for call preservation?*)  
+        * destruct p. unfold translate_eqn in H2. unfold generate_trconstrs_constraints in H1. repeat monadInv.  (*Need some auxiliary result here for call preservation?*)  
+        * unfold translate_eqn in H0. 
     Admitted.
 
     Lemma eqns_preserv: forall (G1 G2: secglobal), Signature_consistent G1 G2 ->
@@ -134,14 +137,16 @@ Locate Env.
     forall (env rst_env: Env.t ident)
            (base_ty rst_ty: ident)
            (nconst sconst: list constraint)
-           (init_state st1 st2: sec_state),
-           (generate_eqns_constraints G1 env base_ty rst_ty es init_state) = OK (nconst, st1) ->
-           (generate_trconstrs_constraints G2 env rst_env base_ty rst_ty trs init_state) = OK (sconst, st2) ->
+           (init_state1 init_state2 st1 st2: sec_state),
+           (generate_eqns_constraints G1 env base_ty rst_ty es init_state1) = OK (nconst, st1) ->
+           (generate_trconstrs_constraints G2 env rst_env base_ty rst_ty trs init_state2) = OK (sconst, st2) ->
         forall (dlt: ident -> Lat.t), listSatisfiable dlt nconst -> listSatisfiable dlt sconst.
     Proof.
       induction es; intros. 
       - repeat monadInv. unfold listSatisfiable. auto.
-      - unfold translate_eqns in H0. simpl in H0.  
+      - unfold translate_eqns in H0. simpl in H0,H1,H2. repeat monadInv. 
+          
+    Admitted.
   (* Should I split trs into multiple parts and then have results on generate_trconstrs_constraints .... (trs++trs') .. = generate_trconstrs_constraints .... trs .. ++ generate_trconstrs_constraints .... trs' ..??*)
 
 
@@ -159,7 +164,7 @@ Locate Env.
       -> forall (dlt: ident -> Lat.t), listSatisfiable dlt (nsig.(s_constraints))
       -> listSatisfiable dlt (ssig.(s_constraints)).
     Proof.
-       unfold Signature_consistent. intros. unfold translate_node in H. 
+       unfold Signature_consistent. intros. unfold translate_node in H. unfold generate_node_signature in H1. destruct init_state eqn:init. repeat monadInv.
       Admitted.
 
   End NODESYSPRES.

@@ -129,6 +129,7 @@ Check generate_eqns_constraints.
     Check n_name.
     Check generate_eqns_constraints.
     (* This should just return signature, not in a monad*)
+    (* Standardize the names. Keep Glossary.*)
     Definition generate_node_signature (n: node): res signature :=
       match  (do (env_in,  inp)  <- insert_vars (List.map fst (n.(n_in))) (Env.empty _);
               do (env_out, out)  <- insert_vars (List.map fst n.(n_out)) env_in;
@@ -178,7 +179,13 @@ Check generate_eqns_constraints.
   (*Security of node calls*)
   Lemma security_node_calls_1: forall (G: secglobal) f n dlt, find_signature f G = Some n ->
     listSatisfiable dlt (n.(s_constraints)) ->
-    
+    (* substitution on s_constraints with NEW names, can also be satisfiable under same dlt or different dlt' 
+     a \leq b
+      d \sqcup c/a , e/b
+      - The U \rel U', (o' \rel o) are assumptions (chec statement in paper)
+      - dlt*
+    ?*)
+
 End SECNLUSTYPING.
 
 Module SecNLusTyping  
