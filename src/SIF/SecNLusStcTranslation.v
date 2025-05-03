@@ -114,9 +114,9 @@ Locate Env.
     forall (env rst_env: Env.t ident)
            (base_ty rst_ty: ident)
            (nconst sconst: list constraint)
-           (init_state st1 st2: sec_state),
-           (generate_eqn_constraint G1 env base_ty rst_ty e init_state) = OK (nconst, st1) ->
-           (generate_trconstrs_constraints G2 env rst_env base_ty rst_ty trs init_state) = OK (sconst, st2) ->
+           (init_state1 init_state2 st1 st2: sec_state),
+           (generate_eqn_constraint G1 env base_ty rst_ty e init_state1) = OK (nconst, st1) ->
+           (generate_trconstrs_constraints G2 env rst_env base_ty rst_ty trs init_state2) = OK (sconst, st2) ->
         forall (dlt: ident -> Lat.t), listSatisfiable dlt nconst -> listSatisfiable dlt sconst.
     Proof.
       induction e; intros; 
@@ -144,9 +144,16 @@ Locate Env.
     Proof.
       induction es; intros. 
       - repeat monadInv. unfold listSatisfiable. auto.
-      - unfold translate_eqns in H0. simpl in H0,H1,H2. repeat monadInv.
+      - unfold translate_eqns in H0. simpl in H0,H1,H2. repeat monadInv. 
+
+      eapply generate_tr_constraints_inv in H2. destruct H2 as (aeqncons & st' & eseqncons & [Hgen_a [Hgen_es Hscons]]). rewrite Hscons. unfold listSatisfiable. apply Forall_app in H3.  
+      apply Forall_app. destruct H3 as [HNLa HNLind]. split. 
+      * eapply (eqn_preserv G1 G2 H a (translate_eqn a) _ env rst_env base_ty rst_ty x aeqncons _ _); eauto. 
+      * eapply IHes; eauto.
+      Unshelve. eauto.      
+    Qed.
       
-      (*Need a result like generate_trconstrs_constraints .. (translate_eqn a ++ flat_map translate_eqn es) .. = OK (sconst1 ++ sconst2, st2)*) 
+      
           
     Admitted.
   (* Should I split trs into multiple parts and then have results on generate_trconstrs_constraints .... (trs++trs') .. = generate_trconstrs_constraints .... trs .. ++ generate_trconstrs_constraints .... trs' ..??*)
