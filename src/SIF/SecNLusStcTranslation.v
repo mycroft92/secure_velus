@@ -150,7 +150,7 @@ Locate Env.
       apply Forall_app. destruct H3 as [HNLa HNLind]. split. 
       * eapply (eqn_preserv G1 G2 H a (translate_eqn a) _ env rst_env base_ty rst_ty x aeqncons _ _); eauto. 
       * eapply IHes; eauto.
-      Unshelve. eauto.      
+      Unshelve. eauto. (*obvious goal coming from translate_eqn a*)
     Qed.
       
       
