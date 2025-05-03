@@ -177,8 +177,8 @@ Check generate_eqns_constraints.
    **) 
 
   (*Security of node calls*)
-  Lemma security_node_calls_1: forall (G: secglobal) f n dlt, find_signature f G = Some n ->
-    listSatisfiable dlt (n.(s_constraints)) ->
+  (* Lemma security_node_calls_1: forall (G: secglobal) f n dlt, find_signature f G = Some n ->
+    listSatisfiable dlt (n.(s_constraints)) -> *)
     (* substitution on s_constraints with NEW names, can also be satisfiable under same dlt or different dlt' 
      a \leq b
       d \sqcup c/a , e/b

@@ -144,7 +144,9 @@ Locate Env.
     Proof.
       induction es; intros. 
       - repeat monadInv. unfold listSatisfiable. auto.
-      - unfold translate_eqns in H0. simpl in H0,H1,H2. repeat monadInv. 
+      - unfold translate_eqns in H0. simpl in H0,H1,H2. repeat monadInv. unfold generate_trconstrs_constraints in H2. repeat monadInv.
+      
+      (*Need a result like generate_trconstrs_constraints .. (translate_eqn a ++ flat_map translate_eqn es) .. = OK (sconst1 ++ sconst2, st2)*) 
           
     Admitted.
   (* Should I split trs into multiple parts and then have results on generate_trconstrs_constraints .... (trs++trs') .. = generate_trconstrs_constraints .... trs .. ++ generate_trconstrs_constraints .... trs' ..??*)

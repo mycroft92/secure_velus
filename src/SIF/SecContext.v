@@ -14,11 +14,13 @@ Section MySecMonad.
   Context {A : Type}.
   (* The state is current fresh number to use to generate the name 
    * and the map of currently generated type for each program var *)
-  Definition sec_state : Type := (ident * Env.t ident).
-  
+  (* Definition sec_state : Type := (ident * Env.t ident). *) (* Old formulation*)
+  Definition sec_state : Type := ident.
   Definition Sec A := sec_state -> res (A * sec_state).
-  Definition init_state : sec_state := (xH, Env.empty _).
-  Definition initialize : ident -> Env.t ident -> sec_state := fun xi ev => (xi, ev). 
+  (* Definition init_state : sec_state := (xH, Env.empty _). *) (*old formulation*)
+  Definition init_state : sec_state := xH.
+  (* Definition initialize : ident -> Env.t ident -> sec_state := fun xi ev => (xi, ev).  *) (*old formulaton*)
+  Definition initialize : ident -> sec_state := fun xi  => xi.
   
   Definition ret (x : A) : Sec A := fun st => OK (x, st).
   
@@ -37,10 +39,14 @@ Section MySecMonad.
   Definition error (msg : errmsg) : Sec A :=
     fun st => Error msg.
   
-  Definition fresh_ident : Sec ident :=
+  (* Definition fresh_ident : Sec ident :=
     fun '(n, sub1) =>
       let id := Ids.gensym Ids.sec n in
-      OK (id, (Pos.succ n, sub1)).
+      OK (id, (Pos.succ n, sub1)). *) (* old formulation*)
+    Definition fresh_ident : Sec ident :=
+    fun n =>
+      let id := Ids.gensym Ids.sec n in
+      OK (id, Pos.succ n).
   
   Definition gets : Sec sec_state :=
     fun st => OK (st, st).

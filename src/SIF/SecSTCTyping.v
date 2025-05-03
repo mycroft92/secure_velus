@@ -139,8 +139,43 @@ Module Type SECSTCTYPING
         ret (c++cs)
     end.
 
+  Ltac monadInv :=
+    simpl in *;
+    unfold error in *;
+    match goal with
+    | H: OK _ = OK _ |- _ =>
+      inversion H; clear H; try subst
+    | H: Error _ = OK _ |- _ =>
+      discriminate
+    | H: ret _ _ = _ |- _ =>
+      unfold ret in H
+    | H: bind ?x ?f ?st = OK (?res, ?st') |- _ =>
+      let H1 := fresh "Hbind" in
+      let H2 := fresh "Hbind" in
+      eapply sec_bind_inv in H as [? [? [H1 H2]]]
+    | H: bind2 ?x ?f ?st = OK (?res, ?st') |- _ =>
+      let H1 := fresh "Hbind" in
+      let H2 := fresh "Hbind" in
+      eapply sec_bind2_inv in H as [? [? [? [H1 H2]]]]
+    end; simpl in *.
 
-  End SECTRCONSTRTYPING.
+  
+  Lemma generate_tr_constraints_inv: forall (es1 es2: list trconstr)  st sconst st2,
+  generate_trconstrs_constraints (es1 ++ es2) st = OK (sconst, st2) -> exists sconst1 st1 sconst2,  generate_trconstrs_constraints es1 st = OK (sconst1, st1) /\ generate_trconstrs_constraints es2 st1 = OK (sconst2, st2) /\ sconst = sconst1++sconst2.
+  Proof.
+    induction es1.
+    - intros. simpl in H.  repeat eexists . eauto.
+    - intros. simpl in H. repeat monadInv. eapply IHes1 in Hbind1. destruct Hbind1 as (es1const & es1state & es2const & [indArg1 [indArg2 Hx1]]). exists (x++es1const). exists es1state. exists es2const. split.
+    2: split; auto; rewrite <- app_assoc; now subst. 
+    unfold bind. destruct (generate_trconstr_constraint a st) as [(x' & x0')|] eqn:Hgen1;  inversion Hbind;
+    destruct (generate_trconstrs_constraints es1 x0) eqn:Hgen2; inversion indArg1; subst; unfold ret; try congruence.
+  Qed.
+
+    
+
+
+    End SECTRCONSTRTYPING.
+
 
   (* sec typing nodes *) 
   Section SECSYSTYPING.
