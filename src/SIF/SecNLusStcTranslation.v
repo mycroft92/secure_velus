@@ -128,8 +128,10 @@ Locate Env.
       
       - simpl in H. destruct o eqn:rsto. destruct l; subst; simpl in H1.
         * repeat monadInv. now unfold listSatisfiable. 
-        * destruct p. unfold translate_eqn in H2. unfold generate_trconstrs_constraints in H1. repeat monadInv.  (*Need some auxiliary result here for call preservation?*)  
-        * unfold translate_eqn in H0. 
+        * destruct p. unfold translate_eqn in H2. unfold generate_trconstrs_constraints in H1. repeat monadInv.    
+        * unfold translate_eqn in H0. destruct l eqn:Hl; auto. 
+          + subst trs. simpl in H2. inversion H2. now unfold listSatisfiable.
+          +  subst trs. simpl in H2. (*Need some auxiliary result here for call preservation?*)
     Admitted.
 
     Lemma eqns_preserv: forall (G1 G2: secglobal), Signature_consistent G1 G2 ->
@@ -153,9 +155,6 @@ Locate Env.
       Unshelve. eauto. (*obvious goal coming from translate_eqn a*)
     Qed.
       
-      
-          
-    Admitted.
   (* Should I split trs into multiple parts and then have results on generate_trconstrs_constraints .... (trs++trs') .. = generate_trconstrs_constraints .... trs .. ++ generate_trconstrs_constraints .... trs' ..??*)
 
 
@@ -175,6 +174,8 @@ Locate Env.
     Proof.
        unfold Signature_consistent. intros. unfold translate_node in H. unfold generate_node_signature in H1. destruct init_state eqn:init. repeat monadInv.
       Admitted.
+    
+      
 
   End NODESYSPRES.
 

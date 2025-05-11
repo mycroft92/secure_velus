@@ -103,6 +103,7 @@ Module Type SECSTCTYPING
           do xty   <- find_env x env;
           ret [(ckty ⊔ expty, [xty])]
           (* TcCall needs some throat clearing in args to compute *)
+      | TcCall _ [] _ _ _ _ => ret []
       | TcCall _ xs ck false f exps => 
          (match find_signature f G with
           | Some n => (*error (msg "unimplemented") *)
@@ -236,7 +237,7 @@ Module Type SECSTCTYPING
       | [] => OK acc
       | n::ns => 
         do sig <- generate_system_signature acc n;
-        generate_signatures' (acc++[sig]) ns
+        generate_signatures' (sig::acc) ns
       end.
 
     Definition generate_signatures (sys_list: program) := generate_signatures' [] sys_list.

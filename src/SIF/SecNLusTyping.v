@@ -60,6 +60,7 @@ Module Type SECNLUSTYPING
           do expty <- option_to_sec (assign_exp_type  env exp);
           do xty   <- find_env x env;
           ret [(ckty ⊔ expty, [xty])]
+      | EqApp [] _ _ _ _ => ret [] 
       | EqApp xs ck f exps None => 
          (match find_signature f G with
           | Some n => (*error (msg "unimplemented") *)
@@ -162,7 +163,7 @@ Check generate_eqns_constraints.
       | [] => OK acc
       | n::ns => 
         do sig <- generate_node_signature acc n;
-        generate_signatures' (acc++[sig]) ns
+        generate_signatures' (sig::acc) ns
       end.
 
     Definition generate_signatures (node_list: global) := generate_signatures' [] node_list.
