@@ -122,6 +122,8 @@ Section Type_Substitutions.
       do clk_subst_constraints <- subst_ident_in_constraints inp_subst_constraints node.(s_clk) clk;
       do res_subst_constraints <- subst_ident_in_constraints clk_subst_constraints node.(s_reset) res;
       subst_constraints_out_map res_subst_constraints node.(s_out) out.
+    
+  (* Substitution lemma *)
    
 End Type_Substitutions.
 
