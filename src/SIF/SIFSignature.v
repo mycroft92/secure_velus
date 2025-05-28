@@ -4,6 +4,8 @@ From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import SIF.Helpers.
 From Velus Require Import SIF.SymTypes. 
+From Velus Require Import SIF.SecTypes. 
+From Velus Require Export SIF.SecLattice.
 From Velus Require Import SIF.SecContext.
 From Coq   Require Import List Sorting.Permutation.
 From Coq Require Import String. (*for errors*)
@@ -59,8 +61,9 @@ Section Type_Substitutions.
     | false =>  ty
     | true  => (st_remove x ty) ⊔ (st_remove x v)
     end.
+  (* THIS is ST substitution, need to rethink. substituting preserves type maybe required here. *)
   
-  Local Definition subst_ident_in_constraint (c: constraint) (x: ident) (v: ST): Sec constraint :=
+  Local Definition subst_inp_ident_in_constraint (c: constraint) (x: ident) (v: ST): Sec constraint :=
     match c with
     | (ty, [x']) => 
       if ident_eqb x x' then
@@ -68,13 +71,13 @@ Section Type_Substitutions.
       else ret (subst_ident_in_type ty x v, [x'])
     | _ => error (msg "malformed constraint")
     end.
-
+  (* THIS is ST substitution, need to rethink. substitution preserves satisfiability required here*)
    (* forall c ∈ cs, c[v/x]*)
    Definition subst_ident_in_constraints (cs: list constraint) (x: ident) (v: ST)
    : Sec (list constraint) :=
-   mmap (fun c => subst_ident_in_constraint c x v) cs.
+   mmap (fun c => subst_inp_ident_in_constraint c x v) cs.
 
-   (*input types are to substituted by this function *)
+   (*input types are to substituted by this function, in the FINAL call constraint set. *)
    Fixpoint subst_constraints_inp_map (cs: list constraint) (xs: list ident) (vs: list ST): Sec (list constraint) :=
     match xs,vs with
     | [], [] => ret cs
@@ -92,13 +95,14 @@ Section Type_Substitutions.
     end.
 
     Local Definition subst_ident_constraint (c: constraint) (x v: ident): Sec constraint :=
-    match c with
+    if ident_eqb x v then error (msg "Illegal same ident substitution") else
+    (match c with
     | (ty, [x']) => 
        if ident_eqb x x' then
         ret (subst_ident ty x v, [v])
        else ret (subst_ident ty x v, [x'])
     | _  => error (msg "Malformed constraint")
-    end.
+    end).
 
     Local Definition subst_ident_constraints (cs: list constraint) (x v: ident): Sec (list constraint) :=
     mmap (fun c => subst_ident_constraint c x v) cs.
@@ -137,3 +141,38 @@ Module Signature
     (SC : SECMONAD Ids) <: SIGNATURE Ids SC.
 Include SIGNATURE Ids SC.
 End Signature.
+
+Module Type SIGNATURE_PROOFS (Import Ids: IDS)
+  (Import SC: SECMONAD Ids)
+  (Import SIG: SIGNATURE Ids SC)
+  (Import Lat: Lattice)
+  (Import SecTypes: SECTYPES Lat).
+
+Lemma st_remove_correct: forall dlt ty x, hm_ext dlt (SymTypes.st_remove x ty) ⊑ hm_ext dlt ty.
+Proof.
+induction ty; intros.
+- now unfold SymTypes.st_remove.
+- unfold  SymTypes.st_remove. simpl.
+  destruct (ident_eq_dec x a) eqn:Hxa.
+  + subst x. assert (hm_ext dlt (remove ident_eq_dec a ty) ⊑ hm_ext dlt ty) as H1. { auto. }
+  assert (hm_ext dlt ty ⊑ join (dlt a) (hm_ext dlt ty)) as H2. { apply join_bound2. }
+  now eapply order_trans.
+  + simpl. auto.
+Qed. 
+
+
+
+Lemma subst_ident_in_type_correct: 
+    forall dlt x st ty, hm_ext dlt st ⊑ dlt x 
+    -> hm_ext dlt (SIG.subst_ident_in_type ty x st) ⊑ hm_ext dlt ty.
+Proof.
+  induction ty; intros; unfold SIG.subst_ident_in_type; unfold SymTypes.my_set_mem; auto.
+  destruct (ident_eqb a x) eqn:Hax.
+  - unfold SymTypes.st_remove.  
+    apply ident_eqb_eq in Hax; subst. simpl.
+    destruct (ident_eq_dec x x) eqn:Hxx; auto.
+    * fold SymTypes.st_remove. apply (hm_ext_distributive dlt (SymTypes.st_remove x st) (SymTypes.st_remove x ty) (join (dlt x) (hm_ext dlt ty))).
+    + (* Mundane proofs, need to use lattice assumptions*)
+Admitted.
+
+End SIGNATURE_PROOFS.
