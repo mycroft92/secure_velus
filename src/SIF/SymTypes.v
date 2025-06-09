@@ -312,7 +312,9 @@ Module MergeFacts.
                    destruct (Pos.compare a0 a1) eqn:E01'; repeat pos_handler. auto.
     Qed.
           
-   
+    Lemma merge_comm2: forall a ls1 ls2, merge (a::ls1) ls2 = merge [a] (merge ls1 ls2).
+    Proof.
+    Admitted. 
 
 
 

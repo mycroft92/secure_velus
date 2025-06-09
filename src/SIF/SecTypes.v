@@ -3,7 +3,7 @@ From Coq Require Import Lists.ListSet.
 (*From Coq Require Import Logic.Classical_Prop.*)
 From Velus Require Import Common.
 From Coq Require Import Lia.
-
+From Velus Require Import SymTypes.
 From Velus Require Export SIF.SecLattice.
 Require Import Coq.Program.Equality.
 
@@ -339,9 +339,17 @@ Module Type SECTYPES(Import Lat: Lattice).
   Proof.
     intros. eapply order_trans. eapply hm_ext_concat_r. eauto. 
   Qed.
+  Import MergeFacts.
+  Lemma hm_ext_distributive2: forall st1 st2 dlt,  hm_ext dlt (st1 ⊔ st2) ⊑ join (hm_ext dlt st1) (hm_ext dlt st2).
+  Proof.
+  induction st1; intros.
+  - rewrite merge_nil2. simpl. auto.
+  - rewrite merge_comm2. unfold hm_ext. fold hm_ext.  
+  Admitted.
 
-  Hint Resolve hm_ext_concat_l hm_ext_concat_r  hm_ext_distributive 
-  hm_ext_list_in1.
+
+  Hint Resolve hm_ext_concat_l hm_ext_concat_r  hm_ext_distributive
+  hm_ext_distributive2  hm_ext_list_in1.
   
   (*Constraints and substitutions*)
   (*Under dlt, s_0 ⊑ s_1 *)
