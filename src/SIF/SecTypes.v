@@ -355,11 +355,14 @@ Module Type SECTYPES(Import Lat: Lattice).
   (*Under dlt, s_0 ⊑ s_1 *)
   Definition satisfiable (dlt: ident -> Lat.t) (s_0 s_1: ST) := 
     (hm_ext dlt s_0) ⊑ (hm_ext dlt s_1).
-  
-  Definition listSatisfiable (dlt: ident -> Lat.t) (cns: list constraint) :=
-    Forall (fun '(s,x) => satisfiable dlt s x) cns.
 
-  Hint Unfold satisfiable listSatisfiable.
+  Definition constraintSatisfiable (dlt: ident-> Lat.t) (c: constraint) := let (lhs, rhs) := c in
+    satisfiable dlt lhs rhs.
+  
+  Definition listSatisfiable (dlt: ident -> Lat.t) (cns: list constraint) := Forall (fun c => constraintSatisfiable dlt c) cns.
+    (* Forall (fun '(s,x) => satisfiable dlt s x) cns. *)
+
+  Hint Unfold satisfiable constraintSatisfiable listSatisfiable.
    
   Fixpoint findST cns d: option ST :=
     match cns with

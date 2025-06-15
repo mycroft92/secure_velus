@@ -63,7 +63,7 @@ Section Type_Substitutions.
     end.
   (* THIS is ST substitution, need to rethink. substituting preserves type maybe required here. *)
   
-  Local Definition subst_inp_ident_in_constraint (c: constraint) (x: ident) (v: ST): Sec constraint :=
+  Definition subst_inp_ident_in_constraint (c: constraint) (x: ident) (v: ST): Sec constraint :=
     match c with
     | (ty, [x']) => 
       if ident_eqb x x' then
@@ -72,13 +72,15 @@ Section Type_Substitutions.
     | _ => error (msg "malformed constraint")
     end.
   (* THIS is ST substitution, need to rethink. substitution preserves satisfiability required here*)
+  (* if c is satisfied before substitution, then c is satistfied after substituting x in c.*)
    (* forall c ∈ cs, c[v/x]*)
-   Definition subst_ident_in_constraints (cs: list constraint) (x: ident) (v: ST)
+  Definition subst_ident_in_constraints (cs: list constraint) (x: ident) (v: ST)
    : Sec (list constraint) :=
    mmap (fun c => subst_inp_ident_in_constraint c x v) cs.
+   (* induction obviously for multiple cs*)
 
    (*input types are to substituted by this function, in the FINAL call constraint set. *)
-   Fixpoint subst_constraints_inp_map (cs: list constraint) (xs: list ident) (vs: list ST): Sec (list constraint) :=
+  Fixpoint subst_constraints_inp_map (cs: list constraint) (xs: list ident) (vs: list ST): Sec (list constraint) :=
     match xs,vs with
     | [], [] => ret cs
     | x::xs, v::vs => 
@@ -88,13 +90,13 @@ Section Type_Substitutions.
     | _, _ => error (msg "Malformed replace map")
     end.
 
-    Local Definition subst_ident (ty: ST) (x v: ident): ST :=
+  Local Definition subst_ident (ty: ST) (x v: ident): ST :=
     match (my_set_mem x ty) with
     | false =>  ty
     | true  => (st_remove x ty) ⊔ [v]
     end.
 
-    Local Definition subst_ident_constraint (c: constraint) (x v: ident): Sec constraint :=
+  Local Definition subst_ident_constraint (c: constraint) (x v: ident): Sec constraint :=
     if ident_eqb x v then error (msg "Illegal same ident substitution") else
     (match c with
     | (ty, [x']) => 
@@ -104,10 +106,10 @@ Section Type_Substitutions.
     | _  => error (msg "Malformed constraint")
     end).
 
-    Local Definition subst_ident_constraints (cs: list constraint) (x v: ident): Sec (list constraint) :=
+  Local Definition subst_ident_constraints (cs: list constraint) (x v: ident): Sec (list constraint) :=
     mmap (fun c => subst_ident_constraint c x v) cs.
 
-    Fixpoint subst_constraints_out_map (cs: list constraint) (xs: list ident) (vs: list ident): Sec (list constraint) :=
+  Fixpoint subst_constraints_out_map (cs: list constraint) (xs: list ident) (vs: list ident): Sec (list constraint) :=
     match xs,vs with
     | [], [] => ret cs
     | x::xs, v::vs => 
@@ -116,16 +118,17 @@ Section Type_Substitutions.
       subst_constraints_out_map cs' xs vs
     | _, _ => error (msg "Malformed replace map")
     end.
+  
   (* We need lemmas that the substitution is happening correctly *)
-    Definition generate_constraints (node: signature) 
-      (inp: list ST) 
-      (clk: ST) 
-      (res: ST) 
-      (out: list ident): Sec (list constraint) :=
-      do inp_subst_constraints <- subst_constraints_inp_map node.(s_constraints) node.(s_in) inp;
-      do clk_subst_constraints <- subst_ident_in_constraints inp_subst_constraints node.(s_clk) clk;
-      do res_subst_constraints <- subst_ident_in_constraints clk_subst_constraints node.(s_reset) res;
-      subst_constraints_out_map res_subst_constraints node.(s_out) out.
+  Definition generate_constraints (node: signature) 
+    (inp: list ST) 
+    (clk: ST) 
+    (res: ST) 
+    (out: list ident): Sec (list constraint) :=
+    do inp_subst_constraints <- subst_constraints_inp_map node.(s_constraints) node.(s_in) inp;
+    do clk_subst_constraints <- subst_ident_in_constraints inp_subst_constraints node.(s_clk) clk;
+    do res_subst_constraints <- subst_ident_in_constraints clk_subst_constraints node.(s_reset) res;
+    subst_constraints_out_map res_subst_constraints node.(s_out) out.
     
   (* Substitution lemma *)
    
@@ -148,44 +151,55 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
   (Import Lat: Lattice)
   (Import SecTypes: SECTYPES Lat).
 Import MergeFacts.
-Lemma st_remove_correct: forall dlt ty x, hm_ext dlt (SymTypes.st_remove x ty) ⊑ hm_ext dlt ty.
-Proof.
-induction ty; intros.
-- now unfold SymTypes.st_remove.
-- unfold  SymTypes.st_remove. simpl.
-  destruct (ident_eq_dec x a) eqn:Hxa.
-  + subst x. assert (hm_ext dlt (remove ident_eq_dec a ty) ⊑ hm_ext dlt ty) as H1. { auto. }
-  assert (hm_ext dlt ty ⊑ join (dlt a) (hm_ext dlt ty)) as H2. { apply join_bound2. }
-  now eapply order_trans.
-  + simpl. auto.
-Qed. 
+  Lemma st_remove_correct: forall dlt ty x, hm_ext dlt (SymTypes.st_remove x ty) ⊑ hm_ext dlt ty.
+  Proof.
+  induction ty; intros.
+  - now unfold SymTypes.st_remove.
+  - unfold  SymTypes.st_remove. simpl.
+    destruct (ident_eq_dec x a) eqn:Hxa.
+    + subst x. assert (hm_ext dlt (remove ident_eq_dec a ty) ⊑ hm_ext dlt ty) as H1. { auto. }
+    assert (hm_ext dlt ty ⊑ join (dlt a) (hm_ext dlt ty)) as H2. { apply join_bound2. }
+    now eapply order_trans.
+    + simpl. auto.
+  Qed. 
 
 
 
-Lemma subst_ident_in_type_correct: 
-    forall dlt x st ty, hm_ext dlt st ⊑ dlt x 
-    -> hm_ext dlt (SIG.subst_ident_in_type ty x st) ⊑ hm_ext dlt ty.
-Proof.
-  induction ty; intros; unfold SIG.subst_ident_in_type; unfold SymTypes.my_set_mem; auto.
-  destruct (ident_eqb a x) eqn:Hax.
-  - unfold SymTypes.st_remove.  
-    apply ident_eqb_eq in Hax; subst. simpl.
-    destruct (ident_eq_dec x x) eqn:Hxx; auto.
-    * fold SymTypes.st_remove. apply (hm_ext_distributive dlt (SymTypes.st_remove x st) (SymTypes.st_remove x ty) (join (dlt x) (hm_ext dlt ty))).
-      + assert (hm_ext dlt (SymTypes.st_remove x st) ⊑ hm_ext dlt st) as Hez. {  apply st_remove_correct. }
-     apply Lat.order_trans with (y:=hm_ext dlt st); auto. 
-     apply Lat.order_trans with (y:=dlt x); auto.
-      + assert (hm_ext dlt (SymTypes.st_remove x ty) ⊑ hm_ext dlt ty) as Hez. {  apply st_remove_correct. }
-    apply Lat.order_trans with (y:=hm_ext dlt ty); auto.
-    * congruence.
-  - fold SymTypes.my_set_mem. apply ident_eqb_neq in Hax. simpl. destruct (ident_eq_dec x a) eqn:Hxa; try congruence.
-  unfold SIG.subst_ident_in_type in IHty. apply IHty in H as Hih.
-  destruct (SymTypes.my_set_mem x ty) eqn:Hmem; auto.
-  rewrite merge_comm2. assert (hm_ext dlt ([a] ⊔ (SymTypes.st_remove x ty ⊔ SymTypes.st_remove x st)) ⊑ join (hm_ext dlt [a]) (hm_ext dlt (SymTypes.st_remove x ty ⊔ SymTypes.st_remove x st))) as Htrans. { apply hm_ext_distributive2. }
-  apply order_trans with (y:=join (hm_ext dlt [a])
-             (hm_ext dlt (SymTypes.st_remove x ty ⊔ SymTypes.st_remove x st))); auto.
-  simpl. rewrite <- join_bottom_eq1.  apply join_least_upper_bound; auto. eapply order_trans; eauto.
-Qed.
+  Lemma subst_ident_in_type_correct1: 
+      forall dlt x st ty, hm_ext dlt st ⊑ dlt x 
+      -> hm_ext dlt (SIG.subst_ident_in_type ty x st) ⊑ hm_ext dlt ty.
+  Proof.
+    induction ty; intros; unfold SIG.subst_ident_in_type; unfold SymTypes.my_set_mem; auto.
+    destruct (ident_eqb a x) eqn:Hax.
+    - unfold SymTypes.st_remove.  
+      apply ident_eqb_eq in Hax; subst. simpl.
+      destruct (ident_eq_dec x x) eqn:Hxx; auto.
+      * fold SymTypes.st_remove. apply (hm_ext_distributive dlt (SymTypes.st_remove x st) (SymTypes.st_remove x ty) (join (dlt x) (hm_ext dlt ty))).
+        + assert (hm_ext dlt (SymTypes.st_remove x st) ⊑ hm_ext dlt st) as Hez. {  apply st_remove_correct. }
+       apply Lat.order_trans with (y:=hm_ext dlt st); auto. 
+       apply Lat.order_trans with (y:=dlt x); auto.
+        + assert (hm_ext dlt (SymTypes.st_remove x ty) ⊑ hm_ext dlt ty) as Hez. {  apply st_remove_correct. }
+      apply Lat.order_trans with (y:=hm_ext dlt ty); auto.
+      * congruence.
+    - fold SymTypes.my_set_mem. apply ident_eqb_neq in Hax. simpl. destruct (ident_eq_dec x a) eqn:Hxa; try congruence.
+    unfold SIG.subst_ident_in_type in IHty. apply IHty in H as Hih.
+    destruct (SymTypes.my_set_mem x ty) eqn:Hmem; auto.
+    rewrite merge_comm2. assert (hm_ext dlt ([a] ⊔ (SymTypes.st_remove x ty ⊔ SymTypes.st_remove x st)) ⊑ join (hm_ext dlt [a]) (hm_ext dlt (SymTypes.st_remove x ty ⊔ SymTypes.st_remove x st))) as Htrans. { apply hm_ext_distributive2. }
+    apply order_trans with (y:=join (hm_ext dlt [a])
+               (hm_ext dlt (SymTypes.st_remove x ty ⊔ SymTypes.st_remove x st))); auto.
+    simpl. rewrite <- join_bottom_eq1.  apply join_least_upper_bound; auto. eapply order_trans; eauto.
+  Qed.
 
+  
+  Lemma subst_inp_ident_in_constraint_correct:
+    forall (c: constraint) (x: ident) (v: ST) c' st st', subst_inp_ident_in_constraint c x v st = OK (c' , st') ->
+    forall dlt, constraintSatisfiable dlt c -> 
+    hm_ext dlt v ⊑ dlt x ->constraintSatisfiable dlt c'.
+  Proof.
+    intros. unfold subst_inp_ident_in_constraint in H. destruct c eqn:Hc. destruct s0 eqn:Hs0; try (now inversion H). destruct s1 eqn:Hs1; try (now inversion H). destruct (ident_eqb x i) eqn:Hxi; try (now inversion H). unfold ret in H; inversion H.
+    unfold constraintSatisfiable in *. unfold satisfiable in *.
+    apply order_trans with (y:=hm_ext dlt s). eapply subst_ident_in_type_correct1; eauto. easy.
+  Qed.
+    
 
 End SIGNATURE_PROOFS.
