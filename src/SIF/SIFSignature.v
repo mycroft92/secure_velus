@@ -200,6 +200,38 @@ Import MergeFacts.
     unfold constraintSatisfiable in *. unfold satisfiable in *.
     apply order_trans with (y:=hm_ext dlt s). eapply subst_ident_in_type_correct1; eauto. easy.
   Qed.
+
+  Ltac monadInv :=
+    simpl in *;
+    unfold error in *;
+    match goal with
+    | H: OK _ = OK _ |- _ =>
+      inversion H; clear H; try subst
+    | H: Error _ = OK _ |- _ =>
+      discriminate
+    | H: ret _ _ = _ |- _ =>
+      unfold ret in H
+    | H: bind ?x ?f ?st = OK (?res, ?st') |- _ =>
+      let H1 := fresh "Hbind" in
+      let H2 := fresh "Hbind" in
+      eapply sec_bind_inv in H as [? [? [H1 H2]]]
+    | H: bind2 ?x ?f ?st = OK (?res, ?st') |- _ =>
+      let H1 := fresh "Hbind" in
+      let H2 := fresh "Hbind" in
+      eapply sec_bind2_inv in H as [? [? [? [H1 H2]]]]
+    end; simpl in *.
+
+
+  Lemma subst_ident_in_constraints_correct:
+    forall (cs: list constraint) (x: ident) (v: ST) cs' st st', subst_ident_in_constraints cs x v st = OK (cs' , st') ->
+      forall dlt, listSatisfiable dlt cs -> hm_ext dlt v ⊑ dlt x -> listSatisfiable dlt cs'.
+  Proof. 
+  induction cs; intros.
+  - simpl in H. unfold ret in H. inversion H; now subst.
+  - repeat monadInv. unfold listSatisfiable in *. inversion H0. apply Forall_cons.
+    + apply (subst_inp_ident_in_constraint_correct a x v x0 st x1); auto.
+    + now apply (IHcs x v x2 x1 st').
+  Qed.
     
 
 End SIGNATURE_PROOFS.
