@@ -236,17 +236,24 @@ Import MergeFacts.
   Definition inp_replace_cond dlt (x: ident) (v: ST): Prop := hm_ext dlt v ⊑ dlt x.
   Check Forall2.
   Locate Forall2.
+  Print Forall2_cons.
+
+  (* Lemma subst_constraints_inp_map_helper: 
+    forall (cs: list constraint) (xs: list ident) (vs: list ST) cs' st st' ->  *)
   (* Find the right statement here*)
   Lemma  subst_constraints_inp_map_correct:
-    forall (cs: list constraint) (xs: list ident) (vs: list ST) cs' st st', 
+    forall (xs: list ident) (cs: list constraint) (vs: list ST) cs' st st', 
       subst_constraints_inp_map cs xs vs st = OK (cs',st') -> 
         forall dlt, listSatisfiable dlt cs -> Forall2 (inp_replace_cond dlt) xs vs
         -> listSatisfiable dlt cs'.
   Proof.
-    induction xs; intros.
+    induction xs as [| x xs]; intros.
     - simpl in H; destruct vs eqn:E; inversion H; now subst.
-    -
-
+    - simpl in H. destruct vs eqn:E; inversion H.
+      *  monadInv. inversion  H1. unfold inp_replace_cond in H5.
+        apply (IHxs x0 l cs' x1 st'); auto. 
+        eapply subst_ident_in_constraints_correct; eauto.
+  Qed. 
 
     
 
