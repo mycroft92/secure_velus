@@ -101,8 +101,8 @@ Section Type_Substitutions.
     (match c with
     | (ty, [x']) => 
        if ident_eqb x x' then
-        ret (subst_ident ty x v, [v])
-       else ret (subst_ident ty x v, [x'])
+        ret (subst_ident_in_type ty x [v], [v])
+       else ret (subst_ident_in_type ty x [v], [x'])
     | _  => error (msg "Malformed constraint")
     end).
 
@@ -153,14 +153,14 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
 Import MergeFacts.
   Lemma st_remove_correct: forall dlt ty x, hm_ext dlt (SymTypes.st_remove x ty) ⊑ hm_ext dlt ty.
   Proof.
-  induction ty; intros.
-  - now unfold SymTypes.st_remove.
-  - unfold  SymTypes.st_remove. simpl.
-    destruct (ident_eq_dec x a) eqn:Hxa.
-    + subst x. assert (hm_ext dlt (remove ident_eq_dec a ty) ⊑ hm_ext dlt ty) as H1. { auto. }
-    assert (hm_ext dlt ty ⊑ join (dlt a) (hm_ext dlt ty)) as H2. { apply join_bound2. }
-    now eapply order_trans.
-    + simpl. auto.
+    induction ty; intros.
+    - now unfold SymTypes.st_remove.
+    - unfold  SymTypes.st_remove. simpl.
+      destruct (ident_eq_dec x a) eqn:Hxa.
+      + subst x. assert (hm_ext dlt (remove ident_eq_dec a ty) ⊑ hm_ext dlt ty) as H1. { auto. }
+      assert (hm_ext dlt ty ⊑ join (dlt a) (hm_ext dlt ty)) as H2. { apply join_bound2. }
+      now eapply order_trans.
+      + simpl. auto.
   Qed. 
 
 
@@ -226,12 +226,28 @@ Import MergeFacts.
     forall (cs: list constraint) (x: ident) (v: ST) cs' st st', subst_ident_in_constraints cs x v st = OK (cs' , st') ->
       forall dlt, listSatisfiable dlt cs -> hm_ext dlt v ⊑ dlt x -> listSatisfiable dlt cs'.
   Proof. 
-  induction cs; intros.
-  - simpl in H. unfold ret in H. inversion H; now subst.
-  - repeat monadInv. unfold listSatisfiable in *. inversion H0. apply Forall_cons.
-    + apply (subst_inp_ident_in_constraint_correct a x v x0 st x1); auto.
-    + now apply (IHcs x v x2 x1 st').
+    induction cs; intros.
+    - simpl in H. unfold ret in H. inversion H; now subst.
+    - repeat monadInv. unfold listSatisfiable in *. inversion H0. apply Forall_cons.
+      + apply (subst_inp_ident_in_constraint_correct a x v x0 st x1); auto.
+      + now apply (IHcs x v x2 x1 st').
   Qed.
+
+  Definition inp_replace_cond dlt (x: ident) (v: ST): Prop := hm_ext dlt v ⊑ dlt x.
+  Check Forall2.
+  Locate Forall2.
+  (* Find the right statement here*)
+  Lemma  subst_constraints_inp_map_correct:
+    forall (cs: list constraint) (xs: list ident) (vs: list ST) cs' st st', 
+      subst_constraints_inp_map cs xs vs st = OK (cs',st') -> 
+        forall dlt, listSatisfiable dlt cs -> Forall2 (inp_replace_cond dlt) xs vs
+        -> listSatisfiable dlt cs'.
+  Proof.
+    induction xs; intros.
+    - simpl in H; destruct vs eqn:E; inversion H; now subst.
+    -
+
+
     
 
 End SIGNATURE_PROOFS.

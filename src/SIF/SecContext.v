@@ -43,7 +43,7 @@ Section MySecMonad.
     fun '(n, sub1) =>
       let id := Ids.gensym Ids.sec n in
       OK (id, (Pos.succ n, sub1)). *) (* old formulation*)
-    Definition fresh_ident : Sec ident :=
+  Definition fresh_ident : Sec ident :=
     fun n =>
       let id := Ids.gensym Ids.sec n in
       OK (id, Pos.succ n).

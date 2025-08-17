@@ -100,8 +100,8 @@ Module Export Ids <: IDS.
   Proof.
     unfold gensym_prefs.
     repeat constructor; auto.
-    1,2:repeat rewrite not_in_cons; repeat split; auto.
-    1-3:prove_str_to_pos_neq.
+    1-3:repeat rewrite not_in_cons; repeat split; auto.
+    1-6:prove_str_to_pos_neq.
   Qed.
 
   Lemma self_not_out: self <> out.
@@ -166,7 +166,7 @@ Module Export Ids <: IDS.
       unfold atom, x; rewrite pos_to_str_equiv;
       rewrite not_mem_In_str; reflexivity
     end.
-
+  
   Lemma self_atom: atom self.
   Proof. prove_atom. Qed.
   Lemma out_atom: atom out.
@@ -193,6 +193,8 @@ Module Export Ids <: IDS.
   Lemma glob_atom: atom glob.
   Proof. prove_atom. Qed.
 
+  Lemma sec_atom: atom sec.
+  Proof. prove_atom. Qed.
   Lemma elab_atom: atom elab.
   Proof. prove_atom. Qed.
   Lemma norm1_atom: atom norm1.
@@ -208,7 +210,7 @@ Module Export Ids <: IDS.
   Lemma sec_clk_atom: atom sec_clk.
   Proof. prove_atom. Qed.
 
-  Hint Resolve step_atom reset_atom fun_id_atom sync_id_atom
+  Hint Resolve sec_atom step_atom reset_atom fun_id_atom sync_id_atom
        out_atom main_id_atom main_proved_id_atom main_sync_id_atom
        self_atom glob_atom elab_atom norm1_atom norm2_atom obc2c_atom sec_reset_atom sec_clk_atom.
 
