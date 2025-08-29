@@ -96,7 +96,7 @@ Section Type_Substitutions.
     | true  => (st_remove x ty) ⊔ [v]
     end.
 
-  Local Definition subst_ident_constraint (c: constraint) (x v: ident): Sec constraint :=
+  Definition subst_ident_constraint (c: constraint) (x v: ident): Sec constraint :=
     if ident_eqb x v then error (msg "Illegal same ident substitution") else
     (match c with
     | (ty, [x']) => 
@@ -106,7 +106,7 @@ Section Type_Substitutions.
     | _  => error (msg "Malformed constraint")
     end).
 
-  Local Definition subst_ident_constraints (cs: list constraint) (x v: ident): Sec (list constraint) :=
+  Definition subst_ident_constraints (cs: list constraint) (x v: ident): Sec (list constraint) :=
     mmap (fun c => subst_ident_constraint c x v) cs.
 
   Fixpoint subst_constraints_out_map (cs: list constraint) (xs: list ident) (vs: list ident): Sec (list constraint) :=
@@ -163,8 +163,6 @@ Import MergeFacts.
       + simpl. auto.
   Qed. 
 
-
-
   Lemma subst_ident_in_type_correct1: 
       forall dlt x st ty, hm_ext dlt st ⊑ dlt x 
       -> hm_ext dlt (SIG.subst_ident_in_type ty x st) ⊑ hm_ext dlt ty.
@@ -205,6 +203,7 @@ Import MergeFacts.
     simpl in *;
     unfold error in *;
     match goal with
+    | H: ident_eqb _ _ = true |- _ => rewrite ident_eqb_eq in H; subst
     | H: OK _ = OK _ |- _ =>
       inversion H; clear H; try subst
     | H: Error _ = OK _ |- _ =>
@@ -220,7 +219,6 @@ Import MergeFacts.
       let H2 := fresh "Hbind" in
       eapply sec_bind2_inv in H as [? [? [? [H1 H2]]]]
     end; simpl in *.
-
 
   Lemma subst_ident_in_constraints_correct:
     forall (cs: list constraint) (x: ident) (v: ST) cs' st st', subst_ident_in_constraints cs x v st = OK (cs' , st') ->
@@ -242,7 +240,7 @@ Import MergeFacts.
     forall (cs: list constraint) (xs: list ident) (vs: list ST) cs' st st' ->  *)
   (* Find the right statement here*)
   Lemma  subst_constraints_inp_map_correct:
-    forall (xs: list ident) (cs: list constraint) (vs: list ST) cs' st st', 
+    forall  (xs: list ident) (cs: list constraint) (vs: list ST) cs' st st', 
       subst_constraints_inp_map cs xs vs st = OK (cs',st') -> 
         forall dlt, listSatisfiable dlt cs -> Forall2 (inp_replace_cond dlt) xs vs
         -> listSatisfiable dlt cs'.
@@ -255,6 +253,17 @@ Import MergeFacts.
         eapply subst_ident_in_constraints_correct; eauto.
   Qed. 
 
+  Lemma subst_ident_constraint_correct: forall (c: constraint) (x v: ident) (c': constraint) st st', 
+      subst_ident_constraint c x v st = OK (c', st') -> forall dlt, constraintSatisfiable dlt c -> dlt x ⊑ dlt v -> constraintSatisfiable dlt c'.
+  Proof.
+    intros. unfold subst_ident_constraint in H. destruct (ident_eqb x v) eqn:Hxv; try inversion H.
+    destruct c as [lhs x'] eqn:Hc. destruct x' as [|x'' l] eqn:Hx'; try inversion H. destruct l eqn:Hl; inversion H; clear H3 H4 H5.
+    destruct (ident_eqb x x'') eqn:Hxx''; repeat monadInv; unfold satisfiable in *;
+    unfold hm_ext in H0; fold hm_ext in H0; rewrite <- join_bottom_eq1 in H0.
+    Admitted. 
+    
+
+  Lemma subst_constraints_out_map_correct: 
     
 
 End SIGNATURE_PROOFS.
