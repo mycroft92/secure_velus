@@ -220,6 +220,16 @@ Import MergeFacts.
       eapply sec_bind2_inv in H as [? [? [? [H1 H2]]]]
     end; simpl in *.
 
+  Ltac matchMonadInv :=
+    match goal with
+    | H: (match ?x with
+          | OK _ => _ 
+          | Error _ => _ end) |- _ => 
+      let H1 := fresh "Hmat" in
+      destruct x eqn:H1; monadInv
+    end.
+
+
   Lemma subst_ident_in_constraints_correct:
     forall (cs: list constraint) (x: ident) (v: ST) cs' st st', subst_ident_in_constraints cs x v st = OK (cs' , st') ->
       forall dlt, listSatisfiable dlt cs -> hm_ext dlt v ⊑ dlt x -> listSatisfiable dlt cs'.
@@ -263,7 +273,7 @@ Import MergeFacts.
     Admitted. 
     
 
-  Lemma subst_constraints_out_map_correct: 
+  (* Lemma subst_constraints_out_map_correct:  *)
     
 
 End SIGNATURE_PROOFS.
