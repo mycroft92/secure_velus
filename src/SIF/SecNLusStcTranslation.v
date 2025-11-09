@@ -230,8 +230,8 @@ Check res. *)
       -> forall (dlt: ident -> Lat.t), listSatisfiable dlt (nsig.(s_constraints))
       -> listSatisfiable dlt (ssig.(s_constraints)).
     Proof.
-       unfold Signature_consistent. intros. unfold translate_node in H. unfold generate_node_signature in H1. destruct init_state eqn:init; matchMonadInv.
-      -
+       unfold Signature_consistent. intros. unfold translate_node in H. unfold generate_node_signature in H1. unfold generate_system_signature in H2. repeat matchMonadInv.
+      
     Admitted. 
 
 
