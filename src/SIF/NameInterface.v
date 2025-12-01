@@ -47,7 +47,7 @@ Module Type  NameGen  (Import Ids   : IDS)
   Definition bind2 {A1 A2 B : Type} (x : Name (A1 * A2)) (f : A1 -> A2 -> Name B) : Name B :=
     fun st => match (x st) with
           | OK ((a1, a2), st') => f a1 a2 st'
-          | Error err => Error err
+          | Error err => Error err      
           end.
    Definition error (msg : errmsg) : Name A :=
     fun st => Error msg.
@@ -104,17 +104,67 @@ Module Type  NameGen  (Import Ids   : IDS)
   Import List.ListNotations.
 
 (* To insert into the map*)
-  Definition insert_env (k v: ident) (env: Env.t ident): Name (Env.t ident) :=
+  Definition insert_env  (env: Env.t ident) (k v: ident): Name (Env.t ident) :=
     let st:= Env.add k v env in
       ret st.
 
-  Definition fresh_insert (k: ident) (env: Env.t ident): Name (Env.t ident*ident) :=
+  Definition fresh_insert (env: Env.t ident) (k: ident) : Name (Env.t ident) :=
     if Env.mem k env then
      error (MSG "Key declared more than once ":: [CTX k])
     else
       do v <- fresh_ident_gen; 
-      do e <- insert_env k v env;
-      ret (e, v).
+      do e <- insert_env env k v;
+      ret e.
+  
+  Section mmap.
+  Context {A B : Type}.
+  Variable (f : A -> Name B).
+
+  Fixpoint mmap (l: list A) {struct l} : Name (list B) :=
+    match l with
+    | nil => ret nil
+    | hd :: tl => do hd' <- f hd; do tl' <- mmap tl; ret (hd' :: tl')
+    end.
+  End mmap.
+    
+  
+  Fixpoint fresh_map_list (ks: list ident) (env: Env.t ident): Name (Env.t ident) :=
+    match ks with
+    | nil => ret env
+    | k::ks' => (
+      do e' <- fresh_insert env k;
+      do e'' <- fresh_map_list ks' e';
+      ret e'')
+    end.
+
+  Record node_aux_names := mkNames {
+    nname : ident;
+    nclk: ident;
+    nrst: ident;
+  }.
+  
+  Print node.
+  (* Do something for clock and reset names, then their mappings*)
+  Definition generate_new_names_for_node (n: node) (e: Env.t ident): Name (Env.t ident * node_aux_names):=
+    do clk_name <- fresh_ident_gen;
+    do rst_name <- fresh_ident_gen;
+    do env' <- fresh_map_list ([clk_name; rst_name]  ++ (map fst  (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))) e;
+    ret (env', {| nname:= n.(n_name) ; nclk := clk_name ; nrst := rst_name|}).
+
+  Fixpoint generate_node_env' (ns: list node) (e: Env.t ident) (acc: list node_aux_names): Name (Env.t ident * list node_aux_names) :=
+    match ns with
+    | [] => ret (e, acc)
+    | n::ns' => 
+      do (e',r) <- generate_new_names_for_node n e;
+      do (e'', rs) <- generate_node_env' ns' e' (r::acc);
+      ret (e'', rs)
+    end.
+
+  Definition generate_node_env (ns: list node) : res (Env.t ident * list node_aux_names) :=
+    match generate_node_env' ns (Env.empty _) [] init_state with
+    | OK ((e, names), _) => OK (e,names)
+    | Error e => Error e
+    end.
 
    
 
