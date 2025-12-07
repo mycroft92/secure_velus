@@ -17,7 +17,7 @@ From compcert Require Import common.Errors.
 
 Open Scope list_scope.
 
-Module Type  NameGen  (Import Ids   : IDS)
+Module Type  NAMEGEN  (Import Ids   : IDS)
   (Import Op    : OPERATORS)
 
   (Import CESyn : CESYNTAX      Op)
@@ -166,6 +166,21 @@ Module Type  NameGen  (Import Ids   : IDS)
     | Error e => Error e
     end.
 
+  Fixpoint find_node_names (n: ident) (nnames: list node_aux_names) : res node_aux_names :=
+    match nnames with
+    | [] => Error (MSG "Node not processed! ":: [CTX n])
+    | name::nnames' => if (ident_eqb n name.(nname)) then OK name else find_node_names n nnames'
+    end.
    
+
+End NAMEGEN.
+
+
+Module Type  NameGen  (Ids   : IDS)
+  (Op    : OPERATORS)
+  (CESyn : CESYNTAX      Op)
+  (SynNL : NLSYNTAX  Ids Op CESyn) <: NAMEGEN Ids Op CESyn SynNL.
+
+Include NAMEGEN Ids Op CESyn SynNL.
 
 End NameGen.
