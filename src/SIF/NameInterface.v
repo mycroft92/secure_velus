@@ -172,6 +172,12 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     | name::nnames' => if (ident_eqb n name.(nname)) then OK name else find_node_names n nnames'
     end.
    
+  Definition get_node_aux (n: ident) (nnames: list node_aux_names) : res (ident*ident) :=
+    let nsearch := find_node_names n nnames in
+    match nsearch with
+    | OK nod => OK (nod.(nclk), nod.(nrst))
+    | Error e => Error e
+    end.
 
 End NAMEGEN.
 

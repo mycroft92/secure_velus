@@ -9,6 +9,7 @@ From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF.SecCETyping.
 From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SIFSignature.
+From Velus Require Import SIF.NameInterface.
 
 From Coq Require Import String. (*Required for Errors *)
 From compcert Require Import common.Errors.
@@ -24,6 +25,7 @@ Module Type SECNLUSTYPING
   (Import CESyn : CESYNTAX      Op)
   (Import SynNL : NLSYNTAX  Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
+  (Import Names : NAMEGEN Ids Op  CESyn SynNL)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn).
 
   (* expressions are already done in CETyping*)
@@ -46,7 +48,7 @@ Module Type SECNLUSTYPING
     Variable env: Env.t ident. 
     Variable base_ty: ident.
     Variable rst_ty : ident.
-
+    (*Perhaps need to transpose from base_ty and rst_ty to their original names?*)
 
     Definition generate_eqn_constraint (e: equation): Sec (list constraint) := 
       match e with
@@ -101,6 +103,7 @@ Module Type SECNLUSTYPING
 
   End SECEQNTYPING.
 
+
 Check generate_eqns_constraints.
   (* sec typing nodes *) 
   Section SECNODETYPING.
@@ -131,6 +134,7 @@ Check generate_eqns_constraints.
     Check generate_eqns_constraints.
     (* This should just return signature, not in a monad*)
     (* Standardize the names. Keep Glossary.*)
+    (*** This function changes in the sense that there is no name creation anymore*)
     Definition generate_node_signature (n: node): res signature :=
       match  (do (env_in,  inp)  <- insert_vars (List.map fst (n.(n_in))) (Env.empty _);
               do (env_out, out)  <- insert_vars (List.map fst n.(n_out)) env_in;
@@ -148,6 +152,21 @@ Check generate_eqns_constraints.
                 s_clk   := ck_id;
                 s_constraints := constraints|}
       end.   
+
+      Definition generate_node_sig (n: node) (env: Env.t ident) (aux_names: list node_aux_names) : res signature :=
+      match  (do (ck_id, rst_id) <- get_node_aux n aux_name;
+            
+              do constraints'    <- generate_eqns_constraints G env ck_id rst_id (n.(n_eqs));
+              ret (n_name n, inp, out, rst_id, ck_id, simplify constraints' locals, env_out)) init_state with
+      | Error e => Error e
+      | OK ((name, inp, out, rst_id, ck_id, constraints, _),_) => 
+          OK {| s_name  := name;
+                s_in    := inp;
+                s_out   := out;
+                s_reset := rst_id;
+                s_clk   := ck_id;
+                s_constraints := constraints|}
+      end.  
 
       (*How will type preservation here look like?*)
       (*a. If env generated is same for inputs, ouputs, clock and reset, then the constraints produced after simplify are equisatisfiable?
@@ -196,9 +215,10 @@ Module SecNLusTyping
   (CESyn : CESYNTAX      Op)
   (SynNL : NLSYNTAX  Ids Op CESyn)
   (SIG   : SIGNATURE   Ids SC)
-  (SECCETYPING: SECCETYPING Ids Op CESyn) <: SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING.
+  (Names : NAMEGEN Ids Op  CESyn SynNL)
+  (SECCETYPING: SECCETYPING Ids Op CESyn) <: SECNLUSTYPING Ids Op SC CESyn SynNL SIG Names SECCETYPING.
 
-Include SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING.
+Include SECNLUSTYPING Ids Op SC CESyn SynNL SIG Names SECCETYPING.
 
 
 End SecNLusTyping.
