@@ -23,6 +23,19 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   (Import CESyn : CESYNTAX      Op)
   (Import SynNL : NLSYNTAX  Ids Op CESyn).
 
+  Section Env_helpers.
+  Import List.ListNotations.
+  Open Scope option_monad_scope.
+  Fixpoint get_mappings (ns: list ident)  (env: Env.t ident) : option (list ident) :=
+    match ns with
+    | [] => Some []
+    | x::xs => do t  <- Env.find x env;
+              do ts <- get_mappings xs env;
+              Some (t::ts)
+    end.
+  End Env_helpers.
+  
+
   Section NameMonad.
   Context {A : Type}.
 
@@ -166,18 +179,23 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     | Error e => Error e
     end.
 
-  Fixpoint find_node_names (n: ident) (nnames: list node_aux_names) : res node_aux_names :=
+  Fixpoint find_node_names (n: ident) (nnames: list node_aux_names) : option node_aux_names :=
     match nnames with
-    | [] => Error (MSG "Node not processed! ":: [CTX n])
-    | name::nnames' => if (ident_eqb n name.(nname)) then OK name else find_node_names n nnames'
+    | [] => None
+    | name::nnames' => if (ident_eqb n name.(nname)) then Some name else find_node_names n nnames'
     end.
    
-  Definition get_node_aux (n: ident) (nnames: list node_aux_names) : res (ident*ident) :=
+  Definition get_node_aux (n: ident) (nnames: list node_aux_names) : option (ident*ident) :=
     let nsearch := find_node_names n nnames in
     match nsearch with
-    | OK nod => OK (nod.(nclk), nod.(nrst))
-    | Error e => Error e
+    | Some nod => Some (nod.(nclk), nod.(nrst))
+    | None => None
     end.
+  
+  (* Definition *)
+  Check rev.
+  Check Env.find.
+
 
 End NAMEGEN.
 
