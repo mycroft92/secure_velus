@@ -33,6 +33,14 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
               do ts <- get_mappings xs env;
               Some (t::ts)
     end.
+  
+  Fixpoint get_mappings_from_node {A: Type} (ns: list (ident * A) ) (env: Env.t ident) : option (list ident):=
+    match ns with
+    | [] => Some []
+    | (x,_)::xs => do t  <- Env.find x env;
+                   do ts <- get_mappings_from_node xs env;
+                   Some (t::ts)
+    end.
   End Env_helpers.
   
 
