@@ -152,16 +152,18 @@ Check generate_eqns_constraints.
                 s_clk   := ck_id;
                 s_constraints := constraints|}
       end.   
-
+      (*eliminate local vars*)
+      Check simplify.
       Definition generate_node_sig (n: node) (env: Env.t ident) (aux_names: list node_aux_names) : res signature :=
       match  (do (clk_id, rst_id) <- option_to_sec (get_node_aux (n.(n_name)) aux_names);
               do clk_type <- option_to_sec (Env.find clk_id env);
               do rst_type <- option_to_sec (Env.find rst_id env);
-              do inp <- option_to_sec (get_mappings (n.(n_in)) env);
-              do out <- option_to_sec (get_mappings (n.(n_out)) env);
+              do inp <- option_to_sec (get_mappings_from_node (n.(n_in)) env);
+              do out <- option_to_sec (get_mappings_from_node (n.(n_out)) env);
+              do locals <- option_to_sec (get_mappings_from_node (n.(n_vars)) env);
             
               do constraints'    <- generate_eqns_constraints G env clk_type rst_type (n.(n_eqs));
-              ret (n_name n, inp, out, rst_type, clk_type, constraints', env)) init_state with
+              ret (n_name n, inp, out, rst_type, clk_type, simplify constraints' locals, env)) init_state with
       | Error e => Error e
       | OK ((name, inp, out, rst_id, ck_id, constraints, _),_) => 
           OK {| s_name  := name;
@@ -181,6 +183,17 @@ Check generate_eqns_constraints.
 
   Section SECGLOBALTYPING.
     Open Scope error_monad_scope.
+(* New formulation*)
+    Fixpoint generate_all_signatures' (acc: list signature) (node_list: global) (env: Env.t ident) (aux_names: list node_aux_names) : res (list signature) :=
+      match node_list with
+      | [] => OK acc
+      | n::ns => 
+        do sig <- generate_node_sig acc n env aux_names;
+        generate_all_signatures' (sig::acc) ns env aux_names
+      end.
+    Definition generate_all_signatures (node_list: global) (env: Env.t ident) (aux_names: list node_aux_names): res (list signature) :=
+      generate_all_signatures' [] node_list env aux_names.
+(*End of new formulation*)
     Fixpoint generate_signatures' (acc: list signature) (node_list: global): res (list signature) :=
       match node_list with
       | [] => OK acc

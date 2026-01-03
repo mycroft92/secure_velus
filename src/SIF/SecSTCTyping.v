@@ -9,6 +9,7 @@ From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF.SecCETyping.
 From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SIFSignature.
+From Velus Require Import SIF.NameInterface.
 
 From Coq Require Import String. (*Required for Errors *)
 From compcert Require Import common.Errors.
@@ -24,6 +25,7 @@ Module Type SECSTCTYPING
   (Import CESyn : CESYNTAX Op)
   (Import SynStc: STCSYNTAX Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
+  (Import Names : NAMEGEN Ids Op  CESyn SynNL)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn).
   (* Check wst_exp. *)
 
