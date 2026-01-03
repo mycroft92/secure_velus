@@ -25,7 +25,6 @@ Module Type SECSTCTYPING
   (Import CESyn : CESYNTAX Op)
   (Import SynStc: STCSYNTAX Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
-  (Import Names : NAMEGEN Ids Op  CESyn SynNL)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn).
   (* Check wst_exp. *)
 

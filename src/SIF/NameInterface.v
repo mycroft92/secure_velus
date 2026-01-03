@@ -17,14 +17,26 @@ From compcert Require Import common.Errors.
 
 Open Scope list_scope.
 
-Module Type  NAMEGEN  (Import Ids   : IDS)
-  (Import Op    : OPERATORS)
+Record node_aux_names := mkNames {
+    nname : ident;
+    nclk: ident;
+    nrst: ident;
+}.
+Import List.ListNotations.
+Fixpoint find_node_names (n: ident) (nnames: list node_aux_names) : option node_aux_names :=
+    match nnames with
+    | [] => None
+    | name::nnames' => if (ident_eqb n name.(nname)) then Some name else find_node_names n nnames'
+    end.
+   
+Definition get_node_aux (n: ident) (nnames: list node_aux_names) : option (ident*ident) :=
+    let nsearch := find_node_names n nnames in
+    match nsearch with
+    | Some nod => Some (nod.(nclk), nod.(nrst))
+    | None => None
+    end.
+Section Env_helpers.
 
-  (Import CESyn : CESYNTAX      Op)
-  (Import SynNL : NLSYNTAX  Ids Op CESyn).
-
-  Section Env_helpers.
-  Import List.ListNotations.
   Open Scope option_monad_scope.
   Fixpoint get_mappings (ns: list ident)  (env: Env.t ident) : option (list ident) :=
     match ns with
@@ -41,8 +53,15 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
                    do ts <- get_mappings_from_node xs env;
                    Some (t::ts)
     end.
-  End Env_helpers.
-  
+End Env_helpers.
+
+Module Type  NAMEGEN  (Import Ids   : IDS)
+  (Import Op    : OPERATORS)
+
+  (Import CESyn : CESYNTAX      Op)
+  (Import SynNL : NLSYNTAX  Ids Op CESyn).
+
+ 
 
   Section NameMonad.
   Context {A : Type}.
@@ -122,7 +141,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
         
   End NAMEMONADNotations.
   Import NAMEMONADNotations.
-  Import List.ListNotations.
+  (* Import List.ListNotations. *)
 
 (* To insert into the map*)
   Definition insert_env  (env: Env.t ident) (k v: ident): Name (Env.t ident) :=
@@ -158,12 +177,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       ret e'')
     end.
 
-  Record node_aux_names := mkNames {
-    nname : ident;
-    nclk: ident;
-    nrst: ident;
-  }.
-  
+
   Print node.
   (* Do something for clock and reset names, then their mappings*)
   Definition generate_new_names_for_node (n: node) (e: Env.t ident): Name (Env.t ident * node_aux_names):=
@@ -187,18 +201,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     | Error e => Error e
     end.
 
-  Fixpoint find_node_names (n: ident) (nnames: list node_aux_names) : option node_aux_names :=
-    match nnames with
-    | [] => None
-    | name::nnames' => if (ident_eqb n name.(nname)) then Some name else find_node_names n nnames'
-    end.
-   
-  Definition get_node_aux (n: ident) (nnames: list node_aux_names) : option (ident*ident) :=
-    let nsearch := find_node_names n nnames in
-    match nsearch with
-    | Some nod => Some (nod.(nclk), nod.(nrst))
-    | None => None
-    end.
+
   
   (* Definition *)
   Check rev.

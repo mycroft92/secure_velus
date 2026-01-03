@@ -18,6 +18,8 @@ From compcert Require Import common.Errors.
 Import List.ListNotations.
 (*Definition msg_missing_ident (id : ident) : errmsg := MSG "Identifier: '" :: CTX id :: msg "' not found in context.".  *)
 
+(*Module is independent of names monad, uses some common definitions*)
+
 Module Type SECNLUSTYPING
   (Import Ids   : IDS)
   (Import Op    : OPERATORS)
@@ -25,7 +27,6 @@ Module Type SECNLUSTYPING
   (Import CESyn : CESYNTAX      Op)
   (Import SynNL : NLSYNTAX  Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
-  (Import Names : NAMEGEN Ids Op  CESyn SynNL)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn).
 
   (* expressions are already done in CETyping*)
@@ -232,10 +233,10 @@ Module SecNLusTyping
   (CESyn : CESYNTAX      Op)
   (SynNL : NLSYNTAX  Ids Op CESyn)
   (SIG   : SIGNATURE   Ids SC)
-  (Names : NAMEGEN Ids Op  CESyn SynNL)
-  (SECCETYPING: SECCETYPING Ids Op CESyn) <: SECNLUSTYPING Ids Op SC CESyn SynNL SIG Names SECCETYPING.
+  (* (Names : NAMEGEN Ids Op  CESyn SynNL) *)
+  (SECCETYPING: SECCETYPING Ids Op CESyn) <: SECNLUSTYPING Ids Op SC CESyn SynNL SIG  SECCETYPING.
 
-Include SECNLUSTYPING Ids Op SC CESyn SynNL SIG Names SECCETYPING.
+Include SECNLUSTYPING Ids Op SC CESyn SynNL SIG  SECCETYPING.
 
 
 End SecNLusTyping.
