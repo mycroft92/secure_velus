@@ -80,6 +80,7 @@ Module Type SECSTCTYPING
      end.
   
   Definition generate_reset_env trl : Sec (Env.t ident * list ident) := generate_reset_env' trl (Env.empty _) []. 
+  Definition generate_reset_environment trl env : Sec (Env.t ident * list ident) := generate_reset_env' trl env []. 
   End RESETHANDLER.
 
   (* sec typing equations   : mapping -> equation -> constraints  *)
@@ -228,7 +229,30 @@ Module Type SECSTCTYPING
                 s_clk   := ck_id;
                 s_constraints := constraints|}
       end.   
-
+      Check SynStc.s_name.
+      Check get_mappings_from_node.
+(*system_sig generation with env and aux_node_names*)
+(*Remember simplification*)
+(* Then we feed into correctness?*)
+    Definition generate_sys_signature (n: system) (env: Env.t ident) (aux_names: list node_aux_names) : res signature :=
+      match (do (clk_id, rst_id) <- option_to_sec (get_node_aux (n.(SynStc.s_name)) aux_names);
+              do clk_type <- option_to_sec (Env.find clk_id env);
+              do rst_type <- option_to_sec (Env.find rst_id env);
+              do inp <- option_to_sec (get_mappings_from_node (n.(SynStc.s_in)) env);
+              do out <- option_to_sec (get_mappings_from_node (n.(SynStc.s_out)) env);
+              do locals <- option_to_sec (get_mappings_from_node (n.(SynStc.s_vars)) env);
+              do (reset_env, rids) <- generate_reset_environment n.(SynStc.s_tcs) env;
+              do constraints' <- generate_trconstrs_constraints G env reset_env clk_type rst_type (n.(SynStc.s_tcs));
+              ret (inp, out, rst_type, clk_type, simplify constraints' (locals++rids), env)) init_state with
+      | Error e => Error e
+      | OK ((inp, out, rst_id, ck_id, constraints, env),_) => 
+          OK {| s_name  := SynStc.s_name n;
+                s_in    := inp;
+                s_out   := out;
+                s_reset := rst_id;
+                s_clk   := ck_id;
+                s_constraints := constraints|}
+      end.  
   End SECSYSTYPING.
 
   Section SECPROGRAMTYPING.
