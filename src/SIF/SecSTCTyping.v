@@ -257,6 +257,18 @@ Module Type SECSTCTYPING
 
   Section SECPROGRAMTYPING.
     Open Scope error_monad_scope.
+(* New formulation*)
+    Fixpoint generate_all_sys_signatures' (acc: list signature) (sys_list: program) (env: Env.t ident) (aux_names: list node_aux_names) : res (list signature) :=
+      match sys_list with
+      | [] => OK acc
+      | n::ns => 
+        do sig <- generate_sys_signature acc n env aux_names;
+        generate_all_sys_signatures' (sig::acc) ns env aux_names
+      end.
+    Definition generate_all_sys_signatures (sys_list: program) (env: Env.t ident) (aux_names: list node_aux_names): res (list signature) :=
+      generate_all_sys_signatures' [] sys_list env aux_names.
+(*End of new formulation*)
+
     Fixpoint generate_signatures' (acc: list signature) (sys_list: program): res (list signature) :=
       match sys_list with
       | [] => OK acc
