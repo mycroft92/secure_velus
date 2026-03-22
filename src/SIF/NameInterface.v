@@ -76,15 +76,15 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   (* Definition initialize : ident -> Env.t ident -> sec_state := fun xi ev => (xi, ev).  *) (*old formulaton*)
   Definition initialize : ident -> name_state := fun xi  => xi.
   
-  Definition ret (x : A) : Name A := fun st =>  OK (x, st).
+  Definition NMret (x : A) : Name A := fun st =>  OK (x, st).
   
-  Definition bind {B : Type} (x : Name A) (f : A -> Name B) : Name B :=
+  Definition NMbind {B : Type} (x : Name A) (f : A -> Name B) : Name B :=
     fun st => match (x st) with
           | OK (a, st') => f a st'
           | Error err => Error err
           end.
   
-  Definition bind2 {A1 A2 B : Type} (x : Name (A1 * A2)) (f : A1 -> A2 -> Name B) : Name B :=
+  Definition NMbind2 {A1 A2 B : Type} (x : Name (A1 * A2)) (f : A1 -> A2 -> Name B) : Name B :=
     fun st => match (x st) with
           | OK ((a1, a2), st') => f a1 a2 st'
           | Error err => Error err      
@@ -109,22 +109,22 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     fun st => fun st' => OK (tt, st).  *)
   
   Lemma name_bind_inv {B} : forall (x : Name A) (f : A -> Name B) res st,
-      (bind x f) st = OK res ->
+      (NMbind x f) st = OK res ->
       exists y st'',
         x st = OK (y, st'') /\ f y st'' = OK res.
   Proof.
     intros * Hbind.
-    unfold bind in Hbind.
+    unfold NMbind in Hbind.
     destruct (x st) as [[y st'']|]; eauto. inv Hbind.
   Qed.
 
   Lemma name_bind2_inv {A1 A2 B} : forall (x : Name (A1 * A2)) (f : A1 -> A2 -> Name B) res st,
-      (bind2 x f) st = OK res ->
+      (NMbind2 x f) st = OK res ->
       exists y1 y2 st'',
         x st = OK ((y1, y2), st'') /\ f y1 y2 st'' = OK res.
   Proof.
     intros * Hbind.
-    unfold bind2 in Hbind.
+    unfold NMbind2 in Hbind.
    destruct (x st) as [[[y1 y2] st'']|]; eauto. inv Hbind.
   Qed.
 
@@ -132,11 +132,11 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
 
   Module NAMEMONADNotations.
     Notation "'do' X <- A ; B" :=
-      (bind A (fun X => B))
+      (NMbind A (fun X => B))
         (at level 200, X ident, A at level 100, B at level 200).
         
     Notation "'do' ( X , Y ) <- A ; B" :=
-      (bind2 A (fun X Y => B))
+      (NMbind2 A (fun X Y => B))
       (at level 200, X ident, Y ident, A at level 100, B at level 200).
         
   End NAMEMONADNotations.
@@ -146,7 +146,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
 (* To insert into the map*)
   Definition insert_env  (env: Env.t ident) (k v: ident): Name (Env.t ident) :=
     let st:= Env.add k v env in
-      ret st.
+      NMret st.
 
   Definition fresh_insert (env: Env.t ident) (k: ident) : Name (Env.t ident) :=
     if Env.mem k env then
@@ -154,7 +154,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     else
       do v <- fresh_ident_gen; 
       do e <- insert_env env k v;
-      ret e.
+      NMret e.
   
   Section mmap.
   Context {A B : Type}.
@@ -162,19 +162,19 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
 
   Fixpoint mmap (l: list A) {struct l} : Name (list B) :=
     match l with
-    | nil => ret nil
-    | hd :: tl => do hd' <- f hd; do tl' <- mmap tl; ret (hd' :: tl')
+    | nil => NMret nil
+    | hd :: tl => do hd' <- f hd; do tl' <- mmap tl; NMret (hd' :: tl')
     end.
   End mmap.
     
   
   Fixpoint fresh_map_list (ks: list ident) (env: Env.t ident): Name (Env.t ident) :=
     match ks with
-    | nil => ret env
+    | nil => NMret env
     | k::ks' => (
       do e' <- fresh_insert env k;
       do e'' <- fresh_map_list ks' e';
-      ret e'')
+      NMret e'')
     end.
 
 
@@ -184,15 +184,15 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     do clk_name <- fresh_ident_gen;
     do rst_name <- fresh_ident_gen;
     do env' <- fresh_map_list ([clk_name; rst_name]  ++ (map fst  (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))) e;
-    ret (env', {| nname:= n.(n_name) ; nclk := clk_name ; nrst := rst_name|}).
+    NMret (env', {| nname:= n.(n_name) ; nclk := clk_name ; nrst := rst_name|}).
 
   Fixpoint generate_node_env' (ns: list node) (e: Env.t ident) (acc: list node_aux_names): Name (Env.t ident * list node_aux_names) :=
     match ns with
-    | [] => ret (e, acc)
+    | [] => NMret (e, acc)
     | n::ns' => 
       do (e',r) <- generate_new_names_for_node n e;
       do (e'', rs) <- generate_node_env' ns' e' (r::acc);
-      ret (e'', rs)
+      NMret (e'', rs)
     end.
 
   Definition generate_node_env (ns: list node) : res (Env.t ident * list node_aux_names) :=
