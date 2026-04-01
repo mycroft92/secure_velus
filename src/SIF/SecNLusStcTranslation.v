@@ -169,7 +169,7 @@ Module Type SECNLUSSTCTRANSLATION
   End SECEQNPRES. 
 
   Section NODESYSPRES.
-
+  
    Ltac myMonadInv :=
     simpl in *;
     unfold error in *;
@@ -180,6 +180,7 @@ Module Type SECNLUSSTCTRANSLATION
       discriminate
     | H: ret _ _ = _ |- _ =>
       unfold ret in H
+    | H: Some _ = Some _ |- _ => inversion H; clear H; try subst
     | H: bind ?x ?f ?st = OK (?res, ?st') |- _ =>
       let H1 := fresh "Hbind" in
       let H2 := fresh "Hbind" in
@@ -198,6 +199,15 @@ Module Type SECNLUSSTCTRANSLATION
       eapply sec_bind2_inv in H as [? [? [? [H1 H2]]]]
     end; simpl in *.
 
+  Ltac destruct_match_slow :=
+    match goal with
+    | H: context [match ?x with
+          | Some _ => _ 
+          | None => _ end] |- _ =>
+      let H1 := fresh "Hmat" in 
+        destruct x eqn:H1; repeat myMonadInv; try easy
+  end.
+
   Ltac matchMonadInv :=
     
     match goal with
@@ -205,32 +215,37 @@ Module Type SECNLUSSTCTRANSLATION
           | OK _ => _ 
           | Error _ => _ end) = OK _ |- _ => 
       let H1 := fresh "Hmat" in
-       destruct x eqn:H1; repeat myMonadInv
+       destruct x eqn:H1 ;repeat myMonadInv
   
     | H: (match ?x with
           | OK _ => _ 
           | Error _ => _ end) = Error _ |- _ => 
       let H1 := fresh "Hmat" in
        destruct x eqn:H1; repeat myMonadInv
-    (* | H: context [match ?x with
-          | OK _ => _ 
-          | Error _ => _ end] |- _ => 
-      let H1 := fresh "Hmat" in
-       destruct x eqn:H1; repeat monadInv *)
     end.    
 
     Locate monadInv.
+    
     Theorem node_preserv: forall (n : node) (s: system), translate_node n = s 
       -> forall (G1 G2: secglobal), Signature_consistent G1 G2 
-      -> forall (nsig: signature), 
-            generate_node_signature G1 n = OK nsig 
+      -> forall (env: Env.t ident) (aux_names: list node_aux_names) (nsig: signature), 
+            generate_node_sig G1 n env aux_names = OK nsig 
       -> forall (ssig: signature),
-            generate_system_signature G2 s = OK ssig
+            generate_sys_signature G2 s env aux_names = OK ssig
       (*Interface types are the same*)
       -> forall (dlt: ident -> Lat.t), listSatisfiable dlt (nsig.(s_constraints))
       -> listSatisfiable dlt (ssig.(s_constraints)).
     Proof.
-       unfold Signature_consistent. intros. unfold translate_node in H. unfold generate_node_signature in H1. unfold generate_system_signature in H2. repeat matchMonadInv.
+       unfold Signature_consistent. intros. unfold translate_node in H. unfold generate_node_sig in H1. unfold generate_sys_signature in H2. unfold option_to_sec in *. repeat matchMonadInv. repeat destruct_match_slow.
+       (*Could be done better I think. I need to apply correctly and then the simplification should be just one way street*)
+       eapply eqns_preserv with 
+        (G2:=G2) 
+        (trs:=(translate_eqns (n_eqs n))) 
+        (rst_env:=x12) 
+        (sconst:=x15) 
+        (init_state2:=x14)
+        (dlt:=dlt) in Hbind13 as Hmain; eauto.
+       (* eapply eqns_preserv in Hbind13; eauto. *) (* From here on it should be easy proof.*)
       
     Admitted. 
 
