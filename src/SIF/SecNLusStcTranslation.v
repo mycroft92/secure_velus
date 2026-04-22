@@ -112,6 +112,8 @@ Module Type SECNLUSSTCTRANSLATION
     (* The signature consistency should make it easier in node-sec level preservation*)
     (* 1. Signatures consistency on inp, out, clk, rst.*)
     (* 2. The inits need to be "aligned", it is not necessary that they match because stc's fresh names are different from nlus's *)
+
+    (** Simpliyfy aggresively here*)
     forall (G1 G2: secglobal), Signature_consistent G1 G2 ->
     forall (e: equation) (trs: list trconstr), translate_eqn e = trs ->
     forall (env rst_env: Env.t ident)
@@ -122,12 +124,13 @@ Module Type SECNLUSSTCTRANSLATION
            (generate_trconstrs_constraints G2 env rst_env base_ty rst_ty trs init_state2) = OK (sconst, st2) ->
         forall (dlt: ident -> Lat.t), listSatisfiable dlt nconst -> listSatisfiable dlt sconst.
     Proof.
+    
       induction e; intros; 
        repeat myMonadInv.
        (*cexp case*)
        1:{eapply find_env_consistent in Hbind0; eauto. subst. unfold option_to_sec in *. destruct (assign_clk_type env base_ty c) eqn:clkty; destruct (assign_cexp_type env c0) eqn:cexpty;repeat myMonadInv;  now subst. }
        (* fby case*)
-       2:{ eapply find_env_consistent in Hbind0; eauto. subst. unfold option_to_sec in *. destruct (assign_clk_type env base_ty c) eqn:clkty; destruct (assign_exp_type env e) eqn:cexpty;repeat myMonadInv;  now subst. }
+       2:{ eapply find_env_consistent in Hbind0; eauto. subst. unfold option_to_sec in *. destruct (assign_clk_type env base_ty c) eqn:clkty; destruct (assign_exp_type env e) eqn:cexpty;repeat myMonadInv; now subst. }
       
       - simpl in H. destruct o eqn:rsto. destruct l; subst; simpl in H1.
         * repeat myMonadInv. now unfold listSatisfiable. 
@@ -238,6 +241,7 @@ Module Type SECNLUSSTCTRANSLATION
     Proof.
        unfold Signature_consistent. intros. unfold translate_node in H. unfold generate_node_sig in H1. unfold generate_sys_signature in H2. unfold option_to_sec in *. repeat matchMonadInv. repeat destruct_match_slow.
        (*Could be done better I think. I need to apply correctly and then the simplification should be just one way street*)
+       (* We need to say that we can extend dlt to dlt' that will satisfy eqns consistently when simplified eqns are satisfied.*)
        eapply eqns_preserv with 
         (G2:=G2) 
         (trs:=(translate_eqns (n_eqs n))) 
@@ -245,7 +249,13 @@ Module Type SECNLUSSTCTRANSLATION
         (sconst:=x15) 
         (init_state2:=x14)
         (dlt:=dlt) in Hbind13 as Hmain; eauto.
-       (* eapply eqns_preserv in Hbind13; eauto. *) (* From here on it should be easy proof.*)
+        - Eqns constraints -> simplified eqns constraints
+          |
+          statements consstraints -> simplified statement constraints
+        
+     (* Limit the dlt to only interface security variables.
+      - Needs equivalence of dlts only on interface security vars, same with the theorem statement
+      *)
       
     Admitted. 
 
