@@ -12,6 +12,9 @@ General instructions:
 - Avoid reading Obc, ObcToClight, StcToObc, Transcription folders. They are not relevant to the work we are doing for now.
 - Each phase is usually self-contained in a similarly named folder, except when moving from phase to phase
 - When you add a file/folder modify the vfiles to reflect the compilation, do a make clean and then configure with `./configure -clightgen x86_64-linux`. If existing files are modified, you don't need to do this step.
+- Update TODO.md whenever you perform a task (create it if needed)
+- Document every decision clearly before proceeding.
+- Before starting make a new branch called AI_version from the current state and then make your changes only in that branch. Merge only on approval
 
 Tasks to do:
 We are to implement the  paper mentioned as close as possible but the important thing is to prove the correctness (so you can take alternate design decisions if it lets you make the proof.)
