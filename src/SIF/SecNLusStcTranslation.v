@@ -397,17 +397,35 @@ Module Type SECNLUSSTCTRANSLATION
   End SECEQNPRES. 
 
   (** The node-level theorem simply instantiates the list-level result with the
-      scope that matters for the current development:
+      scope that matters for the current development. The proof is organised in
+      three layers:
 
-      - inputs
-      - outputs
-      - locals
-      - the node clock type
-      - the node reset type
-
-      Any STC-only reset-instance variables live outside this scope. *)
+      1. [node_preserv] is the core theorem. It works for one already-aligned
+         node/system pair and assumes the relevant environment lookups plus the
+         freshness of STC reset-instance variables.
+      2. The freshness and inversion lemmas below are used only to discharge
+         those assumptions when the environments and signatures come from the
+         generators in [NameInterface], [SecNLusTyping], and [SecSTCTyping].
+      3. [generated_node_preserv] packages that discharge for generated
+         signatures, and [found_system_preserv] is the lookup-based corollary
+         obtained from [find_system_translate]. *)
   Section NODESYSPRES.
 
+    (** Core node theorem.
+
+        This is the direct analogue of the list-level theorem [eqns_preserv]
+        for a translated node/system pair. All bookkeeping facts are explicit
+        in the premises:
+
+        - shared NLustre/STC interface lookups in the common environment;
+        - the chosen shared scope;
+        - the reset-instance environment produced on the STC side;
+        - freshness of reset-instance variables with respect to the shared
+          scope.
+
+        The more user-facing theorem [generated_node_preserv] below is obtained
+        by reconstructing these premises from the generated environments and
+        signatures. *)
     Theorem node_preserv:
       forall (n : node) (s: system) scope
              (G1 G2: secglobal)
@@ -432,7 +450,7 @@ Module Type SECNLUSSTCTRANSLATION
             find_env x reset_env st1 = OK (rst_inst, st2) ->
             ~ In rst_inst scope) ->
         generate_eqns_constraints G1 env clk_type rst_type n.(n_eqs) init_state = OK (nconst, st_n) ->
-        generate_trconstrs_constraints G2 env reset_env clk_type rst_type s.(SynStc.s_tcs) init_state = OK (sconst, st_s) ->
+        generate_trconstrs_constraints G2 env reset_env clk_type rst_type s.(SynStc.s_tcs) st_reset = OK (sconst, st_s) ->
         preserves_on scope nconst sconst.
     Proof.
       intros n s scope G1 G2 env aux_names clk_id rst_id clk_type rst_type
@@ -444,7 +462,483 @@ Module Type SECNLUSSTCTRANSLATION
       eapply eqns_preserv; eauto.
     Qed.
 
+    (** The lemmas in this block are only used to discharge the freshness side
+        conditions of [generated_node_preserv]. They establish that ordinary
+        security variables come from the [sec] namespace, while reset-instance
+        variables come from the disjoint [sec_reset] namespace. *)
+    Ltac myNameInv :=
+      simpl in *;
+      match goal with
+      | H: OK _ = OK _ |- _ =>
+        inversion H; clear H; try subst
+      | H: Error _ = OK _ |- _ =>
+        discriminate
+      | H: NMret _ _ = _ |- _ =>
+        unfold NMret in H
+      | H: NMbind ?x ?f ?st = OK ?res |- _ =>
+        let H1 := fresh "Hbind" in
+        let H2 := fresh "Hbind" in
+        eapply name_bind_inv in H as [? [? [H1 H2]]]
+      | H: NMbind2 ?x ?f ?st = OK ?res |- _ =>
+        let H1 := fresh "Hbind" in
+        let H2 := fresh "Hbind" in
+        eapply name_bind2_inv in H as [? [? [? [H1 H2]]]]
+      end; simpl in *.
 
+    Ltac mySecInv :=
+      simpl in *;
+      match goal with
+      | H: OK _ = OK _ |- _ =>
+        inversion H; clear H; try subst
+      | H: Error _ = OK _ |- _ =>
+        discriminate
+      | H: ret _ _ = _ |- _ =>
+        unfold ret in H
+      | H: bind ?x ?f ?st = OK ?res |- _ =>
+        let H1 := fresh "Hbind" in
+        let H2 := fresh "Hbind" in
+        eapply sec_bind_inv in H as [? [? [H1 H2]]]
+      | H: bind2 ?x ?f ?st = OK ?res |- _ =>
+        let H1 := fresh "Hbind" in
+        let H2 := fresh "Hbind" in
+        eapply sec_bind2_inv in H as [? [? [? [H1 H2]]]]
+      end; simpl in *.
+
+    Lemma fresh_insert_sec_range:
+      forall env k st env' st' x ty,
+        (forall y ty', Env.find y env = Some ty' -> exists n, ty' = Ids.gensym Ids.sec n) ->
+        fresh_insert env k st = OK (env', st') ->
+        Env.find x env' = Some ty ->
+        exists n, ty = Ids.gensym Ids.sec n.
+    Proof.
+      intros env k st env' st' x ty Henv Hins Hfind.
+      unfold fresh_insert in Hins.
+      destruct (Env.mem k env) eqn:Hmem; try discriminate.
+      eapply name_bind_inv in Hins as (v & st1 & Hfresh & Hins).
+      eapply name_bind_inv in Hins as (e & st2 & Hins0 & Hret).
+      unfold fresh_ident_gen in Hfresh.
+      inversion Hfresh; subst v st1.
+      unfold insert_env, NMret in Hins0.
+      inversion Hins0; subst e st2.
+      unfold NMret in Hret. inversion Hret. subst env' st'.
+      destruct (Pos.eq_dec x k) as [Heq|Hneq].
+      - subst. rewrite Env.gss in Hfind. inversion Hfind. subst.
+        eexists; reflexivity.
+      - rewrite Env.gso in Hfind; eauto.
+    Qed.
+
+    Lemma fresh_map_list_sec_range:
+      forall ks env st env' st' x ty,
+        (forall y ty', Env.find y env = Some ty' -> exists n, ty' = Ids.gensym Ids.sec n) ->
+        fresh_map_list ks env st = OK (env', st') ->
+        Env.find x env' = Some ty ->
+        exists n, ty = Ids.gensym Ids.sec n.
+    Proof.
+      induction ks as [|k ks IH]; intros env st env' st' x ty Henv Hmap Hfind.
+      - simpl in Hmap. inversion Hmap; subst. eauto.
+      - simpl in Hmap.
+        repeat myNameInv.
+        eapply IH; [|eauto|eauto].
+        intros y ty' Hy.
+        eapply fresh_insert_sec_range; eauto.
+    Qed.
+
+    Lemma generate_new_names_for_node_sec_range:
+      forall n env st env' aux st' x ty,
+        (forall y ty', Env.find y env = Some ty' -> exists m, ty' = Ids.gensym Ids.sec m) ->
+        generate_new_names_for_node n env st = OK ((env', aux), st') ->
+        Env.find x env' = Some ty ->
+        exists m, ty = Ids.gensym Ids.sec m.
+    Proof.
+      intros n env st env' aux st' x ty Henv Hgen Hfind.
+      unfold generate_new_names_for_node in Hgen.
+      eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+      eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+      eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+      unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
+      unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
+      unfold NMret in Hret. inversion Hret. subst env' aux st'.
+      eapply fresh_map_list_sec_range; eauto.
+    Qed.
+
+    Lemma generate_node_env_sec_range':
+      forall ns env acc st env' aux st' x ty,
+        (forall y ty', Env.find y env = Some ty' -> exists m, ty' = Ids.gensym Ids.sec m) ->
+        generate_node_env' ns env acc st = OK ((env', aux), st') ->
+        Env.find x env' = Some ty ->
+        exists m, ty = Ids.gensym Ids.sec m.
+    Proof.
+      induction ns as [|n ns IH]; intros env acc st env' aux st' x ty Henv Hgen Hfind.
+      - simpl in Hgen. inversion Hgen; subst. eauto.
+      - simpl in Hgen.
+        repeat myNameInv.
+        eapply IH; [|eauto|eauto].
+        intros y ty' Hy.
+        eapply generate_new_names_for_node_sec_range; eauto.
+    Qed.
+
+    Lemma generate_node_env_sec_range:
+      forall ns env aux x ty,
+        generate_node_env ns = OK (env, aux) ->
+        Env.find x env = Some ty ->
+        exists m, ty = Ids.gensym Ids.sec m.
+    Proof.
+      intros ns env aux x ty Hgen Hfind.
+      unfold generate_node_env in Hgen.
+      destruct (generate_node_env' ns (Env.empty _) nil init_state) as [[[env' aux'] st']|] eqn:Hgen'; try discriminate.
+      inversion Hgen; subst env aux.
+      eapply generate_node_env_sec_range'; eauto.
+      intros y ty' Hy.
+      rewrite Env.gempty in Hy. discriminate.
+    Qed.
+
+    Lemma fresh_reset_insert_sec_range:
+      forall env k st env' rst_inst st' x ty,
+        (forall y ty', Env.find y env = Some ty' -> exists n, ty' = Ids.gensym Ids.sec_reset n) ->
+        fresh_reset_insert k env st = OK ((env', rst_inst), st') ->
+        Env.find x env' = Some ty ->
+        exists n, ty = Ids.gensym Ids.sec_reset n.
+    Proof.
+      intros env k st env' rst_inst st' x ty Henv Hins Hfind.
+      unfold fresh_reset_insert in Hins.
+      destruct (Env.mem k env) eqn:Hmem; try discriminate.
+      eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
+      eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
+      unfold fresh_reset_ident in Hfresh.
+      inversion Hfresh; subst v st1.
+      unfold insert_env, ret in Hins0.
+      inversion Hins0; subst e st2.
+      unfold ret in Hret. inversion Hret. subst env' rst_inst st'.
+      destruct (Pos.eq_dec x k) as [Heq|Hneq].
+      - subst. rewrite Env.gss in Hfind. inversion Hfind. subst.
+        eexists; reflexivity.
+      - rewrite Env.gso in Hfind; eauto.
+    Qed.
+
+    Lemma generate_reset_env_range':
+      forall trs env acc st reset_env rids st' x ty,
+        (forall y ty', Env.find y env = Some ty' -> exists n, ty' = Ids.gensym Ids.sec_reset n) ->
+        generate_reset_env' trs env acc st = OK ((reset_env, rids), st') ->
+        Env.find x reset_env = Some ty ->
+        exists n, ty = Ids.gensym Ids.sec_reset n.
+    Proof.
+      induction trs as [|tr trs IH]; intros env acc st reset_env rids st' x ty Henv Hgen Hfind.
+      - simpl in Hgen. inversion Hgen; subst. eauto.
+      - simpl in Hgen.
+        destruct tr as [x0 ck ce|x0 ck e|x0 rck f|x0 xs ck b f exps].
+        1,2,4: eapply IH; eauto.
+        repeat mySecInv.
+        eapply IH; [|eauto|eauto].
+        intros y ty' Hy.
+        eapply fresh_reset_insert_sec_range; eauto.
+    Qed.
+
+    Lemma generate_reset_env_range:
+      forall trs reset_env rids st' x ty,
+        generate_reset_env trs init_state = OK ((reset_env, rids), st') ->
+        Env.find x reset_env = Some ty ->
+        exists n, ty = Ids.gensym Ids.sec_reset n.
+    Proof.
+      intros trs reset_env rids st' x ty Hgen Hfind.
+      unfold generate_reset_env in Hgen.
+      eapply generate_reset_env_range'; eauto.
+      intros y ty' Hy.
+      rewrite Env.gempty in Hy. discriminate.
+    Qed.
+
+    Lemma get_mappings_from_node_In:
+      forall A (xs: list (ident * A)) env tys ty,
+        get_mappings_from_node xs env = Some tys ->
+        In ty tys ->
+        exists x a, In (x, a) xs /\ Env.find x env = Some ty.
+    Proof.
+      induction xs as [|(x, a) xs IH]; intros env tys ty Hmap Hin.
+      - simpl in Hmap. inversion Hmap; subst. inversion Hin.
+      - simpl in Hmap.
+        destruct (Env.find x env) as [xty|] eqn:Hfind.
+        2: discriminate.
+        destruct (get_mappings_from_node xs env) as [tys'|] eqn:Hmaps.
+        2: discriminate.
+        inversion Hmap; subst tys.
+        simpl in Hin.
+        destruct Hin as [Heq|Hin];
+          [subst ty; exists x, a; split; [left; reflexivity|exact Hfind]
+          |specialize (IH env tys' ty Hmaps Hin) as IH';
+           destruct IH' as (x' & a' & Hin' & Hfind');
+           exists x', a'; split; [right; exact Hin'|exact Hfind']].
+    Qed.
+
+    Lemma node_scope_sec_range:
+      forall all_nodes env aux_names n
+             clk_id rst_id clk_type rst_type inp out locals ty,
+        generate_node_env all_nodes = OK (env, aux_names) ->
+        get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
+        Env.find clk_id env = Some clk_type ->
+        Env.find rst_id env = Some rst_type ->
+        get_mappings_from_node n.(n_in) env = Some inp ->
+        get_mappings_from_node n.(n_out) env = Some out ->
+        get_mappings_from_node n.(n_vars) env = Some locals ->
+        In ty (inp ++ out ++ locals ++ clk_type :: rst_type :: nil) ->
+        exists m, ty = Ids.gensym Ids.sec m.
+    Proof.
+      intros all_nodes env aux_names n clk_id rst_id clk_type rst_type inp out locals ty
+             Henvgen Haux Hclk Hrst Hinp Hout Hlocals Hin.
+      repeat rewrite in_app_iff in Hin.
+      destruct Hin as [Hin|[Hin|[Hin|[Hin|[Hin|[]]]]]].
+      - destruct (get_mappings_from_node_In _ _ _ _ _ Hinp Hin) as (x & a & _ & Hfind).
+        eapply generate_node_env_sec_range; eauto.
+      - destruct (get_mappings_from_node_In _ _ _ _ _ Hout Hin) as (x & a & _ & Hfind).
+        eapply generate_node_env_sec_range; eauto.
+      - destruct (get_mappings_from_node_In _ _ _ _ _ Hlocals Hin) as (x & a & _ & Hfind).
+        eapply generate_node_env_sec_range; eauto.
+      - subst. eapply generate_node_env_sec_range; eauto.
+      - subst. eapply generate_node_env_sec_range; eauto.
+    Qed.
+
+    (** The next two inversion lemmas package the operational content of the
+        generated NLustre/STC signatures. They let the node/system theorem talk
+        directly in terms of the underlying constraint generators, rather than
+        repeatedly unfolding the large monadic definitions. *)
+
+    Lemma generate_node_sig_inv:
+      forall G n env aux_names sig,
+        SECNLUSTYPING.generate_node_sig G n env aux_names = OK sig ->
+        exists clk_id rst_id clk_type rst_type inp out locals nconst st_n,
+          get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id)
+          /\ Env.find clk_id env = Some clk_type
+          /\ Env.find rst_id env = Some rst_type
+          /\ get_mappings_from_node n.(n_in) env = Some inp
+          /\ get_mappings_from_node n.(n_out) env = Some out
+          /\ get_mappings_from_node n.(n_vars) env = Some locals
+          /\ generate_eqns_constraints G env clk_type rst_type n.(n_eqs) init_state = OK (nconst, st_n)
+          /\ sig = {| s_name := n.(n_name);
+                      s_in := inp;
+                      s_out := out;
+                      s_reset := rst_type;
+                      s_clk := clk_type;
+                      s_constraints := SymTypes.simplify nconst locals |}.
+    Proof.
+      intros G n env aux_names sig Hsig.
+      unfold SECNLUSTYPING.generate_node_sig in Hsig.
+      lazymatch type of Hsig with
+      | context [match ?m with | OK _ => _ | Error _ => _ end = _] =>
+          remember m as gen_res eqn:Hgen
+      end.
+      destruct gen_res as [[packed st_res]|]; try discriminate.
+      destruct packed as [packed env0].
+      destruct packed as [packed packed_constraints].
+      destruct packed as [packed packed_clk_type].
+      destruct packed as [packed packed_rst_type].
+      destruct packed as [packed packed_out].
+      destruct packed as [name packed_inp].
+      simpl in Hsig.
+      inversion Hsig; clear Hsig; subst.
+      symmetry in Hgen.
+      eapply sec_bind2_inv in Hgen as (clk_id & rst_id & st_aux & Haux & Hgen).
+      eapply sec_bind_inv in Hgen as (clk_type & st_clk & Hclk & Hgen).
+      eapply sec_bind_inv in Hgen as (rst_type & st_rst & Hrst & Hgen).
+      eapply sec_bind_inv in Hgen as (inp & st_inp & Hinp & Hgen).
+      eapply sec_bind_inv in Hgen as (out & st_out & Hout & Hgen).
+      eapply sec_bind_inv in Hgen as (locals & st_locals & Hlocals & Hgen).
+      eapply sec_bind_inv in Hgen as (nconst & st_n & Hnconst & Hret).
+      unfold option_to_sec in Haux.
+      destruct (get_node_aux (n.(n_name)) aux_names) as [[clk_id0 rst_id0]|] eqn:Haux0; try discriminate.
+      inversion Haux; subst clk_id0 rst_id0 st_aux.
+      unfold option_to_sec in Hclk.
+      destruct (Env.find clk_id env) as [clk_type0|] eqn:Hclk0; try discriminate.
+      inversion Hclk; subst clk_type0 st_clk.
+      unfold option_to_sec in Hrst.
+      destruct (Env.find rst_id env) as [rst_type0|] eqn:Hrst0; try discriminate.
+      inversion Hrst; subst rst_type0 st_rst.
+      unfold option_to_sec in Hinp.
+      destruct (get_mappings_from_node (n.(n_in)) env) as [inp0|] eqn:Hinp0; try discriminate.
+      inversion Hinp; subst inp0 st_inp.
+      unfold option_to_sec in Hout.
+      destruct (get_mappings_from_node (n.(n_out)) env) as [out0|] eqn:Hout0; try discriminate.
+      inversion Hout; subst out0 st_out.
+      unfold option_to_sec in Hlocals.
+      destruct (get_mappings_from_node (n.(n_vars)) env) as [locals0|] eqn:Hlocals0; try discriminate.
+      inversion Hlocals; subst locals0 st_locals.
+      unfold ret in Hret. inversion Hret; subst.
+      exists clk_id, rst_id, packed_clk_type, packed_rst_type, packed_inp, packed_out, locals, nconst, st_res.
+      repeat split; eauto.
+    Qed.
+
+    Lemma generate_sys_signature_inv:
+      forall G s env aux_names sig,
+        SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+        exists clk_id rst_id clk_type rst_type inp out slocals
+               reset_env rids st_reset sconst st_s,
+          get_node_aux s.(SynStc.s_name) aux_names = Some (clk_id, rst_id)
+          /\ Env.find clk_id env = Some clk_type
+          /\ Env.find rst_id env = Some rst_type
+          /\ get_mappings_from_node s.(SynStc.s_in) env = Some inp
+          /\ get_mappings_from_node s.(SynStc.s_out) env = Some out
+          /\ get_mappings_from_node s.(SynStc.s_vars) env = Some slocals
+          /\ generate_reset_env s.(SynStc.s_tcs) init_state = OK ((reset_env, rids), st_reset)
+          /\ generate_trconstrs_constraints G env reset_env clk_type rst_type s.(SynStc.s_tcs) st_reset = OK (sconst, st_s)
+          /\ sig = {| s_name := s.(SynStc.s_name);
+                      s_in := inp;
+                      s_out := out;
+                      s_reset := rst_type;
+                      s_clk := clk_type;
+                      s_constraints := SymTypes.simplify sconst (slocals ++ rids) |}.
+    Proof.
+      intros G s env aux_names sig Hsig.
+      unfold SECSTCTYPING.generate_sys_signature in Hsig.
+      lazymatch type of Hsig with
+      | context [match ?m with | OK _ => _ | Error _ => _ end = _] =>
+          remember m as gen_res eqn:Hgen
+      end.
+      destruct gen_res as [[packed st_res]|]; try discriminate.
+      destruct packed as [packed env0].
+      destruct packed as [packed packed_constraints].
+      destruct packed as [packed packed_clk_type].
+      destruct packed as [packed packed_rst_type].
+      destruct packed as [packed_inp packed_out].
+      simpl in Hsig.
+      inversion Hsig; clear Hsig; subst.
+      symmetry in Hgen.
+      eapply sec_bind2_inv in Hgen as (clk_id & rst_id & st_aux & Haux & Hgen).
+      eapply sec_bind_inv in Hgen as (clk_type & st_clk & Hclk & Hgen).
+      eapply sec_bind_inv in Hgen as (rst_type & st_rst & Hrst & Hgen).
+      eapply sec_bind_inv in Hgen as (inp & st_inp & Hinp & Hgen).
+      eapply sec_bind_inv in Hgen as (out & st_out & Hout & Hgen).
+      eapply sec_bind_inv in Hgen as (slocals & st_locals & Hslocals & Hgen).
+      eapply sec_bind2_inv in Hgen as (reset_env & rids & st_reset & Hresetenv & Hgen).
+      eapply sec_bind_inv in Hgen as (sconst & st_s & Hsconst & Hret).
+      unfold option_to_sec in Haux.
+      destruct (get_node_aux (s.(SynStc.s_name)) aux_names) as [[clk_id0 rst_id0]|] eqn:Haux0; try discriminate.
+      inversion Haux; subst clk_id0 rst_id0 st_aux.
+      unfold option_to_sec in Hclk.
+      destruct (Env.find clk_id env) as [clk_type0|] eqn:Hclk0; try discriminate.
+      inversion Hclk; subst clk_type0 st_clk.
+      unfold option_to_sec in Hrst.
+      destruct (Env.find rst_id env) as [rst_type0|] eqn:Hrst0; try discriminate.
+      inversion Hrst; subst rst_type0 st_rst.
+      unfold option_to_sec in Hinp.
+      destruct (get_mappings_from_node (s.(SynStc.s_in)) env) as [inp0|] eqn:Hinp0; try discriminate.
+      inversion Hinp; subst inp0 st_inp.
+      unfold option_to_sec in Hout.
+      destruct (get_mappings_from_node (s.(SynStc.s_out)) env) as [out0|] eqn:Hout0; try discriminate.
+      inversion Hout; subst out0 st_out.
+      unfold option_to_sec in Hslocals.
+      destruct (get_mappings_from_node (s.(SynStc.s_vars)) env) as [slocals0|] eqn:Hslocals0; try discriminate.
+      inversion Hslocals; subst slocals0 st_locals.
+      unfold ret in Hret. inversion Hret; subst.
+      exists clk_id, rst_id, packed_clk_type, packed_rst_type, packed_inp, packed_out, slocals, reset_env, rids, st_reset, sconst, st_res.
+      repeat split; eauto.
+    Qed.
+
+    (** Generated-node theorem.
+
+        This theorem reconstructs the explicit premises of [node_preserv] from
+        the generated environment and the two generated signatures. Its proof
+        proceeds as follows:
+
+        - [generate_node_sig_inv] and [generate_sys_signature_inv] recover the
+          raw lookup equalities and raw constraint generators hidden inside the
+          signature constructors;
+        - the freshness lemmas above show that reset-instance variables created
+          on the STC side cannot belong to the shared NLustre scope;
+        - the result is then discharged by a single application of
+          [node_preserv]. *)
+    Theorem generated_node_preserv:
+      forall all_nodes (n : node) (G1 G2: secglobal)
+             (env: Env.t ident) (aux_names: list node_aux_names)
+             (nsig ssig: signature),
+        Ids.sec <> Ids.sec_reset ->
+        Signature_consistent G1 G2 ->
+        (forall scope, preserves_on_app_closed scope) ->
+        generate_node_env all_nodes = OK (env, aux_names) ->
+        SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
+        SECSTCTYPING.generate_sys_signature G2 (translate_node n) env aux_names = OK ssig ->
+        exists nlocals slocals rids nconst sconst,
+          signature_fields_agree nsig ssig
+          /\ nsig.(s_constraints) = SymTypes.simplify nconst nlocals
+          /\ ssig.(s_constraints) = SymTypes.simplify sconst (slocals ++ rids)
+          /\ preserves_on (nsig.(s_in) ++ nsig.(s_out) ++ nlocals ++ nsig.(s_clk) :: nsig.(s_reset) :: nil)
+                          nconst sconst.
+    Proof.
+      intros all_nodes n G1 G2 env aux_names nsig ssig Hsec Hsig Happ Henvgen Hnsig Hssig.
+      edestruct generate_node_sig_inv as
+          (clk_id & rst_id & clk_type & rst_type & inp & out & nlocals & nconst & st_n
+           & Haux & Hclk & Hrst & Hinp & Hout & Hnlocals & Hnconst & Hnsigdef); eauto.
+      edestruct generate_sys_signature_inv as
+          (clk_id' & rst_id' & clk_type' & rst_type' & inp' & out' & slocals
+           & reset_env & rids & st_reset & sconst & st_s
+           & Haux' & Hclk' & Hrst' & Hinp' & Hout' & Hslocals & Hresetenv & Hsconst & Hssigdef); eauto.
+      simpl in Haux', Hinp', Hout', Hslocals, Hresetenv, Hsconst, Hssigdef.
+      rewrite Haux in Haux'. inversion Haux'. subst clk_id' rst_id'.
+      rewrite Hclk in Hclk'. inversion Hclk'. subst clk_type'.
+      rewrite Hrst in Hrst'. inversion Hrst'. subst rst_type'.
+      rewrite Hinp in Hinp'. inversion Hinp'. subst inp'.
+      rewrite Hout in Hout'. inversion Hout'. subst out'.
+      rewrite Hnsigdef in *.
+      rewrite Hssigdef in *.
+      exists nlocals, slocals, rids, nconst, sconst.
+      split.
+      - repeat split; reflexivity.
+      - split; [reflexivity|].
+        split; [reflexivity|].
+        assert (Hfresh:
+                  forall x rst_inst st1 st2,
+                    find_env x reset_env st1 = OK (rst_inst, st2) ->
+                    ~ In rst_inst (inp ++ out ++ nlocals ++ clk_type :: rst_type :: nil)).
+        {
+          intros x rst_inst st1 st2 Hfind Hin.
+          unfold find_env in Hfind.
+          destruct (Env.find x reset_env) as [rst_inst'|] eqn:Hrstfind; try discriminate.
+          inversion Hfind; clear Hfind; subst.
+          edestruct generate_reset_env_range as (nrst & Hrsteq); eauto.
+          edestruct node_scope_sec_range as (nsec & Hscopeeq); eauto.
+          rewrite Hrsteq in Hscopeeq.
+          apply gensym_injective in Hscopeeq as [Hpref _].
+          symmetry in Hpref. contradiction.
+        }
+        eapply node_preserv
+          with (scope := inp ++ out ++ nlocals ++ clk_type :: rst_type :: nil)
+               (G1 := G1) (G2 := G2)
+               (s := translate_node n)
+               (env := env) (reset_env := reset_env)
+               (aux_names := aux_names)
+               (clk_id := clk_id) (rst_id := rst_id)
+               (clk_type := clk_type) (rst_type := rst_type)
+               (inp := inp) (out := out) (locals := nlocals)
+               (rids := rids) (nconst := nconst) (sconst := sconst)
+               (st_reset := st_reset) (st_n := st_n) (st_s := st_s); eauto.
+    Qed.
+
+    (** System-lookup corollary.
+
+        Once [generated_node_preserv] is available, the only remaining work is
+        to rewrite a [find_system] hypothesis on the translated program back to
+        the corresponding source node using [find_system_translate]. *)
+    Corollary found_system_preserv:
+      forall all_nodes f n s prog' (G1 G2: secglobal)
+             (env: Env.t ident) (aux_names: list node_aux_names)
+             (nsig ssig: signature),
+        Ids.sec <> Ids.sec_reset ->
+        Signature_consistent G1 G2 ->
+        (forall scope, preserves_on_app_closed scope) ->
+        generate_node_env all_nodes = OK (env, aux_names) ->
+        find_node f all_nodes = Some n ->
+        SynStc.find_system f (translate all_nodes) = Some (s, prog') ->
+        SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
+        SECSTCTYPING.generate_sys_signature G2 s env aux_names = OK ssig ->
+        exists nlocals slocals rids nconst sconst,
+          signature_fields_agree nsig ssig
+          /\ nsig.(s_constraints) = SymTypes.simplify nconst nlocals
+          /\ ssig.(s_constraints) = SymTypes.simplify sconst (slocals ++ rids)
+          /\ preserves_on (nsig.(s_in) ++ nsig.(s_out) ++ nlocals ++ nsig.(s_clk) :: nsig.(s_reset) :: nil)
+                          nconst sconst.
+    Proof.
+      intros all_nodes f n s prog' G1 G2 env aux_names nsig ssig
+             Hsec Hsig Happ Henvgen Hfind Hsys Hnsig Hssig.
+      eapply find_system_translate in Hsys as (n' & Hfind' & Htr).
+      rewrite Hfind in Hfind'. inversion Hfind'. subst n'. subst s.
+      eapply generated_node_preserv; eauto.
+    Qed.
   End NODESYSPRES.
 
 
