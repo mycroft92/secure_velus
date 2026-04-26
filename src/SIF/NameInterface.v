@@ -1,8 +1,9 @@
-(* The point of this file is to create a consistent naming environment during NLustre typing phase.
+(** Shared security-name generation for the NLustre/STC translation proofs.
 
-These names woud be passed to STC as well. 
-I ma unsure how we are going to do Lus-Nlus but we focus on NLus to STC for now.
-Then onto non-interference*)
+    The generators in this file build one common environment of security
+    identifiers for node inputs, outputs, locals, and the extra clock/reset
+    auxiliaries. Both NLustre and STC typing reuse that environment so the
+    translation theorem can talk about a single naming discipline. *)
 From Velus Require Import Common.
 From Velus Require Import SecLattice.
 From Velus Require Import Environment.
@@ -66,14 +67,11 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   Section NameMonad.
   Context {A : Type}.
 
-  (* The state is current fresh number to use to generate the name 
-   * and the map of currently generated type for each program var *)
-  (* Definition sec_state : Type := (ident * Env.t ident). *) (* Old formulation*)
+  (* The state only tracks the next fresh index. The shared environment itself
+     is threaded explicitly through the generators below. *)
   Definition name_state : Type := ident.
   Definition Name A := name_state -> res (A * name_state).
-  (* Definition init_state : sec_state := (xH, Env.empty _). *) (*old formulation*)
   Definition init_state : name_state := xH.
-  (* Definition initialize : ident -> Env.t ident -> sec_state := fun xi ev => (xi, ev).  *) (*old formulaton*)
   Definition initialize : ident -> name_state := fun xi  => xi.
   
   Definition NMret (x : A) : Name A := fun st =>  OK (x, st).
@@ -92,10 +90,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
    Definition error (msg : errmsg) : Name A :=
     fun st => Error msg.
   
-  (* Definition fresh_ident : Sec ident :=
-    fun '(n, sub1) =>
-      let id := Ids.gensym Ids.sec n in
-      OK (id, (Pos.succ n, sub1)). *) (* old formulation*)
   Definition fresh_ident_gen : Name ident :=
     fun n =>
       let id := Ids.gensym Ids.sec n in
@@ -104,10 +98,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   Definition gets : Name name_state :=
     fun st =>  OK (st, st).
 
-  (* (*Just ignore st'. We instead have st coming *)
-  Definition puts : sec_state -> Sec unit :=
-    fun st => fun st' => OK (tt, st).  *)
-  
   Lemma name_bind_inv {B} : forall (x : Name A) (f : A -> Name B) res st,
       (NMbind x f) st = OK res ->
       exists y st'',
@@ -141,9 +131,9 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
         
   End NAMEMONADNotations.
   Import NAMEMONADNotations.
-  (* Import List.ListNotations. *)
 
-(* To insert into the map*)
+  (* Extend the shared security-name environment with one new program-variable
+     to security-variable mapping. *)
   Definition insert_env  (env: Env.t ident) (k v: ident): Name (Env.t ident) :=
     let st:= Env.add k v env in
       NMret st.
@@ -177,9 +167,8 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       NMret e'')
     end.
 
-
-  Print node.
-  (* Do something for clock and reset names, then their mappings*)
+  (* Allocate clock/reset auxiliaries first, then fresh security variables for
+     the node interface and locals in one shared environment. *)
   Definition generate_new_names_for_node (n: node) (e: Env.t ident): Name (Env.t ident * node_aux_names):=
     do clk_name <- fresh_ident_gen;
     do rst_name <- fresh_ident_gen;
@@ -195,18 +184,13 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       NMret (e'', rs)
     end.
 
+  (* Generate the shared environment and per-node auxiliary-name table for an
+     entire NLustre global. *)
   Definition generate_node_env (ns: list node) : res (Env.t ident * list node_aux_names) :=
     match generate_node_env' ns (Env.empty _) [] init_state with
     | OK ((e, names), _) => OK (e,names)
     | Error e => Error e
     end.
-
-
-  
-  (* Definition *)
-  Check rev.
-  Check Env.find.
-
 
 End NAMEGEN.
 

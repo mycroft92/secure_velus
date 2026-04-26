@@ -12,14 +12,11 @@ Module Type SECMONAD (Import Ids   : IDS).
 
 Section MySecMonad.
   Context {A : Type}.
-  (* The state is current fresh number to use to generate the name 
-   * and the map of currently generated type for each program var *)
-  (* Definition sec_state : Type := (ident * Env.t ident). *) (* Old formulation*)
+  (* The state only tracks the next fresh index. The shared typing context is
+     threaded explicitly through the generators that use this monad. *)
   Definition sec_state : Type := ident.
   Definition Sec A := sec_state -> res (A * sec_state).
-  (* Definition init_state : sec_state := (xH, Env.empty _). *) (*old formulation*)
   Definition init_state : sec_state := xH.
-  (* Definition initialize : ident -> Env.t ident -> sec_state := fun xi ev => (xi, ev).  *) (*old formulaton*)
   Definition initialize : ident -> sec_state := fun xi  => xi.
   
   Definition ret (x : A) : Sec A := fun st => OK (x, st).
@@ -39,10 +36,6 @@ Section MySecMonad.
   Definition error (msg : errmsg) : Sec A :=
     fun st => Error msg.
   
-  (* Definition fresh_ident : Sec ident :=
-    fun '(n, sub1) =>
-      let id := Ids.gensym Ids.sec n in
-      OK (id, (Pos.succ n, sub1)). *) (* old formulation*)
   Definition fresh_ident : Sec ident :=
     fun n =>
       let id := Ids.gensym Ids.sec n in
@@ -51,10 +44,6 @@ Section MySecMonad.
   Definition gets : Sec sec_state :=
     fun st => OK (st, st).
 
-  (* (*Just ignore st'. We instead have st coming *)
-  Definition puts : sec_state -> Sec unit :=
-    fun st => fun st' => OK (tt, st).  *)
-  
   Lemma sec_bind_inv {B} : forall (x : Sec A) (f : A -> Sec B) res st,
       (bind x f) st = OK res ->
       exists y st'',
@@ -90,7 +79,7 @@ End SECMONADNotations.
 Import SECMONADNotations.
 Import List.ListNotations.
 
-(* To insert into the map*)
+(* Extend the context with one fresh security variable. *)
 Definition insert_env (k v: ident) (env: Env.t ident): Sec (Env.t ident) :=
   let st:= Env.add k v env in
     ret st.
@@ -102,13 +91,6 @@ Definition fresh_insert (k: ident) (env: Env.t ident): Sec (Env.t ident*ident) :
     do v <- fresh_ident; 
     do e <- insert_env k v env;
     ret (e, v).
-
-(* Definition fresh_insert_with_key : ident -> Sec (ident*ident) :=
-  fun k =>
-    do v <- fresh_ident; 
-    do _ <- insert_ctxt k v;
-    ret (k,v). *)
-
 
 Section mmap.
   Context {A B : Type}.

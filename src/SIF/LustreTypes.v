@@ -19,7 +19,6 @@ From Velus Require Import SIF.SymTypes.
 *)
 
 
-(* 
 (* Canoncalize these and prove confluence*)
 (* Don't work with syntax, instead work with ST*list constraint format*)
 Inductive nonCanonST : Type :=
@@ -58,8 +57,6 @@ with canonicalizeConstraints cn : list constraint :=
       constraint_merge [(s1,s2)] (constraint_merge (constraint_merge c1 c2) cxs') 
   end.
 
-
-Print constraint.
 (* Needs to return a type and a constraint set *)
 (* Constraint merge needs to be smarter*)
 Fixpoint canonicalizeType (ty: nonCanonST) : (ST * (list constraint)) :=
@@ -84,9 +81,8 @@ with canonicalizeConstraint (cons: uConstraint) : (list constraint) :=
 
   end.
 
-
-(* Write the relation for constraint-type rewrite*)
-
-Inductive Rewrite_Rel (t: nonCanonST) (s: ST) : Prop :=.
-(* State and prove confluence for that relation*)
-Prove canonicalizeType satisfies the relation *)
+(*
+  Future work in this file:
+  - define the rewrite relation for non-canonical types;
+  - prove that canonicalization follows that relation and is confluent.
+*)

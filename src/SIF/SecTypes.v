@@ -577,33 +577,8 @@ Module Type SECTYPES(Import Lat: Lattice).
 
 End SECTYPES.
 
-(*
-- Syntactic subset checks might make most of the effort easier.
-- make types Canonical (order the identifiers within the list) 
-    - make sure the LUB properties hold
-- Confluence (* would need an inductive predicate along the lines of sorted*)
-- Soundness for the extended form (of the type equalities)
-- Add constraint simplification (refer to the notes on15th Oct)
-    a <= b, c <= b => a ⊔ c <= b 
-(*subset properties on lists required for this*)
-- New fresh monad representation, on "st ident"
-- Abstract on the fresh name, don't push the generated names into record
-*)
-(*
-- Refinement types, soundness of simplify
-- Lustre typing
-  - NLustre constraints to be ordered.
-  - Constraints equisatisfiability on the same DLT (ident -> sec ident)
-  - Use a helper function that changes 
-- Confluence
-- Subject reduction
-*)
-Print SECTYPES.
-
 Module SecTypes (Lat: Lattice) <: SECTYPES Lat.
 
   Include SECTYPES Lat.
 
 End SecTypes.
-
-Print SecTypes.

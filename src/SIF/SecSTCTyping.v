@@ -16,7 +16,6 @@ From compcert Require Import common.Errors.
 
 
 Import List.ListNotations.
-(*Definition msg_missing_ident (id : ident) : errmsg := MSG "Identifier: '" :: CTX id :: msg "' not found in context.".  *)
 
 Module Type SECSTCTYPING
   (Import Ids   : IDS)
@@ -26,11 +25,6 @@ Module Type SECSTCTYPING
   (Import SynStc: STCSYNTAX Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn).
-  (* Check wst_exp. *)
-
-  (* expressions are already done in CETyping*)
-  (* sec typing expressions : mapping -> expression -> sec type *)
-
   Import SECMONADNotations.
   
   Local Definition find_signature (f : ident) : secglobal -> option signature :=
@@ -43,9 +37,8 @@ Module Type SECSTCTYPING
     end.
 
   Section RESETHANDLER.
-  (***
-    This section collects all reset statements and assigns reset variables for their calls.
-  *)
+  (** This section collects STC reset statements and assigns one fresh
+      reset-instance type variable to each translated reset call. *)
   Fixpoint collect_reset_stmts' (trl: list trconstr) (acc: list trconstr) : list trconstr :=
     match trl with
     | [] => acc
@@ -56,7 +49,7 @@ Module Type SECSTCTYPING
         end)
     end.
 
-  Definition collect_reset_stmts trl := collect_reset_stmts' trl []. (* first part of gather_reset function in paper*)
+  Definition collect_reset_stmts trl := collect_reset_stmts' trl [].
 
   (* Reset-instance type variables are STC-specific auxiliaries.
      Keep them in their own namespace so they never clash with the
@@ -74,16 +67,14 @@ Module Type SECSTCTYPING
       do e <- insert_env k v env;
       ret (e, v).
 
-  (* Inserts a new reset type for reset function call into environment env. Returns the environemnt and list of reset types generated*)
+  (* Insert one reset-instance type variable for a translated [TcReset]. *)
   Definition assign_reset_type (tr: trconstr) (env: Env.t ident) : Sec (Env.t ident * ident) :=
     match tr with
     | TcReset x ck f => fresh_reset_insert x env
     | _ => error (msg "Not a reset statement! ")
     end. 
 
-  (* TcReset i r f *)
   Fixpoint generate_reset_env' (trl: list trconstr) (env: Env.t ident) (acc: list ident): Sec (Env.t ident * list ident) :=
-    (* let trl' := collect_reset_stmts trl in *)
     match trl with
     | [] => ret (env, acc)
     | t :: trl => 
@@ -95,19 +86,18 @@ Module Type SECSTCTYPING
         end)
      end.
   
-  Definition generate_reset_env trl : Sec (Env.t ident * list ident) := generate_reset_env' trl (Env.empty _) []. 
-  Definition generate_reset_environment trl env : Sec (Env.t ident * list ident) := generate_reset_env' trl env []. 
+  Definition generate_reset_env trl : Sec (Env.t ident * list ident) := generate_reset_env' trl (Env.empty _) [].
   End RESETHANDLER.
 
-  (* sec typing equations   : mapping -> equation -> constraints  *)
+  (** STC translated-constraint typing in the shared naming environment plus
+      the STC-only reset-instance environment. *)
   Section SECTRCONSTRTYPING.
     Variable G: secglobal.
     Variable env: Env.t ident. 
-    Variable reset_env: Env.t ident. (* context of resets*)
+    Variable reset_env: Env.t ident.
     Variable base_ty: ident.
     Variable rst_ty : ident.
-    Print trconstr.
-    (* We need a context of resets*)
+
     Definition generate_trconstr_constraint (e: trconstr): Sec (list constraint) := 
       match e with
       | TcDef x ck cexp  =>
@@ -120,11 +110,10 @@ Module Type SECSTCTYPING
           do expty <- option_to_sec (assign_exp_type  env exp);
           do xty   <- find_env x env;
           ret [(ckty ⊔ expty, [xty])]
-          (* TcCall needs some throat clearing in args to compute *)
       | TcCall _ [] _ _ _ _ => ret []
       | TcCall _ xs ck false f exps => 
          (match find_signature f G with
-          | Some n => (*error (msg "unimplemented") *)
+          | Some n =>
               do ckty   <- option_to_sec (assign_clk_type env base_ty ck);
               do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;              
               do outtyp <- mmap (fun x => find_env x env) xs;
@@ -134,7 +123,7 @@ Module Type SECSTCTYPING
 
       | TcCall x0 xs ck true f exps => 
          (match find_signature f G with
-          | Some n => (*error (msg "unimplemented")*) 
+          | Some n =>
               do ckty     <- option_to_sec (assign_clk_type env base_ty ck);
               do inptyp   <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do outtyp   <- mmap (fun x => find_env x env) xs;
@@ -142,10 +131,9 @@ Module Type SECSTCTYPING
             generate_constraints n inptyp ckty [rst_inst] outtyp
           | None   => error (MSG "Signature not found for: ":: [CTX f])
           end)
-      | TcReset x rck f => (*error (msg "Unimplemented")*)
+      | TcReset x rck f =>
           do rckty    <- option_to_sec (assign_clk_type env base_ty rck); (* κ''*)
           do rst_inst <- find_env x reset_env; (* κ⁰ in paper*)
-          (*Naming of types to be consistent*)
           ret [([rst_ty]  ⊔ rckty, [rst_inst])]
       end.
 
@@ -193,47 +181,20 @@ Module Type SECSTCTYPING
     
 
 
-    End SECTRCONSTRTYPING.
+  End SECTRCONSTRTYPING.
 
 
-  (* sec typing nodes *) 
   Section SECSYSTYPING.
     Variable G: secglobal.
-    (* Variable env: Env.t ident.  *)
-    (* Variable base_ty: ident.
-    Variable rst_ty : ident. *)
-    (* Record signature := mkSig {
-    n_name : ident; (*node name*)
-    n_in   : list ident; (*ordered list of input security types*)
-    n_out  : list ident; (*ordered list of output security types*)
 
-    n_reset: ident; (* We generate the name for the reset type and its corresponding value*)
-    n_clk  : ident; (* In a generated signature, this will always be named sec_clk*)(*The base clock is always empty list*)
-    (* We already have that Gamma \rel forall inp. inp, because the clock rules give us this directly. No need to have an additional \Gamma = GLB (inputs) *)
-    constraints : list constraint; (*constraints*)
-    }. *)
-    (* For each node
-      * inputs : G, env 
-      * create new Env with inputs type vars, clock_ty, reset_ty, output type vars, localvars
-      * run simplify on localvars types*)
-    (* Fixpoint generate_node_signature (n: node) : Sec signature := *)
-      
-      (*Check List.map.
-    Check insert_vars.
-    Print signature.
-    Print system.
-    Check SynStc.s_name.
-    (*Check n_name.*)
-    Check generate_trconstrs_constraints.
-         Check generate_reset_env. *)
-    (* This should just return signature, not in a monad*)
+    (* Legacy self-contained system-signature generation. *)
     Definition generate_system_signature (n: system): res signature :=
       match  (do (env_in,  inp)    <- insert_vars (List.map fst (n.(SynStc.s_in))) (Env.empty _);
               do (env_out, out)    <- insert_vars (List.map fst n.(SynStc.s_out)) env_in;
               do (env, locals)     <- insert_vars (List.map fst n.(SynStc.s_vars)) env_out;
               do ck_id             <- fresh_ident;
               do rst_id            <- fresh_ident;
-              do (reset_env, rids) <- generate_reset_env n.(SynStc.s_tcs); (* reset_env *) 
+              do (reset_env, rids) <- generate_reset_env n.(SynStc.s_tcs);
               do constraints'      <- generate_trconstrs_constraints G env reset_env ck_id rst_id (n.(SynStc.s_tcs));
               ret (SynStc.s_name n, inp, out, rst_id, ck_id, simplify constraints' (locals ++ rids))) init_state with
       | Error e => Error e
@@ -245,11 +206,10 @@ Module Type SECSTCTYPING
                 s_clk   := ck_id;
                 s_constraints := constraints|}
       end.   
-      Check SynStc.s_name.
-      Check get_mappings_from_node.
-(*system_sig generation with env and aux_node_names*)
-(*Remember simplification*)
-(* Then we feed into correctness?*)
+
+    (* Environment-driven system-signature generation used in the translation
+       preservation proofs. The main STC-specific addition is the separate
+       reset-instance environment threaded through [generate_reset_env]. *)
     Definition generate_sys_signature (n: system) (env: Env.t ident) (aux_names: list node_aux_names) : res signature :=
       match (do (clk_id, rst_id) <- option_to_sec (get_node_aux (n.(SynStc.s_name)) aux_names);
               do clk_type <- option_to_sec (Env.find clk_id env);
@@ -259,7 +219,7 @@ Module Type SECSTCTYPING
               do locals <- option_to_sec (get_mappings_from_node (n.(SynStc.s_vars)) env);
               do (reset_env, rids) <- generate_reset_env n.(SynStc.s_tcs);
               do constraints' <- generate_trconstrs_constraints G env reset_env clk_type rst_type (n.(SynStc.s_tcs));
-              ret (inp, out, rst_type, clk_type, simplify constraints' (locals++rids), env)) init_state with
+              ret (inp, out, rst_type, clk_type, simplify constraints' (locals ++ rids), env)) init_state with
       | Error e => Error e
       | OK ((inp, out, rst_id, ck_id, constraints, env),_) => 
           OK {| s_name  := SynStc.s_name n;
@@ -273,7 +233,7 @@ Module Type SECSTCTYPING
 
   Section SECPROGRAMTYPING.
     Open Scope error_monad_scope.
-(* New formulation*)
+
     Fixpoint generate_all_sys_signatures' (acc: list signature) (sys_list: program) (env: Env.t ident) (aux_names: list node_aux_names) : res (list signature) :=
       match sys_list with
       | [] => OK acc
@@ -283,7 +243,7 @@ Module Type SECSTCTYPING
       end.
     Definition generate_all_sys_signatures (sys_list: program) (env: Env.t ident) (aux_names: list node_aux_names): res (list signature) :=
       generate_all_sys_signatures' [] sys_list env aux_names.
-(*End of new formulation*)
+
 
     Fixpoint generate_signatures' (acc: list signature) (sys_list: program): res (list signature) :=
       match sys_list with
@@ -296,13 +256,6 @@ Module Type SECSTCTYPING
     Definition generate_signatures (sys_list: program) := generate_signatures' [] sys_list.
 
   End SECPROGRAMTYPING.
-  (**
-   * 1. New name generation scheme
-   *   a. Check elab->fresh monad usage
-   * 2. Sets up mapping from idents -> idents
-   * 3. Typing rules
-   * 4. Do we assume that signatures are part of node records or are they seperate records?
-   **) 
 End SECSTCTYPING.
 
 Module SecSTCTyping  
