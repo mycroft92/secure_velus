@@ -39,7 +39,7 @@ Module Type SECNLUSTYPING
 
   Definition find_env (x: ident) (env: Env.t ident): Sec ident :=
     match Env.find x env with
-    | Some x' => ret x
+    | Some x' => ret x'
     | None    => error (MSG "Cannot find identifier in env: " :: [CTX x])
     end.
 
@@ -77,19 +77,17 @@ Module Type SECNLUSTYPING
         2. compute the types of input expressions, clock and reset
         3. find the types of output expressions 
         4. substitute the types to generate fresh constraints*)
-      | EqApp xs ck f exps (Some (r,ckr)) => error (msg "unimplemented")
-         (* (match find_signature f G with
-          | Some n => 
-              (*error (msg "unimplemented")*)
-              (*I will add this once the proof goes through for no reset part*)
+      | EqApp xs ck f exps (Some (r,ckr)) =>
+         (match find_signature f G with
+          | Some n =>
               do ckty   <- option_to_sec (assign_clk_type env base_ty ck);
               do rty    <- find_env r env;
               do rstty  <- option_to_sec (assign_clk_type env rst_ty ckr);
-              do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;              
+              do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do outtyp <- mmap (fun x => find_env x env) xs;
               generate_constraints n inptyp ckty ([rty] ⊔ rstty) outtyp
           | None   => error (MSG "Signature not found for: ":: [CTX f])
-          end) *)
+          end)
       end.
 
   Fixpoint generate_eqns_constraints (es: list equation) : Sec (list constraint) :=

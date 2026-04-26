@@ -38,7 +38,7 @@ Module Type SECSTCTYPING
 
   Definition find_env (x: ident) (env: Env.t ident): Sec ident :=
     match Env.find x env with
-    | Some x' => ret x
+    | Some x' => ret x'
     | None    => error (MSG "Cannot find identifier in env: " :: [CTX x])
     end.
 
@@ -58,10 +58,26 @@ Module Type SECSTCTYPING
 
   Definition collect_reset_stmts trl := collect_reset_stmts' trl []. (* first part of gather_reset function in paper*)
 
+  (* Reset-instance type variables are STC-specific auxiliaries.
+     Keep them in their own namespace so they never clash with the
+     shared NLustre/STC interface/local type variables. *)
+  Definition fresh_reset_ident : Sec ident :=
+    fun n =>
+      let id := Ids.gensym Ids.sec_reset n in
+      OK (id, Pos.succ n).
+
+  Definition fresh_reset_insert (k: ident) (env: Env.t ident): Sec (Env.t ident * ident) :=
+    if Env.mem k env then
+      error (MSG "Key declared more than once " :: [CTX k])
+    else
+      do v <- fresh_reset_ident;
+      do e <- insert_env k v env;
+      ret (e, v).
+
   (* Inserts a new reset type for reset function call into environment env. Returns the environemnt and list of reset types generated*)
   Definition assign_reset_type (tr: trconstr) (env: Env.t ident) : Sec (Env.t ident * ident) :=
     match tr with
-    | TcReset x ck f => fresh_insert x env 
+    | TcReset x ck f => fresh_reset_insert x env
     | _ => error (msg "Not a reset statement! ")
     end. 
 
@@ -241,7 +257,7 @@ Module Type SECSTCTYPING
               do inp <- option_to_sec (get_mappings_from_node (n.(SynStc.s_in)) env);
               do out <- option_to_sec (get_mappings_from_node (n.(SynStc.s_out)) env);
               do locals <- option_to_sec (get_mappings_from_node (n.(SynStc.s_vars)) env);
-              do (reset_env, rids) <- generate_reset_environment n.(SynStc.s_tcs) env;
+              do (reset_env, rids) <- generate_reset_env n.(SynStc.s_tcs);
               do constraints' <- generate_trconstrs_constraints G env reset_env clk_type rst_type (n.(SynStc.s_tcs));
               ret (inp, out, rst_type, clk_type, simplify constraints' (locals++rids), env)) init_state with
       | Error e => Error e

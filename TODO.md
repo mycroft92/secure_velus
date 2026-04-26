@@ -1,0 +1,5 @@
+2026-04-22: Rewrote `AGENTS.md` into a cleaner, structured set of repository instructions.
+2026-04-22: Reviewed the paper against the current `SecNLusTyping.v`, `SecSTCTyping.v`, `NameInterface.v`, and `SecNLusStcTranslation.v` implementation, focusing on NLustre/STC typing and translation preservation gaps.
+2026-04-26: Re-enabled NLustre resettable-call typing, isolated STC reset-instance type variables into a separate `sec_reset` namespace and reset context, and reframed `SecNLusStcTranslation.v` around a weaker preservation relation based on agreement over shared variables plus existential extension on STC-only auxiliaries.
+2026-04-26: Replaced the remaining `Admitted` proofs in `SecNLusStcTranslation.v` with compiled proofs under a weaker call-preservation hypothesis and shared-scope `agree_on` / `preserves_on` formulation.
+2026-04-26: Cleaned comments in `SecNLusStcTranslation.v` and documented the proof flow from single equations to nodes for readers familiar with Coq but not necessarily Lustre.
