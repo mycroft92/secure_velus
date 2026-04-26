@@ -530,6 +530,126 @@ Module Type SECNLUSSTCTRANSLATION
         eapply sec_bind2_inv in H as [? [? [? [H1 H2]]]]
       end; simpl in *.
 
+    Lemma get_mappings_In:
+      forall xs env tys ty,
+        get_mappings xs env = Some tys ->
+        In ty tys ->
+        exists x, In x xs /\ Env.find x env = Some ty.
+    Proof.
+      induction xs as [|x xs IH]; intros env tys ty Hmap Hin.
+      - simpl in Hmap. inversion Hmap; subst. inversion Hin.
+      - simpl in Hmap.
+        destruct (Env.find x env) as [xty|] eqn:Hfind.
+        2: discriminate.
+        destruct (get_mappings xs env) as [tys'|] eqn:Hmaps.
+        2: discriminate.
+        inversion Hmap; subst tys.
+        simpl in Hin.
+        destruct Hin as [Heq|Hin].
+        + subst ty. exists x. split; [left; reflexivity|exact Hfind].
+        + specialize (IH env tys' ty Hmaps Hin) as (x' & Hin' & Hfind').
+          exists x'. split; [right; exact Hin'|exact Hfind'].
+    Qed.
+
+    Lemma get_mappings_app:
+      forall xs ys env txs tys,
+        get_mappings xs env = Some txs ->
+        get_mappings ys env = Some tys ->
+        get_mappings (xs ++ ys) env = Some (txs ++ tys).
+    Proof.
+      induction xs as [|x xs IH]; intros ys env txs tys Hxs Hys.
+      - simpl in Hxs. inversion Hxs; subst. exact Hys.
+      - simpl in Hxs.
+        destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
+        destruct (get_mappings xs env) as [txs'|] eqn:Htail; try discriminate.
+        inversion Hxs; subst txs.
+        simpl. rewrite Hfind.
+        rewrite (IH ys env txs' tys Htail Hys).
+        reflexivity.
+    Qed.
+
+    Lemma get_mappings_from_node_eq:
+      forall A (xs: list (ident * A)) env tys,
+        get_mappings_from_node xs env = Some tys ->
+        get_mappings (map fst xs) env = Some tys.
+    Proof.
+      induction xs as [|(x, a) xs IH]; intros env tys Hmap; simpl in *.
+      - inversion Hmap; reflexivity.
+      - destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
+        destruct (get_mappings_from_node xs env) as [tys'|] eqn:Htail; try discriminate.
+        inversion Hmap; subst tys.
+        simpl. rewrite Hfind. now apply IH.
+    Qed.
+
+    Lemma get_mappings_from_node_app:
+      forall A (xs ys: list (ident * A)) env txs tys,
+        get_mappings_from_node xs env = Some txs ->
+        get_mappings_from_node ys env = Some tys ->
+        get_mappings_from_node (xs ++ ys) env = Some (txs ++ tys).
+    Proof.
+      induction xs as [|(x, a) xs IH]; intros ys env txs tys Hxs Hys; simpl in *.
+      - inversion Hxs; subst. exact Hys.
+      - destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
+        destruct (get_mappings_from_node xs env) as [txs'|] eqn:Htail; try discriminate.
+        inversion Hxs; subst txs.
+        simpl. rewrite Hfind.
+        rewrite (IH ys env txs' tys Htail Hys).
+        reflexivity.
+    Qed.
+
+    Lemma fresh_map_list_preserves_find:
+      forall ks env st env' st' x ty,
+        fresh_map_list ks env st = OK (env', st') ->
+        Env.find x env = Some ty ->
+        Env.find x env' = Some ty.
+    Proof.
+      induction ks as [|k ks IH]; intros env st env' st' x ty Hmap Hfind.
+      - simpl in Hmap. inversion Hmap; subst. exact Hfind.
+      - simpl in Hmap.
+        unfold fresh_insert in Hmap.
+        destruct (Env.mem k env) eqn:Hmem; try discriminate.
+        eapply name_bind_inv in Hmap as (v & st1 & Hfresh & Hmap).
+        eapply name_bind_inv in Hmap as (env1 & st2 & Hins & Hmap).
+        unfold fresh_ident_gen in Hfresh. inversion Hfresh; subst v st1.
+        unfold insert_env, NMret in Hins. inversion Hins; subst env1 st2.
+        assert (Hxk : x <> k).
+        { intro Heq; subst x.
+          assert (Env.mem k env = true).
+          { apply Env.mem_1. unfold Env.In. eexists; exact Hfind. }
+          congruence. }
+        apply IH with (st := Pos.succ st); auto.
+        rewrite Env.gso; auto.
+    Qed.
+
+    Lemma generate_new_names_for_node_preserves_find:
+      forall n env st env' aux st' x ty,
+        generate_new_names_for_node n env st = OK ((env', aux), st') ->
+        Env.find x env = Some ty ->
+        Env.find x env' = Some ty.
+    Proof.
+      intros n env st env' aux st' x ty Hgen Hfind.
+      unfold generate_new_names_for_node in Hgen.
+      eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+      eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+      eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+      unfold NMret in Hret. inversion Hret; subst env' aux st'.
+      eapply fresh_map_list_preserves_find; eauto.
+    Qed.
+
+    Lemma generate_node_env'_preserves_find:
+      forall ns env acc st env' aux st' x ty,
+        generate_node_env' ns env acc st = OK ((env', aux), st') ->
+        Env.find x env = Some ty ->
+        Env.find x env' = Some ty.
+    Proof.
+      induction ns as [|n ns IH]; intros env acc st env' aux st' x ty Hgen Hfind.
+      - simpl in Hgen. inversion Hgen; subst. exact Hfind.
+      - simpl in Hgen.
+        eapply name_bind2_inv in Hgen as (env1 & r & st1 & Hstep & Hgen).
+        eapply IH; eauto.
+        eapply generate_new_names_for_node_preserves_find; eauto.
+    Qed.
+
     Lemma fresh_insert_sec_range:
       forall env k st env' st' x ty,
         (forall y ty', Env.find y env = Some ty' -> exists n, ty' = Ids.gensym Ids.sec n) ->
@@ -966,21 +1086,38 @@ Module Type SECNLUSSTCTRANSLATION
       eapply generated_node_preserv; eauto.
     Qed.
 
-    (** Source-side completeness for signature simplification.
+    (** Structural side conditions for the simplify-completeness bridge.
 
-        The stored node signature has already eliminated its local variables via
-        [SymTypes.simplify]. To recover the raw node constraints used by
-        [generated_node_preserv], we need a converse to [simplify_is_correct]:
-        every valuation satisfying the simplified signature constraints should
-        extend, without changing the visible signature scope, to one satisfying
-        the pre-simplification constraints. *)
-    Definition signature_simplify_complete (sig: signature) : Prop :=
-      forall raw elim dlt,
-        sig.(s_constraints) = SymTypes.simplify raw elim ->
-        listSatisfiable dlt sig.(s_constraints) ->
-        exists dlt',
-          agree_on (sig_scope sig) dlt dlt'
-          /\ listSatisfiable dlt' raw.
+        The generic theorem [SecTypes.simplify_complete] no longer needs a
+        signature-specific semantic axiom. Instead, the generated-node bridge
+        only requires the exact concrete facts that theorem consumes:
+
+        - the raw generated NLustre constraints are well formed;
+        - the variables eliminated by [simplify] are disjoint from the visible
+          signature scope.
+
+        This predicate packages those facts at the level of generated node
+        signatures. *)
+    Definition generated_node_simplify_ready
+      (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
+      forall G1 n nsig
+             clk_id rst_id clk_type rst_type inp out locals raw st_n,
+        SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
+        get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
+        Env.find clk_id env = Some clk_type ->
+        Env.find rst_id env = Some rst_type ->
+        get_mappings_from_node n.(n_in) env = Some inp ->
+        get_mappings_from_node n.(n_out) env = Some out ->
+        get_mappings_from_node n.(n_vars) env = Some locals ->
+        generate_eqns_constraints G1 env clk_type rst_type n.(n_eqs) init_state = OK (raw, st_n) ->
+        nsig = {| s_name := n.(n_name);
+                  s_in := inp;
+                  s_out := out;
+                  s_reset := rst_type;
+                  s_clk := clk_type;
+                  s_constraints := SymTypes.simplify raw locals |} ->
+        wf_constraints raw
+        /\ (forall x, In x locals -> ~ In x (sig_scope nsig)).
 
     Lemma sig_scope_in_raw_scope:
       forall sig locals x,
@@ -996,6 +1133,20 @@ Module Type SECNLUSSTCTRANSLATION
         try (now right; right; right; right; left).
     Qed.
 
+    (** This theorem is the concrete connection point between the generic
+        [SecTypes.simplify_complete] metatheory and the NLustre/STC
+        translation proof.
+
+        Flow:
+        - [generated_node_preserv] gives preservation for the raw NLustre/STC
+          constraints before signature simplification;
+        - [generated_node_simplify_ready] supplies the two structural facts
+          needed to invert the NLustre-side [simplify];
+        - [SecTypes.simplify_complete] reconstructs a satisfying valuation for
+          the raw NLustre constraints while preserving the visible signature
+          scope;
+        - [simplify_is_correct] pushes the resulting STC valuation back down
+          to the stored simplified STC signature. *)
     Theorem generated_signatures_preserved_from_simplify_bridge:
       forall all_nodes (n : node) (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
@@ -1006,18 +1157,28 @@ Module Type SECNLUSSTCTRANSLATION
         generate_node_env all_nodes = OK (env, aux_names) ->
         SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
         SECSTCTYPING.generate_sys_signature G2 (translate_node n) env aux_names = OK ssig ->
-        signature_simplify_complete nsig ->
+        generated_node_simplify_ready env aux_names ->
         signatures_preserved nsig ssig.
     Proof.
       intros all_nodes n G1 G2 env aux_names nsig ssig
-             Hsec Hcons Happ Henvgen Hnsig Hssig Hcomplete.
+             Hsec Hcons Happ Henvgen Hnsig Hssig Hready.
       edestruct generated_node_preserv as
           (nlocals & slocals & rids & nconst & sconst
            & Hfields & Hnsigcstr & Hssigcstr & Hrawpres); eauto.
+      edestruct generate_node_sig_inv as
+          (clk_id & rst_id & clk_type & rst_type & inp & out & locals & raw & st_n
+           & Haux & Hclk & Hrst & Hinp & Hout & Hlocals & Hraw & Hnsigdef); eauto.
+      destruct (Hready G1 n nsig
+                  clk_id rst_id clk_type rst_type inp out locals raw st_n
+                  Hnsig Haux Hclk Hrst Hinp Hout Hlocals Hraw Hnsigdef)
+        as [Hwf Hdisj].
+      rewrite Hnsigdef in Hnsigcstr.
+      inversion Hnsigcstr; subst nlocals nconst.
       split; [exact Hfields|].
       unfold preserves_on.
       intros dlt Hsat.
-      edestruct Hcomplete as (dlt1 & Hagree1 & Hrawsat1); eauto.
+      edestruct simplify_complete
+        as (dlt1 & Hagree1 & Hrawsat1); eauto.
       edestruct Hrawpres as (dlt2 & Hagree2 & Hrawsat2); eauto.
       exists dlt2. split.
       - intros x Hin.
@@ -1028,6 +1189,110 @@ Module Type SECNLUSSTCTRANSLATION
         eapply simplify_is_correct; eauto.
         eapply simplify_simplifyRel.
         reflexivity.
+    Qed.
+
+    (** Call-instantiation metatheory.
+
+        The remaining step from [signatures_preserved] to
+        [Signature_call_preserves] is semantic rather than translation-specific:
+        the stored signature constraints must behave well under call-time
+        substitution. The definitions in this block make the exact remaining
+        requirements explicit.
+
+        - [signature_scoped] says that the stored signature constraints mention
+          only the interface variables plus clock/reset.
+        - [call_subst_fresh] says that the actual caller-side names/types used
+          to instantiate a callee signature are fresh with respect to that
+          formal signature scope.
+
+        When both properties hold, the source and target signatures can be
+        instantiated against the same caller valuation without accidentally
+        capturing callee-local names. *)
+
+    Definition constraint_scope (c: constraint) : list ident :=
+      fst c ++ snd c.
+
+    Definition constraint_scoped (scope: list ident) (c: constraint) : Prop :=
+      forall x, In x (constraint_scope c) -> In x scope.
+
+    Definition constraints_scoped (scope: list ident) (cns: list constraint) : Prop :=
+      Forall (constraint_scoped scope) cns.
+
+    Definition signature_scoped (sig: signature) : Prop :=
+      constraints_scoped (sig_scope sig) sig.(s_constraints).
+
+    Definition type_fresh (scope: list ident) (st: ST) : Prop :=
+      Forall (fun x => ~ In x scope) st.
+
+    Definition types_fresh (scope: list ident) (sts: list ST) : Prop :=
+      Forall (type_fresh scope) sts.
+
+    Definition outputs_fresh (scope: list ident) (outs: list ident) : Prop :=
+      Forall (fun x => ~ In x scope) outs.
+
+    Definition call_subst_fresh
+      (sig: signature) (inptyp: list ST) (ckty rstty: ST) (outtyp: list ident) : Prop :=
+      types_fresh (sig_scope sig) inptyp
+      /\ type_fresh (sig_scope sig) ckty
+      /\ type_fresh (sig_scope sig) rstty
+      /\ outputs_fresh (sig_scope sig) outtyp.
+
+    (** Global freshness assumption for successful call instantiations.
+
+        This is lower-level than the previous [signature_calls_from_preservation]
+        placeholder: it talks only about the substitution interface exported by
+        [generate_constraints]. In the intended finished development, this
+        should be discharged from the shared name-generation environment in
+        [NameInterface] together with the fact that generated signatures are
+        scoped to their visible interface. *)
+    Definition successful_call_substitutions_fresh : Prop :=
+      forall sig inptyp ckty rstty outtyp cns st_init st',
+        generate_constraints sig inptyp ckty rstty outtyp st_init = OK (cns, st') ->
+        call_subst_fresh sig inptyp ckty rstty outtyp.
+
+    Definition upd_type (dlt: ident -> Lat.t) (x: ident) (st: ST) : ident -> Lat.t :=
+      fun y => if ident_eqb y x then hm_ext dlt st else dlt y.
+
+    Definition upd_ident (dlt: ident -> Lat.t) (x v: ident) : ident -> Lat.t :=
+      fun y => if ident_eqb y x then dlt v else dlt y.
+
+    Lemma join_idem_eq:
+      forall a : Lat.t, join a a = a.
+    Proof.
+      intro a.
+      apply eq_no_red.
+      apply order_antisym.
+      - apply join_least_upper_bound; apply order_refl; apply eq_refl.
+      - apply join_bound1.
+    Qed.
+
+    Lemma join_sym_eq:
+      forall a b : Lat.t, join a b = join b a.
+    Proof.
+      intros a b.
+      apply eq_no_red.
+      apply join_sym.
+    Qed.
+
+    Lemma join_assoc_eq:
+      forall a b c : Lat.t, join a (join b c) = join (join a b) c.
+    Proof.
+      intros a b c.
+      apply eq_no_red.
+      apply join_assoc.
+    Qed.
+
+    Lemma hm_ext_merge_eq:
+      forall dlt st1 st2,
+        hm_ext dlt (st1 ⊔ st2) = join (hm_ext dlt st1) (hm_ext dlt st2).
+    Proof.
+      intros dlt st1 st2.
+      apply eq_no_red.
+      apply order_antisym.
+      - apply hm_ext_distributive2.
+      - apply join_least_upper_bound.
+        + apply hm_ext_concat_l.
+        + apply hm_ext_concat_r.
     Qed.
 
     (** The remaining gap to a fully proved signature-step theorem is not in
@@ -1092,19 +1357,18 @@ Module Type SECNLUSSTCTRANSLATION
 
         The abstract step theorem above only needs two semantic ingredients:
 
-        - source-side completeness of signature simplification for every
-          generated NLustre signature;
+        - structural side conditions that let [SecTypes.simplify_complete]
+          reconstruct raw generated NLustre constraints from the stored
+          simplified signature;
         - call-level preservation derived from [signatures_preserved], which is
           where the later fresh-name instantiation metatheory belongs.
 
         The definitions below package those requirements explicitly so the
         public node/system/program theorems do not need to mention the opaque
         predicate [generated_signature_step_consistent]. *)
-    Definition generated_signature_simplify_complete
+    Definition generated_node_simplify_ready_global
       (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
-      forall G1 n nsig,
-        SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
-        signature_simplify_complete nsig.
+      generated_node_simplify_ready env aux_names.
 
     Definition generated_signatures_preserved
       (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
@@ -1114,29 +1378,53 @@ Module Type SECNLUSSTCTRANSLATION
         SECSTCTYPING.generate_sys_signature G2 (translate_node n) env aux_names = OK ssig ->
         signatures_preserved nsig ssig.
 
-    (** This is the second bridge in the proof plan sketched above.
-        Semantically, it says that call-time instantiation by
-        [generate_constraints] is compatible with the weak signature theorem.
-        In the intended final proof, this premise should be discharged from a
-        fresh-name instantiation lemma for calls. *)
-    Definition signature_calls_from_preservation : Prop :=
+    Definition generated_node_signatures_scoped
+      (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
+      forall G n nsig,
+        SECNLUSTYPING.generate_node_sig G n env aux_names = OK nsig ->
+        signature_scoped nsig.
+
+    Definition generated_system_signatures_scoped
+      (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
+      forall G s ssig,
+        SECSTCTYPING.generate_sys_signature G s env aux_names = OK ssig ->
+        signature_scoped ssig.
+
+    (** This is the semantic call bridge that still has to come from the
+        signature-instantiation layer.
+
+        Unlike the older placeholder [signature_calls_from_preservation], this
+        formulation exposes the actual low-level requirements:
+
+        - stored signatures must be scoped to their visible interface;
+        - successful instantiations produced by [generate_constraints] must use
+          caller-side names that are fresh with respect to that scope.
+
+        Once the corresponding metatheory is proved in the signature layer,
+        this premise should disappear entirely. *)
+    Definition signatures_preserved_calls : Prop :=
+      successful_call_substitutions_fresh ->
       forall nsig ssig,
+        signature_scoped nsig ->
+        signature_scoped ssig ->
         signatures_preserved nsig ssig ->
         Signature_call_preserves nsig ssig.
 
+    (** Generated signatures satisfy the weak signature theorem as soon as the
+        generated-node side condition needed by [simplify_complete] is
+        available. No separate semantic completeness premise remains. *)
     Corollary generated_signatures_preserved_from_simplify_complete:
       forall all_nodes env aux_names,
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_signature_simplify_complete env aux_names ->
+        generated_node_simplify_ready_global env aux_names ->
         generated_signatures_preserved env aux_names.
     Proof.
-      intros all_nodes env aux_names Hsec Happ Henvgen Hcomplete.
+      intros all_nodes env aux_names Hsec Happ Henvgen Hready.
       unfold generated_signatures_preserved.
       intros G1 G2 n nsig ssig Hcons Hnsig Hssig.
       eapply generated_signatures_preserved_from_simplify_bridge; eauto.
-      eapply Hcomplete; eauto.
     Qed.
 
     Corollary generated_signature_step_consistent_concrete:
@@ -1144,13 +1432,18 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_signature_simplify_complete env aux_names ->
-        signature_calls_from_preservation ->
+        generated_node_simplify_ready_global env aux_names ->
+        generated_node_signatures_scoped env aux_names ->
+        generated_system_signatures_scoped env aux_names ->
+        successful_call_substitutions_fresh ->
+        signatures_preserved_calls ->
         generated_signature_step_consistent env aux_names.
     Proof.
-      intros all_nodes env aux_names Hsec Happ Henvgen Hcomplete Hcall.
+      intros all_nodes env aux_names Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall.
       eapply generated_signature_step_consistent_from_bridges; eauto.
       eapply generated_signatures_preserved_from_simplify_complete; eauto.
+      intros nsig ssig Hpres.
+      eapply Hcall; eauto.
     Qed.
 
     (** Global-signature extension.
@@ -1280,14 +1573,17 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_signature_simplify_complete env aux_names ->
-        signature_calls_from_preservation ->
+        generated_node_simplify_ready_global env aux_names ->
+        generated_node_signatures_scoped env aux_names ->
+        generated_system_signatures_scoped env aux_names ->
+        successful_call_substitutions_fresh ->
+        signatures_preserved_calls ->
         SECNLUSTYPING.generate_all_signatures all_nodes env aux_names = OK G1 ->
         SECSTCTYPING.generate_all_sys_signatures (translate all_nodes) env aux_names = OK G2 ->
         Signature_consistent G1 G2.
     Proof.
       intros all_nodes env aux_names G1 G2
-             Hsec Happ Henvgen Hcomplete Hcall Hallnl Hallstc.
+             Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc.
       eapply generate_all_signatures_consistent_abstract; eauto.
       eapply generated_signature_step_consistent_concrete; eauto.
     Qed.
@@ -1310,8 +1606,11 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_signature_simplify_complete env aux_names ->
-        signature_calls_from_preservation ->
+        generated_node_simplify_ready_global env aux_names ->
+        generated_node_signatures_scoped env aux_names ->
+        generated_system_signatures_scoped env aux_names ->
+        successful_call_substitutions_fresh ->
+        signatures_preserved_calls ->
         SECNLUSTYPING.generate_all_signatures all_nodes env aux_names = OK G1 ->
         SECSTCTYPING.generate_all_sys_signatures (translate all_nodes) env aux_names = OK G2 ->
         SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
@@ -1324,9 +1623,9 @@ Module Type SECNLUSSTCTRANSLATION
                           nconst sconst.
     Proof.
       intros all_nodes n G1 G2 env aux_names nsig ssig
-             Hsec Happ Henvgen Hcomplete Hcall Hallnl Hallstc Hnsig Hssig.
+             Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc Hnsig Hssig.
       pose proof (generate_all_signatures_consistent
-                    all_nodes env aux_names G1 G2 Hsec Happ Henvgen Hcomplete Hcall Hallnl Hallstc) as Hcons.
+                    all_nodes env aux_names G1 G2 Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc) as Hcons.
       eapply generated_node_preserv; eauto.
     Qed.
 
@@ -1341,8 +1640,11 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_signature_simplify_complete env aux_names ->
-        signature_calls_from_preservation ->
+        generated_node_simplify_ready_global env aux_names ->
+        generated_node_signatures_scoped env aux_names ->
+        generated_system_signatures_scoped env aux_names ->
+        successful_call_substitutions_fresh ->
+        signatures_preserved_calls ->
         SECNLUSTYPING.generate_all_signatures all_nodes env aux_names = OK G1 ->
         SECSTCTYPING.generate_all_sys_signatures (translate all_nodes) env aux_names = OK G2 ->
         find_node f all_nodes = Some n ->
@@ -1357,9 +1659,9 @@ Module Type SECNLUSSTCTRANSLATION
                           nconst sconst.
     Proof.
       intros all_nodes f n s prog' G1 G2 env aux_names nsig ssig
-             Hsec Happ Henvgen Hcomplete Hcall Hallnl Hallstc Hfind Hsys Hnsig Hssig.
+             Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc Hfind Hsys Hnsig Hssig.
       pose proof (generate_all_signatures_consistent
-                    all_nodes env aux_names G1 G2 Hsec Happ Henvgen Hcomplete Hcall Hallnl Hallstc) as Hcons.
+                    all_nodes env aux_names G1 G2 Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc) as Hcons.
       eapply found_system_preserv; eauto.
     Qed.
 
@@ -1389,7 +1691,8 @@ Module Type SECNLUSSTCTRANSLATION
 
         The program theorem now exposes only the two concrete bridge premises:
 
-        - generated signatures admit the required simplify-completeness lift;
+        - generated NLustre signatures satisfy the concrete structural side
+          conditions needed by [SecTypes.simplify_complete];
         - weak signature preservation is stable under call-time instantiation.
 
         From those two ingredients, the abstract per-step compatibility
@@ -1402,14 +1705,17 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_signature_simplify_complete env aux_names ->
-        signature_calls_from_preservation ->
+        generated_node_simplify_ready_global env aux_names ->
+        generated_node_signatures_scoped env aux_names ->
+        generated_system_signatures_scoped env aux_names ->
+        successful_call_substitutions_fresh ->
+        signatures_preserved_calls ->
         SECNLUSTYPING.generate_all_signatures all_nodes env aux_names = OK G1 ->
         SECSTCTYPING.generate_all_sys_signatures (translate all_nodes) env aux_names = OK G2 ->
         generated_program_preserves all_nodes env aux_names G1 G2.
     Proof.
       intros all_nodes G1 G2 env aux_names
-             Hsec Happ Henvgen Hcomplete Hcall Hallnl Hallstc.
+             Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc.
       intros f n s prog' nsig ssig Hfind Hsys Hnsig Hssig.
       eapply found_system_preserv_global; eauto.
     Qed.
