@@ -873,6 +873,283 @@ Module Type SECTYPES(Import Lat: Lattice).
     eapply simplify_simplifyRel. reflexivity.
   Qed.
 
+  (** Generic scope metatheory for constraints and symbolic types.
+
+      These lemmas belong next to [findST], [subST], [subAll], and [simplify]:
+      they are independent of any particular source or target language and are
+      later reused both by the signature-instantiation layer and by the
+      NLustre/STC translation proof. *)
+
+  Definition constraint_scope (c: constraint) : list ident :=
+    fst c ++ snd c.
+
+  Definition constraint_scoped (scope: list ident) (c: constraint) : Prop :=
+    forall x, In x (constraint_scope c) -> In x scope.
+
+  Definition constraints_scoped (scope: list ident) (cns: list constraint) : Prop :=
+    Forall (constraint_scoped scope) cns.
+
+  Definition st_scoped (scope: list ident) (st: ST) : Prop :=
+    forall x, In x st -> In x scope.
+
+  Lemma st_scoped_weaken:
+    forall scope1 scope2 st,
+      incl scope1 scope2 ->
+      st_scoped scope1 st ->
+      st_scoped scope2 st.
+  Proof.
+    intros scope1 scope2 st Hincl Hsc x Hin.
+    apply Hincl, Hsc, Hin.
+  Qed.
+
+  Lemma scope_remove_choice:
+    forall pre post x y,
+      In y (pre ++ x :: post) ->
+      y = x \/ In y (pre ++ post).
+  Proof.
+    intros pre post x y Hin.
+    rewrite in_app_iff in Hin.
+    destruct Hin as [Hin|Hin].
+    - right. now apply in_or_app; left.
+    - simpl in Hin. destruct Hin as [Heq|Hin].
+      + now left.
+      + right. now apply in_or_app; right.
+  Qed.
+
+  Lemma in_merge_inv:
+    forall x a b,
+      In x (a ⊔ b) ->
+      In x a \/ In x b.
+  Proof.
+    intros x a.
+    induction a as [|a0 a IHa]; intros b Hin.
+    - rewrite merge_nil2 in Hin. now right.
+    - destruct b as [|b0 b].
+      + rewrite merge_nil in Hin. now left.
+      + simpl in Hin.
+        destruct (Pos.compare a0 b0) eqn:Hcmp.
+        * simpl in Hin. destruct Hin as [Hin|Hin].
+          { subst x. now left; left. }
+          apply IHa in Hin. destruct Hin as [Hin|Hin].
+          { now left; right. }
+          { now right. }
+        * simpl in Hin. destruct Hin as [Hin|Hin].
+          { subst x. now left; left. }
+          apply IHa in Hin. destruct Hin as [Hin|Hin].
+          { now left; right. }
+          { now right. }
+        * simpl in Hin. destruct Hin as [Hin|Hin].
+          { subst x. now right; left. }
+          apply IHa in Hin. destruct Hin as [Hin|Hin].
+          { now left. }
+          { now right; right. }
+  Qed.
+
+  Lemma st_remove_in_inv:
+    forall x y st,
+      In y (st_remove x st) ->
+      In y st /\ y <> x.
+  Proof.
+    intros x y st.
+    induction st as [|a st IH]; simpl; intros Hin.
+    - contradiction.
+    - destruct (ident_eq_dec x a) as [Heq|Hneq].
+      + subst a.
+        specialize (IH Hin) as [Hin' Hneq'].
+        split; [now right|exact Hneq'].
+      + simpl in Hin.
+        destruct Hin as [Heq|Hin].
+        * subst y. split; [now left|intro Heq'; contradiction].
+        * specialize (IH Hin) as [Hin' Hneq'].
+          split; [now right|exact Hneq'].
+  Qed.
+
+  Lemma st_scoped_remove_app:
+    forall pre post x st,
+      st_scoped (pre ++ x :: post) st ->
+      st_scoped (pre ++ post) (st_remove x st).
+  Proof.
+    intros pre post x st Hsc y Hin.
+    destruct (st_remove_in_inv _ _ _ Hin) as [Hin' Hneq].
+    specialize (Hsc y Hin').
+    destruct (scope_remove_choice pre post x y Hsc) as [Heq|Hin''].
+    - contradiction.
+    - exact Hin''.
+  Qed.
+
+  Lemma st_scoped_drop_absent_app:
+    forall pre post x st,
+      ~ In x st ->
+      st_scoped (pre ++ x :: post) st ->
+      st_scoped (pre ++ post) st.
+  Proof.
+    intros pre post x st Hnin Hsc y Hin.
+    destruct (scope_remove_choice pre post x y (Hsc _ Hin)) as [Heq|Hin'].
+    - subst y. contradiction.
+    - exact Hin'.
+  Qed.
+
+  Lemma st_scoped_merge:
+    forall scope st1 st2,
+      st_scoped scope st1 ->
+      st_scoped scope st2 ->
+      st_scoped scope (st1 ⊔ st2).
+  Proof.
+    intros scope st1 st2 H1 H2 x Hin.
+    destruct (in_merge_inv _ _ _ Hin) as [Hin'|Hin']; auto.
+  Qed.
+
+  Lemma constraint_scoped_lhs:
+    forall scope lhs rhs x,
+      constraint_scoped scope (lhs, rhs) ->
+      In x lhs ->
+      In x scope.
+  Proof.
+    intros scope lhs rhs x Hsc Hin.
+    apply Hsc. unfold constraint_scope. now apply in_or_app; left.
+  Qed.
+
+  Lemma constraint_scoped_rhs:
+    forall scope lhs rhs x,
+      constraint_scoped scope (lhs, rhs) ->
+      In x rhs ->
+      In x scope.
+  Proof.
+    intros scope lhs rhs x Hsc Hin.
+    apply Hsc. unfold constraint_scope. now apply in_or_app; right.
+  Qed.
+
+  Lemma st_scoped_singleton:
+    forall scope x,
+      In x scope ->
+      st_scoped scope [x].
+  Proof.
+    intros scope x Hin y Hy.
+    simpl in Hy. destruct Hy as [Heq|[]]. subst. exact Hin.
+  Qed.
+
+  Lemma findST_of_rhs_in:
+    forall cns d,
+      In [d] (map snd cns) ->
+      exists st, findST cns d = Some st.
+  Proof.
+    induction cns as [|[lhs rhs] cns IH]; intros d Hin.
+    - inversion Hin.
+    - simpl in Hin.
+      destruct rhs as [|r rhs'].
+      + apply IH. exact Hin.
+      + destruct rhs' as [|r' rhs''].
+        * simpl in Hin. destruct Hin as [Heq|Hin].
+          -- inversion Heq. subst r.
+             destruct (ident_eqb d d) eqn:Hd; [eexists; reflexivity|].
+             apply ident_eqb_neq in Hd. contradiction.
+          -- destruct (ident_eqb r d) eqn:Hrd.
+             ++ apply ident_eqb_eq in Hrd. subst r. eexists. reflexivity.
+             ++ apply IH in Hin as (st & Hfind). exists st. exact Hfind.
+        * apply IH. exact Hin.
+  Qed.
+
+  Lemma subST_scoped_elim:
+    forall scope ds d lhs st,
+      st_scoped (scope ++ d :: ds) lhs ->
+      st_scoped (scope ++ d :: ds) st ->
+      st_scoped (scope ++ ds) (subST lhs d st).
+  Proof.
+    intros scope ds d lhs st Hlhs Hst.
+    unfold subST.
+    destruct (st_mem d lhs) eqn:Hmem.
+    - destruct (st_mem d st) eqn:Hmem'.
+      + eapply st_scoped_merge.
+        * eapply st_scoped_remove_app; eauto.
+        * eapply st_scoped_remove_app; eauto.
+      + eapply st_scoped_merge.
+        * eapply st_scoped_remove_app; eauto.
+        * eapply st_scoped_drop_absent_app with (x := d); eauto.
+          intro Hin. apply my_set_mem_correct in Hin. rewrite Hin in Hmem'. discriminate.
+    - eapply st_scoped_drop_absent_app with (x := d); eauto.
+      intro Hin. apply my_set_mem_correct in Hin. rewrite Hin in Hmem. discriminate.
+  Qed.
+
+  Lemma subAll_scoped_elim:
+    forall scope ds cns d st,
+      constraints_scoped (scope ++ d :: ds) cns ->
+      st_scoped (scope ++ d :: ds) st ->
+      constraints_scoped (scope ++ ds) (subAll cns d st).
+  Proof.
+    induction cns as [|[lhs rhs] cns IH]; intros d st Hsc Hst; simpl.
+    - constructor.
+    - inversion Hsc as [|c0 cs0 Hc Hcs]; subst c0 cs0.
+      destruct rhs as [|r rhs'].
+      + apply IH; auto.
+      + destruct rhs' as [|r' rhs''].
+        * destruct (ident_eqb r d) eqn:Hrd.
+          -- apply IH; auto.
+          -- constructor.
+             ++ intros y Hin.
+                unfold constraint_scope in Hin. rewrite in_app_iff in Hin.
+                destruct Hin as [Hin|Hin].
+                ** eapply subST_scoped_elim; eauto.
+                ** simpl in Hin. destruct Hin as [Heq|[]]. subst y.
+                   apply ident_eqb_neq in Hrd.
+                   eapply constraint_scoped_rhs in Hc; eauto.
+                   eapply scope_remove_choice in Hc as [Heq|Hin'].
+                   --- contradiction.
+                   --- exact Hin'.
+             ++ apply IH; auto.
+        * apply IH; auto.
+  Qed.
+
+  Lemma subAll_preserves_other_rhs:
+    forall cns d st d',
+      d' <> d ->
+      In [d'] (map snd cns) ->
+      In [d'] (map snd (subAll cns d st)).
+  Proof.
+    induction cns as [|[lhs rhs] cns IH]; intros d st d' Hneq Hin; simpl in *.
+    - contradiction.
+    - destruct rhs as [|r rhs'].
+      + apply IH; auto.
+      + destruct rhs' as [|r' rhs''].
+        * simpl in Hin. destruct Hin as [Heq|Hin].
+          -- inversion Heq; subst r.
+             destruct (ident_eqb d' d) eqn:Hd.
+             ++ apply ident_eqb_eq in Hd. contradiction.
+             ++ destruct (ident_eqb d d) eqn:Hdself.
+                ** simpl. left. reflexivity.
+                ** apply ident_eqb_neq in Hdself. contradiction.
+          -- destruct (ident_eqb r d) eqn:Hrd.
+             ++ apply IH; auto.
+             ++ simpl. right. apply IH; auto.
+        * apply IH; auto.
+  Qed.
+
+  Theorem simplify_scoped:
+    forall scope ds cns,
+      NoDup ds ->
+      constraints_scoped (scope ++ ds) cns ->
+      (forall d, In d ds -> In [d] (map snd cns)) ->
+      constraints_scoped scope (simplify cns ds).
+  Proof.
+    intros scope ds.
+    induction ds as [|d ds IH]; intros cns Hnd Hsc Hdefs.
+    - simpl. exact Hsc.
+    - simpl.
+      assert (Hrhs : In [d] (map snd cns)) by (apply Hdefs; left; reflexivity).
+      destruct (findST_of_rhs_in _ _ Hrhs) as [st Hfind].
+      rewrite Hfind.
+      apply IH.
+      + now apply NoDup_cons_iff in Hnd.
+      + eapply subAll_scoped_elim; eauto.
+        eapply constraint_scoped_lhs.
+        2: apply find_correct; exact Hfind.
+        exact Hsc.
+      + intros d' Hin.
+        eapply subAll_preserves_other_rhs.
+        * intro Heq. subst d'.
+          apply NoDup_cons_iff in Hnd as [Hnin _]. contradiction.
+        * apply Hdefs. now right.
+  Qed.
+
 
 End SECTYPES.
 

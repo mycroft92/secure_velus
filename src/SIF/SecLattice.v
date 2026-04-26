@@ -119,6 +119,35 @@ Module Type Lattice.
       apply order_trans with (join y z); auto.
     Qed.
 
+    (** Equality-form lattice laws.
+
+        Most developments reason in the abstract [eq] relation, but some proof
+        scripts are cleaner when rewritten with Leibniz equality.  These
+        wrappers belong at the lattice layer rather than in downstream proofs. *)
+
+    Lemma join_idem_eq : forall x : t, join x x = x.
+    Proof.
+      intro x.
+      apply eq_no_red.
+      apply order_antisym.
+      - apply join_least_upper_bound; apply order_refl; apply eq_refl.
+      - apply join_bound1.
+    Qed.
+
+    Lemma join_sym_eq : forall x y : t, join x y = join y x.
+    Proof.
+      intros x y.
+      apply eq_no_red.
+      apply join_sym.
+    Qed.
+
+    Lemma join_assoc_eq : forall x y z : t, join x (join y z) = join (join x y) z.
+    Proof.
+      intros x y z.
+      apply eq_no_red.
+      apply join_assoc.
+    Qed.
+
     Lemma meet_eq1 :
       forall x y z, eq x y -> eq (meet x z) (meet y z).
     Proof.
@@ -236,4 +265,3 @@ Module Type Lattice.
 
 
 End Lattice.
-

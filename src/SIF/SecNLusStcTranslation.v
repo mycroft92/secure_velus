@@ -1557,17 +1557,16 @@ Module Type SECNLUSSTCTRANSLATION
         instantiated against the same caller valuation without accidentally
         capturing callee-local names. *)
 
-    Definition constraint_scope (c: constraint) : list ident :=
-      fst c ++ snd c.
+    (** Scope/substitution metatheory lives in [SIFSignature].
 
-    Definition constraint_scoped (scope: list ident) (c: constraint) : Prop :=
-      forall x, In x (constraint_scope c) -> In x scope.
+        The translation proof only keeps the [simplify]-specific lemmas local.
+        Everything about how call-time signature instantiation transforms
+        scoped constraints is proved once in the signature layer and imported
+        here through [SIG]. *)
 
-    Definition constraints_scoped (scope: list ident) (cns: list constraint) : Prop :=
-      Forall (constraint_scoped scope) cns.
-
-    Definition signature_scoped (sig: signature) : Prop :=
-      constraints_scoped (sig_scope sig) sig.(s_constraints).
+    (** Generic scope metatheory for [findST], [subST], [subAll], and
+        [simplify] now lives in [SecTypes].  The translation proof only uses
+        the imported lemmas, rather than carrying local copies here. *)
 
     Definition type_fresh (scope: list ident) (st: ST) : Prop :=
       Forall (fun x => ~ In x scope) st.
@@ -1769,17 +1768,19 @@ Module Type SECNLUSSTCTRANSLATION
         Signature_call_preserves nsig ssig.
 
     (** Generated signatures satisfy the weak signature theorem as soon as the
-        generated-node side condition needed by [simplify_complete] is
-        available. No separate semantic completeness premise remains. *)
+        remaining concrete call-shape premise reconstructs the derived
+        generated-node readiness predicate used by [simplify_complete]. *)
     Corollary generated_signatures_preserved_from_simplify_complete:
       forall all_nodes env aux_names,
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_simplify_ready_global env aux_names ->
+        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
         generated_signatures_preserved env aux_names.
     Proof.
-      intros all_nodes env aux_names Hsec Happ Henvgen Hready.
+      intros all_nodes env aux_names Hsec Happ Henvgen Hcallshape.
+      pose proof (generated_node_simplify_ready_global_from_call_shape
+                    all_nodes env aux_names Henvgen Hcallshape) as Hready.
       unfold generated_signatures_preserved.
       intros G1 G2 n nsig ssig Hcons Hnsig Hssig.
       eapply generated_signatures_preserved_from_simplify_bridge; eauto.
@@ -1790,14 +1791,14 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_simplify_ready_global env aux_names ->
+        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
         generated_node_signatures_scoped env aux_names ->
         generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
         generated_signature_step_consistent env aux_names.
     Proof.
-      intros all_nodes env aux_names Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall.
+      intros all_nodes env aux_names Hsec Happ Henvgen Hcallshape Hnscoped Hsscoped Hfreshcalls Hcall.
       eapply generated_signature_step_consistent_from_bridges; eauto.
       eapply generated_signatures_preserved_from_simplify_complete; eauto.
       intros nsig ssig Hpres.
@@ -1924,14 +1925,17 @@ Module Type SECNLUSSTCTRANSLATION
     (** Concrete global-signature theorem.
 
         This is the version intended for later use in the development: the
-        caller provides the two semantic bridge properties, and the abstract
-        accumulator invariant is rebuilt internally. *)
+        caller provides the concrete bridge premises, and the abstract
+        accumulator invariant is rebuilt internally.  The older derived
+        assumption [generated_node_simplify_ready_global] is no longer exposed:
+        it is reconstructed from [generate_node_env] and the remaining
+        call-shape premise. *)
     Corollary generate_all_signatures_consistent:
       forall all_nodes env aux_names G1 G2,
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_simplify_ready_global env aux_names ->
+        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
         generated_node_signatures_scoped env aux_names ->
         generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
@@ -1941,7 +1945,7 @@ Module Type SECNLUSSTCTRANSLATION
         Signature_consistent G1 G2.
     Proof.
       intros all_nodes env aux_names G1 G2
-             Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc.
+             Hsec Happ Henvgen Hcallshape Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc.
       eapply generate_all_signatures_consistent_abstract; eauto.
       eapply generated_signature_step_consistent_concrete; eauto.
     Qed.
@@ -1964,7 +1968,7 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_simplify_ready_global env aux_names ->
+        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
         generated_node_signatures_scoped env aux_names ->
         generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
@@ -1981,9 +1985,9 @@ Module Type SECNLUSSTCTRANSLATION
                           nconst sconst.
     Proof.
       intros all_nodes n G1 G2 env aux_names nsig ssig
-             Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc Hnsig Hssig.
+             Hsec Happ Henvgen Hcallshape Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc Hnsig Hssig.
       pose proof (generate_all_signatures_consistent
-                    all_nodes env aux_names G1 G2 Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc) as Hcons.
+                    all_nodes env aux_names G1 G2 Hsec Happ Henvgen Hcallshape Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc) as Hcons.
       eapply generated_node_preserv; eauto.
     Qed.
 
@@ -1998,7 +2002,7 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_simplify_ready_global env aux_names ->
+        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
         generated_node_signatures_scoped env aux_names ->
         generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
@@ -2017,9 +2021,9 @@ Module Type SECNLUSSTCTRANSLATION
                           nconst sconst.
     Proof.
       intros all_nodes f n s prog' G1 G2 env aux_names nsig ssig
-             Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc Hfind Hsys Hnsig Hssig.
+             Hsec Happ Henvgen Hcallshape Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc Hfind Hsys Hnsig Hssig.
       pose proof (generate_all_signatures_consistent
-                    all_nodes env aux_names G1 G2 Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc) as Hcons.
+                    all_nodes env aux_names G1 G2 Hsec Happ Henvgen Hcallshape Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc) as Hcons.
       eapply found_system_preserv; eauto.
     Qed.
 
@@ -2047,23 +2051,27 @@ Module Type SECNLUSSTCTRANSLATION
 
     (** Final program theorem.
 
-        The program theorem now exposes only the two concrete bridge premises:
+        The final program theorem no longer exposes the derived readiness
+        predicate [generated_node_simplify_ready_global].  Instead it keeps the
+        remaining lower-level premise that still has to be discharged above
+        this layer:
 
-        - generated NLustre signatures satisfy the concrete structural side
-          conditions needed by [SecTypes.simplify_complete];
+        - [SECNLUSTYPING.call_constraints_shape] for the shared generated env;
+        - generated NLustre/STC signatures are scoped to their visible
+          interfaces;
         - weak signature preservation is stable under call-time instantiation.
 
-        From those two ingredients, the abstract per-step compatibility
-        invariant is rebuilt internally, and every translated system in the
-        program satisfies the node-level raw preservation theorem without an
-        explicit [Signature_consistent] premise. *)
+        From those ingredients, the abstract per-step compatibility invariant
+        is rebuilt internally, and every translated system in the program
+        satisfies the node-level raw preservation theorem without an explicit
+        [Signature_consistent] premise. *)
     Theorem generated_program_preserv_global:
       forall all_nodes (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names),
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_simplify_ready_global env aux_names ->
+        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
         generated_node_signatures_scoped env aux_names ->
         generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
@@ -2073,7 +2081,7 @@ Module Type SECNLUSSTCTRANSLATION
         generated_program_preserves all_nodes env aux_names G1 G2.
     Proof.
       intros all_nodes G1 G2 env aux_names
-             Hsec Happ Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc.
+             Hsec Happ Henvgen Hcallshape Hnscoped Hsscoped Hfreshcalls Hcall Hallnl Hallstc.
       intros f n s prog' nsig ssig Hfind Hsys Hnsig Hssig.
       eapply found_system_preserv_global; eauto.
     Qed.

@@ -94,6 +94,181 @@ Section Type_Substitutions.
     do clk_subst_constraints <- subst_ident_in_constraints inp_subst_constraints node.(s_clk) clk;
     do res_subst_constraints <- subst_ident_in_constraints clk_subst_constraints node.(s_reset) res;
     subst_constraints_out_map res_subst_constraints node.(s_out) out.
+
+  (* Generic scope notions for symbolic types/constraints live in [SecTypes].
+     This file only adds the signature-specific wrapper. *)
+  Definition signature_scope (sig: signature) : list ident :=
+    sig.(s_in) ++ sig.(s_out) ++ [sig.(s_clk); sig.(s_reset)].
+
+  Definition signature_scoped (sig: signature) : Prop :=
+    constraints_scoped (signature_scope sig) sig.(s_constraints).
+
+  Lemma subst_ident_in_type_scoped_app:
+    forall pre post x ty v,
+      st_scoped (pre ++ x :: post) ty ->
+      st_scoped (pre ++ post) v ->
+      st_scoped (pre ++ post) (subst_ident_in_type ty x v).
+  Proof.
+    intros pre post x ty v Hty Hv.
+    unfold subst_ident_in_type.
+    destruct (my_set_mem x ty) eqn:Hmem.
+    - eapply st_scoped_merge.
+      + eapply st_scoped_remove_app; eauto.
+      + eapply st_scoped_remove_app.
+        eapply st_scoped_weaken; eauto.
+        intros y Hin. now apply in_or_app; right.
+    - apply st_scoped_drop_absent_app with (x := x).
+      + intro Hin.
+        apply my_set_mem_correct in Hin.
+        rewrite Hin in Hmem. discriminate.
+      + exact Hty.
+  Qed.
+
+  Lemma subst_inp_ident_in_constraint_scoped:
+    forall scope c x v c' st st',
+      constraint_scoped (x :: scope) c ->
+      st_scoped scope v ->
+      subst_inp_ident_in_constraint c x v st = OK (c', st') ->
+      constraint_scoped scope c'.
+  Proof.
+    intros scope [lhs rhs] x v c' st st' Hsc Hv Hsub.
+    unfold subst_inp_ident_in_constraint in Hsub.
+    destruct rhs as [|r rhs']; try discriminate.
+    destruct rhs' as [|r' rhs'']; try discriminate.
+    destruct (ident_eqb x r) eqn:Hxr; try discriminate.
+    unfold ret in Hsub. inversion Hsub; subst c' st'; clear Hsub.
+    intros y Hin.
+    unfold constraint_scope in Hin. rewrite in_app_iff in Hin.
+    destruct Hin as [Hin|Hin].
+    - eapply subst_ident_in_type_scoped_app with (pre := []) (post := scope) in Hin; eauto.
+      exact Hin.
+    - simpl in Hin. destruct Hin as [Heq|[]]. subst y.
+      apply ident_eqb_neq in Hxr.
+      eapply constraint_scoped_rhs in Hsc; eauto.
+      simpl in Hsc. destruct Hsc as [Heq|Hin']; [contradiction|exact Hin'].
+  Qed.
+
+  Lemma subst_ident_constraint_scoped:
+    forall scope c x v c' st st',
+      constraint_scoped (x :: scope) c ->
+      In v scope ->
+      subst_ident_constraint c x v st = OK (c', st') ->
+      constraint_scoped scope c'.
+  Proof.
+    intros scope [lhs rhs] x v c' st st' Hsc Hv Hsub.
+    unfold subst_ident_constraint in Hsub.
+    destruct (ident_eqb x v) eqn:Hxv; try discriminate.
+    destruct rhs as [|r rhs']; try discriminate.
+    destruct rhs' as [|r' rhs'']; try discriminate.
+    destruct (ident_eqb x r) eqn:Hxr.
+    - unfold ret in Hsub. inversion Hsub; subst c' st'; clear Hsub.
+      intros y Hin.
+      unfold constraint_scope in Hin. rewrite in_app_iff in Hin.
+      destruct Hin as [Hin|Hin].
+      + eapply subst_ident_in_type_scoped_app with (pre := []) (post := scope) in Hin.
+        * exact Hin.
+        * exact Hsc.
+        * apply st_scoped_singleton. exact Hv.
+      + simpl in Hin. destruct Hin as [Heq|[]]. subst y. exact Hv.
+    - unfold ret in Hsub. inversion Hsub; subst c' st'; clear Hsub.
+      intros y Hin.
+      unfold constraint_scope in Hin. rewrite in_app_iff in Hin.
+      destruct Hin as [Hin|Hin].
+      + eapply subst_ident_in_type_scoped_app with (pre := []) (post := scope) in Hin.
+        * exact Hin.
+        * exact Hsc.
+        * apply st_scoped_singleton. exact Hv.
+      + simpl in Hin. destruct Hin as [Heq|[]]. subst y.
+        apply ident_eqb_neq in Hxr.
+        eapply constraint_scoped_rhs in Hsc; eauto.
+        simpl in Hsc. destruct Hsc as [Heq|Hin']; [contradiction|exact Hin'].
+  Qed.
+
+  Lemma subst_ident_in_constraints_scoped:
+    forall scope cs x v cs' st st',
+      constraints_scoped (x :: scope) cs ->
+      st_scoped scope v ->
+      subst_ident_in_constraints cs x v st = OK (cs', st') ->
+      constraints_scoped scope cs'.
+  Proof.
+    induction cs as [|c cs IH]; intros x v cs' st st' Hsc Hv Hsub.
+    - simpl in Hsub. unfold ret in Hsub. inversion Hsub; subst. constructor.
+    - inversion Hsc as [|c0 cs0 Hc Hcs]; subst c0 cs0.
+      simpl in Hsub.
+      eapply sec_bind_inv in Hsub as (c1 & st1 & Hhd & Hsub).
+      eapply sec_bind_inv in Hsub as (cs1 & st2 & Htl & Hret).
+      unfold ret in Hret. inversion Hret; subst cs' st'; clear Hret.
+      constructor.
+      + eapply subst_inp_ident_in_constraint_scoped; eauto.
+      + eapply IH; eauto.
+  Qed.
+
+  Lemma subst_constraints_inp_map_scoped:
+    forall xs vs rest scope cs cs' st st',
+      constraints_scoped (xs ++ rest ++ scope) cs ->
+      Forall (st_scoped scope) vs ->
+      subst_constraints_inp_map cs xs vs st = OK (cs', st') ->
+      constraints_scoped (rest ++ scope) cs'.
+  Proof.
+    induction xs as [|x xs IH]; intros vs rest scope cs cs' st st' Hsc Hvs Hsub.
+    - destruct vs as [|v vs]; simpl in Hsub; try discriminate.
+      unfold ret in Hsub. inversion Hsub; subst. exact Hsc.
+    - destruct vs as [|v vs]; simpl in Hsub; try discriminate.
+      inversion Hvs as [|v0 vs0 Hv Hvs']; subst v0 vs0.
+      eapply sec_bind_inv in Hsub as (cs1 & st1 & Hhd & Htl).
+      eapply IH with (st := st1); eauto.
+      eapply subst_ident_in_constraints_scoped; eauto.
+      eapply st_scoped_weaken; eauto.
+      intros y Hin. repeat rewrite in_app_iff. now right; right.
+  Qed.
+
+  Lemma subst_constraints_out_map_scoped:
+    forall xs vs scope cs cs' st st',
+      constraints_scoped (xs ++ scope) cs ->
+      Forall (fun x => In x scope) vs ->
+      subst_constraints_out_map cs xs vs st = OK (cs', st') ->
+      constraints_scoped scope cs'.
+  Proof.
+    induction xs as [|x xs IH]; intros vs scope cs cs' st st' Hsc Hvs Hsub.
+    - destruct vs as [|v vs]; simpl in Hsub; try discriminate.
+      unfold ret in Hsub. inversion Hsub; subst. exact Hsc.
+    - destruct vs as [|v vs]; simpl in Hsub; try discriminate.
+      inversion Hvs as [|v0 vs0 Hv Hvs']; subst v0 vs0.
+      eapply sec_bind_inv in Hsub as (cs1 & st1 & Hhd & Htl).
+      eapply IH with (st := st1); eauto.
+      clear IH.
+      induction cs as [|c cs IHcs]; inversion Hsc; subst; constructor.
+      + eapply subst_ident_constraint_scoped; eauto.
+      + eapply IHcs; eauto.
+  Qed.
+
+  Theorem generate_constraints_scoped:
+    forall sig scope inp clk rst out cns st st',
+      signature_scoped sig ->
+      Forall (st_scoped scope) inp ->
+      st_scoped scope clk ->
+      st_scoped scope rst ->
+      Forall (fun x => In x scope) out ->
+      generate_constraints sig inp clk rst out st = OK (cns, st') ->
+      constraints_scoped scope cns.
+  Proof.
+    intros sig scope inp clk rst out cns st st'
+           Hscoped Hinp Hclk Hrst Hout Hgen.
+    unfold generate_constraints in Hgen.
+    eapply sec_bind_inv in Hgen as (c1 & st1 & Hinpsub & Hgen).
+    eapply sec_bind_inv in Hgen as (c2 & st2 & Hclksub & Hgen).
+    eapply sec_bind_inv in Hgen as (c3 & st3 & Hrstsub & Houts).
+    eapply subst_constraints_out_map_scoped; eauto.
+    eapply subst_ident_in_constraints_scoped; eauto.
+    eapply st_scoped_weaken; eauto.
+    { intros x Hin. repeat rewrite in_app_iff. now right; right. }
+    eapply subst_ident_in_constraints_scoped; eauto.
+    eapply st_scoped_weaken; eauto.
+    { intros x Hin. repeat rewrite in_app_iff. now right; right. }
+    eapply subst_constraints_inp_map_scoped; eauto.
+    eapply st_scoped_weaken; eauto.
+    intros x Hin. repeat rewrite in_app_iff. now left.
+  Qed.
    
 End Type_Substitutions.
 
