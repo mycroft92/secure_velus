@@ -54,6 +54,116 @@ Section Env_helpers.
                    do ts <- get_mappings_from_node xs env;
                    Some (t::ts)
     end.
+
+  (** The lemmas below are the reusable interface between the shared
+      name-generation environment and the phase-specific typing proofs.
+
+      They let later developments move back and forth between:
+      - source identifiers in node/system interfaces;
+      - their generated security identifiers in the shared environment;
+      - list-level results returned by [get_mappings] / [get_mappings_from_node].
+
+      Keeping these facts here avoids repeating the same environment-plumbing
+      proofs inside both the NLustre/STC typing modules and the translation
+      preservation file. *)
+
+  Lemma get_mappings_app:
+    forall xs ys env txs tys,
+      get_mappings xs env = Some txs ->
+      get_mappings ys env = Some tys ->
+      get_mappings (xs ++ ys) env = Some (txs ++ tys).
+  Proof.
+    induction xs as [|x xs IH]; intros ys env txs tys Hxs Hys.
+    - simpl in Hxs. inversion Hxs; subst. exact Hys.
+    - simpl in Hxs.
+      destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
+      destruct (get_mappings xs env) as [txs'|] eqn:Htail; try discriminate.
+      inversion Hxs; subst txs.
+      simpl. rewrite Hfind.
+      rewrite (IH ys env txs' tys Htail Hys).
+      reflexivity.
+  Qed.
+
+  Lemma get_mappings_from_node_eq:
+    forall A (xs: list (ident * A)) env tys,
+      get_mappings_from_node xs env = Some tys ->
+      get_mappings (map fst xs) env = Some tys.
+  Proof.
+    induction xs as [|(x, a) xs IH]; intros env tys Hmap; simpl in *.
+    - inversion Hmap; reflexivity.
+    - destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
+      destruct (get_mappings_from_node xs env) as [tys'|] eqn:Htail; try discriminate.
+      inversion Hmap; subst tys.
+      simpl. rewrite Hfind. now apply IH.
+  Qed.
+
+  Lemma get_mappings_from_node_app:
+    forall A (xs ys: list (ident * A)) env txs tys,
+      get_mappings_from_node xs env = Some txs ->
+      get_mappings_from_node ys env = Some tys ->
+      get_mappings_from_node (xs ++ ys) env = Some (txs ++ tys).
+  Proof.
+    induction xs as [|(x, a) xs IH]; intros ys env txs tys Hxs Hys; simpl in *.
+    - inversion Hxs; subst. exact Hys.
+    - destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
+      destruct (get_mappings_from_node xs env) as [txs'|] eqn:Htail; try discriminate.
+      inversion Hxs; subst txs.
+      simpl. rewrite Hfind.
+      rewrite (IH ys env txs' tys Htail Hys).
+      reflexivity.
+  Qed.
+
+  Lemma get_mappings_in:
+    forall xs env tys x,
+      In x xs ->
+      get_mappings xs env = Some tys ->
+      exists ty, Env.find x env = Some ty /\ In ty tys.
+  Proof.
+    induction xs as [|y ys IH]; intros env tys x Hin Hmap.
+    - inversion Hin.
+    - simpl in Hmap.
+      destruct (Env.find y env) as [yty|] eqn:Hyfind; try discriminate.
+      destruct (get_mappings ys env) as [tys'|] eqn:Hys; try discriminate.
+      inversion Hmap; subst tys.
+      simpl in Hin.
+      destruct Hin as [Heq|Hin].
+      + subst x. exists yty. split; [exact Hyfind|left; reflexivity].
+      + edestruct IH as (ty & Hfind & Hin'); eauto.
+        exists ty. split; [exact Hfind|right; exact Hin'].
+  Qed.
+
+  Lemma get_mappings_from_node_inmembers:
+    forall A (xs: list (ident * A)) env tys x,
+      InMembers x xs ->
+      get_mappings_from_node xs env = Some tys ->
+      exists ty, Env.find x env = Some ty /\ In ty tys.
+  Proof.
+    intros A xs env tys x Hin Hmap.
+    apply fst_InMembers in Hin.
+    eapply get_mappings_in; eauto.
+    eapply get_mappings_from_node_eq; eauto.
+  Qed.
+
+  Lemma get_mappings_from_node_In:
+    forall A (xs: list (ident * A)) env tys ty,
+      get_mappings_from_node xs env = Some tys ->
+      In ty tys ->
+      exists x a, In (x, a) xs /\ Env.find x env = Some ty.
+  Proof.
+    induction xs as [|(x, a) xs IH]; intros env tys ty Hmap Hin.
+    - simpl in Hmap. inversion Hmap; subst. inversion Hin.
+    - simpl in Hmap.
+      destruct (Env.find x env) as [xty|] eqn:Hfind.
+      2: discriminate.
+      destruct (get_mappings_from_node xs env) as [tys'|] eqn:Hmaps.
+      2: discriminate.
+      inversion Hmap; subst tys.
+      simpl in Hin.
+      destruct Hin as [Heq|Hin].
+      + subst ty. exists x, a. split; [left; reflexivity|exact Hfind].
+      + specialize (IH env tys' ty Hmaps Hin) as (x' & a' & Hin' & Hfind').
+        exists x', a'. split; [right; exact Hin'|exact Hfind'].
+  Qed.
 End Env_helpers.
 
 Module Type  NAMEGEN  (Import Ids   : IDS)

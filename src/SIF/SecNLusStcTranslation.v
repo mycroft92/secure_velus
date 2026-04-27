@@ -551,52 +551,6 @@ Module Type SECNLUSSTCTRANSLATION
           exists x'. split; [right; exact Hin'|exact Hfind'].
     Qed.
 
-    Lemma get_mappings_app:
-      forall xs ys env txs tys,
-        get_mappings xs env = Some txs ->
-        get_mappings ys env = Some tys ->
-        get_mappings (xs ++ ys) env = Some (txs ++ tys).
-    Proof.
-      induction xs as [|x xs IH]; intros ys env txs tys Hxs Hys.
-      - simpl in Hxs. inversion Hxs; subst. exact Hys.
-      - simpl in Hxs.
-        destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
-        destruct (get_mappings xs env) as [txs'|] eqn:Htail; try discriminate.
-        inversion Hxs; subst txs.
-        simpl. rewrite Hfind.
-        rewrite (IH ys env txs' tys Htail Hys).
-        reflexivity.
-    Qed.
-
-    Lemma get_mappings_from_node_eq:
-      forall A (xs: list (ident * A)) env tys,
-        get_mappings_from_node xs env = Some tys ->
-        get_mappings (map fst xs) env = Some tys.
-    Proof.
-      induction xs as [|(x, a) xs IH]; intros env tys Hmap; simpl in *.
-      - inversion Hmap; reflexivity.
-      - destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
-        destruct (get_mappings_from_node xs env) as [tys'|] eqn:Htail; try discriminate.
-        inversion Hmap; subst tys.
-        simpl. rewrite Hfind. now apply IH.
-    Qed.
-
-    Lemma get_mappings_from_node_app:
-      forall A (xs ys: list (ident * A)) env txs tys,
-        get_mappings_from_node xs env = Some txs ->
-        get_mappings_from_node ys env = Some tys ->
-        get_mappings_from_node (xs ++ ys) env = Some (txs ++ tys).
-    Proof.
-      induction xs as [|(x, a) xs IH]; intros ys env txs tys Hxs Hys; simpl in *.
-      - inversion Hxs; subst. exact Hys.
-      - destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
-        destruct (get_mappings_from_node xs env) as [txs'|] eqn:Htail; try discriminate.
-        inversion Hxs; subst txs.
-        simpl. rewrite Hfind.
-        rewrite (IH ys env txs' tys Htail Hys).
-        reflexivity.
-    Qed.
-
     Lemma fresh_map_list_preserves_find:
       forall ks env st env' st' x ty,
         fresh_map_list ks env st = OK (env', st') ->
@@ -1036,28 +990,6 @@ Module Type SECNLUSSTCTRANSLATION
       eapply generate_reset_env_range'; eauto.
       intros y ty' Hy.
       rewrite Env.gempty in Hy. discriminate.
-    Qed.
-
-    Lemma get_mappings_from_node_In:
-      forall A (xs: list (ident * A)) env tys ty,
-        get_mappings_from_node xs env = Some tys ->
-        In ty tys ->
-        exists x a, In (x, a) xs /\ Env.find x env = Some ty.
-    Proof.
-      induction xs as [|(x, a) xs IH]; intros env tys ty Hmap Hin.
-      - simpl in Hmap. inversion Hmap; subst. inversion Hin.
-      - simpl in Hmap.
-        destruct (Env.find x env) as [xty|] eqn:Hfind.
-        2: discriminate.
-        destruct (get_mappings_from_node xs env) as [tys'|] eqn:Hmaps.
-        2: discriminate.
-        inversion Hmap; subst tys.
-        simpl in Hin.
-        destruct Hin as [Heq|Hin];
-          [subst ty; exists x, a; split; [left; reflexivity|exact Hfind]
-          |specialize (IH env tys' ty Hmaps Hin) as IH';
-           destruct IH' as (x' & a' & Hin' & Hfind');
-           exists x', a'; split; [right; exact Hin'|exact Hfind']].
     Qed.
 
     Lemma node_scope_sec_range:
@@ -1603,45 +1535,6 @@ Module Type SECNLUSSTCTRANSLATION
     Definition upd_ident (dlt: ident -> Lat.t) (x v: ident) : ident -> Lat.t :=
       fun y => if ident_eqb y x then dlt v else dlt y.
 
-    Lemma join_idem_eq:
-      forall a : Lat.t, join a a = a.
-    Proof.
-      intro a.
-      apply eq_no_red.
-      apply order_antisym.
-      - apply join_least_upper_bound; apply order_refl; apply eq_refl.
-      - apply join_bound1.
-    Qed.
-
-    Lemma join_sym_eq:
-      forall a b : Lat.t, join a b = join b a.
-    Proof.
-      intros a b.
-      apply eq_no_red.
-      apply join_sym.
-    Qed.
-
-    Lemma join_assoc_eq:
-      forall a b c : Lat.t, join a (join b c) = join (join a b) c.
-    Proof.
-      intros a b c.
-      apply eq_no_red.
-      apply join_assoc.
-    Qed.
-
-    Lemma hm_ext_merge_eq:
-      forall dlt st1 st2,
-        hm_ext dlt (st1 ⊔ st2) = join (hm_ext dlt st1) (hm_ext dlt st2).
-    Proof.
-      intros dlt st1 st2.
-      apply eq_no_red.
-      apply order_antisym.
-      - apply hm_ext_distributive2.
-      - apply join_least_upper_bound.
-        + apply hm_ext_concat_l.
-        + apply hm_ext_concat_r.
-    Qed.
-
     (** The remaining gap to a fully proved signature-step theorem is not in
         the global induction; it is in the semantic bridge from generated raw
         node/system constraints to the simplified modular signatures used at
@@ -1741,6 +1634,12 @@ Module Type SECNLUSSTCTRANSLATION
         SECNLUSTYPING.generate_node_sig G n env aux_names = OK nsig ->
         signature_scoped nsig.
 
+    (** The node-side scopedness theorem now lives in [SecNLusTyping.v]:
+        [SECNLUSTYPING.generate_node_sig_scoped] proves exactly this shape,
+        once the standard NLustre clocking premise and the concrete
+        call-shape/environment hypotheses are available.  The STC-side wrapper
+        remains separate here because reset-instance elimination is still
+        packaged around [generate_sys_signature]. *)
     Definition generated_system_signatures_scoped
       (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
       forall G s ssig,

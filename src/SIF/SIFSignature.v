@@ -30,7 +30,6 @@ Definition secglobal := list signature.
 Definition find_signature (f : ident) : secglobal -> option signature :=
     List.find (fun n=> ident_eqb n.(s_name) f).
 
-
 Section Type_Substitutions.
 
   Local Definition subst_ident_in_type (ty: ST) (x: ident) (v: ST): ST :=
@@ -102,6 +101,14 @@ Section Type_Substitutions.
 
   Definition signature_scoped (sig: signature) : Prop :=
     constraints_scoped (signature_scope sig) sig.(s_constraints).
+
+  (* Every stored signature in the global environment only mentions its own
+     visible interface variables. This is the reusable global invariant
+     consumed by the NLustre and STC typing developments. *)
+  Definition secglobal_scoped (G: secglobal) : Prop :=
+    forall f sig,
+      find_signature f G = Some sig ->
+      signature_scoped sig.
 
   Lemma subst_ident_in_type_scoped_app:
     forall pre post x ty v,

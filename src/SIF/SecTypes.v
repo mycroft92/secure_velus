@@ -873,6 +873,19 @@ Module Type SECTYPES(Import Lat: Lattice).
     eapply simplify_simplifyRel. reflexivity.
   Qed.
 
+  Lemma hm_ext_merge_eq:
+    forall dlt st1 st2,
+      hm_ext dlt (st1 ⊔ st2) = join (hm_ext dlt st1) (hm_ext dlt st2).
+  Proof.
+    intros dlt st1 st2.
+    apply eq_no_red.
+    apply order_antisym.
+    - apply hm_ext_distributive2.
+    - apply join_least_upper_bound.
+      + apply hm_ext_concat_l.
+      + apply hm_ext_concat_r.
+  Qed.
+
   (** Generic scope metatheory for constraints and symbolic types.
 
       These lemmas belong next to [findST], [subST], [subAll], and [simplify]:
