@@ -1574,7 +1574,7 @@ Module Type SECNLUSSTCTRANSLATION
     Lemma generate_sys_signature_inv:
       forall G s env aux_names sig,
         SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
-        exists clk_id rst_id clk_type rst_type inp out slocals
+        exists clk_id rst_id clk_type rst_type inp out slocals slasts
                reset_env rids st_reset sconst st_s,
           get_node_aux s.(SynStc.s_name) aux_names = Some (clk_id, rst_id)
           /\ Env.find clk_id env = Some clk_type
@@ -1582,6 +1582,7 @@ Module Type SECNLUSSTCTRANSLATION
           /\ get_mappings_from_node s.(SynStc.s_in) env = Some inp
           /\ get_mappings_from_node s.(SynStc.s_out) env = Some out
           /\ get_mappings_from_node s.(SynStc.s_vars) env = Some slocals
+          /\ get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts
           /\ generate_reset_env s.(SynStc.s_tcs) init_state = OK ((reset_env, rids), st_reset)
           /\ generate_trconstrs_constraints G env reset_env clk_type rst_type s.(SynStc.s_tcs) st_reset = OK (sconst, st_s)
           /\ sig = {| s_name := s.(SynStc.s_name);
@@ -1589,7 +1590,7 @@ Module Type SECNLUSSTCTRANSLATION
                       s_out := out;
                       s_reset := rst_type;
                       s_clk := clk_type;
-                      s_constraints := SymTypes.simplify sconst (slocals ++ rids) |}.
+                      s_constraints := SymTypes.simplify sconst (SECSTCTYPING.hidden_sys_vars slocals slasts rids) |}.
     Proof.
       intros G s env aux_names sig Hsig.
       unfold SECSTCTYPING.generate_sys_signature in Hsig.
@@ -1612,6 +1613,7 @@ Module Type SECNLUSSTCTRANSLATION
       eapply sec_bind_inv in Hgen as (inp & st_inp & Hinp & Hgen).
       eapply sec_bind_inv in Hgen as (out & st_out & Hout & Hgen).
       eapply sec_bind_inv in Hgen as (slocals & st_locals & Hslocals & Hgen).
+      eapply sec_bind_inv in Hgen as (slasts & st_lasts & Hslasts & Hgen).
       eapply sec_bind2_inv in Hgen as (reset_env & rids & st_reset & Hresetenv & Hgen).
       eapply sec_bind_inv in Hgen as (sconst & st_s & Hsconst & Hret).
       unfold option_to_sec in Haux.
@@ -1632,8 +1634,12 @@ Module Type SECNLUSSTCTRANSLATION
       unfold option_to_sec in Hslocals.
       destruct (get_mappings_from_node (s.(SynStc.s_vars)) env) as [slocals0|] eqn:Hslocals0; try discriminate.
       inversion Hslocals; subst slocals0 st_locals.
+      unfold option_to_sec in Hslasts.
+      destruct (get_mappings_from_node (s.(SynStc.s_lasts)) env) as [slasts0|] eqn:Hslasts0; try discriminate.
+      inversion Hslasts; subst slasts0 st_lasts.
       unfold ret in Hret. inversion Hret; subst.
-      exists clk_id, rst_id, packed_clk_type, packed_rst_type, packed_inp, packed_out, slocals, reset_env, rids, st_reset, sconst, st_res.
+      exists clk_id, rst_id, packed_clk_type, packed_rst_type, packed_inp, packed_out,
+             slocals, slasts, reset_env, rids, st_reset, sconst, st_res.
       repeat split; eauto.
     Qed.
 
@@ -1660,10 +1666,10 @@ Module Type SECNLUSSTCTRANSLATION
         generate_node_env all_nodes = OK (env, aux_names) ->
         SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
         SECSTCTYPING.generate_sys_signature G2 (translate_node n) env aux_names = OK ssig ->
-        exists nlocals slocals rids nconst sconst,
+        exists nlocals slocals slasts rids nconst sconst,
           signature_fields_agree nsig ssig
           /\ nsig.(s_constraints) = SymTypes.simplify nconst nlocals
-          /\ ssig.(s_constraints) = SymTypes.simplify sconst (slocals ++ rids)
+          /\ ssig.(s_constraints) = SymTypes.simplify sconst (SECSTCTYPING.hidden_sys_vars slocals slasts rids)
           /\ preserves_on (nsig.(s_in) ++ nsig.(s_out) ++ nlocals ++ nsig.(s_clk) :: nsig.(s_reset) :: nil)
                           nconst sconst.
     Proof.
@@ -1672,10 +1678,10 @@ Module Type SECNLUSSTCTRANSLATION
           (clk_id & rst_id & clk_type & rst_type & inp & out & nlocals & nconst & st_n
            & Haux & Hclk & Hrst & Hinp & Hout & Hnlocals & Hnconst & Hnsigdef); eauto.
       edestruct generate_sys_signature_inv as
-          (clk_id' & rst_id' & clk_type' & rst_type' & inp' & out' & slocals
+          (clk_id' & rst_id' & clk_type' & rst_type' & inp' & out' & slocals & slasts
            & reset_env & rids & st_reset & sconst & st_s
-           & Haux' & Hclk' & Hrst' & Hinp' & Hout' & Hslocals & Hresetenv & Hsconst & Hssigdef); eauto.
-      simpl in Haux', Hinp', Hout', Hslocals, Hresetenv, Hsconst, Hssigdef.
+           & Haux' & Hclk' & Hrst' & Hinp' & Hout' & Hslocals & Hslasts & Hresetenv & Hsconst & Hssigdef); eauto.
+      simpl in Haux', Hinp', Hout', Hslocals, Hslasts, Hresetenv, Hsconst, Hssigdef.
       rewrite Haux in Haux'. inversion Haux'. subst clk_id' rst_id'.
       rewrite Hclk in Hclk'. inversion Hclk'. subst clk_type'.
       rewrite Hrst in Hrst'. inversion Hrst'. subst rst_type'.
@@ -1683,7 +1689,7 @@ Module Type SECNLUSSTCTRANSLATION
       rewrite Hout in Hout'. inversion Hout'. subst out'.
       rewrite Hnsigdef in *.
       rewrite Hssigdef in *.
-      exists nlocals, slocals, rids, nconst, sconst.
+      exists nlocals, slocals, slasts, rids, nconst, sconst.
       split.
       - repeat split; reflexivity.
       - split; [reflexivity|].
@@ -1733,10 +1739,10 @@ Module Type SECNLUSSTCTRANSLATION
         SynStc.find_system f (translate all_nodes) = Some (s, prog') ->
         SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
         SECSTCTYPING.generate_sys_signature G2 s env aux_names = OK ssig ->
-        exists nlocals slocals rids nconst sconst,
+        exists nlocals slocals slasts rids nconst sconst,
           signature_fields_agree nsig ssig
           /\ nsig.(s_constraints) = SymTypes.simplify nconst nlocals
-          /\ ssig.(s_constraints) = SymTypes.simplify sconst (slocals ++ rids)
+          /\ ssig.(s_constraints) = SymTypes.simplify sconst (SECSTCTYPING.hidden_sys_vars slocals slasts rids)
           /\ preserves_on (nsig.(s_in) ++ nsig.(s_out) ++ nlocals ++ nsig.(s_clk) :: nsig.(s_reset) :: nil)
                           nconst sconst.
     Proof.
@@ -1794,7 +1800,7 @@ Module Type SECNLUSSTCTRANSLATION
     Theorem generated_node_simplify_ready_from_generated_env:
       forall all_nodes env aux_names,
         generate_node_env all_nodes = OK (env, aux_names) ->
-        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
+        (forall G1, call_constraints_shape G1) ->
         generated_node_simplify_ready env aux_names.
     Proof.
       intros all_nodes env aux_names Henvgen Hcall.
@@ -1894,7 +1900,7 @@ Module Type SECNLUSSTCTRANSLATION
       intros all_nodes n G1 G2 env aux_names nsig ssig
              Hsec Hcons Happ Henvgen Hnsig Hssig Hready.
       edestruct generated_node_preserv as
-          (nlocals & slocals & rids & nconst & sconst
+          (nlocals & slocals & slasts & rids & nconst & sconst
            & Hfields & Hnsigcstr & Hssigcstr & Hrawpres); eauto.
       edestruct generate_node_sig_inv as
           (clk_id & rst_id & clk_type & rst_type & inp & out & locals & raw & st_n
@@ -2015,9 +2021,9 @@ Module Type SECNLUSSTCTRANSLATION
           (clk_id & rst_id & clk_type & rst_type & inp & out & locals & nconst & st_n
            & Haux & Hclk & Hrst & Hinp & Hout & Hlocals & Hnconst & Hnsigdef); eauto.
       edestruct generate_sys_signature_inv as
-          (clk_id' & rst_id' & clk_type' & rst_type' & inp' & out' & slocals
+          (clk_id' & rst_id' & clk_type' & rst_type' & inp' & out' & slocals & slasts
            & reset_env & rids & st_reset & sconst & st_s
-           & Haux' & Hclk' & Hrst' & Hinp' & Hout' & Hslocals & Hresetenv & Hsconst & Hssigdef); eauto.
+           & Haux' & Hclk' & Hrst' & Hinp' & Hout' & Hslocals & Hslasts & Hresetenv & Hsconst & Hssigdef); eauto.
       rewrite Hnsigdef, Hssigdef. reflexivity.
     Qed.
 
@@ -2064,7 +2070,7 @@ Module Type SECNLUSSTCTRANSLATION
     Corollary generated_node_simplify_ready_global_from_call_shape:
       forall all_nodes env aux_names,
         generate_node_env all_nodes = OK (env, aux_names) ->
-        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
+        (forall G1, call_constraints_shape G1) ->
         generated_node_simplify_ready_global env aux_names.
     Proof.
       intros all_nodes env aux_names Henvgen Hcall.
@@ -2095,9 +2101,12 @@ Module Type SECNLUSSTCTRANSLATION
         final theorem should expose.  It remains only because the current
         translation-layer step theorem is still phrased for arbitrary
         accumulators; once that step is refactored to consume generated globals
-        directly, this premise should disappear.  The STC-side wrapper remains
-        separate here because reset-instance elimination is still packaged
-        around [generate_sys_signature]. *)
+        directly, this premise should disappear.  On the STC side, the base
+        scopedness theorems now live in [SecSTCTyping.v]
+        ([generate_sys_signature_scoped] and
+        [generate_all_sys_signatures_scoped]); this stronger pointwise wrapper
+        remains here only because the translation-layer step theorem is still
+        phrased over arbitrary accumulator globals. *)
     Definition generated_system_signatures_scoped
       (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
       forall G s ssig,
@@ -2132,7 +2141,7 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
+        (forall G1, call_constraints_shape G1) ->
         generated_signatures_preserved env aux_names.
     Proof.
       intros all_nodes env aux_names Hsec Happ Henvgen Hcallshape.
@@ -2148,7 +2157,7 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
+        (forall G1, call_constraints_shape G1) ->
         generated_node_signatures_scoped env aux_names ->
         generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
@@ -2200,26 +2209,6 @@ Module Type SECNLUSSTCTRANSLATION
         exists n2. simpl. rewrite Hneqb. auto.
     Qed.
 
-    Lemma generate_all_sys_signatures_scoped':
-      forall systems acc env aux_names G,
-        secglobal_scoped acc ->
-        generated_system_signatures_scoped env aux_names ->
-        SECSTCTYPING.generate_all_sys_signatures' acc systems env aux_names = OK G ->
-        secglobal_scoped G.
-    Proof.
-      induction systems as [|s systems IH]; intros acc env aux_names G Hacc Hscoped Hgen.
-      - simpl in Hgen. inversion Hgen; subst. exact Hacc.
-      - simpl in Hgen.
-        destruct (SECSTCTYPING.generate_sys_signature acc s env aux_names) as [ssig|] eqn:Hsig;
-          try discriminate.
-        destruct (SECSTCTYPING.generate_all_sys_signatures' (ssig :: acc) systems env aux_names) as [G'|] eqn:Htl;
-          try discriminate.
-        inversion Hgen; subst G'. clear Hgen.
-        eapply IH; eauto.
-        eapply secglobal_scoped_cons; eauto.
-        eapply Hscoped; eauto.
-    Qed.
-
     (** The source-side generated-global scopedness theorem now belongs to the
         NLustre typing layer.  This corollary is just the translation-facing
         bridge from [generate_node_env] to the typing theorem's injective-env
@@ -2228,7 +2217,7 @@ Module Type SECNLUSSTCTRANSLATION
       forall all_nodes env aux_names G,
         SECNLUSTYPING.Clo.wc_global all_nodes ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
+        (forall G1, call_constraints_shape G1) ->
         SECNLUSTYPING.generate_all_signatures all_nodes env aux_names = OK G ->
         secglobal_scoped G.
     Proof.
@@ -2239,14 +2228,14 @@ Module Type SECNLUSSTCTRANSLATION
 
     Corollary generate_all_translated_system_signatures_scoped:
       forall all_nodes env aux_names G,
-        generated_system_signatures_scoped env aux_names ->
+        SECSTCTYPING.Clo.wc_program (translate all_nodes) ->
+        (forall G1, call_constraints_shape G1) ->
+        SECSTCTYPING.env_injective env ->
         SECSTCTYPING.generate_all_sys_signatures (translate all_nodes) env aux_names = OK G ->
         secglobal_scoped G.
     Proof.
-      intros all_nodes env aux_names G Hscoped Hgen.
-      unfold SECSTCTYPING.generate_all_sys_signatures in Hgen.
-      eapply generate_all_sys_signatures_scoped'; eauto.
-      apply secglobal_scoped_nil.
+      intros all_nodes env aux_names G Hwc Hcallshape Hinj Hgen.
+      eapply SECSTCTYPING.generate_all_sys_signatures_scoped; eauto.
     Qed.
 
     (** This is the generated-signature form of [Signature_consistent_cons].
@@ -2341,7 +2330,7 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
+        (forall G1, call_constraints_shape G1) ->
         generated_node_signatures_scoped env aux_names ->
         generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
@@ -2374,7 +2363,7 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
+        (forall G1, call_constraints_shape G1) ->
         generated_node_signatures_scoped env aux_names ->
         generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
@@ -2383,10 +2372,10 @@ Module Type SECNLUSSTCTRANSLATION
         SECSTCTYPING.generate_all_sys_signatures (translate all_nodes) env aux_names = OK G2 ->
         SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
         SECSTCTYPING.generate_sys_signature G2 (translate_node n) env aux_names = OK ssig ->
-        exists nlocals slocals rids nconst sconst,
+        exists nlocals slocals slasts rids nconst sconst,
           signature_fields_agree nsig ssig
           /\ nsig.(s_constraints) = SymTypes.simplify nconst nlocals
-          /\ ssig.(s_constraints) = SymTypes.simplify sconst (slocals ++ rids)
+          /\ ssig.(s_constraints) = SymTypes.simplify sconst (SECSTCTYPING.hidden_sys_vars slocals slasts rids)
           /\ preserves_on (nsig.(s_in) ++ nsig.(s_out) ++ nlocals ++ nsig.(s_clk) :: nsig.(s_reset) :: nil)
                           nconst sconst.
     Proof.
@@ -2408,7 +2397,7 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
+        (forall G1, call_constraints_shape G1) ->
         generated_node_signatures_scoped env aux_names ->
         generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
@@ -2419,10 +2408,10 @@ Module Type SECNLUSSTCTRANSLATION
         SynStc.find_system f (translate all_nodes) = Some (s, prog') ->
         SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
         SECSTCTYPING.generate_sys_signature G2 s env aux_names = OK ssig ->
-        exists nlocals slocals rids nconst sconst,
+        exists nlocals slocals slasts rids nconst sconst,
           signature_fields_agree nsig ssig
           /\ nsig.(s_constraints) = SymTypes.simplify nconst nlocals
-          /\ ssig.(s_constraints) = SymTypes.simplify sconst (slocals ++ rids)
+          /\ ssig.(s_constraints) = SymTypes.simplify sconst (SECSTCTYPING.hidden_sys_vars slocals slasts rids)
           /\ preserves_on (nsig.(s_in) ++ nsig.(s_out) ++ nlocals ++ nsig.(s_clk) :: nsig.(s_reset) :: nil)
                           nconst sconst.
     Proof.
@@ -2448,10 +2437,10 @@ Module Type SECNLUSSTCTRANSLATION
         SynStc.find_system f (translate all_nodes) = Some (s, prog') ->
         SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
         SECSTCTYPING.generate_sys_signature G2 s env aux_names = OK ssig ->
-        exists nlocals slocals rids nconst sconst,
+        exists nlocals slocals slasts rids nconst sconst,
           signature_fields_agree nsig ssig
           /\ nsig.(s_constraints) = SymTypes.simplify nconst nlocals
-          /\ ssig.(s_constraints) = SymTypes.simplify sconst (slocals ++ rids)
+          /\ ssig.(s_constraints) = SymTypes.simplify sconst (SECSTCTYPING.hidden_sys_vars slocals slasts rids)
           /\ preserves_on (nsig.(s_in) ++ nsig.(s_out) ++ nlocals ++ nsig.(s_clk) :: nsig.(s_reset) :: nil)
                           nconst sconst.
 
@@ -2462,7 +2451,7 @@ Module Type SECNLUSSTCTRANSLATION
         remaining lower-level premise that still has to be discharged above
         this layer:
 
-        - [SECNLUSTYPING.call_constraints_shape] for the shared generated env;
+        - [call_constraints_shape] for the shared generated env;
         - generated NLustre/STC signatures are scoped to their visible
           interfaces;
         - weak signature preservation is stable under call-time instantiation.
@@ -2477,7 +2466,7 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         (forall scope, preserves_on_app_closed scope) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
+        (forall G1, call_constraints_shape G1) ->
         generated_node_signatures_scoped env aux_names ->
         generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->

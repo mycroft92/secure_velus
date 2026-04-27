@@ -30,6 +30,7 @@ src/SIF/SecContext.v
 src/SIF/SecCETyping.v
 src/SIF/SecNLusTyping.v
 src/SIF/SecSTCTyping.v
+src/SIF/SecNLusStcTranslation.v
 
 
 src/Lustre/LSemantics.v

@@ -94,7 +94,7 @@ Section Env_helpers.
     - destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
       destruct (get_mappings_from_node xs env) as [tys'|] eqn:Htail; try discriminate.
       inversion Hmap; subst tys.
-      simpl. rewrite Hfind. now apply IH.
+      simpl. rewrite (IH env tys' Htail). reflexivity.
   Qed.
 
   Lemma get_mappings_from_node_app:
@@ -108,9 +108,7 @@ Section Env_helpers.
     - destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
       destruct (get_mappings_from_node xs env) as [txs'|] eqn:Htail; try discriminate.
       inversion Hxs; subst txs.
-      simpl. rewrite Hfind.
-      rewrite (IH ys env txs' tys Htail Hys).
-      reflexivity.
+      simpl. rewrite (IH ys env txs' tys Htail Hys). reflexivity.
   Qed.
 
   Lemma get_mappings_in:

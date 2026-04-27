@@ -118,14 +118,6 @@ Module Type SECNLUSTYPING
       the standard “variables are defined at most once” property, while the
       call case depends on separate metatheory for [generate_constraints]. *)
 
-  Definition call_constraints_shape : Prop :=
-    forall f sig inptyp ckty rstty outtyp cns st st',
-      find_signature f G = Some sig ->
-      NoDup outtyp ->
-      generate_constraints sig inptyp ckty rstty outtyp st = OK (cns, st') ->
-      wf_constraints cns
-      /\ map snd cns = map (fun ty => [ty]) outtyp.
-
   Definition env_injective : Prop :=
     forall x y tx ty,
       Env.find x env = Some tx ->
@@ -649,7 +641,7 @@ Module Type SECNLUSTYPING
 
   Lemma generate_eqn_constraint_shape:
     forall eq cns st st',
-      call_constraints_shape ->
+      call_constraints_shape G ->
       env_injective ->
       NoDup (var_defined eq) ->
       generate_eqn_constraint eq st = OK (cns, st') ->
@@ -712,7 +704,7 @@ Module Type SECNLUSTYPING
 
   Theorem generate_eqns_constraints_shape:
     forall eqs cns st st',
-      call_constraints_shape ->
+      call_constraints_shape G ->
       env_injective ->
       NoDup (vars_defined eqs) ->
       generate_eqns_constraints eqs st = OK (cns, st') ->
@@ -751,7 +743,7 @@ Module Type SECNLUSTYPING
 
   Corollary generate_eqns_constraints_wf:
     forall eqs cns st st',
-      call_constraints_shape ->
+      call_constraints_shape G ->
       env_injective ->
       NoDup (vars_defined eqs) ->
       generate_eqns_constraints eqs st = OK (cns, st') ->
@@ -778,7 +770,7 @@ Module Type SECNLUSTYPING
         “every variable is defined once” argument from the paper. *)
     Corollary generate_node_eqns_constraints_wf:
       forall n env base_ty rst_ty raw st st',
-        call_constraints_shape G env base_ty rst_ty ->
+        call_constraints_shape G ->
         env_injective env ->
         generate_eqns_constraints G env base_ty rst_ty n.(n_eqs) st = OK (raw, st') ->
         wf_constraints raw.
@@ -849,7 +841,7 @@ Module Type SECNLUSTYPING
       Theorem generate_node_sig_scoped:
         forall P n env aux_names sig,
           secglobal_scoped G ->
-          (forall base_ty rst_ty, call_constraints_shape G env base_ty rst_ty) ->
+          call_constraints_shape G ->
           env_injective env ->
           Clo.wc_node P n ->
           generate_node_sig n env aux_names = OK sig ->
@@ -980,7 +972,7 @@ Module Type SECNLUSTYPING
       forall nodes acc env aux_names G,
         Clo.wc_global nodes ->
         secglobal_scoped acc ->
-        (forall G1, call_constraints_shape G1 env) ->
+        (forall G1, call_constraints_shape G1) ->
         env_injective env ->
         generate_all_signatures' acc nodes env aux_names = OK G ->
         secglobal_scoped G.
@@ -1003,7 +995,7 @@ Module Type SECNLUSTYPING
     Corollary generate_all_signatures_scoped:
       forall nodes env aux_names G,
         Clo.wc_global nodes ->
-        (forall G1, call_constraints_shape G1 env) ->
+        (forall G1, call_constraints_shape G1) ->
         env_injective env ->
         generate_all_signatures nodes env aux_names = OK G ->
         secglobal_scoped G.

@@ -402,7 +402,7 @@ Proof.
 Qed.
 
 (*Substitute an ident d in st wtih st'*)
-Local Definition subST st d st' : ST := 
+Definition subST st d st' : ST := 
   match st_mem  d st with
   | false => st
   | true  => if st_mem d st' then (st_remove d st) ⊔ (st_remove d st') else (st_remove d st) ⊔ st'
@@ -415,7 +415,7 @@ Fixpoint subAll cns d st' : list constraint :=
   match cns with 
   | [] => []
   | (st, [d'])::cns' => if ident_eqb d' d then 
-                        subAll cns' d (st_remove d (st' ⊔ st) )
+                        subAll cns' d st'
                       else ((subST st d st'),[d']):: (subAll cns' d st')
   | _ :: cns'   => subAll cns' d st'
   end.
