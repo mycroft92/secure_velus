@@ -538,13 +538,4 @@ Import MergeFacts.
         eapply subst_ident_in_constraints_correct; eauto.
   Qed. 
 
-  Lemma subst_ident_constraint_correct: forall (c: constraint) (x v: ident) (c': constraint) st st', 
-      subst_ident_constraint c x v st = OK (c', st') -> forall dlt, constraintSatisfiable dlt c -> dlt x ⊑ dlt v -> constraintSatisfiable dlt c'.
-  Proof.
-    intros. unfold subst_ident_constraint in H. destruct (ident_eqb x v) eqn:Hxv; try inversion H.
-    destruct c as [lhs x'] eqn:Hc. destruct x' as [|x'' l] eqn:Hx'; try inversion H. destruct l eqn:Hl; inversion H; clear H3 H4 H5.
-    destruct (ident_eqb x x'') eqn:Hxx''; repeat monadInv; unfold satisfiable in *;
-    unfold hm_ext in H0; fold hm_ext in H0; rewrite <- join_bottom_eq1 in H0.
-    Admitted. 
-
 End SIGNATURE_PROOFS.

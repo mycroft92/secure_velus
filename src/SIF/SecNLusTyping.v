@@ -8,6 +8,7 @@ From Velus Require Import NLustre.NLOrdered.
 From Velus Require Import NLustre.Memories.
 From Velus Require Import NLustre.IsDefined.
 From Velus Require Import NLustre.IsFree.
+From Velus Require Import NLustre.NLClocking.
 From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import CoreExpr.CEIsFree.
 From Velus Require Import CoreExpr.CEClocking.
