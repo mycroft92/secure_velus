@@ -236,6 +236,161 @@ Module Type SECNLUSSTCTRANSLATION
         preserves_on scope c2 t2 ->
         preserves_on scope (c1 ++ c2) (t1 ++ t2).
 
+    (** Satisfaction is extensional on the variables a constraint actually
+        mentions. This is the semantic replacement for the older ad hoc
+        concatenation premise: to compose independently constructed witnesses,
+        it is enough to know that each target block only depends on its shared
+        scope plus its own private auxiliary variables. *)
+    Lemma constraintSatisfiable_ext:
+      forall c scope dlt1 dlt2,
+        constraint_scoped scope c ->
+        agree_on scope dlt1 dlt2 ->
+        constraintSatisfiable dlt1 c ->
+        constraintSatisfiable dlt2 c.
+    Proof.
+      intros [lhs rhs] scope dlt1 dlt2 Hsc Hagree Hsat.
+      unfold constraintSatisfiable, satisfiable in *.
+      assert (Hlhs: hm_ext dlt1 lhs = hm_ext dlt2 lhs).
+      {
+        clear Hsat.
+        induction lhs as [|x xs IH]; simpl; auto.
+        rewrite (Hagree x).
+        2:{ eapply constraint_scoped_lhs; eauto. now left. }
+        rewrite IH; auto.
+        intros y Hy. apply Hagree.
+        eapply constraint_scoped_lhs; eauto. now right.
+      }
+      destruct rhs as [|x rhs']; simpl in *.
+      - exact Hsat.
+      - rewrite <- Hlhs.
+        rewrite (Hagree x).
+        + exact Hsat.
+        + eapply constraint_scoped_rhs; eauto. now left.
+    Qed.
+
+    Lemma listSatisfiable_ext:
+      forall cns scope dlt1 dlt2,
+        constraints_scoped scope cns ->
+        agree_on scope dlt1 dlt2 ->
+        listSatisfiable dlt1 cns ->
+        listSatisfiable dlt2 cns.
+    Proof.
+      intros cns scope dlt1 dlt2 Hsc Hagree Hsat.
+      induction Hsc as [|c cns Hc Hcs IH] in Hsat |- *.
+      - constructor.
+      - inversion Hsat; subst.
+        constructor.
+        + eapply constraintSatisfiable_ext; eauto.
+        + eapply IH; eauto.
+    Qed.
+
+    Definition agree_on_notin
+      (scope extras: list ident)
+      (dlt base: ident -> Lat.t) : ident -> Lat.t :=
+      fun x =>
+        if in_dec ident_eq_dec x extras then dlt x
+        else base x.
+
+    Lemma agree_on_notin_scope:
+      forall scope extras dlt base,
+        (forall x, In x extras -> ~ In x scope) ->
+        agree_on scope base (agree_on_notin scope extras dlt base).
+    Proof.
+      intros scope extras dlt base Hfresh x Hin.
+      unfold agree_on_notin.
+      destruct (in_dec ident_eq_dec x extras) as [Hinextra|Hnin]; auto.
+      exfalso. eauto.
+    Qed.
+
+    Lemma agree_on_notin_extras:
+      forall scope extras dlt base,
+        NoDup extras ->
+        (forall x, In x extras -> ~ In x scope) ->
+        agree_on (scope ++ extras) dlt base ->
+        agree_on (scope ++ extras) dlt (agree_on_notin scope extras dlt base).
+    Proof.
+      intros scope extras dlt base Hnd Hfresh Hagree x Hin.
+      unfold agree_on_notin.
+      destruct (in_dec ident_eq_dec x extras) as [Hinextra|Hnin].
+      - reflexivity.
+      - apply Hagree.
+        apply in_app_iff in Hin.
+        apply in_app_iff.
+        destruct Hin as [Hin|Hin].
+        + now left.
+        + right.
+          exfalso. apply Hnin. exact Hin.
+    Qed.
+
+    Lemma preserves_on_concat_scoped:
+      forall scope extras1 extras2 c1 c2 t1 t2,
+        NoDup (extras1 ++ extras2) ->
+        (forall x, In x (extras1 ++ extras2) -> ~ In x scope) ->
+        constraints_scoped (scope ++ extras1) t1 ->
+        constraints_scoped (scope ++ extras2) t2 ->
+        preserves_on scope c1 t1 ->
+        preserves_on scope c2 t2 ->
+        preserves_on scope (c1 ++ c2) (t1 ++ t2).
+    Proof.
+      intros scope extras1 extras2 c1 c2 t1 t2 Hnd Hfresh Hsc1 Hsc2 Hpres1 Hpres2 dlt Hsat.
+      rewrite Forall_app in Hsat.
+      destruct Hsat as [Hsat1 Hsat2].
+      destruct (Hpres1 dlt Hsat1) as (dlt1 & Hagree1 & Ht1).
+      destruct (Hpres2 dlt Hsat2) as (dlt2 & Hagree2 & Ht2).
+      set (dlt' := agree_on_notin scope extras1 dlt1
+                     (agree_on_notin scope extras2 dlt2 dlt)).
+      exists dlt'. split.
+      - unfold dlt'. eapply agree_on_notin_scope.
+        intros x Hin.
+        apply Hfresh. now apply in_or_app; left.
+      - rewrite Forall_app. split.
+        + eapply listSatisfiable_ext.
+          * exact Hsc1.
+          * unfold dlt'. eapply agree_on_notin_extras.
+            -- eapply NoDup_app_l. exact Hnd.
+            -- intros x Hin.
+               apply Hfresh. now apply in_or_app; left.
+            -- intros x Hin.
+               unfold agree_on_notin.
+               destruct (in_dec ident_eq_dec x extras1) as [Hin1|Hnin1].
+               ++ reflexivity.
+               ++ destruct (in_dec ident_eq_dec x extras2) as [Hin2|Hnin2].
+                  ** exfalso.
+                     apply in_app_iff in Hin.
+                     destruct Hin as [Hinscope|Hin1'].
+                     --- eapply Hfresh in Hin2. contradiction.
+                         now apply in_or_app; right.
+                     --- apply Hnin1. exact Hin1'.
+                  ** apply Hagree1.
+                     apply in_app_iff in Hin.
+                     destruct Hin as [Hinscope|Hin1'].
+                     --- exact Hinscope.
+                     --- contradiction.
+          * exact Ht1.
+        + eapply listSatisfiable_ext.
+          * exact Hsc2.
+          * unfold dlt'. intros x Hin.
+            unfold agree_on_notin.
+            destruct (in_dec ident_eq_dec x extras1) as [Hin1|Hnin1].
+            -- exfalso.
+               apply in_app_iff in Hin.
+               destruct Hin as [Hinscope|Hin2].
+               ++ eapply Hfresh in Hin1. contradiction.
+                  now apply in_or_app; left.
+               ++ assert (~ In x extras2).
+                  { intro Hcontra.
+                    eapply NoDup_app_In with (x := x) in Hnd; eauto. }
+                  contradiction.
+            -- destruct (in_dec ident_eq_dec x extras2) as [Hin2|Hnin2].
+               ++ reflexivity.
+               ++ apply Hagree2.
+                  apply in_app_iff in Hin.
+                  destruct Hin as [Hinscope|Hin2'].
+                  ** exact Hinscope.
+                  ** contradiction.
+          * exact Ht2.
+    Qed.
+
     Lemma agree_on_refl: forall xs dlt, agree_on xs dlt dlt.
     Proof.
       intros * x Hin. reflexivity.
@@ -247,6 +402,108 @@ Module Type SECNLUSSTCTRANSLATION
       exists dlt. split.
       - apply agree_on_refl.
       - exact Hsat.
+    Qed.
+
+    (** Reset-call keys in source equations.
+
+        These helpers isolate the only source-defined variables that create
+        private STC auxiliaries during translation: the leading output of a
+        resettable [EqApp].  They are used later to relate source equation-list
+        structure to the reset-instance environment generated on the STC side. *)
+    Definition reset_call_var (e: equation) : option ident :=
+      match e with
+      | EqApp (x :: _) _ _ _ (Some _) => Some x
+      | _ => None
+      end.
+
+    Fixpoint reset_call_vars (eqs: list equation) : list ident :=
+      match eqs with
+      | [] => []
+      | eq :: eqs' =>
+          match reset_call_var eq with
+          | Some x => x :: reset_call_vars eqs'
+          | None => reset_call_vars eqs'
+          end
+      end.
+
+    Lemma reset_call_vars_in_vars_defined:
+      forall eqs x,
+        In x (reset_call_vars eqs) ->
+        In x (vars_defined eqs).
+    Proof.
+      induction eqs as [|eq eqs IH]; intros x Hin.
+      - inversion Hin.
+      - destruct eq as [y ck ce|xs ck f exps orst|y ck c0 exp];
+          simpl in *; try now right; eauto.
+        destruct xs as [|x0 xs]; simpl in *.
+        + eauto.
+        + destruct orst as [[r ckr]|]; simpl in *.
+          * destruct Hin as [Heq|Hin].
+            -- subst x.
+               rewrite IsD.vars_defined_cons. simpl. now left.
+            -- rewrite IsD.vars_defined_cons. simpl. right. eauto.
+          * eauto.
+    Qed.
+
+    Lemma reset_call_vars_nodup:
+      forall eqs,
+        NoDup (vars_defined eqs) ->
+        NoDup (reset_call_vars eqs).
+    Proof.
+      induction eqs as [|eq eqs IH]; intros Hnd.
+      - constructor.
+      - destruct eq as [y ck ce|xs ck f exps orst|y ck c0 exp];
+          simpl in *; eauto.
+        destruct xs as [|x0 xs]; simpl in *; eauto.
+        destruct orst as [[r ckr]|]; simpl in *; eauto.
+        apply NoDup_cons.
+        + intro Hin.
+          apply (reset_call_vars_in_vars_defined eqs) in Hin.
+          rewrite IsD.vars_defined_cons in Hnd.
+          apply NoDup_cons_iff in Hnd as [Hnin _].
+          simpl in Hnin.
+          apply Hnin. now right.
+        + rewrite IsD.vars_defined_cons in Hnd.
+          apply NoDup_cons_iff in Hnd as [_ Htail].
+          eauto.
+    Qed.
+
+    Lemma reset_call_var_translate_eqn:
+      forall eq x,
+        reset_call_var eq = Some x ->
+        exists ck f,
+          In (TcReset x ck f) (translate_eqn eq).
+    Proof.
+      intros [y ck ce|xs ck f exps orst|y ck c0 exp] x Hreset;
+        simpl in Hreset; try discriminate.
+      destruct xs as [|x0 xs]; try discriminate.
+      destruct orst as [[r ckr]|]; try discriminate.
+      inversion Hreset; subst x.
+      exists (Con ckr r true), f.
+      simpl. now left.
+    Qed.
+
+    Lemma reset_call_vars_translate_eqns:
+      forall eqs x,
+        In x (reset_call_vars eqs) ->
+        exists ck f,
+          In (TcReset x ck f) (translate_eqns eqs).
+    Proof.
+      induction eqs as [|eq eqs IH]; intros x Hin.
+      - inversion Hin.
+      - simpl in Hin.
+        destruct (reset_call_var eq) as [x0|] eqn:Hreset.
+        + destruct Hin as [Heq|Hin].
+          * subst x.
+            destruct (reset_call_var_translate_eqn _ _ Hreset) as (ck & f & Hin').
+            exists ck, f.
+            unfold translate_eqns. simpl. now apply in_or_app; left.
+          * destruct (IH _ Hin) as (ck & f & Hin').
+            exists ck, f.
+            unfold translate_eqns. simpl. now apply in_or_app; right.
+        + destruct (IH _ Hin) as (ck & f & Hin').
+          exists ck, f.
+          unfold translate_eqns. simpl. now apply in_or_app; right.
     Qed.
     
     (** Small inversion tactic for the state/error monad used by the typing
@@ -992,6 +1249,200 @@ Module Type SECNLUSSTCTRANSLATION
       rewrite Env.gempty in Hy. discriminate.
     Qed.
 
+    Lemma fresh_reset_insert_preserves_find:
+      forall env k st env' rst_inst st' x ty,
+        fresh_reset_insert k env st = OK ((env', rst_inst), st') ->
+        Env.find x env = Some ty ->
+        Env.find x env' = Some ty.
+    Proof.
+      intros env k st env' rst_inst st' x ty Hins Hfind.
+      unfold fresh_reset_insert in Hins.
+      destruct (Env.mem k env) eqn:Hmem; try discriminate.
+      eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
+      eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
+      unfold fresh_reset_ident in Hfresh.
+      inversion Hfresh; subst v st1.
+      unfold insert_env, ret in Hins0. inversion Hins0; subst e st2.
+      unfold ret in Hret. inversion Hret; subst env' rst_inst st'.
+      assert (Hxk : x <> k).
+      { intro Heq. subst x.
+        assert (Env.mem k env = true).
+        { apply Env.mem_1. unfold Env.In. eexists; exact Hfind. }
+        congruence. }
+      now rewrite Env.gso.
+    Qed.
+
+    Lemma generate_reset_env'_preserves_find:
+      forall trs env acc st reset_env rids st' x ty,
+        generate_reset_env' trs env acc st = OK ((reset_env, rids), st') ->
+        Env.find x env = Some ty ->
+        Env.find x reset_env = Some ty.
+    Proof.
+      induction trs as [|tr trs IH]; intros env acc st reset_env rids st' x ty Hgen Hfind.
+      - simpl in Hgen. inversion Hgen; subst. exact Hfind.
+      - simpl in Hgen.
+        destruct tr as [x0 ck ce|x0 ck e|x0 rck f|x0 xs ck b f exps].
+        1,2,4: eapply IH; eauto.
+        eapply sec_bind2_inv in Hgen as (env1 & i & st1 & Hstep & Hrec).
+        eapply IH; eauto.
+        eapply fresh_reset_insert_preserves_find; eauto.
+    Qed.
+
+    Definition reset_env_sec_bounded (st: ident) (env: Env.t ident) : Prop :=
+      forall x ty,
+        Env.find x env = Some ty ->
+        exists n, ty = Ids.gensym Ids.sec_reset n /\ (n < st)%positive.
+
+    Lemma reset_env_sec_bounded_step:
+      forall st env,
+        reset_env_sec_bounded st env ->
+        reset_env_sec_bounded (Pos.succ st) env.
+    Proof.
+      intros st env Hbound x ty Hfind.
+      specialize (Hbound _ _ Hfind) as (n & Hn & Hlt).
+      exists n. split; auto.
+      eapply Pos.lt_trans; eauto.
+      apply Pos.lt_succ_diag_r.
+    Qed.
+
+    Lemma reset_env_values_fresh_notin:
+      forall env st,
+        reset_env_sec_bounded st env ->
+        ~ InMembers (Ids.gensym Ids.sec_reset st) (env_values env).
+    Proof.
+      intros env st Hbound Hin.
+      apply InMembers_In in Hin as (x & Hin).
+      unfold env_values in Hin.
+      apply in_map_iff in Hin as ((x', ty') & Heq & Hele).
+      simpl in Heq. inversion Heq; subst x' ty'. clear Heq.
+      apply Env.elements_complete in Hele.
+      specialize (Hbound _ _ Hele) as (n & Hgen & Hlt).
+      apply gensym_injective in Hgen as [_ Hn]. subst n.
+      now apply Pos.lt_irrefl in Hlt.
+    Qed.
+
+    Lemma fresh_reset_insert_env_props:
+      forall env k st env' rst_inst st',
+        reset_env_sec_bounded st env ->
+        NoDupMembers (env_values env) ->
+        fresh_reset_insert k env st = OK ((env', rst_inst), st') ->
+        reset_env_sec_bounded st' env'
+        /\ NoDupMembers (env_values env').
+    Proof.
+      intros env k st env' rst_inst st' Hbound Hnodup Hgen.
+      unfold fresh_reset_insert in Hgen.
+      destruct (Env.mem k env) eqn:Hmem; try discriminate.
+      eapply sec_bind_inv in Hgen as (v & st1 & Hfresh & Hgen).
+      eapply sec_bind_inv in Hgen as (e & st2 & Hins & Hret).
+      unfold fresh_reset_ident in Hfresh. inversion Hfresh; subst v st1.
+      unfold insert_env, ret in Hins. inversion Hins; subst e st2.
+      unfold ret in Hret. inversion Hret; subst env' rst_inst st'.
+      split.
+      - intros x ty Hfind.
+        destruct (ident_eq_dec x k) as [Heq|Hneq].
+        + subst x. rewrite Env.gss in Hfind. inversion Hfind; subst ty.
+          exists st. split; [reflexivity|apply Pos.lt_succ_diag_r].
+        + rewrite Env.gso in Hfind by auto.
+          specialize (Hbound _ _ Hfind) as (n & Hn & Hlt).
+          exists n. split; auto.
+          eapply Pos.lt_trans; eauto.
+          apply Pos.lt_succ_diag_r.
+      - assert (Hnotin : ~ Env.In k env).
+        { intro Hin. apply Env.mem_1 in Hin. rewrite Hmem in Hin. discriminate. }
+        eapply (NoDupMembers_Permutation_Proper
+                  (env_values (Env.add k (Ids.gensym Ids.sec_reset st) env))
+                  ((Ids.gensym Ids.sec_reset st, k) :: env_values env)).
+        + apply env_values_add; exact Hnotin.
+        + constructor.
+          * apply reset_env_values_fresh_notin; exact Hbound.
+          * exact Hnodup.
+    Qed.
+
+    Lemma generate_reset_env_props':
+      forall trs env acc st reset_env rids st',
+        reset_env_sec_bounded st env ->
+        NoDupMembers (env_values env) ->
+        generate_reset_env' trs env acc st = OK ((reset_env, rids), st') ->
+        reset_env_sec_bounded st' reset_env
+        /\ NoDupMembers (env_values reset_env).
+    Proof.
+      induction trs as [|tr trs IH]; intros env acc st reset_env rids st'
+                                            Hbound Hnodup Hgen.
+      - simpl in Hgen. inversion Hgen; subst. auto.
+      - simpl in Hgen.
+        destruct tr as [x0 ck ce|x0 ck e|x0 rck f|x0 xs ck b f exps].
+        1,2,4: eapply IH; eauto.
+        eapply sec_bind2_inv in Hgen as (env1 & i & st1 & Hstep & Hrec).
+        destruct (fresh_reset_insert_env_props _ _ _ _ _ _
+                    Hbound Hnodup Hstep) as [Hbound1 Hnodup1].
+        eapply IH; eauto.
+    Qed.
+
+    Lemma generate_reset_env_injective:
+      forall trs reset_env rids st',
+        generate_reset_env trs init_state = OK ((reset_env, rids), st') ->
+        forall x y tx ty,
+          Env.find x reset_env = Some tx ->
+          Env.find y reset_env = Some ty ->
+          tx = ty ->
+          x = y.
+    Proof.
+      intros trs reset_env rids st' Hgen.
+      unfold generate_reset_env in Hgen.
+      destruct (generate_reset_env' trs (Env.empty _) [] init_state)
+        as [[[reset_env0 rids0] st0]|] eqn:Hgen'; try discriminate.
+      inversion Hgen; subst reset_env rids st'.
+      intros x y tx ty Hfindx Hfindy Heq.
+      destruct (generate_reset_env_props' trs (Env.empty _) [] init_state reset_env0 rids0 st0)
+        as [_ Hnodup];
+        eauto.
+      - intros z tz Hz. rewrite Env.gempty in Hz. discriminate.
+      - constructor.
+      - eapply env_values_nodup_injective; eauto.
+    Qed.
+
+    Lemma generate_reset_env'_has_reset_stmt:
+      forall trs env acc st reset_env rids st' x ck f,
+        generate_reset_env' trs env acc st = OK ((reset_env, rids), st') ->
+        In (TcReset x ck f) trs ->
+        exists ty, Env.find x reset_env = Some ty.
+    Proof.
+      induction trs as [|tr trs IH]; intros env acc st reset_env rids st' x ck f Hgen Hin.
+      - inversion Hin.
+      - simpl in Hgen.
+        simpl in Hin.
+        destruct Hin as [Heq|Hin].
+        + subst tr.
+          eapply sec_bind2_inv in Hgen as (env1 & i & st1 & Hstep & Hrec).
+          exists i.
+          eapply generate_reset_env'_preserves_find; eauto.
+          unfold assign_reset_type in Hstep.
+          eapply sec_bind2_inv in Hstep as (env0 & rst_inst & st0 & Hfresh & Hret).
+          inversion Hret; subst env0 rst_inst st0.
+          unfold fresh_reset_insert in Hfresh.
+          destruct (Env.mem x env) eqn:Hmem; try discriminate.
+          eapply sec_bind_inv in Hfresh as (v & stv & Hfreshid & Hins).
+          eapply sec_bind_inv in Hins as (e & ste & Hins & Hdone).
+          unfold fresh_reset_ident in Hfreshid. inversion Hfreshid; subst v stv.
+          unfold insert_env, ret in Hins. inversion Hins; subst e ste.
+          rewrite Env.gss. reflexivity.
+        + destruct tr as [x0 ck0 ce|x0 ck0 e|x0 rck0 f0|x0 xs ck0 b f0 exps].
+          1,2,4: eauto.
+          eapply sec_bind2_inv in Hgen as (env1 & i & st1 & Hstep & Hrec).
+          eauto.
+    Qed.
+
+    Lemma generate_reset_env_has_reset_stmt:
+      forall trs reset_env rids st' x ck f,
+        generate_reset_env trs init_state = OK ((reset_env, rids), st') ->
+        In (TcReset x ck f) trs ->
+        exists ty, Env.find x reset_env = Some ty.
+    Proof.
+      intros trs reset_env rids st' x ck f Hgen Hin.
+      unfold generate_reset_env in Hgen.
+      eapply generate_reset_env'_has_reset_stmt; eauto.
+    Qed.
+
     Lemma node_scope_sec_range:
       forall all_nodes env aux_names n
              clk_id rst_id clk_type rst_type inp out locals ty,
@@ -1635,11 +2086,18 @@ Module Type SECNLUSSTCTRANSLATION
         signature_scoped nsig.
 
     (** The node-side scopedness theorem now lives in [SecNLusTyping.v]:
-        [SECNLUSTYPING.generate_node_sig_scoped] proves exactly this shape,
-        once the standard NLustre clocking premise and the concrete
-        call-shape/environment hypotheses are available.  The STC-side wrapper
-        remains separate here because reset-instance elimination is still
-        packaged around [generate_sys_signature]. *)
+        [SECNLUSTYPING.generate_node_sig_scoped] proves the local one-node
+        result, and [SECNLUSTYPING.generate_all_signatures_scoped] lifts it to
+        a fully generated NLustre signature environment under the standard
+        source [wc_global] premise.
+
+        The pointwise predicate kept here is therefore stronger than what the
+        final theorem should expose.  It remains only because the current
+        translation-layer step theorem is still phrased for arbitrary
+        accumulators; once that step is refactored to consume generated globals
+        directly, this premise should disappear.  The STC-side wrapper remains
+        separate here because reset-instance elimination is still packaged
+        around [generate_sys_signature]. *)
     Definition generated_system_signatures_scoped
       (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
       forall G s ssig,
@@ -1740,6 +2198,55 @@ Module Type SECNLUSSTCTRANSLATION
         assert (Hneqb : ident_eqb ssig.(s_name) f = false).
         { apply ident_eqb_neq. exact Hssigname. }
         exists n2. simpl. rewrite Hneqb. auto.
+    Qed.
+
+    Lemma generate_all_sys_signatures_scoped':
+      forall systems acc env aux_names G,
+        secglobal_scoped acc ->
+        generated_system_signatures_scoped env aux_names ->
+        SECSTCTYPING.generate_all_sys_signatures' acc systems env aux_names = OK G ->
+        secglobal_scoped G.
+    Proof.
+      induction systems as [|s systems IH]; intros acc env aux_names G Hacc Hscoped Hgen.
+      - simpl in Hgen. inversion Hgen; subst. exact Hacc.
+      - simpl in Hgen.
+        destruct (SECSTCTYPING.generate_sys_signature acc s env aux_names) as [ssig|] eqn:Hsig;
+          try discriminate.
+        destruct (SECSTCTYPING.generate_all_sys_signatures' (ssig :: acc) systems env aux_names) as [G'|] eqn:Htl;
+          try discriminate.
+        inversion Hgen; subst G'. clear Hgen.
+        eapply IH; eauto.
+        eapply secglobal_scoped_cons; eauto.
+        eapply Hscoped; eauto.
+    Qed.
+
+    (** The source-side generated-global scopedness theorem now belongs to the
+        NLustre typing layer.  This corollary is just the translation-facing
+        bridge from [generate_node_env] to the typing theorem's injective-env
+        premise. *)
+    Corollary generate_all_source_signatures_scoped:
+      forall all_nodes env aux_names G,
+        SECNLUSTYPING.Clo.wc_global all_nodes ->
+        generate_node_env all_nodes = OK (env, aux_names) ->
+        (forall G1, SECNLUSTYPING.call_constraints_shape G1 env) ->
+        SECNLUSTYPING.generate_all_signatures all_nodes env aux_names = OK G ->
+        secglobal_scoped G.
+    Proof.
+      intros all_nodes env aux_names G Hwc Henvgen Hcallshape Hgen.
+      eapply SECNLUSTYPING.generate_all_signatures_scoped; eauto.
+      eapply generate_node_env_injective; eauto.
+    Qed.
+
+    Corollary generate_all_translated_system_signatures_scoped:
+      forall all_nodes env aux_names G,
+        generated_system_signatures_scoped env aux_names ->
+        SECSTCTYPING.generate_all_sys_signatures (translate all_nodes) env aux_names = OK G ->
+        secglobal_scoped G.
+    Proof.
+      intros all_nodes env aux_names G Hscoped Hgen.
+      unfold SECSTCTYPING.generate_all_sys_signatures in Hgen.
+      eapply generate_all_sys_signatures_scoped'; eauto.
+      apply secglobal_scoped_nil.
     Qed.
 
     (** This is the generated-signature form of [Signature_consistent_cons].

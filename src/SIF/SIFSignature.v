@@ -110,6 +110,26 @@ Section Type_Substitutions.
       find_signature f G = Some sig ->
       signature_scoped sig.
 
+  Lemma secglobal_scoped_nil:
+    secglobal_scoped [].
+  Proof.
+    intros f sig Hfind.
+    simpl in Hfind. discriminate.
+  Qed.
+
+  Lemma secglobal_scoped_cons:
+    forall sig G,
+      signature_scoped sig ->
+      secglobal_scoped G ->
+      secglobal_scoped (sig :: G).
+  Proof.
+    intros sig G Hsig Hglob f sig' Hfind.
+    simpl in Hfind.
+    destruct (ident_eqb sig.(s_name) f) eqn:Hname.
+    - inversion Hfind; subst sig'. exact Hsig.
+    - eapply Hglob; eauto.
+  Qed.
+
   Lemma subst_ident_in_type_scoped_app:
     forall pre post x ty v,
       st_scoped (pre ++ x :: post) ty ->

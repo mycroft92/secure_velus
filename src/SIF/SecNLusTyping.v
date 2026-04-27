@@ -957,6 +957,63 @@ Module Type SECNLUSTYPING
     Definition generate_all_signatures (node_list: global) (env: Env.t ident) (aux_names: list node_aux_names): res (list signature) :=
       generate_all_signatures' [] node_list env aux_names.
 
+    (** Global scopedness for generated NLustre signatures.
+
+        The node theorem [generate_node_sig_scoped] is the paper-facing local
+        result: one generated NLustre signature only mentions its visible
+        interface when its source node is well clocked.  The theorem below is
+        the list-level lifting used later by the translation-preservation
+        development.
+
+        Proof flow:
+        1. [wc_global] supplies the standard [wc_node] fact for the current
+           head node.
+        2. [generate_node_sig_scoped] gives scopedness of the freshly generated
+           head signature from that local clocking fact.
+        3. [secglobal_scoped_cons] extends the accumulator invariant.
+        4. Induction lifts the result to the full generated signature list.
+
+        This is the NLustre-side modular analogue of the paper's reasoning that
+        already-typed callees provide well-scoped assumptions for the next node
+        in the list. *)
+    Theorem generate_all_signatures_scoped':
+      forall nodes acc env aux_names G,
+        Clo.wc_global nodes ->
+        secglobal_scoped acc ->
+        (forall G1, call_constraints_shape G1 env) ->
+        env_injective env ->
+        generate_all_signatures' acc nodes env aux_names = OK G ->
+        secglobal_scoped G.
+    Proof.
+      induction nodes as [|n nodes IH]; intros acc env aux_names G
+                                              Hwc Hacc Hcallshape Hinj Hgen.
+      - simpl in Hgen. inversion Hgen; subst. exact Hacc.
+      - inversion Hwc as [|n' ns Hwc_tail Hwc_head]; subst n' ns.
+        simpl in Hgen.
+        destruct (generate_node_sig acc n env aux_names) as [sig|] eqn:Hsig;
+          try discriminate.
+        destruct (generate_all_signatures' (sig :: acc) nodes env aux_names) as [G'|] eqn:Htl;
+          try discriminate.
+        inversion Hgen; subst G'. clear Hgen.
+        eapply IH; eauto.
+        eapply secglobal_scoped_cons; eauto.
+        eapply generate_node_sig_scoped; eauto.
+    Qed.
+
+    Corollary generate_all_signatures_scoped:
+      forall nodes env aux_names G,
+        Clo.wc_global nodes ->
+        (forall G1, call_constraints_shape G1 env) ->
+        env_injective env ->
+        generate_all_signatures nodes env aux_names = OK G ->
+        secglobal_scoped G.
+    Proof.
+      intros nodes env aux_names G Hwc Hcallshape Hinj Hgen.
+      unfold generate_all_signatures in Hgen.
+      eapply generate_all_signatures_scoped'; eauto.
+      apply secglobal_scoped_nil.
+    Qed.
+
     Fixpoint generate_signatures' (acc: list signature) (node_list: global): res (list signature) :=
       match node_list with
       | [] => OK acc
