@@ -153,7 +153,6 @@ The active dependency chain is:
 
 The final theorem stack still mentions:
 
-- `SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped`
 - `SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped`
 - `successful_call_substitutions_fresh`
 - `signatures_preserved_calls`

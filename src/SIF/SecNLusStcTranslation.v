@@ -2382,20 +2382,20 @@ Module Type SECNLUSSTCTRANSLATION
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
         SECNLUSTYPINGCORRECTNESS.generated_node_simplify_ready env aux_names ->
-        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
         SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
         CloNL.wc_global nodes ->
         Signature_consistent acc1 acc2 ->
+        secglobal_scoped acc1 ->
         secglobal_scoped acc2 ->
         SECNLUSTYPING.generate_all_signatures' acc1 nodes env aux_names = OK G1 ->
         SECSTCTYPING.generate_all_sys_signatures' acc2 (translate nodes) env aux_names = OK G2 ->
         Signature_consistent G1 G2 /\ secglobal_scoped G2.
     Proof.
       induction nodes as [|n nodes IH]; intros acc1 acc2 env aux_names G1 G2
-                                             Hsec Henvgen Hready Hnscoped Hsscoped
-                                             Hfreshcalls Hcall Hwc Hcons Haccscoped Hnl Hstc.
+                                             Hsec Henvgen Hready Hsscoped
+                                             Hfreshcalls Hcall Hwc Hcons Hacc1scoped Hacc2scoped Hnl Hstc.
       - simpl in Hnl, Hstc. inversion Hnl; inversion Hstc; subst.
         split; assumption.
       - inversion Hwc as [|n' ns Hwc_tail Hwc_head]; subst n' ns.
@@ -2410,10 +2410,28 @@ Module Type SECNLUSSTCTRANSLATION
           simpl in Hstc; try discriminate.
         inversion Hnl; subst G1'. clear Hnl.
         inversion Hstc; subst G2'. clear Hstc.
+        assert (Henvinj : SECNLUSTYPING.env_injective env).
+        { eapply NAMEGEN.generate_node_env_injective; eauto. }
+        assert (Hnsigscoped : signature_scoped nsig).
+        {
+          eapply SECNLUSTYPING.generate_node_sig_scoped with (P := nodes).
+          - exact Hacc1scoped.
+          - exact Henvinj.
+          - exact Hwc_head.
+          - exact Hnsig.
+        }
         assert (Hpres : signatures_preserved nsig ssig).
         {
           eapply generated_signatures_preserved_from_simplify_bridge_scoped
-            with (all_nodes := all_nodes) (P := nodes) (G1 := acc1) (G2 := acc2); eauto.
+            with (all_nodes := all_nodes) (P := nodes) (G1 := acc1) (G2 := acc2).
+          - exact Hsec.
+          - exact Hcons.
+          - exact Hacc2scoped.
+          - exact Henvgen.
+          - exact Hwc_head.
+          - exact Hnsig.
+          - exact Hssig.
+          - exact Hready.
         }
         assert (Hhead : Signature_head_consistent nsig ssig).
         {
@@ -2422,13 +2440,15 @@ Module Type SECNLUSSTCTRANSLATION
           - destruct Hpres as [Hfields Hprescall].
             split; [exact Hfields|].
             eapply (Hcall Hfreshcalls nsig ssig).
-            + eapply Hnscoped; eauto.
+            + exact Hnsigscoped.
             + eapply Hsscoped; eauto.
             + split; [exact Hfields|exact Hprescall].
         }
         assert (Hcons' : Signature_consistent (nsig :: acc1) (ssig :: acc2)).
         { eapply Signature_consistent_cons; eauto. }
-        assert (Hscoped' : secglobal_scoped (ssig :: acc2)).
+        assert (Hacc1scoped' : secglobal_scoped (nsig :: acc1)).
+        { eapply secglobal_scoped_cons; eauto. }
+        assert (Hacc2scoped' : secglobal_scoped (ssig :: acc2)).
         { eapply secglobal_scoped_cons; eauto. }
         eapply IH; eauto.
     Qed.
@@ -2437,7 +2457,6 @@ Module Type SECNLUSSTCTRANSLATION
       forall all_nodes env aux_names G1 G2,
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
         SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
@@ -2447,7 +2466,7 @@ Module Type SECNLUSSTCTRANSLATION
         Signature_consistent G1 G2.
     Proof.
       intros all_nodes env aux_names G1 G2
-             Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc.
+             Hsec Henvgen Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc.
       pose proof (SECNLUSTYPINGCORRECTNESS.generated_node_simplify_ready_global_from_env
                     all_nodes env aux_names Henvgen)
         as Hready.
@@ -2455,8 +2474,8 @@ Module Type SECNLUSSTCTRANSLATION
       unfold SECSTCTYPING.generate_all_sys_signatures in Hallstc.
       destruct (generate_all_signatures_consistent_scoped'
                   all_nodes all_nodes nil nil env aux_names G1 G2
-                  Hsec Henvgen Hready Hnscoped Hsscoped Hfreshcalls Hcall
-                  Hwc Signature_consistent_nil secglobal_scoped_nil Hallnl Hallstc)
+                  Hsec Henvgen Hready Hsscoped Hfreshcalls Hcall
+                  Hwc Signature_consistent_nil secglobal_scoped_nil secglobal_scoped_nil Hallnl Hallstc)
         as [Hcons _].
       exact Hcons.
     Qed.
@@ -2471,7 +2490,6 @@ Module Type SECNLUSSTCTRANSLATION
       forall all_nodes env aux_names G1 G2,
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
         SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
@@ -2481,7 +2499,7 @@ Module Type SECNLUSSTCTRANSLATION
         Signature_consistent G1 G2.
     Proof.
       intros all_nodes env aux_names G1 G2
-             Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc.
+             Hsec Henvgen Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc.
       eapply generate_all_signatures_consistent_scoped; eauto.
     Qed.
 
@@ -2496,7 +2514,6 @@ Module Type SECNLUSSTCTRANSLATION
              (nsig ssig: signature),
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
         SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
@@ -2514,9 +2531,9 @@ Module Type SECNLUSSTCTRANSLATION
                           nconst sconst.
     Proof.
       intros all_nodes n G1 G2 env aux_names nsig ssig
-             Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hfind Hallnl Hallstc Hnsig Hssig.
+             Hsec Henvgen Hsscoped Hfreshcalls Hcall Hwc Hfind Hallnl Hallstc Hnsig Hssig.
       pose proof (generate_all_signatures_consistent
-                    all_nodes env aux_names G1 G2 Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc) as Hcons.
+                    all_nodes env aux_names G1 G2 Hsec Henvgen Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc) as Hcons.
       pose proof (SECSTCTYPINGCORRECTNESS.generate_all_sys_signatures_scoped_from_pointwise
                     (translate all_nodes) env aux_names G2 Hsscoped Hallstc) as HscopedG2.
       eapply generated_node_preserv_scoped_global; eauto.
@@ -2532,7 +2549,6 @@ Module Type SECNLUSSTCTRANSLATION
              (nsig ssig: signature),
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
         SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
@@ -2551,9 +2567,9 @@ Module Type SECNLUSSTCTRANSLATION
                           nconst sconst.
     Proof.
       intros all_nodes f n s prog' G1 G2 env aux_names nsig ssig
-             Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc Hfind Hsys Hnsig Hssig.
+             Hsec Henvgen Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc Hfind Hsys Hnsig Hssig.
       pose proof (generate_all_signatures_consistent
-                    all_nodes env aux_names G1 G2 Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc) as Hcons.
+                    all_nodes env aux_names G1 G2 Hsec Henvgen Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc) as Hcons.
       pose proof (SECSTCTYPINGCORRECTNESS.generate_all_sys_signatures_scoped_from_pointwise
                     (translate all_nodes) env aux_names G2 Hsscoped Hallstc) as HscopedG2.
       eapply found_system_preserv_scoped_global; eauto.
@@ -2572,7 +2588,6 @@ Module Type SECNLUSSTCTRANSLATION
              (nsig ssig: signature),
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
         SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
@@ -2586,11 +2601,11 @@ Module Type SECNLUSSTCTRANSLATION
         signatures_preserved nsig ssig.
     Proof.
       intros all_nodes f n s prog' G1 G2 env aux_names nsig ssig
-             Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc
+             Hsec Henvgen Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc
              Hfind Hsys Hnsig Hssig.
       pose proof (generate_all_signatures_consistent
                     all_nodes env aux_names G1 G2
-                    Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall
+                    Hsec Henvgen Hsscoped Hfreshcalls Hcall
                     Hwc Hallnl Hallstc) as Hcons.
       pose proof (SECSTCTYPINGCORRECTNESS.generate_all_sys_signatures_scoped_from_pointwise
                     (translate all_nodes) env aux_names G2 Hsscoped Hallstc) as HscopedG2.
@@ -2631,8 +2646,7 @@ Module Type SECNLUSSTCTRANSLATION
         The theorem keeps the remaining lower-level premises that still have to
         be discharged above this layer:
 
-        - generated NLustre/STC signatures are scoped to their visible
-          interfaces;
+        - generated STC signatures are scoped to their visible interfaces;
         - weak signature preservation is stable under call-time instantiation.
 
         From those ingredients, the abstract per-step compatibility invariant
@@ -2644,7 +2658,6 @@ Module Type SECNLUSSTCTRANSLATION
              (env: Env.t ident) (aux_names: list node_aux_names),
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
         SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
@@ -2654,7 +2667,7 @@ Module Type SECNLUSSTCTRANSLATION
         generated_program_preserves all_nodes env aux_names G1 G2.
     Proof.
       intros all_nodes G1 G2 env aux_names
-             Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc.
+             Hsec Henvgen Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc.
       intros f n s prog' nsig ssig Hfind Hsys Hnsig Hssig.
       eapply found_system_preserv_global; eauto.
     Qed.
@@ -2670,7 +2683,6 @@ Module Type SECNLUSSTCTRANSLATION
              (env: Env.t ident) (aux_names: list node_aux_names),
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
         SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
@@ -2685,7 +2697,7 @@ Module Type SECNLUSSTCTRANSLATION
           signatures_preserved nsig ssig.
     Proof.
       intros all_nodes G1 G2 env aux_names
-             Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc
+             Hsec Henvgen Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc
              f n s prog' nsig ssig Hfind Hsys Hnsig Hssig.
       eapply found_system_signatures_preserved_global; eauto.
     Qed.
