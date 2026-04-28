@@ -63,7 +63,12 @@ Module Type SECSTCTYPING
      cells ([s_lasts]) and the STC-only reset-instance auxiliaries.  We remove
      duplicates defensively so the later [simplify_scoped] theorem can be
      applied without having to restate a separate disjointness proof for the
-     reset namespace. *)
+     reset namespace.
+
+     Relative to the paper, this is the target-side analogue of eliminating
+     local witnesses before comparing signatures: STC keeps more internal state
+     than NLustre, so the typing layer makes that hidden state explicit here
+     and then removes it at signature generation time. *)
   Definition hidden_sys_vars (locals lasts rids: list ident) : list ident :=
     nodup ident_eq_dec (locals ++ lasts ++ rids).
 
@@ -135,6 +140,17 @@ Module Type SECSTCTYPING
     Variable reset_env: Env.t ident.
     Variable base_ty: ident.
     Variable rst_ty : ident.
+
+    (** Proof-flow note:
+        - one translated transition constraint is handled by the local
+          [generate_trconstr_constraint_*] lemmas;
+        - list-level lemmas lift this to translated systems;
+        - [generate_sys_signature_scoped] packages the target-side signature
+          scopedness used later by [SecNLusStcTranslation].
+
+        This is the STC counterpart of the NLustre typing file: it isolates the
+        target-side structural facts needed before the translation proof can
+        compare the two symbolic signatures. *)
 
     Definition vars_env_scoped {A: Type} (vars: list (ident * A)) (scope: list ident) : Prop :=
       forall x,
@@ -964,7 +980,6 @@ Module Type SECSTCTYPING
 
   Lemma generate_trconstr_constraint_shape:
     forall tr cns st st',
-      call_constraints_shape G ->
       env_injective env ->
       NoDup (Def.defined_tc tr) ->
       generate_trconstr_constraint tr st = OK (cns, st') ->
@@ -973,7 +988,7 @@ Module Type SECSTCTYPING
         /\ map snd cns = map (fun ty => [ty]) tys
         /\ wf_constraints cns.
   Proof.
-    intros tr cns st st' Hcall Hinj Hnd Hgen.
+    intros tr cns st st' Hinj Hnd Hgen.
     destruct tr as [x ck ce|x ck e|x ck f|x0 xs ck b f exps].
     - simpl in Hgen.
       eapply sec_bind_inv in Hgen as (ckty & st1 & Hck & Hgen).
@@ -1029,12 +1044,13 @@ Module Type SECSTCTYPING
           eapply sec_bind_inv in Hgen as (rst_inst & st4 & HgenRst & Hgen).
           pose proof (mmap_find_env_inv (x1 :: xs') outtyp st2 st3 Houttyp) as Houts.
           destruct Houts as [_ Hmapouts].
-          eapply Hcall in Hgen; eauto.
-          -- destruct Hgen as [Hwf Hsnd].
-             exists outtyp. split.
-             ++ simpl. exact Hmapouts.
-             ++ split; [exact Hsnd|exact Hwf].
-          -- eapply get_mappings_nodup; eauto.
+          assert (Hndout : NoDup outtyp).
+          { eapply get_mappings_nodup; eauto. }
+          destruct (generate_constraints_shape sig inptyp ckty [rst_inst] outtyp cns st4 st'
+                    Hndout Hgen) as [Hwf Hsnd].
+          exists outtyp. split.
+          -- simpl. exact Hmapouts.
+          -- split; [exact Hsnd|exact Hwf].
       + destruct xs as [|x1 xs'].
         * simpl in Hgen. unfold ret in Hgen. inversion Hgen; subst cns st'.
           exists []. split; [reflexivity|].
@@ -1046,17 +1062,17 @@ Module Type SECSTCTYPING
           eapply sec_bind_inv in Hgen as (outtyp & st3 & Houttyp & Hgen).
           pose proof (mmap_find_env_inv (x1 :: xs') outtyp st2 st3 Houttyp) as Houts.
           destruct Houts as [_ Hmapouts].
-          eapply Hcall in Hgen; eauto.
-          -- destruct Hgen as [Hwf Hsnd].
-             exists outtyp. split.
-             ++ simpl. exact Hmapouts.
-             ++ split; [exact Hsnd|exact Hwf].
-          -- eapply get_mappings_nodup; eauto.
+          assert (Hndout : NoDup outtyp).
+          { eapply get_mappings_nodup; eauto. }
+          destruct (generate_constraints_shape sig inptyp ckty [rst_ty] outtyp cns st3 st'
+                    Hndout Hgen) as [Hwf Hsnd].
+          exists outtyp. split.
+          -- simpl. exact Hmapouts.
+          -- split; [exact Hsnd|exact Hwf].
   Qed.
 
   Theorem generate_trconstrs_constraints_targets:
     forall trs cns st st',
-      call_constraints_shape G ->
       env_injective env ->
       NoDup (Def.defined trs) ->
       generate_trconstrs_constraints trs st = OK (cns, st') ->
@@ -1064,7 +1080,7 @@ Module Type SECSTCTYPING
         trconstrs_targets trs = Some tys
         /\ map snd cns = map (fun ty => [ty]) tys.
   Proof.
-    induction trs as [|tr trs IH]; intros cns st st' Hcall Hinj Hnd Hgen.
+    induction trs as [|tr trs IH]; intros cns st st' Hinj Hnd Hgen.
     - simpl in Hgen. unfold ret in Hgen. inversion Hgen; subst.
       exists []. split; reflexivity.
     - simpl in Hgen.
@@ -1259,14 +1275,13 @@ Module Type SECSTCTYPING
     Theorem generate_sys_signature_scoped:
       forall P s env aux_names sig,
         secglobal_scoped G ->
-        call_constraints_shape G ->
         env_injective env ->
         Clo.wc_system P s ->
         generate_sys_signature s env aux_names = OK sig ->
         signature_scoped sig.
     Proof.
       intros P s env aux_names sig
-             Hscoped Hcallshape Hinj Hwc Hsig.
+             Hscoped Hinj Hwc Hsig.
       unfold generate_sys_signature in Hsig.
       remember
         ((do (clk_id, rst_id) <- option_to_sec (get_node_aux (s.(SynStc.s_name)) aux_names);
@@ -1437,13 +1452,12 @@ Module Type SECSTCTYPING
       forall systems acc env aux_names G,
         Clo.wc_program systems ->
         secglobal_scoped acc ->
-        (forall G1, call_constraints_shape G1) ->
         env_injective env ->
         generate_all_sys_signatures' acc systems env aux_names = OK G ->
         secglobal_scoped G.
     Proof.
       induction systems as [|s systems IH]; intros acc env aux_names G
-                                                   Hwc Hacc Hcallshape Hinj Hgen.
+                                                   Hwc Hacc Hinj Hgen.
       - simpl in Hgen. inversion Hgen; subst. exact Hacc.
       - inversion Hwc as [|s' systems' Hwc_tail Hwc_head]; subst s' systems'.
         simpl in Hgen.
@@ -1462,12 +1476,11 @@ Module Type SECSTCTYPING
     Corollary generate_all_sys_signatures_scoped:
       forall systems env aux_names G,
         Clo.wc_program systems ->
-        (forall G1, call_constraints_shape G1) ->
         env_injective env ->
         generate_all_sys_signatures systems env aux_names = OK G ->
         secglobal_scoped G.
     Proof.
-      intros systems env aux_names G Hwc Hcallshape Hinj Hgen.
+      intros systems env aux_names G Hwc Hinj Hgen.
       unfold generate_all_sys_signatures in Hgen.
       eapply generate_all_sys_signatures_scoped'; eauto.
       apply secglobal_scoped_nil.

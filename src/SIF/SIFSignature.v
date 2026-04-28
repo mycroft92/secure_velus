@@ -77,13 +77,24 @@ Section Type_Substitutions.
     match xs,vs with
     | [], [] => ret cs
     | x::xs, v::vs => 
-      do cs' <- subst_ident_constraints cs x v;
-      subst_constraints_out_map cs' xs vs
+      match findST cs v with
+      | Some _ =>
+          error (MSG "Output substitution captures an existing RHS identifier: " :: [CTX v])
+      | None =>
+          do cs' <- subst_ident_constraints cs x v;
+          subst_constraints_out_map cs' xs vs
+      end
     | _, _ => error (msg "Malformed replace map")
     end.
   
   (* Instantiate a signature by substituting the caller's input/clock/reset
      security types and output identifiers into the stored constraints. *)
+  (** The caller-facing reshaping at the end is the key interface contract used
+      by the typing developments.  Stored signature constraints may be kept in
+      any internal order, but a successful call instantiation rebuilds the
+      concrete constraint list in the caller's output order.  This lets the
+      NLustre/STC typing proofs consume the same per-call shape fact without
+      carrying a separate [call_constraints_shape] assumption. *)
   Definition generate_constraints (node: signature) 
     (inp: list ST) 
     (clk: ST) 
@@ -92,15 +103,55 @@ Section Type_Substitutions.
     do inp_subst_constraints <- subst_constraints_inp_map node.(s_constraints) node.(s_in) inp;
     do clk_subst_constraints <- subst_ident_in_constraints inp_subst_constraints node.(s_clk) clk;
     do res_subst_constraints <- subst_ident_in_constraints clk_subst_constraints node.(s_reset) res;
-    subst_constraints_out_map res_subst_constraints node.(s_out) out.
+    do out_subst_constraints <- subst_constraints_out_map res_subst_constraints node.(s_out) out;
+    mmap (fun x =>
+            do st <- option_to_sec (findST out_subst_constraints x);
+            ret (st, [x])) out.
 
-  (** Shape invariant for call-time signature instantiation.
+  (** Stored-signature target shape.
 
-      This is the shared metatheory consumed by both the NLustre and STC
-      security typing developments. A successful call instantiation must
-      produce well-formed constraints, and the generated singleton RHS
-      variables must line up exactly with the caller-provided output
-      identifiers. *)
+      A generated signature is allowed to keep its constraints in any order,
+      but every stored constraint must still be well formed and target exactly
+      the signature outputs up to permutation.  The call-instantiation layer
+      later turns this into the concrete per-call shape fact consumed by the
+      NLustre and STC typing developments.  Relative to the paper, this is the
+      signature-level invariant that replaces the older external
+      [call_constraints_shape] premise. *)
+  Definition signature_good (sig: signature) : Prop :=
+    wf_constraints sig.(s_constraints)
+    /\ Permutation (map snd sig.(s_constraints))
+                   (map (fun ty => [ty]) sig.(s_out)).
+
+  Definition secglobal_good (G: secglobal) : Prop :=
+    forall f sig,
+      find_signature f G = Some sig ->
+      signature_good sig.
+
+  Lemma secglobal_good_nil:
+    secglobal_good [].
+  Proof.
+    intros f sig Hfind.
+    simpl in Hfind. discriminate.
+  Qed.
+
+  Lemma secglobal_good_cons:
+    forall sig G,
+      signature_good sig ->
+      secglobal_good G ->
+      secglobal_good (sig :: G).
+  Proof.
+    intros sig G Hsig Hglob f sig' Hfind.
+    simpl in Hfind.
+    destruct (ident_eqb sig.(s_name) f) eqn:Hname.
+    - inversion Hfind; subst sig'. exact Hsig.
+    - eapply Hglob; eauto.
+  Qed.
+
+  (** Legacy call-shape interface.
+
+      This predicate is being phased out in favour of the more structural
+      [signature_good] / [secglobal_good] invariants above.  It is kept only
+      while the downstream typing and translation modules are migrated. *)
   Definition call_constraints_shape (G: secglobal) : Prop :=
     forall f sig inptyp ckty rstty outtyp cns st st',
       find_signature f G = Some sig ->
@@ -143,6 +194,191 @@ Section Type_Substitutions.
     destruct (ident_eqb sig.(s_name) f) eqn:Hname.
     - inversion Hfind; subst sig'. exact Hsig.
     - eapply Hglob; eauto.
+  Qed.
+
+  Definition subst_rhs_ident (x v: ident) (rhs: ST) : ST :=
+    match rhs with
+    | [y] => if ident_eqb x y then [v] else [y]
+    | _ => rhs
+    end.
+
+  Lemma subst_ident_in_constraint_rhs:
+    forall c x ty c' st st',
+      subst_inp_ident_in_constraint c x ty st = OK (c', st') ->
+      snd c' = snd c.
+  Proof.
+    intros [lhs rhs] x ty c' st st' Hsub.
+    unfold subst_inp_ident_in_constraint in Hsub.
+    destruct rhs as [|r rhs']; try discriminate.
+    destruct rhs' as [|r' rhs'']; try discriminate.
+    destruct (ident_eqb x r) eqn:Hxr; try discriminate.
+    unfold ret in Hsub. inversion Hsub; subst c' st'. reflexivity.
+  Qed.
+
+  Lemma subst_ident_in_constraints_rhs:
+    forall cs x ty cs' st st',
+      subst_ident_in_constraints cs x ty st = OK (cs', st') ->
+      map snd cs' = map snd cs.
+  Proof.
+    induction cs as [|c cs IH]; intros x ty cs' st st' Hsub.
+    - simpl in Hsub. unfold ret in Hsub. inversion Hsub; subst. reflexivity.
+    - simpl in Hsub.
+      eapply sec_bind_inv in Hsub as (c1 & st1 & Hhd & Hsub).
+      eapply sec_bind_inv in Hsub as (cs1 & st2 & Htl & Hret).
+      unfold ret in Hret. inversion Hret; subst cs' st'.
+      simpl. rewrite (subst_ident_in_constraint_rhs _ _ _ _ _ _ Hhd).
+      rewrite (IH _ _ _ _ _ Htl). reflexivity.
+  Qed.
+
+  Lemma subst_ident_constraint_rhs:
+    forall c x v c' st st',
+      subst_ident_constraint c x v st = OK (c', st') ->
+      snd c' = subst_rhs_ident x v (snd c).
+  Proof.
+    intros [lhs rhs] x v c' st st' Hsub.
+    unfold subst_ident_constraint in Hsub.
+    destruct (ident_eqb x v) eqn:Hxv; try discriminate.
+    destruct rhs as [|r rhs']; try discriminate.
+    destruct rhs' as [|r' rhs'']; try discriminate.
+    destruct (ident_eqb x r) eqn:Hxr.
+    - unfold ret in Hsub. inversion Hsub; subst c' st'. simpl. rewrite Hxr. reflexivity.
+    - unfold ret in Hsub. inversion Hsub; subst c' st'. simpl. rewrite Hxr. reflexivity.
+  Qed.
+
+  Lemma subst_ident_constraints_rhs:
+    forall cs x v cs' st st',
+      subst_ident_constraints cs x v st = OK (cs', st') ->
+      map snd cs' = map (subst_rhs_ident x v) (map snd cs).
+  Proof.
+    induction cs as [|c cs IH]; intros x v cs' st st' Hsub.
+    - simpl in Hsub. unfold ret in Hsub. inversion Hsub; subst. reflexivity.
+    - simpl in Hsub.
+      eapply sec_bind_inv in Hsub as (c1 & st1 & Hhd & Hsub).
+      eapply sec_bind_inv in Hsub as (cs1 & st2 & Htl & Hret).
+      unfold ret in Hret. inversion Hret; subst cs' st'.
+      simpl. rewrite (subst_ident_constraint_rhs _ _ _ _ _ _ Hhd).
+      rewrite (IH _ _ _ _ _ Htl). reflexivity.
+  Qed.
+
+  Lemma nodup_singleton_map:
+    forall (xs : list ident),
+      NoDup xs ->
+      NoDup (map (fun ty => [ty]) xs).
+  Proof.
+    intros xs Hnd.
+    induction Hnd as [|x xs Hnin Hnd IH]; simpl.
+    - constructor.
+    - constructor.
+      + intro Hin.
+        apply in_map_iff in Hin as (y & Hy & Hiny).
+        inversion Hy; subst. contradiction.
+      + exact IH.
+  Qed.
+
+  Lemma reorder_constraints_shape:
+    forall src outs cns st st',
+      NoDup outs ->
+      mmap
+        (fun x : ident =>
+           do st0 <- option_to_sec (findST src x);
+           ret (st0, [x])) outs st = OK (cns, st') ->
+      map snd cns = map (fun ty => [ty]) outs
+      /\ wf_constraints cns.
+  Proof.
+    intros src outs.
+    induction outs as [|x outs IH]; intros cns st st' Hnd Hmap.
+    - simpl in Hmap.
+      unfold ret in Hmap. inversion Hmap; subst.
+      split; [reflexivity|].
+      unfold wf_constraints. split; constructor.
+    - simpl in Hmap.
+      apply NoDup_cons' in Hnd as [Hnin Hndtail].
+      eapply sec_bind_inv in Hmap as (cx & st1 & Hhd & Hmap).
+      eapply sec_bind_inv in Hmap as (cxs & st2 & Htl & Hret).
+      unfold option_to_sec in Hhd.
+      destruct (findST src x) as [lhs|] eqn:Hfind; try discriminate.
+      unfold ret in Hhd. inversion Hhd; subst cx st1.
+      unfold ret in Hret. inversion Hret; subst cns st'.
+      specialize (IH _ _ _ Hndtail Htl) as [Hsnd Hwf].
+      split.
+      + simpl. rewrite Hsnd. reflexivity.
+      + unfold wf_constraints in *.
+        destruct Hwf as [Hndwf Hfortail].
+        split.
+        * simpl. constructor.
+          -- intro Hin.
+             assert (Hin' : In [x] (map (fun ty => [ty]) outs)).
+             { rewrite <- Hsnd. exact Hin. }
+             apply in_map_iff in Hin' as (y & Hy & Hiny).
+             inversion Hy; subst.
+             apply Hnin. exact Hiny.
+          -- exact Hndwf.
+        * constructor; [simpl; reflexivity|exact Hfortail].
+  Qed.
+
+  Theorem generate_constraints_shape:
+    forall sig inp clk rst out cns st st',
+      NoDup out ->
+      generate_constraints sig inp clk rst out st = OK (cns, st') ->
+      wf_constraints cns
+      /\ map snd cns = map (fun ty => [ty]) out.
+  Proof.
+    intros sig inp clk rst out cns st st' Hnd Hgen.
+    unfold generate_constraints in Hgen.
+    eapply sec_bind_inv in Hgen as (c1 & st1 & Hinpsub & Hgen).
+    eapply sec_bind_inv in Hgen as (c2 & st2 & Hclksub & Hgen).
+    eapply sec_bind_inv in Hgen as (c3 & st3 & Hrstsub & Hgen).
+    eapply sec_bind_inv in Hgen as (c4 & st4 & Houtsub & Hreorder).
+    destruct (reorder_constraints_shape c4 out cns st4 st' Hnd Hreorder) as [Hsnd Hwf].
+    split; [exact Hwf|exact Hsnd].
+  Qed.
+
+  Lemma lookup_output_constraint_scoped:
+    forall scope src x c st st',
+      constraints_scoped scope src ->
+      In x scope ->
+      (do st0 <- option_to_sec (findST src x);
+       ret (st0, [x])) st = OK (c, st') ->
+      constraint_scoped scope c.
+  Proof.
+    intros scope src x c st st' Hsc Hinx Hlookup.
+    simpl in Hlookup.
+    unfold option_to_sec in Hlookup.
+    destruct (findST src x) as [lhs|] eqn:Hfind; try discriminate.
+    unfold ret in Hlookup. inversion Hlookup; subst c st'.
+    intros y Hin.
+    unfold constraint_scope in Hin. simpl in Hin.
+    apply in_app_iff in Hin.
+    destruct Hin as [Hin|Hin].
+    - apply find_correct in Hfind.
+      unfold constraints_scoped in Hsc.
+      rewrite Forall_forall in Hsc.
+      eapply constraint_scoped_lhs with (rhs := [x]).
+      + eapply Hsc. exact Hfind.
+      + exact Hin.
+    - simpl in Hin. destruct Hin as [Heq|[]]. subst y. exact Hinx.
+  Qed.
+
+  Lemma reorder_constraints_scoped:
+    forall scope src outs cns st st',
+      constraints_scoped scope src ->
+      Forall (fun x => In x scope) outs ->
+      mmap
+        (fun x : ident =>
+           do st0 <- option_to_sec (findST src x);
+           ret (st0, [x])) outs st = OK (cns, st') ->
+      constraints_scoped scope cns.
+  Proof.
+    induction outs as [|x outs IH]; intros cns st st' Hsc Houts Hmap.
+    - simpl in Hmap. unfold ret in Hmap. inversion Hmap; subst. constructor.
+    - inversion Houts as [|x' outs' Hx Houts']; subst x' outs'.
+      simpl in Hmap.
+      eapply sec_bind_inv in Hmap as (cx & st1 & Hhd & Hmap).
+      eapply sec_bind_inv in Hmap as (cxs & st2 & Htl & Hret).
+      unfold ret in Hret. inversion Hret; subst cns st'.
+      constructor.
+      + eapply lookup_output_constraint_scoped; eauto.
+      + eapply IH; eauto.
   Qed.
 
   Lemma subst_ident_in_type_scoped_app:
@@ -315,6 +551,7 @@ Section Type_Substitutions.
       unfold ret in Hsub. inversion Hsub; subst. exact Hsc.
     - destruct vs as [|v vs]; simpl in Hsub; try discriminate.
       inversion Hvs as [|v0 vs0 Hv Hvs']; subst v0 vs0.
+      destruct (findST cs v) as [stx|] eqn:Hfind; try discriminate.
       eapply sec_bind_inv in Hsub as (cs1 & st1 & Hhd & Htl).
       assert (Hv' : In v (xs ++ scope)).
       { apply in_or_app. right. exact Hv. }
@@ -337,7 +574,8 @@ Section Type_Substitutions.
     unfold generate_constraints in Hgen.
     eapply sec_bind_inv in Hgen as (c1 & st1 & Hinpsub & Hgen).
     eapply sec_bind_inv in Hgen as (c2 & st2 & Hclksub & Hgen).
-    eapply sec_bind_inv in Hgen as (c3 & st3 & Hrstsub & Houts).
+    eapply sec_bind_inv in Hgen as (c3 & st3 & Hrstsub & Hgen).
+    eapply sec_bind_inv in Hgen as (c4 & st4 & Houtsub & Hreorder).
     assert (Hsig0 :
               constraints_scoped
                 (s_in sig ++ (s_out sig ++ [s_clk sig; s_reset sig]) ++ scope)
@@ -409,11 +647,13 @@ Section Type_Substitutions.
       - exact Hc2'.
       - exact Hrst'.
       - exact Hrstsub. }
-    eapply (subst_constraints_out_map_scoped
-              (s_out sig) out scope c3 cns st3 st').
-    - exact Hc3.
-    - exact Hout.
-    - exact Houts.
+    assert (Hc4 : constraints_scoped scope c4).
+    { eapply (subst_constraints_out_map_scoped
+                (s_out sig) out scope c3 c4 st3 st4).
+      - exact Hc3.
+      - exact Hout.
+      - exact Houtsub. }
+    eapply reorder_constraints_scoped; eauto.
   Qed.
    
 End Type_Substitutions.

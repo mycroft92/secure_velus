@@ -18,21 +18,6 @@ src/Common/Common.v
 src/Common/CompCertLib.v
 src/AcyGraph.v
 
-
-src/SIF/Helpers.v
-src/SIF/SecLattice.v
-src/SIF/SymTypes.v
-src/SIF/SIFTactics.v
-src/SIF/SIFSignature.v
-src/SIF/NameInterface.v
-src/SIF/SimpleListTypes.v
-src/SIF/SecContext.v
-src/SIF/SecCETyping.v
-src/SIF/SecNLusTyping.v
-src/SIF/SecSTCTyping.v
-src/SIF/SecNLusStcTranslation.v
-
-
 src/Lustre/LSemantics.v
 src/Lustre/LSyntax.v
 src/Lustre/Parser/LustreParser.v
@@ -100,6 +85,7 @@ src/Stc/StcSyntax.v
 src/Stc/StcWellDefined.v
 src/Stc/Stc.v
 
+
 src/Obc/ObcSyntax.v
 src/Obc/ObcTyping.v
 src/Obc/ObcAddDefaults.v
@@ -144,7 +130,16 @@ src/Instantiator.v
 src/NLCorrectness.v
 src/VelusCorrectness.v
 
-
-
-
+src/SIF/Helpers.v
+src/SIF/SecLattice.v
+src/SIF/SymTypes.v
+src/SIF/SIFTactics.v
+src/SIF/SIFSignature.v
+src/SIF/NameInterface.v
+src/SIF/SimpleListTypes.v
+src/SIF/SecContext.v
+src/SIF/SecCETyping.v
 src/SIF/SecTypes.v
+src/SIF/SecNLusTyping.v
+src/SIF/SecSTCTyping.v
+src/SIF/SecNLusStcTranslation.v
