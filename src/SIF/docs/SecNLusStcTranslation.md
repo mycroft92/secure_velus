@@ -19,8 +19,8 @@ long as shared variables agree.
 
 ## Scoped Concatenation
 
-`preserves_on_concat_scoped` is the intended replacement for the older abstract
-`preserves_on_app_closed` assumption.
+`preserves_on_concat_scoped` is the replacement for the older abstract
+append-closure assumption.
 
 It says that two preservation witnesses compose if the target-side private
 variables are:
@@ -44,15 +44,15 @@ The planned replacement for the old list proof is:
 3. accumulate reset-instance extras along the equation list;
 4. compose head and tail with `preserves_on_concat_scoped`.
 
-This is the route for deleting `preserves_on_app_closed` completely.
+This is the route that replaced the old append-closure proof path completely.
 
 ## Current Status
 
 - The caller-facing `call_constraints_shape` cleanup has already been pushed
   through the active proof stack far enough that
   `SecNLusStcTranslation.v` is locally `coqc`-clean again.
-- The next proof artifact to remove is therefore
-  `preserves_on_app_closed`, not the call-shape premise.
+- The next proof artifacts to remove are therefore the remaining
+  scopedness/call-side assumptions, not the call-shape premise.
 - That STC-side refinement now exists in `SecSTCTyping.v` through
   `generate_trconstr*_scoped_on_keys`.
 - This file now contains the matching reset-extra bookkeeping layer:
@@ -68,7 +68,7 @@ In practical terms, the next theorem work should happen in two layers:
 2. compose head and tail with `preserves_on_concat_scoped`, using the new
    key-to-extra bridge lemmas;
 3. propagate that replacement through `node_preserv` and the global theorem
-   stack until `preserves_on_app_closed` disappears entirely.
+   stack until only the remaining scopedness/call-side assumptions are left.
 
 ## Relation to the Paper
 

@@ -38,11 +38,18 @@ Current proof state:
 - The most recent full repo `make` passed the Coq proof phase and entered the
   extraction/OCaml build before being interrupted manually; that is the last
   global checkpoint for the current branch state.
+- Structural follow-up, but not the current priority:
+  once the scoped-composition cleanup is stable and validated, extract
+  the source-side and target-side local correctness developments into new
+  functorized files `SecNLusTypingCorrectness.v` and
+  `SecStcTypingCorrectness.v`. Those files should own the generated
+  signature/raw-constraint scopedness and well-formedness theorems, leaving
+  `SecNLusStcTranslation.v` focused on the cross-phase preservation argument.
 
 What is still open:
 - The next active blocker is no longer the call-shape premise. It is the
-  proof-artifact assumption `preserves_on_app_closed` in
-  `SecNLusStcTranslation.v`.
+  remaining scopedness/call-side assumptions in `SecNLusStcTranslation.v`
+  after the append-closure route was removed.
 - `env_injective` still needs to be made explicit in the work plan.
   Status update: the proof now lives in `NameInterface.v` as a property of
   `generate_node_env`, and the STC global scopedness bridge already derives it
@@ -54,20 +61,16 @@ What is still open:
   generated-global STC theorem from `SecSTCTyping.v` once the accumulator-based
   step theorem is refactored.
 - The current weakened preservation theorem shape in
-  `SecNLusStcTranslation.v` still looks viable, but only if two remaining proof
-  artifacts are removed:
-  - `preserves_on_app_closed` should be replaced by the scoped composition path
-    already started via `preserves_on_concat_scoped`;
-  - the call bridge should be closed through
+  `SecNLusStcTranslation.v` still looks viable, but only if the remaining call
+  bridge is closed through
     `successful_call_substitutions_fresh` and `signatures_preserved_calls`,
     rather than left as a final-layer premise.
 
 Immediate next step:
-1. Strengthen `eqns_preserv` to thread private reset extras and compose head
-   and tail via `preserves_on_concat_scoped`.
-2. Delete `preserves_on_app_closed` from `eqns_preserv`, `node_preserv`,
-   `generated_node_preserv`, and the final global theorem stack.
-3. Then return to the remaining scopedness/call-side assumptions:
+1. Keep the scoped theorem chain stable:
+   `eqns_preserv_scoped`, `node_preserv_scoped`,
+   `generated_node_preserv_scoped`, and the updated global corollaries.
+2. Then return to the remaining scopedness/call-side assumptions:
    `generated_node_signatures_scoped`,
    `generated_system_signatures_scoped`,
    `successful_call_substitutions_fresh`,
@@ -96,9 +99,14 @@ The resume plan for tomorrow is:
 
   1. Introduce the precise STC-side scopedness lemma needed for one translated
      equation/list block and prove it in `SecSTCTyping.v` if possible.
-  2. Rewrite `eqns_preserv` around `preserves_on_concat_scoped`.
-  3. Remove `preserves_on_app_closed` from the global preservation theorem
-     stack and validate with full repo `make`.
-  4. Then continue trimming the remaining scopedness/call-side assumptions.
+  2. Keep the scoped global preservation route intact and validate with full
+     repo `make`.
+  3. Then continue trimming the remaining scopedness/call-side assumptions.
+
+Saved checkpoint decision:
+- Do not perform the correctness-module split while the scoped theorem path is
+  still moving.
+- First stabilize the new theorem path.
+- Then perform the module extraction as a cleanup refactor.
 
   The untracked src/SIF_fresh/ directory was left untouched.

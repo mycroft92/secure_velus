@@ -16,38 +16,39 @@
 2026-04-26: Removed the remaining generic lattice/type-equality wrappers from `SecNLusStcTranslation.v`; `join_*_eq` now live in `SecLattice.v` and `hm_ext_merge_eq` lives in `SecTypes.v`.
 2026-04-26: Proved the NLustre generated-signature scopedness path in `SecNLusTyping.v` (`generate_eqn_constraint_scoped`, `generate_eqns_constraints_scoped`, `generate_node_sig_scoped`), moved reusable `get_mappings*` lemmas into `NameInterface.v`, and deleted the corresponding translation-local copies.
 2026-04-26: Identified the remaining scopedness work on the STC side: a generic `generate_sys_signature` scopedness theorem needs to be specialized around translated systems/reset-instance elimination because the shared typing environment intentionally excludes generic STC `last` variables.
-2026-04-27: Added the reset-translation structural lemmas needed to replace `preserves_on_app_closed` in `SecNLusStcTranslation.v`: source reset-call key extraction (`reset_call_vars`), reset-env persistence/injectivity lemmas, lookup of translated `TcReset` keys in the final reset environment, and a generic lifting lemma from generated system-signature scopedness to `secglobal_scoped`.
+2026-04-27: Added the reset-translation structural lemmas needed to replace the old append-closure route in `SecNLusStcTranslation.v`: source reset-call key extraction (`reset_call_vars`), reset-env persistence/injectivity lemmas, lookup of translated `TcReset` keys in the final reset environment, and a generic lifting lemma from generated system-signature scopedness to `secglobal_scoped`.
 2026-04-27: Moved the generic `secglobal_scoped` list lemmas into `SIFSignature.v`, proved the NLustre global scopedness theorem `generate_all_signatures_scoped` in `SecNLusTyping.v`, and reduced `SecNLusStcTranslation.v` to a thin bridge corollary (`generate_all_source_signatures_scoped`) plus updated documentation about the remaining stronger pointwise node-scopedness predicate.
 2026-04-27: Moved the shared `call_constraints_shape` premise into `SIFSignature.v`, updated the NLustre typing theorems to consume that generic signature-layer assumption directly, and proved the STC-side scopedness development in `SecSTCTyping.v` (`generate_trconstr*_scoped`, target-shape lemmas, `generate_sys_signature_scoped`, and `generate_all_sys_signatures_scoped`).
 2026-04-27: Updated `SecNLusStcTranslation.v` to match the corrected STC signature shape (`hidden_sys_vars slocals slasts rids`) and to treat the STC global scopedness theorem as owned by `SecSTCTyping.v` rather than rebuilt locally.
-2026-04-27: Recorded the current endgoal assessment for `SecNLusStcTranslation.v`: the weakened `agree_on` / `preserves_on` preservation path is still the right target, but it likely closes only after removing the generic `preserves_on_app_closed` assumption in favor of the scoped composition route (`preserves_on_concat_scoped`) and after discharging the call-side freshness bridge (`successful_call_substitutions_fresh` / `signatures_preserved_calls`). Future proof checks should use full repo `make` only.
+2026-04-27: Recorded the current endgoal assessment for `SecNLusStcTranslation.v`: the weakened `agree_on` / `preserves_on` preservation path is still the right target, with the scoped composition route (`preserves_on_concat_scoped`) replacing the old append-closure path and the remaining major gap concentrated in the call-side freshness bridge (`successful_call_substitutions_fresh` / `signatures_preserved_calls`). Future proof checks should use full repo `make` only.
 2026-04-27: Added a repo-level `Dockerfile` and `.dockerignore` for a reproducible linux/amd64 Velus/SIF environment, targeting Apple Silicon hosts through Docker's amd64 emulation. The image installs Coq 8.9.1, Menhir 20200624, and an OCaml 4.09.1 opam switch, then runs `./configure -clightgen x86_64-linux`.
 2026-04-27: Recorded the current repair workflow in `AGENTS.md`: fix `SecNLusTyping.v` first, then `SecSTCTyping.v`, then `SecNLusStcTranslation.v`; after each file-level repair, validate with full repo `make`, then document, commit on `AI_version`, merge into `constraint_gen`, and push before continuing.
 2026-04-27: Recorded the current module-interface rule in `AGENTS.md`: when SIF functors need upstream dependencies such as `CECLOCKING`, `NLCLOCKING`, or `STCCLOCKING`, thread those module types explicitly through the functor signatures instead of recreating local functor instances inside the SIF files.
 2026-04-27: Updated the repair workflow in `AGENTS.md` so local proof-error isolation should use direct `coqc` runs with the exact `_CoqProject` load-path flags rather than `make src/...`, while final acceptance for each repaired state still requires full repo `make`.
 2026-04-28: Repaired `SecSTCTyping.v`, validated that state with full repo `make`, committed it as `b510b9c`, and pushed `constraint_gen`. The full build now gets past `SecSTCTyping.v` and fails next in `SecNLusStcTranslation.v`.
 2026-04-28: Repaired the current `SecNLusStcTranslation.v` fallout from the caller-facing `call_constraints_shape` cleanup. The file is locally `coqc`-clean again, and the last full build progressed through the Coq proof phase into extraction/OCaml before being interrupted manually.
-2026-04-28: Added/update module-level markdown documentation in `src/SIF/docs/`, including an explicit note in `SecNLusStcTranslation.md` that `preserves_on_concat_scoped` is the intended semantic replacement for `preserves_on_app_closed`.
+2026-04-28: Added/update module-level markdown documentation in `src/SIF/docs/`, including an explicit note in `SecNLusStcTranslation.md` that `preserves_on_concat_scoped` is the semantic replacement for the legacy append-closure path.
 2026-04-28: Moved the shared-environment injectivity proof into `NameInterface.v` as a naming-layer theorem (`generate_node_env_injective`) and updated the STC global scopedness bridge in `SecNLusStcTranslation.v` to derive injectivity from `generate_node_env` instead of requiring it as a caller-side premise.
 2026-04-28: Refined the STC raw scopedness interface in `SecSTCTyping.v` with key-based reset lookup tracking (`trconstr_reset_keys`, `trconstrs_reset_keys`, `generate_trconstr*_scoped_on_keys`) and kept the older whole-reset-env scopedness theorems as wrappers.
 2026-04-28: Added the reset-extra bookkeeping layer in `SecNLusStcTranslation.v` needed for the scoped concatenation proof: `eqn_reset_extras`, `eqns_reset_extras`, lookup/freshness/nodup lemmas, translated reset-key tracking, and the bridge from translated reset keys to concrete mapped reset-instance extras. The translation file is locally `coqc`-clean again after this checkpoint.
+2026-04-28: Saved the current pre-refactor state before continuing the append-closure cleanup. Decision: finish the semantic cleanup first, then extract source/target local generation/scopedness/well-formedness lemmas into new functorized modules `SecNLusTypingCorrectness.v` and `SecStcTypingCorrectness.v` so `SecNLusStcTranslation.v` only keeps cross-phase arguments.
+2026-04-28: Completed the migration from the legacy append-closure proof path to the scoped theorem path in `SecNLusStcTranslation.v`; the active stack now goes through `eqns_preserv_scoped`, `node_preserv_scoped`, `generated_node_preserv_scoped`, the scoped simplify/signature bridge, and the updated global preservation corollaries.
 
 Pending resume order after the next compile result:
 - Fix any remaining module-arity/import breakage in `SecNLusTyping.v`, then run full repo `make`.
 - Once validated, commit on `AI_version`, merge into `constraint_gen`, and push.
 - Repair `SecNLusStcTranslation.v`, first for the current proof failure at `constraintSatisfiable_ext`, then for the remaining proof-stack cleanup.
-- After the tree compiles again, remove `preserves_on_app_closed`, prove `call_constraints_shape`, and eliminate the remaining scopedness/call-side assumptions from the final preservation theorem whenever they can be discharged honestly.
+- After the tree compiles again, eliminate the remaining scopedness/call-side assumptions from the final preservation theorem whenever they can be discharged honestly.
 
 Remaining proof-stack after syntax/interface repair:
 - In `SecNLusStcTranslation.v`, first repair any proofs broken only by the new functor/module-type arities.
-- Remove the final theorem chain's dependence on `preserves_on_app_closed` by rewriting the equation-list composition proof around `preserves_on_concat_scoped`.
+- Keep the final theorem chain on the scoped composition proof around `preserves_on_concat_scoped`, and avoid reintroducing the old append-closure route.
 - Discharge `call_constraints_shape` from the signature/typing layer instead of leaving it as a public theorem assumption.
 - Replace the remaining pointwise generated-signature scopedness assumptions with the already-structured generated-global scopedness theorems from `SecNLusTyping.v` and `SecSTCTyping.v`.
 - Try to discharge the call-side assumptions (`successful_call_substitutions_fresh`, `signatures_preserved_calls`) from the naming/signature-instantiation setup; if that fails, leave only a narrow, explicit residual assumption with a comment explaining exactly why it is still needed.
 
 Non-negotiable cleanup target for the weakened preservation development:
 - eliminate all of these dependencies from the final theorem stack without introducing any new theorem-level assumptions:
-  `preserves_on_app_closed`,
   `call_constraints_shape`,
   `generated_node_signatures_scoped`,
   `generated_system_signatures_scoped`,
@@ -55,12 +56,15 @@ Non-negotiable cleanup target for the weakened preservation development:
   `signatures_preserved_calls`.
 
 Current immediate next proof step:
-- Remove `preserves_on_app_closed` first.
-- The expected route is not a generic append-closure theorem. Instead:
-  1. use the new key-based STC scopedness theorem together with the new reset-extra bookkeeping layer to prove a stronger equation-list theorem that returns/threads private reset extras;
-  2. replace `eqns_preserv -> node_preserv -> generated_node_preserv -> generated_program_preserv_global` uses of `preserves_on_app_closed` with `preserves_on_concat_scoped`;
-  3. once that proof path is stable, remove the obsolete `preserves_on_app_closed` premise from the public theorem stack and revalidate with full repo `make`.
+- Keep the scoped theorem path stable:
+  1. preserve the new chain `eqns_preserv_scoped -> node_preserv_scoped -> generated_node_preserv_scoped -> generated_program_preserv_global`;
+  2. continue replacing stronger pointwise scopedness assumptions with generated-global scopedness facts;
+  3. then attack the remaining call-side bridge assumptions.
 - If a syntax-side assumption becomes necessary for this route, keep it to standard well-formedness/clocking facts coming from the compilation pipeline and document it explicitly before exposing it in the final theorem stack.
 - Add `env_injective` to the explicit cleanup list.
   - Status: proved in `NameInterface.v` for environments returned by `generate_node_env`.
   - Remaining cleanup: remove obsolete local copies/uses of the same proof from `SecNLusStcTranslation.v` where possible, and keep downstream typing/translation bridges deriving injectivity from `generate_node_env` instead of exposing it as a premise.
+- After the scoped-composition migration stabilizes and passes full `make`, split node/system-local correctness developments out of:
+  - `SecNLusTyping.v` -> `SecNLusTypingCorrectness.v`
+  - `SecSTCTyping.v` -> `SecStcTypingCorrectness.v`
+  Keep those files functorized over the same module interfaces, and leave `SecNLusStcTranslation.v` with only translation-specific bridges and final preservation theorems.
