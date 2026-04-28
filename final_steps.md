@@ -33,28 +33,43 @@ What is still open:
   `generated_system_signatures_scoped`; this should be replaced by the
   generated-global STC theorem from `SecSTCTyping.v` once the accumulator-based
   step theorem is refactored.
+- The current weakened preservation theorem shape in
+  `SecNLusStcTranslation.v` still looks viable, but only if two remaining proof
+  artifacts are removed:
+  - `preserves_on_app_closed` should be replaced by the scoped composition path
+    already started via `preserves_on_concat_scoped`;
+  - the call bridge should be closed through
+    `successful_call_substitutions_fresh` and `signatures_preserved_calls`,
+    rather than left as a final-layer premise.
 
 Immediate next step:
 1. Prove a well-formedness theorem for `generate_constraints` in `SIFSignature.v`.
 2. Use it to discharge `call_constraints_shape`.
-3. Replace the remaining stronger pointwise STC-scopedness predicate in
+3. Rework the equation-list composition proof in `SecNLusStcTranslation.v` so
+   it no longer depends on `preserves_on_app_closed`.
+4. Replace the remaining stronger pointwise STC-scopedness predicate in
    `SecNLusStcTranslation.v` with the new `SecSTCTyping.v` global theorem.
-4. Reassess the final theorem statements and remove any now-redundant premise.
+5. Revisit the call-instantiation bridge and remove any premise that can be
+   discharged from scopedness plus freshness.
 
 Likely proof entry points:
-- `subst_ident_constraint_correct`
 - `subst_constraints_out_map`
 - `generate_constraints`
+- `eqns_preserv`
+- `preserves_on_concat_scoped`
 - `signatures_preserved_calls`
 
-Suggested commands to resume:
-- `make src/SIF/SIFSignature.vo`
-- `make src/SIF/SecNLusTyping.vo`
-- `make src/SIF/SecSTCTyping.vo`
-- `make src/SIF/SecNLusStcTranslation.vo`
+Build discipline:
+- When checking any new development, use full repo `make` only.
+- Do not rely on target-level `make` or standalone `coqc` as proof validation.
 
 Notes:
 - `src/SIF_fresh/` is intentionally untouched.
+- `SecSTCTyping.v` is now locally `coqc`-clean and has been validated by full
+  repo `make` reaching the next failure in `SecNLusStcTranslation.v`.
+- The current next proof failure is in
+  `SecNLusStcTranslation.v:constraintSatisfiable_ext`; continue the same local
+  `coqc` then full-`make` loop from there.
 
 The resume plan for tomorrow is:
 
@@ -62,8 +77,5 @@ The resume plan for tomorrow is:
   2. Use it to discharge call_constraints_shape.
   3. Replace the pointwise STC-scopedness premise in SecNLusStcTranslation.v with the STC typing theorem.
   4. Then revisit the final preservation theorem statements and remove any redundant premise.
-
-  Verification passed with:
-  make src/SIF/SecNLusTyping.vo src/SIF/SecSTCTyping.vo src/SIF/SecNLusStcTranslation.vo
 
   The untracked src/SIF_fresh/ directory was left untouched.

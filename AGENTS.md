@@ -17,8 +17,14 @@ This repository contains thesis work built on top of the Velus compiler toolchai
 
 - Avoid modifying Velus team code unless the paper truly requires it.
 - Prefer implementing thesis-specific logic in the thesis-specific parts of the repository.
-- When adding a new file or folder, update the relevant `vfiles`, then run `make clean`, then reconfigure with `./configure -clightgen x86_64-linux`.
 - If you only modify existing files, that reconfiguration step is not required.
+- Use direct local `coqc` runs with the exact load-path flags from `_CoqProject` to isolate proof errors while editing.
+- For SIF files, the local debug command template is:
+  `coqc -R /root/secure_velus/src Velus -R /root/secure_velus/CompCert/lib compcert.lib -R /root/secure_velus/CompCert/common compcert.common -R /root/secure_velus/CompCert/backend compcert.backend -R /root/secure_velus/CompCert/cfrontend compcert.cfrontend -R /root/secure_velus/CompCert/driver compcert.driver -R /root/secure_velus/CompCert/flocq compcert.flocq -R /root/secure_velus/CompCert/exportclight compcert.exportclight -R /root/secure_velus/CompCert/cparser compcert.cparser -R /root/secure_velus/CompCert/x86_64 compcert.x86_64 -R /root/secure_velus/CompCert/x86 compcert.x86 src/SIF/<File>.v`
+- Do not rely on `make src/...` targets for local debugging here; they may fail silently.
+- Always validate with full repo `make` before any merge or push.
+- Do not run `./configure` unless generated dependency/config files actually need to be refreshed.
+- Do not run `make clean` unless the build state is genuinely broken and incremental `make` is no longer trustworthy.
 
 ## Workflow Rules
 
@@ -28,6 +34,18 @@ This repository contains thesis work built on top of the Velus compiler toolchai
 - Document important design decisions clearly before proceeding with major changes.
 - Each addition needs to be accompanied with a comment on where that piece fits if its a big developement
 - Every theorem/lemma  needs a commentary on how it relates to paper
+
+## Current Repair Workflow
+
+- Repair the development one file at a time, in this order:
+  `SecNLusTyping.v`, then `SecSTCTyping.v`, then `SecNLusStcTranslation.v`.
+- During each file-level fix, use the `_CoqProject`-compatible direct `coqc` command above to get complete error context quickly.
+- After each file-level fix, validate that state with full repo `make`.
+- Once that state is validated, document the change, commit on `AI_version`, merge into `constraint_gen`, and push before moving to the next file.
+- For module/interface breakages, prefer importing the upstream module types explicitly in functor signatures.
+  Do not recreate those dependencies locally with new `Module ... := ...Fun ...` bindings when the proper module-type argument should be threaded through instead.
+- Keep proof-architecture cleanup separate from syntax/interface repair:
+  first restore compilation, then trim theorem assumptions.
 
 ## Current Research Goal
 
