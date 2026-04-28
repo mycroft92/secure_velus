@@ -118,7 +118,17 @@ Module Type SECNLUSTYPING
       The [EqApp] case is isolated behind a call-instantiation hypothesis.
       That separation is intentional: the NLustre argument itself only needs
       the standard “variables are defined at most once” property, while the
-      call case depends on separate metatheory for [generate_constraints]. *)
+      call case depends on separate metatheory for [generate_constraints].
+
+      Proof-flow note:
+      - [generate_eqn_constraint_shape] handles one equation;
+      - [generate_eqns_constraints_shape] lifts it to an equation list;
+      - the node-level theorems package the raw NLustre side used later by
+        [SecNLusStcTranslation].
+
+      Relative to the paper, this section is the source-side structural
+      support for the preservation theorem: it shows that raw generated
+      constraints are well formed and scoped before simplification. *)
 
   Definition env_injective : Prop :=
     forall x y tx ty,
@@ -771,7 +781,6 @@ Module Type SECNLUSTYPING
 
   Lemma generate_eqn_constraint_shape:
     forall eq cns st st',
-      call_constraints_shape G ->
       env_injective ->
       NoDup (var_defined eq) ->
       generate_eqn_constraint eq st = OK (cns, st') ->
@@ -780,7 +789,7 @@ Module Type SECNLUSTYPING
         /\ map snd cns = map (fun ty => [ty]) tys
         /\ wf_constraints cns.
   Proof.
-    intros eq cns st st' Hcall Hinj Hnd Hgen.
+    intros eq cns st st' Hinj Hnd Hgen.
     destruct eq as [x ck ce|xs ck f exps r|x ck c0 exp].
     - simpl in Hgen.
       eapply sec_bind_inv in Hgen as (ckty & st1 & Hck & Hgen).
@@ -831,8 +840,8 @@ Module Type SECNLUSTYPING
           destruct Houts as [Hstouts Hmapouts]. subst st5.
           assert (Hndout : NoDup outtyp).
           { eapply get_mappings_nodup; eauto. }
-          destruct (Hcall f sig inptyp ckty' ([rty'] ⊔ rstty') outtyp cns st4 st'
-                    Hfindsig' Hndout Hgc) as [Hwf Hsnd].
+          destruct (generate_constraints_shape sig inptyp ckty' ([rty'] ⊔ rstty') outtyp cns st4 st'
+                    Hndout Hgc) as [Hwf Hsnd].
           exists outtyp. split; [exact Hmapouts|].
           split; [exact Hsnd|exact Hwf].
         * simpl in Hgen.
@@ -851,8 +860,8 @@ Module Type SECNLUSTYPING
           destruct Houts as [Hstouts Hmapouts]. subst st3.
           assert (Hndout : NoDup outtyp).
           { eapply get_mappings_nodup; eauto. }
-          destruct (Hcall f sig inptyp ckty' [rst_ty] outtyp cns st2 st'
-                    Hfindsig' Hndout Hgc) as [Hwf Hsnd].
+          destruct (generate_constraints_shape sig inptyp ckty' [rst_ty] outtyp cns st2 st'
+                    Hndout Hgc) as [Hwf Hsnd].
           exists outtyp. split; [exact Hmapouts|].
           split; [exact Hsnd|exact Hwf].
     - simpl in Hgen.
@@ -879,7 +888,6 @@ Module Type SECNLUSTYPING
 
   Theorem generate_eqns_constraints_shape:
     forall eqs cns st st',
-      call_constraints_shape G ->
       env_injective ->
       NoDup (vars_defined eqs) ->
       generate_eqns_constraints eqs st = OK (cns, st') ->
@@ -888,7 +896,7 @@ Module Type SECNLUSTYPING
         /\ map snd cns = map (fun ty => [ty]) tys
         /\ wf_constraints cns.
   Proof.
-    induction eqs as [|eq eqs IH]; intros cns st st' Hcall Hinj Hnd Hgen.
+    induction eqs as [|eq eqs IH]; intros cns st st' Hinj Hnd Hgen.
     - simpl in Hgen. unfold ret in Hgen. inversion Hgen; subst.
       exists []. split; [reflexivity|].
       split; [reflexivity|].
@@ -935,13 +943,12 @@ Module Type SECNLUSTYPING
 
   Corollary generate_eqns_constraints_wf:
     forall eqs cns st st',
-      call_constraints_shape G ->
       env_injective ->
       NoDup (vars_defined eqs) ->
       generate_eqns_constraints eqs st = OK (cns, st') ->
       wf_constraints cns.
   Proof.
-    intros eqs cns st st' Hcall Hinj Hnd Hgen.
+    intros eqs cns st st' Hinj Hnd Hgen.
     edestruct generate_eqns_constraints_shape as (? & ? & ? & Hwf); eauto.
   Qed.
 
@@ -962,12 +969,11 @@ Module Type SECNLUSTYPING
         “every variable is defined once” argument from the paper. *)
     Corollary generate_node_eqns_constraints_wf:
       forall n env base_ty rst_ty raw st st',
-        call_constraints_shape G ->
         env_injective env ->
         generate_eqns_constraints G env base_ty rst_ty n.(n_eqs) st = OK (raw, st') ->
         wf_constraints raw.
     Proof.
-      intros n env base_ty rst_ty raw st st' Hcall Hinj Hraw.
+      intros n env base_ty rst_ty raw st st' Hinj Hraw.
       eapply generate_eqns_constraints_wf; eauto.
       apply NoDup_var_defined_n_eqs.
     Qed.
@@ -1033,14 +1039,13 @@ Module Type SECNLUSTYPING
       Theorem generate_node_sig_scoped:
         forall P n env aux_names sig,
           secglobal_scoped G ->
-          call_constraints_shape G ->
           env_injective env ->
           wc_node P n ->
           generate_node_sig n env aux_names = OK sig ->
           signature_scoped sig.
       Proof.
         intros P n env aux_names sig
-               Hscoped Hcallshape Hinj Hwc Hsig.
+               Hscoped Hinj Hwc Hsig.
         unfold generate_node_sig in Hsig.
         remember
           ((do (clk_id, rst_id) <- option_to_sec (get_node_aux (n.(n_name)) aux_names);
@@ -1146,7 +1151,6 @@ Module Type SECNLUSTYPING
 	                      wf_constraints raw).
 	          { eapply (generate_eqns_constraints_shape
 	                      G env clk_type' rst_type' (n.(n_eqs)) raw init_state st_raw).
-	            - exact Hcallshape.
 	            - exact Hinj.
 	            - apply NoDup_var_defined_n_eqs.
 	            - exact Hraw. }
@@ -1195,13 +1199,12 @@ Module Type SECNLUSTYPING
         forall nodes acc env aux_names G,
         wc_global nodes ->
         secglobal_scoped acc ->
-        (forall G1, call_constraints_shape G1) ->
         env_injective env ->
         generate_all_signatures' acc nodes env aux_names = OK G ->
         secglobal_scoped G.
     Proof.
       induction nodes as [|n nodes IH]; intros acc env aux_names G
-                                              Hwc Hacc Hcallshape Hinj Hgen.
+                                              Hwc Hacc Hinj Hgen.
       - simpl in Hgen. inversion Hgen; subst. exact Hacc.
       - inversion Hwc as [|n' ns Hwc_tail Hwc_head]; subst n' ns.
         simpl in Hgen.
@@ -1220,12 +1223,11 @@ Module Type SECNLUSTYPING
     Corollary generate_all_signatures_scoped:
       forall nodes env aux_names G,
         wc_global nodes ->
-        (forall G1, call_constraints_shape G1) ->
         env_injective env ->
         generate_all_signatures nodes env aux_names = OK G ->
         secglobal_scoped G.
     Proof.
-      intros nodes env aux_names G Hwc Hcallshape Hinj Hgen.
+      intros nodes env aux_names G Hwc Hinj Hgen.
       unfold generate_all_signatures in Hgen.
       eapply generate_all_signatures_scoped'; eauto.
       apply secglobal_scoped_nil.

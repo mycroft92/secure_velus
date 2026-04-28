@@ -26,6 +26,9 @@
 2026-04-27: Recorded the current module-interface rule in `AGENTS.md`: when SIF functors need upstream dependencies such as `CECLOCKING`, `NLCLOCKING`, or `STCCLOCKING`, thread those module types explicitly through the functor signatures instead of recreating local functor instances inside the SIF files.
 2026-04-27: Updated the repair workflow in `AGENTS.md` so local proof-error isolation should use direct `coqc` runs with the exact `_CoqProject` load-path flags rather than `make src/...`, while final acceptance for each repaired state still requires full repo `make`.
 2026-04-28: Repaired `SecSTCTyping.v`, validated that state with full repo `make`, committed it as `b510b9c`, and pushed `constraint_gen`. The full build now gets past `SecSTCTyping.v` and fails next in `SecNLusStcTranslation.v`.
+2026-04-28: Repaired the current `SecNLusStcTranslation.v` fallout from the caller-facing `call_constraints_shape` cleanup. The file is locally `coqc`-clean again, and the last full build progressed through the Coq proof phase into extraction/OCaml before being interrupted manually.
+2026-04-28: Added/update module-level markdown documentation in `src/SIF/docs/`, including an explicit note in `SecNLusStcTranslation.md` that `preserves_on_concat_scoped` is the intended semantic replacement for `preserves_on_app_closed`.
+2026-04-28: Moved the shared-environment injectivity proof into `NameInterface.v` as a naming-layer theorem (`generate_node_env_injective`) and updated the STC global scopedness bridge in `SecNLusStcTranslation.v` to derive injectivity from `generate_node_env` instead of requiring it as a caller-side premise.
 
 Pending resume order after the next compile result:
 - Fix any remaining module-arity/import breakage in `SecNLusTyping.v`, then run full repo `make`.
@@ -39,3 +42,23 @@ Remaining proof-stack after syntax/interface repair:
 - Discharge `call_constraints_shape` from the signature/typing layer instead of leaving it as a public theorem assumption.
 - Replace the remaining pointwise generated-signature scopedness assumptions with the already-structured generated-global scopedness theorems from `SecNLusTyping.v` and `SecSTCTyping.v`.
 - Try to discharge the call-side assumptions (`successful_call_substitutions_fresh`, `signatures_preserved_calls`) from the naming/signature-instantiation setup; if that fails, leave only a narrow, explicit residual assumption with a comment explaining exactly why it is still needed.
+
+Non-negotiable cleanup target for the weakened preservation development:
+- eliminate all of these dependencies from the final theorem stack without introducing any new theorem-level assumptions:
+  `preserves_on_app_closed`,
+  `call_constraints_shape`,
+  `generated_node_signatures_scoped`,
+  `generated_system_signatures_scoped`,
+  `successful_call_substitutions_fresh`,
+  `signatures_preserved_calls`.
+
+Current immediate next proof step:
+- Remove `preserves_on_app_closed` first.
+- The expected route is not a generic append-closure theorem. Instead:
+  1. strengthen the STC-side scopedness theorem so it only requires reset-instance identifiers for the translated block actually being generated, not every entry in the whole `reset_env`;
+  2. use that finer scopedness fact to prove a stronger equation-list theorem that returns/threads private reset extras;
+  3. replace `eqns_preserv -> node_preserv -> generated_node_preserv -> generated_program_preserv_global` uses of `preserves_on_app_closed` with `preserves_on_concat_scoped`.
+- If a syntax-side assumption becomes necessary for this route, keep it to standard well-formedness/clocking facts coming from the compilation pipeline and document it explicitly before exposing it in the final theorem stack.
+- Add `env_injective` to the explicit cleanup list.
+  - Status: proved in `NameInterface.v` for environments returned by `generate_node_env`.
+  - Remaining cleanup: remove obsolete local copies/uses of the same proof from `SecNLusStcTranslation.v` where possible, and keep downstream typing/translation bridges deriving injectivity from `generate_node_env` instead of exposing it as a premise.

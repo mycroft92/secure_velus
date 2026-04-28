@@ -21,14 +21,23 @@ Current proof state:
   `generate_trconstrs_constraints_scoped`,
   `generate_sys_signature_scoped`,
   `generate_all_sys_signatures_scoped`.
+- The caller-facing reshaping cleanup for `call_constraints_shape` has been
+  pushed through the active proof files far enough that
+  `SecNLusStcTranslation.v` is locally `coqc`-clean again.
+- The most recent full repo `make` passed the Coq proof phase and entered the
+  extraction/OCaml build before being interrupted manually; that is the last
+  global checkpoint for the current branch state.
 
 What is still open:
-- The remaining premise for the simplify-side theorem stack is now only
-  `forall G1, call_constraints_shape G1`.
-- In practice, this means proving the signature-instantiation layer preserves:
-  - singleton RHS shape
-  - no duplicate RHS targets
-  - output alignment with the caller-side `outtyp`
+- The next active blocker is no longer the call-shape premise. It is the
+  proof-artifact assumption `preserves_on_app_closed` in
+  `SecNLusStcTranslation.v`.
+- `env_injective` still needs to be made explicit in the work plan.
+  Status update: the proof now lives in `NameInterface.v` as a property of
+  `generate_node_env`, and the STC global scopedness bridge already derives it
+  from `generate_node_env` internally.
+  Remaining cleanup is only to remove any obsolete translation-local copies of
+  the same proof when convenient.
 - The translation file still exposes the stronger pointwise predicate
   `generated_system_signatures_scoped`; this should be replaced by the
   generated-global STC theorem from `SecSTCTyping.v` once the accumulator-based
@@ -43,20 +52,23 @@ What is still open:
     rather than left as a final-layer premise.
 
 Immediate next step:
-1. Prove a well-formedness theorem for `generate_constraints` in `SIFSignature.v`.
-2. Use it to discharge `call_constraints_shape`.
-3. Rework the equation-list composition proof in `SecNLusStcTranslation.v` so
-   it no longer depends on `preserves_on_app_closed`.
-4. Replace the remaining stronger pointwise STC-scopedness predicate in
-   `SecNLusStcTranslation.v` with the new `SecSTCTyping.v` global theorem.
-5. Revisit the call-instantiation bridge and remove any premise that can be
-   discharged from scopedness plus freshness.
+1. Refine the STC-side raw scopedness theorem so it can talk about only the
+   reset-instance variables actually used by the translated block, rather than
+   every entry of the full `reset_env`.
+2. Strengthen `eqns_preserv` to thread private reset extras and compose head
+   and tail via `preserves_on_concat_scoped`.
+3. Delete `preserves_on_app_closed` from `eqns_preserv`, `node_preserv`,
+   `generated_node_preserv`, and the final global theorem stack.
+4. Then return to the remaining scopedness/call-side assumptions:
+   `generated_node_signatures_scoped`,
+   `generated_system_signatures_scoped`,
+   `successful_call_substitutions_fresh`,
+   `signatures_preserved_calls`.
 
 Likely proof entry points:
-- `subst_constraints_out_map`
-- `generate_constraints`
 - `eqns_preserv`
 - `preserves_on_concat_scoped`
+- `SECSTCTYPING.generate_trconstrs_constraints_scoped`
 - `signatures_preserved_calls`
 
 Build discipline:
@@ -65,17 +77,19 @@ Build discipline:
 
 Notes:
 - `src/SIF_fresh/` is intentionally untouched.
-- `SecSTCTyping.v` is now locally `coqc`-clean and has been validated by full
-  repo `make` reaching the next failure in `SecNLusStcTranslation.v`.
-- The current next proof failure is in
-  `SecNLusStcTranslation.v:constraintSatisfiable_ext`; continue the same local
-  `coqc` then full-`make` loop from there.
+- `SecSTCTyping.v` and `SecNLusStcTranslation.v` are locally `coqc`-clean in
+  the current branch state.
+- The local debugging workflow remains:
+  direct `_CoqProject`-compatible `coqc` first, then full repo `make` before
+  any commit/merge/push.
 
 The resume plan for tomorrow is:
 
-  1. Prove the generate_constraints well-formedness/call-shape theorem in SIFSignature.v.
-  2. Use it to discharge call_constraints_shape.
-  3. Replace the pointwise STC-scopedness premise in SecNLusStcTranslation.v with the STC typing theorem.
-  4. Then revisit the final preservation theorem statements and remove any redundant premise.
+  1. Introduce the precise STC-side scopedness lemma needed for one translated
+     equation/list block and prove it in `SecSTCTyping.v` if possible.
+  2. Rewrite `eqns_preserv` around `preserves_on_concat_scoped`.
+  3. Remove `preserves_on_app_closed` from the global preservation theorem
+     stack and validate with full repo `make`.
+  4. Then continue trimming the remaining scopedness/call-side assumptions.
 
   The untracked src/SIF_fresh/ directory was left untouched.
