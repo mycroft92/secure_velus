@@ -727,7 +727,28 @@ Module Type SECSTCTYPING
           ret (c ++ cs)
       end.
 
-    Theorem generate_trconstr_constraint_scoped:
+    (** Reset keys actually consulted by one translated STC block.
+
+        This is the target-side bookkeeping needed by the translation proof in
+        [SecNLusStcTranslation]: ordinary transition constraints never inspect
+        the reset-instance environment, while resettable call blocks do so only
+        through the distinguished leading output identifier.  The scopedness
+        theorem below therefore needs hypotheses only for these keys, not for
+        the whole reset environment. *)
+    Definition trconstr_reset_keys (tr: trconstr) : list ident :=
+      match tr with
+      | TcReset x _ _ => [x]
+      | TcCall x _ _ true _ _ => [x]
+      | _ => []
+      end.
+
+    Fixpoint trconstrs_reset_keys (trs: list trconstr) : list ident :=
+      match trs with
+      | [] => []
+      | tr :: trs' => trconstr_reset_keys tr ++ trconstrs_reset_keys trs'
+      end.
+
+    Theorem generate_trconstr_constraint_scoped_on_keys:
       forall P vars scope tr cns st st',
         secglobal_scoped G ->
         wc_env vars ->
@@ -735,7 +756,10 @@ Module Type SECSTCTYPING
         vars_env_scoped vars scope ->
         In base_ty scope ->
         In rst_ty scope ->
-        (forall x ty st0 st1, find_env x reset_env st0 = OK (ty, st1) -> In ty scope) ->
+        (forall x ty st0 st1,
+            In x (trconstr_reset_keys tr) ->
+            find_env x reset_env st0 = OK (ty, st1) ->
+            In ty scope) ->
         generate_trconstr_constraint tr st = OK (cns, st') ->
         constraints_scoped scope cns.
     Proof.
@@ -847,6 +871,7 @@ Module Type SECSTCTYPING
           * exact (Hlhsscope _ Hin).
           * simpl in Hin. destruct Hin as [Heq|[]]. subst y.
             eapply Hreset; eauto.
+            simpl. now left.
         + constructor.
       - destruct b.
         + simpl in Hgen.
@@ -877,7 +902,8 @@ Module Type SECSTCTYPING
                 eapply (wc_call_outs_scoped vars scope sub ck (SynStc.s_out s) (x1 :: xs')); eauto.
               - exact Houttyp. }
             assert (Hrstscope : In rst_inst scope).
-            { eapply Hreset; eauto. }
+            { eapply Hreset; eauto.
+              simpl. now left. }
             eapply (generate_constraints_scoped sig scope inptyp ckty [rst_inst] outtyp cns st4 st');
               [eapply Hscoped; eauto
               |exact HinpScope
@@ -920,7 +946,7 @@ Module Type SECSTCTYPING
               |exact Hgen].
     Qed.
 
-    Theorem generate_trconstrs_constraints_scoped:
+    Theorem generate_trconstrs_constraints_scoped_on_keys:
       forall P vars scope trs cns st st',
         secglobal_scoped G ->
         wc_env vars ->
@@ -928,7 +954,10 @@ Module Type SECSTCTYPING
         vars_env_scoped vars scope ->
         In base_ty scope ->
         In rst_ty scope ->
-        (forall x ty st0 st1, find_env x reset_env st0 = OK (ty, st1) -> In ty scope) ->
+        (forall x ty st0 st1,
+            In x (trconstrs_reset_keys trs) ->
+            find_env x reset_env st0 = OK (ty, st1) ->
+            In ty scope) ->
         generate_trconstrs_constraints trs st = OK (cns, st') ->
         constraints_scoped scope cns.
     Proof.
@@ -942,8 +971,63 @@ Module Type SECSTCTYPING
         unfold ret in Hret. inversion Hret; subst cns st'.
         apply Forall_app.
         split.
-        + eapply generate_trconstr_constraint_scoped; eauto.
+        + eapply generate_trconstr_constraint_scoped_on_keys; eauto.
+          intros x ty st0 stx Hin Hfind.
+          eapply Hreset; eauto.
+          apply in_or_app. now left.
         + eapply IH; eauto.
+          intros x ty st0 stx Hin Hfind.
+          eapply Hreset; eauto.
+          apply in_or_app. now right.
+    Qed.
+
+    (** Coarser scopedness corollary.
+
+        The translation proof eventually uses the more precise
+        [generate_trconstrs_constraints_scoped_on_keys] theorem above.  This
+        wrapper preserves the older interface for the rest of the typing
+        development when a caller already knows that every lookup in the reset
+        environment lands inside the chosen scope. *)
+    Theorem generate_trconstr_constraint_scoped:
+      forall P vars scope tr cns st st',
+        secglobal_scoped G ->
+        wc_env vars ->
+        Clo.wc_trconstr P vars tr ->
+        vars_env_scoped vars scope ->
+        In base_ty scope ->
+        In rst_ty scope ->
+        (forall x ty st0 st1, find_env x reset_env st0 = OK (ty, st1) -> In ty scope) ->
+        generate_trconstr_constraint tr st = OK (cns, st') ->
+        constraints_scoped scope cns.
+    Proof.
+      intros P vars scope tr cns st st'
+             Hscoped Henv Hwc Hvars Hbase Hrst Hreset Hgen.
+      refine (generate_trconstr_constraint_scoped_on_keys
+                P vars scope tr cns st st'
+                Hscoped Henv Hwc Hvars Hbase Hrst _ Hgen).
+      intros x ty st0 st1 _ Hfind.
+      eapply Hreset; eauto.
+    Qed.
+
+    Theorem generate_trconstrs_constraints_scoped:
+      forall P vars scope trs cns st st',
+        secglobal_scoped G ->
+        wc_env vars ->
+        Forall (Clo.wc_trconstr P vars) trs ->
+        vars_env_scoped vars scope ->
+        In base_ty scope ->
+        In rst_ty scope ->
+        (forall x ty st0 st1, find_env x reset_env st0 = OK (ty, st1) -> In ty scope) ->
+        generate_trconstrs_constraints trs st = OK (cns, st') ->
+        constraints_scoped scope cns.
+    Proof.
+      intros P vars scope trs cns st st'
+             Hscoped Henv Hwc Hvars Hbase Hrst Hreset Hgen.
+      refine (generate_trconstrs_constraints_scoped_on_keys
+                P vars scope trs cns st st'
+                Hscoped Henv Hwc Hvars Hbase Hrst _ Hgen).
+      intros x ty st0 st1 _ Hfind.
+      eapply Hreset; eauto.
     Qed.
 
   Ltac monadInv :=

@@ -29,6 +29,8 @@
 2026-04-28: Repaired the current `SecNLusStcTranslation.v` fallout from the caller-facing `call_constraints_shape` cleanup. The file is locally `coqc`-clean again, and the last full build progressed through the Coq proof phase into extraction/OCaml before being interrupted manually.
 2026-04-28: Added/update module-level markdown documentation in `src/SIF/docs/`, including an explicit note in `SecNLusStcTranslation.md` that `preserves_on_concat_scoped` is the intended semantic replacement for `preserves_on_app_closed`.
 2026-04-28: Moved the shared-environment injectivity proof into `NameInterface.v` as a naming-layer theorem (`generate_node_env_injective`) and updated the STC global scopedness bridge in `SecNLusStcTranslation.v` to derive injectivity from `generate_node_env` instead of requiring it as a caller-side premise.
+2026-04-28: Refined the STC raw scopedness interface in `SecSTCTyping.v` with key-based reset lookup tracking (`trconstr_reset_keys`, `trconstrs_reset_keys`, `generate_trconstr*_scoped_on_keys`) and kept the older whole-reset-env scopedness theorems as wrappers.
+2026-04-28: Added the reset-extra bookkeeping layer in `SecNLusStcTranslation.v` needed for the scoped concatenation proof: `eqn_reset_extras`, `eqns_reset_extras`, lookup/freshness/nodup lemmas, translated reset-key tracking, and the bridge from translated reset keys to concrete mapped reset-instance extras. The translation file is locally `coqc`-clean again after this checkpoint.
 
 Pending resume order after the next compile result:
 - Fix any remaining module-arity/import breakage in `SecNLusTyping.v`, then run full repo `make`.
@@ -55,9 +57,9 @@ Non-negotiable cleanup target for the weakened preservation development:
 Current immediate next proof step:
 - Remove `preserves_on_app_closed` first.
 - The expected route is not a generic append-closure theorem. Instead:
-  1. strengthen the STC-side scopedness theorem so it only requires reset-instance identifiers for the translated block actually being generated, not every entry in the whole `reset_env`;
-  2. use that finer scopedness fact to prove a stronger equation-list theorem that returns/threads private reset extras;
-  3. replace `eqns_preserv -> node_preserv -> generated_node_preserv -> generated_program_preserv_global` uses of `preserves_on_app_closed` with `preserves_on_concat_scoped`.
+  1. use the new key-based STC scopedness theorem together with the new reset-extra bookkeeping layer to prove a stronger equation-list theorem that returns/threads private reset extras;
+  2. replace `eqns_preserv -> node_preserv -> generated_node_preserv -> generated_program_preserv_global` uses of `preserves_on_app_closed` with `preserves_on_concat_scoped`;
+  3. once that proof path is stable, remove the obsolete `preserves_on_app_closed` premise from the public theorem stack and revalidate with full repo `make`.
 - If a syntax-side assumption becomes necessary for this route, keep it to standard well-formedness/clocking facts coming from the compilation pipeline and document it explicitly before exposing it in the final theorem stack.
 - Add `env_injective` to the explicit cleanup list.
   - Status: proved in `NameInterface.v` for environments returned by `generate_node_env`.

@@ -482,6 +482,19 @@ Module Type SECNLUSSTCTRANSLATION
       - exact Hsat.
     Qed.
 
+    Lemma preserves_on_weaken:
+      forall scope1 scope2 c1 c2,
+        incl scope1 scope2 ->
+        preserves_on scope2 c1 c2 ->
+        preserves_on scope1 c1 c2.
+    Proof.
+      intros scope1 scope2 c1 c2 Hincl Hpres dlt Hsat.
+      destruct (Hpres dlt Hsat) as (dlt' & Hagree & Htgt).
+      exists dlt'. split; [|exact Htgt].
+      intros x Hin.
+      apply Hagree, Hincl, Hin.
+    Qed.
+
     (** Reset-call keys in source equations.
 
         These helpers isolate the only source-defined variables that create
@@ -590,6 +603,223 @@ Module Type SECNLUSSTCTRANSLATION
         + destruct (IH _ Hin) as (ck & f & Hin').
           exists ck, f.
           unfold translate_eqns. simpl. now apply in_or_app; right.
+    Qed.
+
+    (** Concrete reset-instance extras used by translated equation blocks.
+
+        A resettable NLustre call introduces exactly one STC-only auxiliary
+        identifier, obtained by looking up the call's leading output in the
+        reset-instance environment built for the translated system.  The list
+        version mirrors [reset_call_vars] and will later be used to track the
+        private variables threaded through the scoped concatenation proof. *)
+    Definition eqn_reset_extras (rst_env: Env.t ident) (eq: equation)
+      : option (list ident) :=
+      match reset_call_var eq with
+      | Some x =>
+          match Env.find x rst_env with
+          | Some ty => Some (ty :: nil)
+          | None => None
+          end
+      | None => Some nil
+      end.
+
+    Fixpoint eqns_reset_extras (rst_env: Env.t ident) (eqs: list equation)
+      : option (list ident) :=
+      match eqs with
+      | nil => Some nil
+      | eq :: eqs' =>
+          match eqn_reset_extras rst_env eq, eqns_reset_extras rst_env eqs' with
+          | Some tys1, Some tys2 => Some (tys1 ++ tys2)
+          | _, _ => None
+          end
+      end.
+
+    Lemma find_env_of_Env_find:
+      forall env x ty st,
+        Env.find x env = Some ty ->
+        find_env x env st = OK (ty, st).
+    Proof.
+      intros env x ty st Hfind.
+      unfold find_env. rewrite Hfind. reflexivity.
+    Qed.
+
+    Lemma get_mappings_In_here:
+      forall xs env tys ty,
+        get_mappings xs env = Some tys ->
+        In ty tys ->
+        exists x, In x xs /\ Env.find x env = Some ty.
+    Proof.
+      induction xs as [|x xs IH]; intros env tys ty Hmap Hin.
+      - simpl in Hmap. inversion Hmap; subst. inversion Hin.
+      - simpl in Hmap.
+        destruct (Env.find x env) as [xty|] eqn:Hfind.
+        2: discriminate.
+        destruct (get_mappings xs env) as [tys'|] eqn:Hmaps.
+        2: discriminate.
+        inversion Hmap; subst tys.
+        simpl in Hin.
+        destruct Hin as [Heq|Hin].
+        + subst ty. exists x. split; [left; reflexivity|exact Hfind].
+        + specialize (IH env tys' ty Hmaps Hin) as (x' & Hin' & Hfind').
+          exists x'. split; [right; exact Hin'|exact Hfind'].
+    Qed.
+
+    Lemma eqns_reset_extras_eq_get_mappings:
+      forall eqs rst_env,
+        eqns_reset_extras rst_env eqs = get_mappings (reset_call_vars eqs) rst_env.
+    Proof.
+      induction eqs as [|eq eqs IH]; intros rst_env; simpl.
+      - reflexivity.
+      - destruct (reset_call_var eq) as [x|] eqn:Hreset.
+        + unfold eqn_reset_extras. rewrite Hreset. simpl.
+          destruct (Env.find x rst_env) as [ty|] eqn:Hfind; simpl.
+          * rewrite IH.
+            destruct (get_mappings (reset_call_vars eqs) rst_env) as [tys|] eqn:Htail;
+              reflexivity.
+          * reflexivity.
+        + unfold eqn_reset_extras. rewrite Hreset. simpl.
+          rewrite IH.
+          destruct (get_mappings (reset_call_vars eqs) rst_env) as [tys|] eqn:Htail;
+            reflexivity.
+    Qed.
+
+    Lemma eqns_reset_extras_complete:
+      forall rst_env eqs tys x ty,
+        eqns_reset_extras rst_env eqs = Some tys ->
+        In x (reset_call_vars eqs) ->
+        Env.find x rst_env = Some ty ->
+        In ty tys.
+    Proof.
+      intros rst_env eqs tys x ty Hextras Hin Hfind.
+      rewrite eqns_reset_extras_eq_get_mappings in Hextras.
+      destruct (get_mappings_in _ _ _ _ Hin Hextras) as (ty' & Hfind' & Hin').
+      rewrite Hfind in Hfind'. inversion Hfind'. subst ty'. exact Hin'.
+    Qed.
+
+    Lemma eqns_reset_extras_In:
+      forall rst_env eqs tys ty,
+        eqns_reset_extras rst_env eqs = Some tys ->
+        In ty tys ->
+        exists x,
+          In x (reset_call_vars eqs)
+          /\ Env.find x rst_env = Some ty.
+    Proof.
+      intros rst_env eqs tys ty Hextras Hin.
+      rewrite eqns_reset_extras_eq_get_mappings in Hextras.
+      eapply get_mappings_In_here; eauto.
+    Qed.
+
+    Lemma eqns_reset_extras_nodup:
+      forall rst_env eqs tys,
+        NoDup (reset_call_vars eqs) ->
+        SECSTCTYPING.env_injective rst_env ->
+        eqns_reset_extras rst_env eqs = Some tys ->
+        NoDup tys.
+    Proof.
+      intros rst_env eqs tys Hnd Hinj Hextras.
+      rewrite eqns_reset_extras_eq_get_mappings in Hextras.
+      eapply SECSTCTYPING.get_mappings_nodup; eauto.
+    Qed.
+
+    Lemma eqns_reset_extras_fresh:
+      forall rst_env eqs tys scope,
+        eqns_reset_extras rst_env eqs = Some tys ->
+        (forall x rst_inst st1 st2,
+            find_env x rst_env st1 = OK (rst_inst, st2) ->
+            ~ In rst_inst scope) ->
+        forall ty, In ty tys -> ~ In ty scope.
+    Proof.
+      intros rst_env eqs tys scope Hextras Hfresh ty Hin HinScope.
+      destruct (eqns_reset_extras_In _ _ _ _ Hextras Hin) as (x & Hinx & Hfind).
+      eapply (Hfresh x ty init_state init_state).
+      - eapply find_env_of_Env_find; eauto.
+      - exact HinScope.
+    Qed.
+
+    Lemma trconstrs_reset_keys_translate_eqn:
+      forall eq x,
+        In x (SECSTCTYPING.trconstrs_reset_keys (translate_eqn eq)) ->
+        reset_call_var eq = Some x.
+    Proof.
+      intros [y ck ce|xs ck f exps orst|y ck c0 exp] x Hin;
+        simpl in *; try contradiction.
+      destruct xs as [|x0 xs']; simpl in *; try contradiction.
+      destruct orst as [[r ckr]|]; simpl in *; try contradiction.
+      intuition congruence.
+    Qed.
+
+    Lemma trconstrs_reset_keys_app:
+      forall trs1 trs2,
+        SECSTCTYPING.trconstrs_reset_keys (trs1 ++ trs2)
+        = SECSTCTYPING.trconstrs_reset_keys trs1
+            ++ SECSTCTYPING.trconstrs_reset_keys trs2.
+    Proof.
+      induction trs1 as [|tr trs1 IH]; intros trs2; simpl.
+      - reflexivity.
+      - rewrite IH, app_assoc. reflexivity.
+    Qed.
+
+    Lemma trconstrs_reset_keys_translate_eqns:
+      forall eqs x,
+        In x (SECSTCTYPING.trconstrs_reset_keys (translate_eqns eqs)) ->
+        In x (reset_call_vars eqs).
+    Proof.
+      induction eqs as [|eq eqs IH]; intros x Hin.
+      - inversion Hin.
+      - unfold translate_eqns in Hin. simpl in Hin.
+        change
+          (In x
+             (SECSTCTYPING.trconstrs_reset_keys
+                (translate_eqn eq ++ translate_eqns eqs))) in Hin.
+        rewrite trconstrs_reset_keys_app in Hin.
+        apply in_app_iff in Hin.
+        destruct Hin as [Hin|Hin].
+        + destruct (reset_call_var eq) as [x0|] eqn:Hreset; simpl.
+          * pose proof (trconstrs_reset_keys_translate_eqn _ _ Hin) as Heq.
+            rewrite Heq. simpl. auto.
+          * pose proof (trconstrs_reset_keys_translate_eqn _ _ Hin) as Heq.
+            congruence.
+        + destruct (reset_call_var eq) as [x0|] eqn:Hreset; simpl.
+          * rewrite Hreset. simpl. exact (or_intror (IH _ Hin)).
+          * rewrite Hreset. simpl. exact (IH _ Hin).
+    Qed.
+
+    (** Bridging translated reset keys to the concrete mapped extras.
+
+        The scoped concatenation proof later needs exactly this fact: whenever
+        the STC constraints generated from [translate_eqns eqs] consult the
+        reset-instance environment on some source identifier [x], the returned
+        security variable belongs to the private-extra list reconstructed by
+        [eqns_reset_extras rst_env eqs]. *)
+    Lemma translated_reset_key_in_extras:
+      forall rst_env eqs tys x ty,
+        eqns_reset_extras rst_env eqs = Some tys ->
+        In x (SECSTCTYPING.trconstrs_reset_keys (translate_eqns eqs)) ->
+        Env.find x rst_env = Some ty ->
+        In ty tys.
+    Proof.
+      intros rst_env eqs tys x ty Hextras Hin Hfind.
+      eapply eqns_reset_extras_complete; eauto.
+      eapply trconstrs_reset_keys_translate_eqns; eauto.
+    Qed.
+
+    Lemma translated_reset_key_fresh:
+      forall rst_env eqs tys scope x ty st1 st2,
+        eqns_reset_extras rst_env eqs = Some tys ->
+        (forall y rst_inst st3 st4,
+            find_env y rst_env st3 = OK (rst_inst, st4) ->
+            ~ In rst_inst scope) ->
+        In x (SECSTCTYPING.trconstrs_reset_keys (translate_eqns eqs)) ->
+        find_env x rst_env st1 = OK (ty, st2) ->
+        In ty tys /\ ~ In ty scope.
+    Proof.
+      intros rst_env eqs tys scope x ty st1 st2 Hextras Hfresh Hin Hfind.
+      split.
+      - unfold find_env in Hfind.
+        destruct (Env.find x rst_env) as [ty'|] eqn:Henv; try discriminate.
+        inversion Hfind; subst ty' st2.
+        eapply translated_reset_key_in_extras; eauto.
+      - eapply Hfresh; eauto.
     Qed.
     
     (** Small inversion tactic for the state/error monad used by the typing
