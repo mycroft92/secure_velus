@@ -53,15 +53,22 @@ This is the route for deleting `preserves_on_app_closed` completely.
   `SecNLusStcTranslation.v` is locally `coqc`-clean again.
 - The next proof artifact to remove is therefore
   `preserves_on_app_closed`, not the call-shape premise.
-- The expected technical move is to refine the STC-side scopedness argument so
-  it only talks about reset-instance variables actually used by the translated
-  block, instead of every entry in the whole `reset_env`.
+- That STC-side refinement now exists in `SecSTCTyping.v` through
+  `generate_trconstr*_scoped_on_keys`.
+- This file now contains the matching reset-extra bookkeeping layer:
+  `eqn_reset_extras`, `eqns_reset_extras`,
+  `trconstrs_reset_keys_translate_eqns`,
+  `translated_reset_key_in_extras`,
+  `translated_reset_key_fresh`.
 
 In practical terms, the next theorem work should happen in two layers:
 
-1. strengthen the raw STC scopedness theorem in `SecSTCTyping.v`;
-2. rewrite `eqns_preserv` and the downstream node/program theorems here to use
-   that finer scopedness fact together with `preserves_on_concat_scoped`.
+1. rewrite `eqns_preserv` so it threads the concrete reset extras coming from
+   `eqns_reset_extras`;
+2. compose head and tail with `preserves_on_concat_scoped`, using the new
+   key-to-extra bridge lemmas;
+3. propagate that replacement through `node_preserv` and the global theorem
+   stack until `preserves_on_app_closed` disappears entirely.
 
 ## Relation to the Paper
 

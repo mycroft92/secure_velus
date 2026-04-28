@@ -21,9 +21,20 @@ Current proof state:
   `generate_trconstrs_constraints_scoped`,
   `generate_sys_signature_scoped`,
   `generate_all_sys_signatures_scoped`.
+- That STC scopedness interface is now refined further:
+  `trconstr_reset_keys`,
+  `trconstrs_reset_keys`,
+  `generate_trconstr_constraint_scoped_on_keys`,
+  `generate_trconstrs_constraints_scoped_on_keys`.
+  The older whole-reset-env scopedness theorems remain as wrappers.
 - The caller-facing reshaping cleanup for `call_constraints_shape` has been
   pushed through the active proof files far enough that
   `SecNLusStcTranslation.v` is locally `coqc`-clean again.
+- `SecNLusStcTranslation.v` now also contains the reset-extra bookkeeping
+  needed for scoped concatenation:
+  `eqn_reset_extras`, `eqns_reset_extras`,
+  translated reset-key tracking, and the bridge from those keys to concrete
+  reset-instance extras/freshness in the generated reset environment.
 - The most recent full repo `make` passed the Coq proof phase and entered the
   extraction/OCaml build before being interrupted manually; that is the last
   global checkpoint for the current branch state.
@@ -52,14 +63,11 @@ What is still open:
     rather than left as a final-layer premise.
 
 Immediate next step:
-1. Refine the STC-side raw scopedness theorem so it can talk about only the
-   reset-instance variables actually used by the translated block, rather than
-   every entry of the full `reset_env`.
-2. Strengthen `eqns_preserv` to thread private reset extras and compose head
+1. Strengthen `eqns_preserv` to thread private reset extras and compose head
    and tail via `preserves_on_concat_scoped`.
-3. Delete `preserves_on_app_closed` from `eqns_preserv`, `node_preserv`,
+2. Delete `preserves_on_app_closed` from `eqns_preserv`, `node_preserv`,
    `generated_node_preserv`, and the final global theorem stack.
-4. Then return to the remaining scopedness/call-side assumptions:
+3. Then return to the remaining scopedness/call-side assumptions:
    `generated_node_signatures_scoped`,
    `generated_system_signatures_scoped`,
    `successful_call_substitutions_fresh`,
@@ -68,7 +76,8 @@ Immediate next step:
 Likely proof entry points:
 - `eqns_preserv`
 - `preserves_on_concat_scoped`
-- `SECSTCTYPING.generate_trconstrs_constraints_scoped`
+- `SECSTCTYPING.generate_trconstrs_constraints_scoped_on_keys`
+- `translated_reset_key_in_extras`
 - `signatures_preserved_calls`
 
 Build discipline:

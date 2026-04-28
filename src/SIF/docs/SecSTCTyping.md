@@ -52,11 +52,21 @@ translation proof.
 The next translation-level cleanup depends on a slightly more precise raw STC
 scopedness lemma than the current generic one.
 
-Today, `generate_trconstrs_constraints_scoped` is convenient for whole-system
-scopedness, but it quantifies over every mapping in the full reset
-environment.  For the `SecNLusStcTranslation.v` equation-list proof, the
-needed statement is more local: only reset-instance variables actually used by
-the translated block should have to lie in the chosen scope.
+That refinement now exists:
 
-That refinement is the expected entry point for removing the remaining
+- `trconstr_reset_keys`
+- `trconstrs_reset_keys`
+- `generate_trconstr_constraint_scoped_on_keys`
+- `generate_trconstrs_constraints_scoped_on_keys`
+
+These lemmas say that a translated STC block is scoped if the reset
+environment is only known on the reset keys that block actually reads.
+
+The older theorems
+`generate_trconstr_constraint_scoped` and
+`generate_trconstrs_constraints_scoped`
+remain as wrapper corollaries when a caller already knows that every reset-env
+lookup falls inside the chosen scope.
+
+That refined interface is the entry point for removing the remaining
 `preserves_on_app_closed` assumption from the translation proof.
