@@ -29,8 +29,8 @@ This gives a stronger interface:
 - successful call instantiation still returns constraints indexed exactly by the
   caller outputs.
 
-This is the intended replacement for the old external `call_constraints_shape`
-assumption.
+This is the signature-layer source of the call-time shape property used by the
+typing developments.
 
 ## Theorem Flow
 
@@ -44,5 +44,5 @@ assumption.
 
 This module corresponds to the "instantiate a callee signature inside a caller"
 part of the paper.  In the mechanized development, it isolates the
-substitution/reordering metatheory so that the NLustre/STC typing files do not
-need to assume separate call-shape lemmas externally.
+substitution/reordering metatheory so that the NLustre/STC typing files can use
+call-time shape and scopedness results directly from the signature layer.
