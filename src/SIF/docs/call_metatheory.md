@@ -88,7 +88,6 @@ generated-program case.
 
 Before tackling the call bridge, remove:
 
-- `generated_node_signatures_scoped`
 - `generated_system_signatures_scoped`
 
 by strengthening the accumulator invariant in the generated-global proof so it

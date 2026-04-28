@@ -9,8 +9,6 @@ Current proof state:
 Remaining proof work:
 
 - discharge
-  `generated_node_signatures_scoped`
-  and
   `generated_system_signatures_scoped`
   from the final theorem stack
 - discharge

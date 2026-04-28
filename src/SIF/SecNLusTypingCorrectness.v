@@ -270,12 +270,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     exact (generated_node_simplify_ready_from_generated_env _ _ _ Henvgen).
   Qed.
 
-  Definition generated_node_signatures_scoped
-    (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
-    forall G n nsig,
-      SECNLUSTYPING.generate_node_sig G n env aux_names = OK nsig ->
-      signature_scoped nsig.
-
   Corollary generate_all_source_signatures_scoped:
     forall all_nodes env aux_names G,
       Clo.wc_global all_nodes ->
