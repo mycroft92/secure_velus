@@ -47,12 +47,10 @@ The STC side keeps more internal state than NLustre, so scopedness and hidden
 variable elimination are explicit here rather than being left implicit in the
 translation proof.
 
-## Current Next Step
+## Key Refinement
 
-The next translation-level cleanup depends on a slightly more precise raw STC
-scopedness lemma than the current generic one.
-
-That refinement now exists:
+The translation proof uses the following more precise raw STC scopedness
+interface:
 
 - `trconstr_reset_keys`
 - `trconstrs_reset_keys`
@@ -60,13 +58,5 @@ That refinement now exists:
 - `generate_trconstrs_constraints_scoped_on_keys`
 
 These lemmas say that a translated STC block is scoped if the reset
-environment is only known on the reset keys that block actually reads.
-
-The older theorems
-`generate_trconstr_constraint_scoped` and
-`generate_trconstrs_constraints_scoped`
-remain as wrapper corollaries when a caller already knows that every reset-env
-lookup falls inside the chosen scope.
-
-That refined interface is the entry point for the scoped composition step in
-the translation proof.
+environment is only known on the reset keys that block actually reads.  This
+is the target-side scopedness interface used in the translation proof.

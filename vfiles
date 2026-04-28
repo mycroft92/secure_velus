@@ -142,4 +142,6 @@ src/SIF/SecCETyping.v
 src/SIF/SecTypes.v
 src/SIF/SecNLusTyping.v
 src/SIF/SecSTCTyping.v
+src/SIF/SecNLusTypingCorrectness.v
+src/SIF/SecStcTypingCorrectness.v
 src/SIF/SecNLusStcTranslation.v

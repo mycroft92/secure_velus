@@ -46,6 +46,8 @@ From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF.SecNLusTyping.
 From Velus Require Import SIF.SecSTCTyping.
+From Velus Require Import SIF.SecNLusTypingCorrectness.
+From Velus Require Import SIF.SecStcTypingCorrectness.
 From Velus Require Import NLustreToStc.Translation.
 From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SecTypes.
@@ -75,6 +77,9 @@ Module Type SECNLUSSTCTRANSLATION
   (Import IsD          : ISDEFINED Ids Op CESyn SynNL Mem)
   (Import IsFNL        : ISFREE Ids Op CESyn SynNL CEIsF)
   (Import CloNL        : NLCLOCKING Ids Op CESyn SynNL OrdNL Mem IsD CEIsF IsFNL CEClo)
+  (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING CEIsF CEClo OrdNL Mem IsD IsFNL CloNL)
+  (Import SECNLUSTYPINGCORRECTNESS
+      : SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo OrdNL Mem IsD IsFNL CloNL SECNLUSTYPING)
   (Import Last         : STCISLAST Ids Op CESyn SynStc)
   (Import Var          : STCISVARIABLE Ids Op CESyn SynStc)
   (Import Def          : STCISDEFINED Ids Op CESyn SynStc Var Last)
@@ -82,8 +87,9 @@ Module Type SECNLUSSTCTRANSLATION
   (Import OrdStc       : STCORDERED Ids Op CESyn SynStc Syst)
   (Import IsFStc       : STCISFREE Ids Op CESyn SynStc CEIsF)
   (Import CloStc       : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst OrdStc CEClo)
-  (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING CEIsF CEClo OrdNL Mem IsD IsFNL CloNL)
-  (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst OrdStc IsFStc CloStc).
+  (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst OrdStc IsFStc CloStc)
+  (Import SECSTCTYPINGCORRECTNESS
+      : SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst OrdStc IsFStc CloStc SECSTCTYPING).
   (** In this section we relate the constraint generator for one NLustre
       equation with the constraint generator for the STC constraints obtained
       by translation. *)
@@ -257,10 +263,10 @@ Module Type SECNLUSSTCTRANSLATION
     Hint Unfold Signature_call_preserves Signature_head_consistent Signature_consistent.
 
     (** Satisfaction is extensional on the variables a constraint actually
-        mentions. This is the semantic replacement for the older ad hoc
-        concatenation premise: to compose independently constructed witnesses,
-        it is enough to know that each target block only depends on its shared
-        scope plus its own private auxiliary variables. *)
+        mentions.  This is the semantic principle behind scoped composition:
+        independently constructed witnesses compose once each target block is
+        known to depend only on the shared scope together with its own private
+        auxiliary variables. *)
     Lemma constraintSatisfiable_ext:
       forall c scope dlt1 dlt2,
         constraint_scoped scope c ->
@@ -1256,11 +1262,9 @@ Module Type SECNLUSSTCTRANSLATION
 
     (** Scoped equation-list preservation.
 
-        This is the replacement route for the older abstract
-        abstract append-closure premise.  In addition to one-step
-        preservation, we track the concrete STC-only reset-instance extras
-        produced by the translation and compose head/tail blocks with
-        [preserves_on_concat_scoped]. *)
+        In addition to one-step preservation, this theorem tracks the concrete
+        STC-only reset-instance extras produced by the translation and
+        composes head/tail blocks with [preserves_on_concat_scoped]. *)
     Lemma eqns_preserv_scoped:
       forall scope P vars (G1 G2: secglobal) (es: list equation) extras
              (env rst_env: Env.t ident)
@@ -1581,533 +1585,6 @@ Module Type SECNLUSSTCTRANSLATION
       eapply fresh_map_list_sec_range; eauto.
     Qed.
 
-    Lemma generate_node_env_sec_range':
-      forall ns env acc st env' aux st' x ty,
-        (forall y ty', Env.find y env = Some ty' -> exists m, ty' = Ids.gensym Ids.sec m) ->
-        generate_node_env' ns env acc st = OK ((env', aux), st') ->
-        Env.find x env' = Some ty ->
-        exists m, ty = Ids.gensym Ids.sec m.
-    Proof.
-      induction ns as [|n ns IH]; intros env acc st env' aux st' x ty Henv Hgen Hfind.
-      - simpl in Hgen. inversion Hgen; subst. eauto.
-      - simpl in Hgen.
-        repeat myNameInv.
-        eapply IH; [|eauto|eauto].
-        intros y ty' Hy.
-        eapply generate_new_names_for_node_sec_range; eauto.
-    Qed.
-
-    Lemma generate_node_env_sec_range:
-      forall ns env aux x ty,
-        generate_node_env ns = OK (env, aux) ->
-        Env.find x env = Some ty ->
-        exists m, ty = Ids.gensym Ids.sec m.
-    Proof.
-      intros ns env aux x ty Hgen Hfind.
-      unfold generate_node_env in Hgen.
-      destruct (generate_node_env' ns (Env.empty _) nil init_state) as [[[env' aux'] st']|] eqn:Hgen'; try discriminate.
-      inversion Hgen; subst env aux.
-      eapply generate_node_env_sec_range'; eauto.
-      intros y ty' Hy.
-      rewrite Env.gempty in Hy. discriminate.
-    Qed.
-
-    Definition env_values (env: Env.t ident) : list (ident * ident) :=
-      map (fun '(x, ty) => (ty, x)) (Env.elements env).
-
-    Definition env_sec_bounded (st: ident) (env: Env.t ident) : Prop :=
-      forall x ty,
-        Env.find x env = Some ty ->
-        exists n, ty = Ids.gensym Ids.sec n /\ (n < st)%positive.
-
-    Definition aux_sec_names (aux: list node_aux_names) : Prop :=
-      forall rec,
-        In rec aux ->
-        exists i j,
-          rec.(nclk) = Ids.gensym Ids.sec i
-          /\ rec.(nrst) = Ids.gensym Ids.sec j.
-
-    Lemma env_sec_bounded_step:
-      forall st env,
-        env_sec_bounded st env ->
-        env_sec_bounded (Pos.succ st) env.
-    Proof.
-      intros st env Hbound x ty Hfind.
-      specialize (Hbound _ _ Hfind) as (n & Hn & Hlt).
-      exists n. split; auto.
-      eapply Pos.lt_trans; eauto.
-      apply Pos.lt_succ_diag_r.
-    Qed.
-
-    Lemma env_values_add:
-      forall x ty env,
-        ~ Env.In x env ->
-        Permutation.Permutation (env_values (Env.add x ty env))
-                                ((ty, x) :: env_values env).
-    Proof.
-      intros x ty env Hnin.
-      unfold env_values.
-      replace ((ty, x) :: map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))
-        with (map (fun '(x0, ty0) => (ty0, x0)) ((x, ty) :: Env.elements env))
-        by reflexivity.
-      now apply Permutation.Permutation_map, Env.elements_add.
-    Qed.
-
-    Lemma env_values_nodup_injective:
-      forall env,
-        NoDupMembers (env_values env) ->
-        SECNLUSTYPING.env_injective env.
-    Proof.
-      intros env Hnodup x y tx ty Hfindx Hfindy Heq.
-      apply Env.elements_correct in Hfindx.
-      apply Env.elements_correct in Hfindy.
-      unfold env_values in Hnodup.
-      assert (Hinx : In (tx, x) (map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))).
-      { apply in_map_iff. exists (x, tx). split; [reflexivity|exact Hfindx]. }
-      assert (Hiny : In (tx, y) (map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))).
-      { subst ty.
-        apply in_map_iff. exists (y, tx). split; [reflexivity|exact Hfindy]. }
-      now eapply NoDupMembers_det; eauto.
-    Qed.
-
-    Lemma env_values_fresh_notin:
-      forall env st,
-        env_sec_bounded st env ->
-        ~ InMembers (Ids.gensym Ids.sec st) (env_values env).
-    Proof.
-      intros env st Hbound Hin.
-      apply InMembers_In in Hin as (x & Hin).
-      unfold env_values in Hin.
-      apply in_map_iff in Hin as ((x', ty') & Heq & Hele).
-      simpl in Heq. inversion Heq; subst x' ty'. clear Heq.
-      apply Env.elements_complete in Hele.
-      specialize (Hbound _ _ Hele) as (n & Hgen & Hlt).
-      apply gensym_injective in Hgen as [_ Hn]. subst n.
-      now apply Pos.lt_irrefl in Hlt.
-    Qed.
-
-    Lemma fresh_insert_env_props:
-      forall env k st env' st',
-        env_sec_bounded st env ->
-        NoDupMembers (env_values env) ->
-        fresh_insert env k st = OK (env', st') ->
-        env_sec_bounded st' env'
-        /\ NoDupMembers (env_values env').
-    Proof.
-      intros env k st env' st' Hbound Hnodup Hgen.
-      unfold fresh_insert in Hgen.
-      destruct (Env.mem k env) eqn:Hmem; try discriminate.
-      eapply name_bind_inv in Hgen as (v & st1 & Hfresh & Hgen).
-      eapply name_bind_inv in Hgen as (e & st2 & Hins & Hret).
-      unfold fresh_ident_gen in Hfresh. inversion Hfresh; subst v st1.
-      unfold insert_env, NMret in Hins. inversion Hins; subst e st2.
-      unfold NMret in Hret. inversion Hret; subst env' st'.
-      split.
-      - intros x ty Hfind.
-        destruct (ident_eq_dec x k) as [Heq|Hneq].
-        + subst x. rewrite Env.gss in Hfind. inversion Hfind; subst ty.
-          exists st. split; [reflexivity|apply Pos.lt_succ_diag_r].
-        + rewrite Env.gso in Hfind by auto.
-          specialize (Hbound _ _ Hfind) as (n & Hn & Hlt).
-          exists n. split; auto.
-          eapply Pos.lt_trans; eauto.
-          apply Pos.lt_succ_diag_r.
-      - assert (Hnotin : ~ Env.In k env).
-        { intro Hin. apply Env.mem_1 in Hin. rewrite Hmem in Hin. discriminate. }
-        eapply (NoDupMembers_Permutation_Proper
-                  (env_values (Env.add k (Ids.gensym Ids.sec st) env))
-                  ((Ids.gensym Ids.sec st, k) :: env_values env)).
-        + apply env_values_add; exact Hnotin.
-        + constructor.
-          * apply env_values_fresh_notin; exact Hbound.
-          * exact Hnodup.
-    Qed.
-
-    Lemma fresh_map_list_env_props:
-      forall ks env st env' st',
-        env_sec_bounded st env ->
-        NoDupMembers (env_values env) ->
-        fresh_map_list ks env st = OK (env', st') ->
-        env_sec_bounded st' env'
-        /\ NoDupMembers (env_values env').
-    Proof.
-      induction ks as [|k ks IH]; intros env st env' st' Hbound Hnodup Hgen.
-      - simpl in Hgen. inversion Hgen; subst. auto.
-      - simpl in Hgen.
-        eapply name_bind_inv in Hgen as (env1 & st1 & Hstep & Hgen).
-        eapply name_bind_inv in Hgen as (env2 & st2 & Hrec & Hret).
-        unfold NMret in Hret. inversion Hret; subst env' st'.
-        destruct (fresh_insert_env_props _ _ _ _ _ Hbound Hnodup Hstep) as [Hbound1 Hnodup1].
-        eapply IH; eauto.
-    Qed.
-
-    Lemma generate_new_names_for_node_env_props:
-      forall n env st env' aux st',
-        env_sec_bounded st env ->
-        NoDupMembers (env_values env) ->
-        generate_new_names_for_node n env st = OK ((env', aux), st') ->
-        env_sec_bounded st' env'
-        /\ NoDupMembers (env_values env')
-        /\ exists i j,
-            aux.(nclk) = Ids.gensym Ids.sec i
-            /\ aux.(nrst) = Ids.gensym Ids.sec j.
-    Proof.
-      intros n env st env' aux st' Hbound Hnodup Hgen.
-      unfold generate_new_names_for_node in Hgen.
-      eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
-      eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-      eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
-      unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
-      unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
-      unfold NMret in Hret. inversion Hret; subst env' aux st'.
-      destruct (fresh_map_list_env_props _ _ _ _ _
-                  (env_sec_bounded_step _ _ (env_sec_bounded_step _ _ Hbound))
-                  Hnodup Hmap) as [Hbound' Hnodup'].
-      split; [exact Hbound'|].
-      split; [exact Hnodup'|].
-      exists st, (Pos.succ st). auto.
-    Qed.
-
-    Lemma generate_node_env_props':
-      forall ns env acc st env' aux st',
-        env_sec_bounded st env ->
-        NoDupMembers (env_values env) ->
-        aux_sec_names acc ->
-        generate_node_env' ns env acc st = OK ((env', aux), st') ->
-        env_sec_bounded st' env'
-        /\ NoDupMembers (env_values env')
-        /\ aux_sec_names aux.
-    Proof.
-      induction ns as [|n ns IH]; intros env acc st env' aux st'
-                                          Hbound Hnodup Hacc Hgen.
-      - simpl in Hgen. inversion Hgen; subst. repeat split; auto.
-      - simpl in Hgen.
-        eapply name_bind2_inv in Hgen as (env1 & rec & st1 & Hstep & Hgen).
-        eapply name_bind2_inv in Hgen as (env2 & rs & st2 & Hrec & Hret).
-        unfold NMret in Hret. inversion Hret; subst env' aux st'.
-        destruct (generate_new_names_for_node_env_props _ _ _ _ _ _
-                    Hbound Hnodup Hstep)
-          as [Hbound1 [Hnodup1 Haux1]].
-        assert (Hacc1 : aux_sec_names (rec :: acc)).
-        { intros rec' Hin.
-          destruct Hin as [Heq|Hin].
-          - subst rec'. exact Haux1.
-          - eapply Hacc; eauto. }
-        eapply IH; eauto.
-    Qed.
-
-    Lemma generate_node_env_injective:
-      forall all_nodes env aux_names,
-        generate_node_env all_nodes = OK (env, aux_names) ->
-        SECNLUSTYPING.env_injective env.
-    Proof.
-      intros all_nodes env aux_names Hgen.
-      unfold generate_node_env in Hgen.
-      destruct (generate_node_env' all_nodes (Env.empty _) nil init_state)
-        as [[[env0 aux0] st0]|] eqn:Hgen'; try discriminate.
-      inversion Hgen; subst env aux_names.
-      destruct (generate_node_env_props' all_nodes (Env.empty _) nil init_state env0 aux0 st0)
-        as [_ [Hnodup _]];
-        eauto.
-      - intros x ty Hfind. rewrite Env.gempty in Hfind. discriminate.
-      - constructor.
-      - intros rec Hin. contradiction.
-      - eapply env_values_nodup_injective; eauto.
-    Qed.
-
-    Lemma get_node_aux_In:
-      forall name aux clk_id rst_id,
-        get_node_aux name aux = Some (clk_id, rst_id) ->
-        exists rec,
-          In rec aux
-          /\ rec.(nname) = name
-          /\ rec.(nclk) = clk_id
-          /\ rec.(nrst) = rst_id.
-    Proof.
-      induction aux as [|rec aux IH]; intros clk_id rst_id Haux.
-      - unfold get_node_aux in Haux. simpl in Haux. discriminate.
-      - unfold get_node_aux in Haux. simpl in Haux.
-        destruct (ident_eqb name rec.(nname)) eqn:Hname.
-        + inversion Haux; subst clk_id rst_id.
-          apply ident_eqb_eq in Hname.
-          exists rec. split; [now left|].
-          repeat split; auto.
-        + eapply IH in Haux as (rec' & Hin & Hn & Hc & Hr).
-          exists rec'. split; [now right|].
-          repeat split; auto.
-    Qed.
-
-    Lemma generate_node_aux_sec_names:
-      forall all_nodes env aux_names name clk_id rst_id,
-        generate_node_env all_nodes = OK (env, aux_names) ->
-        get_node_aux name aux_names = Some (clk_id, rst_id) ->
-        exists i j,
-          clk_id = Ids.gensym Ids.sec i
-          /\ rst_id = Ids.gensym Ids.sec j.
-    Proof.
-      intros all_nodes env aux_names name clk_id rst_id Hgen Haux.
-      unfold generate_node_env in Hgen.
-      destruct (generate_node_env' all_nodes (Env.empty _) nil init_state)
-        as [[[env0 aux0] st0]|] eqn:Hgen'; try discriminate.
-      inversion Hgen; subst env aux_names.
-      destruct (generate_node_env_props' all_nodes (Env.empty _) nil init_state env0 aux0 st0)
-        as [_ [_ Hauxsec]];
-        eauto.
-      - intros x ty Hfind. rewrite Env.gempty in Hfind. discriminate.
-      - constructor.
-      - intros rec Hin. contradiction.
-      - eapply get_node_aux_In in Haux as (rec & Hin & _ & Hclk & Hrst).
-        specialize (Hauxsec rec Hin) as (i & j & Hi & Hj).
-        rewrite Hclk, Hrst in *. eauto.
-    Qed.
-
-    Lemma fresh_reset_insert_sec_range:
-      forall env k st env' rst_inst st' x ty,
-        (forall y ty', Env.find y env = Some ty' -> exists n, ty' = Ids.gensym Ids.sec_reset n) ->
-        fresh_reset_insert k env st = OK ((env', rst_inst), st') ->
-        Env.find x env' = Some ty ->
-        exists n, ty = Ids.gensym Ids.sec_reset n.
-    Proof.
-      intros env k st env' rst_inst st' x ty Henv Hins Hfind.
-      unfold fresh_reset_insert in Hins.
-      destruct (Env.mem k env) eqn:Hmem; try discriminate.
-      eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
-      eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
-      unfold fresh_reset_ident in Hfresh.
-      inversion Hfresh; subst v st1.
-      unfold insert_env, ret in Hins0.
-      inversion Hins0; subst e st2.
-      unfold ret in Hret. inversion Hret. subst env' rst_inst st'.
-      destruct (Pos.eq_dec x k) as [Heq|Hneq].
-      - subst. rewrite Env.gss in Hfind. inversion Hfind. subst.
-        eexists; reflexivity.
-      - rewrite Env.gso in Hfind; eauto.
-    Qed.
-
-    Lemma generate_reset_env_range':
-      forall trs env acc st reset_env rids st' x ty,
-        (forall y ty', Env.find y env = Some ty' -> exists n, ty' = Ids.gensym Ids.sec_reset n) ->
-        generate_reset_env' trs env acc st = OK ((reset_env, rids), st') ->
-        Env.find x reset_env = Some ty ->
-        exists n, ty = Ids.gensym Ids.sec_reset n.
-    Proof.
-      induction trs as [|tr trs IH]; intros env acc st reset_env rids st' x ty Henv Hgen Hfind.
-      - simpl in Hgen. inversion Hgen; subst. eauto.
-      - simpl in Hgen.
-        destruct tr as [x0 ck ce|x0 ck e|x0 rck f|x0 xs ck b f exps].
-        1,2,4: eapply IH; eauto.
-        repeat mySecInv.
-        eapply IH; [|eauto|eauto].
-        intros y ty' Hy.
-        eapply fresh_reset_insert_sec_range; eauto.
-    Qed.
-
-    Lemma generate_reset_env_range:
-      forall trs reset_env rids st' x ty,
-        generate_reset_env trs init_state = OK ((reset_env, rids), st') ->
-        Env.find x reset_env = Some ty ->
-        exists n, ty = Ids.gensym Ids.sec_reset n.
-    Proof.
-      intros trs reset_env rids st' x ty Hgen Hfind.
-      unfold generate_reset_env in Hgen.
-      eapply generate_reset_env_range'; eauto.
-      intros y ty' Hy.
-      rewrite Env.gempty in Hy. discriminate.
-    Qed.
-
-    Lemma fresh_reset_insert_preserves_find:
-      forall env k st env' rst_inst st' x ty,
-        fresh_reset_insert k env st = OK ((env', rst_inst), st') ->
-        Env.find x env = Some ty ->
-        Env.find x env' = Some ty.
-    Proof.
-      intros env k st env' rst_inst st' x ty Hins Hfind.
-      unfold fresh_reset_insert in Hins.
-      destruct (Env.mem k env) eqn:Hmem; try discriminate.
-      eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
-      eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
-      unfold fresh_reset_ident in Hfresh.
-      inversion Hfresh; subst v st1.
-      unfold insert_env, ret in Hins0. inversion Hins0; subst e st2.
-      unfold ret in Hret. inversion Hret; subst env' rst_inst st'.
-      assert (Hxk : x <> k).
-      { intro Heq. subst x.
-        assert (Env.mem k env = true).
-        { apply Env.mem_1. unfold Env.In. eexists; exact Hfind. }
-        congruence. }
-      now rewrite Env.gso.
-    Qed.
-
-    Lemma generate_reset_env'_preserves_find:
-      forall trs env acc st reset_env rids st' x ty,
-        generate_reset_env' trs env acc st = OK ((reset_env, rids), st') ->
-        Env.find x env = Some ty ->
-        Env.find x reset_env = Some ty.
-    Proof.
-      induction trs as [|tr trs IH]; intros env acc st reset_env rids st' x ty Hgen Hfind.
-      - simpl in Hgen. inversion Hgen; subst. exact Hfind.
-      - simpl in Hgen.
-        destruct tr as [x0 ck ce|x0 ck e|x0 rck f|x0 xs ck b f exps].
-        1,2,4: eapply IH; eauto.
-        eapply sec_bind2_inv in Hgen as (env1 & i & st1 & Hstep & Hrec).
-        eapply IH; eauto.
-        eapply fresh_reset_insert_preserves_find; eauto.
-    Qed.
-
-    Definition reset_env_sec_bounded (st: ident) (env: Env.t ident) : Prop :=
-      forall x ty,
-        Env.find x env = Some ty ->
-        exists n, ty = Ids.gensym Ids.sec_reset n /\ (n < st)%positive.
-
-    Lemma reset_env_sec_bounded_step:
-      forall st env,
-        reset_env_sec_bounded st env ->
-        reset_env_sec_bounded (Pos.succ st) env.
-    Proof.
-      intros st env Hbound x ty Hfind.
-      specialize (Hbound _ _ Hfind) as (n & Hn & Hlt).
-      exists n. split; auto.
-      eapply Pos.lt_trans; eauto.
-      apply Pos.lt_succ_diag_r.
-    Qed.
-
-    Lemma reset_env_values_fresh_notin:
-      forall env st,
-        reset_env_sec_bounded st env ->
-        ~ InMembers (Ids.gensym Ids.sec_reset st) (env_values env).
-    Proof.
-      intros env st Hbound Hin.
-      apply InMembers_In in Hin as (x & Hin).
-      unfold env_values in Hin.
-      apply in_map_iff in Hin as ((x', ty') & Heq & Hele).
-      simpl in Heq. inversion Heq; subst x' ty'. clear Heq.
-      apply Env.elements_complete in Hele.
-      specialize (Hbound _ _ Hele) as (n & Hgen & Hlt).
-      apply gensym_injective in Hgen as [_ Hn]. subst n.
-      now apply Pos.lt_irrefl in Hlt.
-    Qed.
-
-    Lemma fresh_reset_insert_env_props:
-      forall env k st env' rst_inst st',
-        reset_env_sec_bounded st env ->
-        NoDupMembers (env_values env) ->
-        fresh_reset_insert k env st = OK ((env', rst_inst), st') ->
-        reset_env_sec_bounded st' env'
-        /\ NoDupMembers (env_values env').
-    Proof.
-      intros env k st env' rst_inst st' Hbound Hnodup Hgen.
-      unfold fresh_reset_insert in Hgen.
-      destruct (Env.mem k env) eqn:Hmem; try discriminate.
-      eapply sec_bind_inv in Hgen as (v & st1 & Hfresh & Hgen).
-      eapply sec_bind_inv in Hgen as (e & st2 & Hins & Hret).
-      unfold fresh_reset_ident in Hfresh. inversion Hfresh; subst v st1.
-      unfold insert_env, ret in Hins. inversion Hins; subst e st2.
-      unfold ret in Hret. inversion Hret; subst env' rst_inst st'.
-      split.
-      - intros x ty Hfind.
-        destruct (ident_eq_dec x k) as [Heq|Hneq].
-        + subst x. rewrite Env.gss in Hfind. inversion Hfind; subst ty.
-          exists st. split; [reflexivity|apply Pos.lt_succ_diag_r].
-        + rewrite Env.gso in Hfind by auto.
-          specialize (Hbound _ _ Hfind) as (n & Hn & Hlt).
-          exists n. split; auto.
-          eapply Pos.lt_trans; eauto.
-          apply Pos.lt_succ_diag_r.
-      - assert (Hnotin : ~ Env.In k env).
-        { intro Hin. apply Env.mem_1 in Hin. rewrite Hmem in Hin. discriminate. }
-        eapply (NoDupMembers_Permutation_Proper
-                  (env_values (Env.add k (Ids.gensym Ids.sec_reset st) env))
-                  ((Ids.gensym Ids.sec_reset st, k) :: env_values env)).
-        + apply env_values_add; exact Hnotin.
-        + constructor.
-          * apply reset_env_values_fresh_notin; exact Hbound.
-          * exact Hnodup.
-    Qed.
-
-    Lemma generate_reset_env_props':
-      forall trs env acc st reset_env rids st',
-        reset_env_sec_bounded st env ->
-        NoDupMembers (env_values env) ->
-        generate_reset_env' trs env acc st = OK ((reset_env, rids), st') ->
-        reset_env_sec_bounded st' reset_env
-        /\ NoDupMembers (env_values reset_env).
-    Proof.
-      induction trs as [|tr trs IH]; intros env acc st reset_env rids st'
-                                            Hbound Hnodup Hgen.
-      - simpl in Hgen. inversion Hgen; subst. auto.
-      - simpl in Hgen.
-        destruct tr as [x0 ck ce|x0 ck e|x0 rck f|x0 xs ck b f exps].
-        1,2,4: eapply IH; eauto.
-        eapply sec_bind2_inv in Hgen as (env1 & i & st1 & Hstep & Hrec).
-        destruct (fresh_reset_insert_env_props _ _ _ _ _ _
-                    Hbound Hnodup Hstep) as [Hbound1 Hnodup1].
-        eapply IH; eauto.
-    Qed.
-
-    Lemma generate_reset_env_injective:
-      forall trs reset_env rids st',
-        generate_reset_env trs init_state = OK ((reset_env, rids), st') ->
-        forall x y tx ty,
-          Env.find x reset_env = Some tx ->
-          Env.find y reset_env = Some ty ->
-          tx = ty ->
-          x = y.
-    Proof.
-      intros trs reset_env rids st' Hgen.
-      unfold generate_reset_env in Hgen.
-      destruct (generate_reset_env' trs (Env.empty _) nil init_state)
-        as [[[reset_env0 rids0] st0]|] eqn:Hgen'; try discriminate.
-      inversion Hgen; subst reset_env rids st'.
-      intros x y tx ty Hfindx Hfindy Heq.
-      destruct (generate_reset_env_props' trs (Env.empty _) nil init_state reset_env0 rids0 st0)
-        as [_ Hnodup];
-        eauto.
-      - intros z tz Hz. rewrite Env.gempty in Hz. discriminate.
-      - constructor.
-      - eapply env_values_nodup_injective; eauto.
-    Qed.
-
-    Lemma generate_reset_env'_has_reset_stmt:
-      forall trs env acc st reset_env rids st' x ck f,
-        generate_reset_env' trs env acc st = OK ((reset_env, rids), st') ->
-        In (TcReset x ck f) trs ->
-        exists ty, Env.find x reset_env = Some ty.
-    Proof.
-      induction trs as [|tr trs IH]; intros env acc st reset_env rids st' x ck f Hgen Hin.
-      - inversion Hin.
-      - simpl in Hgen.
-        simpl in Hin.
-        destruct Hin as [Heq|Hin].
-        + subst tr.
-          eapply sec_bind2_inv in Hgen as (env1 & i & st1 & Hstep & Hrec).
-          exists i.
-          eapply generate_reset_env'_preserves_find; eauto.
-          unfold assign_reset_type in Hstep.
-          unfold fresh_reset_insert in Hstep.
-          destruct (Env.mem x env) eqn:Hmem; try discriminate.
-          eapply sec_bind_inv in Hstep as (v & stv & Hfreshid & Hstep).
-          eapply sec_bind_inv in Hstep as (env0 & ste & Hins & Hdone).
-          unfold fresh_reset_ident in Hfreshid. inversion Hfreshid; subst v stv.
-          unfold insert_env, ret in Hins. inversion Hins; subst env0 ste.
-          unfold ret in Hdone. inversion Hdone; subst env1 i st1.
-          rewrite Env.gss. reflexivity.
-        + destruct tr as [x0 ck0 ce|x0 ck0 e|x0 rck0 f0|x0 xs ck0 b f0 exps].
-          1,2,4: eauto.
-          eapply sec_bind2_inv in Hgen as (env1 & i & st1 & Hstep & Hrec).
-          eauto.
-    Qed.
-
-    Lemma generate_reset_env_has_reset_stmt:
-      forall trs reset_env rids st' x ck f,
-        generate_reset_env trs init_state = OK ((reset_env, rids), st') ->
-        In (TcReset x ck f) trs ->
-        exists ty, Env.find x reset_env = Some ty.
-    Proof.
-      intros trs reset_env rids st' x ck f Hgen Hin.
-      unfold generate_reset_env in Hgen.
-      eapply generate_reset_env'_has_reset_stmt; eauto.
-    Qed.
-
     Lemma generated_reset_env_maps_reset_calls:
       forall eqs reset_env rids st' x,
         generate_reset_env (translate_eqns eqs) init_state = OK ((reset_env, rids), st') ->
@@ -2116,7 +1593,7 @@ Module Type SECNLUSSTCTRANSLATION
     Proof.
       intros eqs reset_env rids st' x Hgen Hin.
       destruct (reset_call_vars_translate_eqns _ _ Hin) as (ck & f & Hinreset).
-      eapply generate_reset_env_has_reset_stmt; eauto.
+      eapply SECSTCTYPINGCORRECTNESS.generate_reset_env_has_reset_stmt; eauto.
     Qed.
 
     Lemma generated_eqns_reset_extras:
@@ -2137,15 +1614,13 @@ Module Type SECNLUSSTCTRANSLATION
       eapply eqns_reset_extras_nodup; eauto.
       - eapply reset_call_vars_nodup; eauto.
       - intros x y tx ty Hfindx Hfindy Heq.
-        eapply generate_reset_env_injective; eauto.
+        eapply SECSTCTYPINGCORRECTNESS.generate_reset_env_injective; eauto.
     Qed.
 
     (** Scoped node theorem.
 
-        This is the direct replacement for the older unscoped node theorem.
-        The conclusion is the same, but the proof
-        now goes through [eqns_preserv_scoped] and therefore needs the
-        concrete structural side conditions that actually justify scoped
+        This theorem packages [eqns_preserv_scoped] at node level, so it keeps
+        the concrete structural side conditions that justify scoped
         concatenation:
 
         - local NLustre clocking for the node equations;
@@ -2197,69 +1672,6 @@ Module Type SECNLUSSTCTRANSLATION
       - eapply node_vars_env_scoped_from_mappings; eauto.
       - repeat rewrite in_app_iff. right. right. right. left. reflexivity.
       - repeat rewrite in_app_iff. right. right. right. right. left. reflexivity.
-    Qed.
-
-    Lemma node_scope_sec_range:
-      forall all_nodes env aux_names n
-             clk_id rst_id clk_type rst_type inp out locals ty,
-        generate_node_env all_nodes = OK (env, aux_names) ->
-        get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
-        Env.find clk_id env = Some clk_type ->
-        Env.find rst_id env = Some rst_type ->
-        get_mappings_from_node n.(n_in) env = Some inp ->
-        get_mappings_from_node n.(n_out) env = Some out ->
-        get_mappings_from_node n.(n_vars) env = Some locals ->
-        In ty (inp ++ out ++ locals ++ clk_type :: rst_type :: nil) ->
-        exists m, ty = Ids.gensym Ids.sec m.
-    Proof.
-      intros all_nodes env aux_names n clk_id rst_id clk_type rst_type inp out locals ty
-             Henvgen Haux Hclk Hrst Hinp Hout Hlocals Hin.
-      repeat rewrite in_app_iff in Hin.
-      destruct Hin as [Hin|[Hin|[Hin|[Hin|[Hin|[]]]]]].
-      - destruct (get_mappings_from_node_In _ _ _ _ _ Hinp Hin) as (x & a & _ & Hfind).
-        eapply generate_node_env_sec_range; eauto.
-      - destruct (get_mappings_from_node_In _ _ _ _ _ Hout Hin) as (x & a & _ & Hfind).
-        eapply generate_node_env_sec_range; eauto.
-      - destruct (get_mappings_from_node_In _ _ _ _ _ Hlocals Hin) as (x & a & _ & Hfind).
-        eapply generate_node_env_sec_range; eauto.
-      - subst. eapply generate_node_env_sec_range; eauto.
-      - subst. eapply generate_node_env_sec_range; eauto.
-    Qed.
-
-    Ltac prove_str_to_pos_neq :=
-      intros Heq; apply str_to_pos_injective in Heq; discriminate.
-
-    (** IDS-side naming invariant.
-
-        The concrete [Ident] implementation satisfies this because the thesis
-        prefix [sec] is distinct from Velus' existing gensym prefixes
-        [elab], [norm1], and [norm2].  The abstract [IDS] interface does not
-        expose that separation, so we keep it explicit here until the naming
-        interface is strengthened accordingly. *)
-    Hypothesis sec_not_in_gensym_prefs :
-      ~In Ids.sec gensym_prefs.
-
-    Lemma node_var_not_sec_gensym:
-      forall n x i,
-        In x (map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
-        x <> Ids.gensym Ids.sec i.
-    Proof.
-      intros n x i Hin Heq.
-      destruct n.(n_good) as [Hgood _].
-      rewrite Forall_forall in Hgood.
-      specialize (Hgood _ Hin).
-      destruct Hgood as [Hat|Hex].
-      - rewrite Heq in Hat.
-        eapply gensym_not_atom; eauto.
-      - unfold PS.Exists in Hex.
-        destruct Hex as (pre & Hinpre & m & Hm).
-        rewrite Heq in Hm.
-        symmetry in Hm.
-        apply gensym_injective in Hm as [Hpre _]. subst pre.
-        apply PSP.of_list_1 in Hinpre.
-        apply SetoidList.InA_alt in Hinpre as (pre' & Heq' & Hinpre).
-        subst pre'.
-        exact (sec_not_in_gensym_prefs Hinpre).
     Qed.
 
     (** The next two inversion lemmas package the operational content of the
@@ -2405,11 +1817,9 @@ Module Type SECNLUSSTCTRANSLATION
 
     (** Scoped generated-node theorem.
 
-        This is the generated counterpart of [node_preserv_scoped]. It keeps
-        the new theorem free of the old unscoped append-closure premise, but
-        still exposes
-        the concrete local prerequisites used by the scoped concatenation
-        proof:
+        This is the generated counterpart of [node_preserv_scoped].  It
+        exposes the concrete local prerequisites used by the scoped
+        concatenation proof:
 
         - local source clocking for [n];
         - scoped target signatures in [G2].
@@ -2468,7 +1878,7 @@ Module Type SECNLUSSTCTRANSLATION
           destruct (Env.find x reset_env) as [rst_inst'|] eqn:Hrstfind; try discriminate.
           inversion Hfind; clear Hfind; subst.
           edestruct generate_reset_env_range as (nrst & Hrsteq); eauto.
-          edestruct node_scope_sec_range as (nsec & Hscopeeq); eauto.
+          edestruct SECNLUSTYPINGCORRECTNESS.node_scope_sec_range as (nsec & Hscopeeq); eauto.
           rewrite Hrsteq in Hscopeeq.
           apply gensym_injective in Hscopeeq as [Hpref _].
           symmetry in Hpref. contradiction.
@@ -2488,14 +1898,11 @@ Module Type SECNLUSSTCTRANSLATION
                (st_reset := st_reset) (st_n := st_n) (st_s := st_s); eauto.
     Qed.
 
-    (** Happ-free generated-node corollary under standard source-side
-        well-formedness.
+    (** Generated-node corollary under standard source-side well-formedness.
 
-        This is the version intended for the downstream theorem stack. The old
-        unscoped closure premise is gone;
-        in exchange we now use the standard NLustre ordering/clocking facts
-        needed to recover the local [wc_node] hypothesis required by
-        [generated_node_preserv_scoped]. *)
+        This packages [generated_node_preserv_scoped] with the standard
+        NLustre ordering/clocking facts needed to recover the local [wc_node]
+        hypothesis. *)
     Corollary generated_node_preserv_scoped_global:
       forall all_nodes (n : node) (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
@@ -2522,12 +1929,10 @@ Module Type SECNLUSSTCTRANSLATION
       eapply generated_node_preserv_scoped with (P := G'); eauto.
     Qed.
 
-    (** Happ-free lookup corollary.
+    (** Lookup corollary.
 
         This is the lookup-based version of
-        [generated_node_preserv_scoped_global].  It is the natural later
-        replacement for the older lookup corollary once the remaining global
-        consistency theorem stack is moved to the scoped route. *)
+        [generated_node_preserv_scoped_global]. *)
     Corollary found_system_preserv_scoped_global:
       forall all_nodes f n s prog' (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
@@ -2557,113 +1962,6 @@ Module Type SECNLUSSTCTRANSLATION
       eapply generated_node_preserv_scoped_global; eauto.
     Qed.
 
-    (** Structural side conditions for the simplify-completeness bridge.
-
-        The generic theorem [SecTypes.simplify_complete] no longer needs a
-        signature-specific semantic axiom. Instead, the generated-node bridge
-        only requires the exact concrete facts that theorem consumes:
-
-        - the raw generated NLustre constraints are well formed;
-        - the variables eliminated by [simplify] are disjoint from the visible
-          signature scope.
-
-        This predicate packages those facts at the level of generated node
-        signatures. *)
-    Definition generated_node_simplify_ready
-      (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
-      forall G1 n nsig
-             clk_id rst_id clk_type rst_type inp out locals raw st_n,
-        SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
-        get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
-        Env.find clk_id env = Some clk_type ->
-        Env.find rst_id env = Some rst_type ->
-        get_mappings_from_node n.(n_in) env = Some inp ->
-        get_mappings_from_node n.(n_out) env = Some out ->
-        get_mappings_from_node n.(n_vars) env = Some locals ->
-        generate_eqns_constraints G1 env clk_type rst_type n.(n_eqs) init_state = OK (raw, st_n) ->
-        nsig = {| s_name := n.(n_name);
-                  s_in := inp;
-                  s_out := out;
-                  s_reset := rst_type;
-                  s_clk := clk_type;
-                  s_constraints := SymTypes.simplify raw locals |} ->
-        wf_constraints raw
-        /\ (forall x, In x locals -> ~ In x (sig_scope nsig)).
-
-    (** Generated-node structural readiness for [simplify_complete].
-
-        This theorem discharges the two source-side obligations in
-        [generated_node_simplify_ready] from:
-
-        - the shared generated naming environment, which gives injective
-          security names and ensures clock/reset helper names are disjoint from
-          user variables;
-        - the NLustre node invariant [NoDup_var_defined_n_eqs]. *)
-    Theorem generated_node_simplify_ready_from_generated_env:
-      forall all_nodes env aux_names,
-        generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_simplify_ready env aux_names.
-    Proof.
-      intros all_nodes env aux_names Henvgen.
-      intros G1 n nsig
-             clk_id rst_id clk_type rst_type inp out locals raw st_n
-             Hnsig Haux Hclk Hrst Hinp Hout Hlocals Hraw Hnsigdef.
-      split.
-      - eapply SECNLUSTYPING.generate_node_eqns_constraints_wf; eauto.
-        eapply NAMEGEN.generate_node_env_injective; eauto.
-      - intros ty Hinlocal Hinsig.
-        subst nsig.
-        unfold sig_scope in Hinsig.
-        repeat rewrite in_app_iff in Hinsig.
-        destruct (get_mappings_from_node_In _ _ _ _ _ Hlocals Hinlocal)
-          as (xlocal & alocal & Hxlocal & Hfindlocal).
-        pose proof (NAMEGEN.generate_node_env_injective _ _ _ Henvgen) as Hinj.
-        pose proof (generate_node_aux_sec_names _ _ _ _ _ _ Henvgen Haux)
-          as (iclk & irst & Hclkid & Hrstid).
-        assert (Hndvars : NoDup (map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
-        { apply fst_NoDupMembers. exact n.(n_nodup). }
-        destruct Hinsig as [Hininput|[Hinoutput|[Hinclk|[Hinrst|[]]]]].
-        + destruct (get_mappings_from_node_In _ _ _ _ _ Hinp Hininput)
-            as (xinp & ainp & Hxinp & Hfindinp).
-          assert (xlocal = xinp) by (eapply Hinj; eauto).
-          subst xinp.
-          repeat rewrite map_app in Hndvars.
-          eapply (NoDup_app_In xlocal
-                    (map fst (n.(n_in)))
-                    (map fst (n.(n_vars)) ++ map fst (n.(n_out)))) in Hndvars.
-          2:{ now apply in_map with (f := fst) in Hxinp. }
-          apply Hndvars.
-          apply in_or_app. left. now apply in_map with (f := fst) in Hxlocal.
-        + destruct (get_mappings_from_node_In _ _ _ _ _ Hout Hinoutput)
-            as (xout & aout & Hxout & Hfindout).
-          assert (xlocal = xout) by (eapply Hinj; eauto).
-          subst xout.
-          repeat rewrite map_app in Hndvars.
-          eapply NoDup_app_r in Hndvars.
-          eapply (NoDup_app_In xlocal
-                    (map fst (n.(n_vars)))
-                    (map fst (n.(n_out)))) in Hndvars.
-          2:{ now apply in_map with (f := fst) in Hxlocal. }
-          apply Hndvars.
-          now apply in_map with (f := fst) in Hxout.
-        + subst ty.
-          assert (xlocal = clk_id) by (eapply Hinj; eauto).
-          subst xlocal.
-          eapply (node_var_not_sec_gensym n clk_id iclk).
-          * rewrite map_app. apply in_or_app. right.
-            rewrite map_app. apply in_or_app. left.
-            now apply in_map with (f := fst) in Hxlocal.
-          * exact Hclkid.
-        + subst ty.
-          assert (xlocal = rst_id) by (eapply Hinj; eauto).
-          subst xlocal.
-          eapply (node_var_not_sec_gensym n rst_id irst).
-          * rewrite map_app. apply in_or_app. right.
-            rewrite map_app. apply in_or_app. left.
-            now apply in_map with (f := fst) in Hxlocal.
-          * exact Hrstid.
-    Qed.
-
     Lemma sig_scope_in_raw_scope:
       forall sig locals x,
         In x (sig_scope sig) ->
@@ -2680,12 +1978,11 @@ Module Type SECNLUSSTCTRANSLATION
         + right. right. right. right. left. exact Hinrst.
     Qed.
 
-    (** Happ-free simplify bridge.
+    (** Simplify bridge for generated signatures.
 
-        This is the scoped replacement for the older theorem just below.  It
-        uses the new scoped generated
-        node theorem together with standard source-side ordering/clocking and a
-        scoped generated target global. *)
+        This theorem combines the generated node preservation result with the
+        source-side simplify completeness theorem and the target-side simplify
+        soundness theorem. *)
     Theorem generated_signatures_preserved_from_simplify_bridge_scoped:
       forall all_nodes P (n : node) (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
@@ -2697,7 +1994,7 @@ Module Type SECNLUSSTCTRANSLATION
         CloNL.wc_node P n ->
         SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
         SECSTCTYPING.generate_sys_signature G2 (translate_node n) env aux_names = OK ssig ->
-        generated_node_simplify_ready env aux_names ->
+        SECNLUSTYPINGCORRECTNESS.generated_node_simplify_ready env aux_names ->
         signatures_preserved nsig ssig.
     Proof.
       intros all_nodes P n G1 G2 env aux_names nsig ssig
@@ -2737,7 +2034,7 @@ Module Type SECNLUSSTCTRANSLATION
           destruct (Env.find x reset_env) as [rst_inst'|] eqn:Hrstfind; try discriminate.
           inversion Hfindrst; clear Hfindrst; subst.
           edestruct generate_reset_env_range as (nrst & Hrsteq); eauto.
-          edestruct node_scope_sec_range as (nsec & Hscopeeq); eauto.
+          edestruct SECNLUSTYPINGCORRECTNESS.node_scope_sec_range as (nsec & Hscopeeq); eauto.
           rewrite Hrsteq in Hscopeeq.
           apply gensym_injective in Hscopeeq as [Hpref _].
           symmetry in Hpref. contradiction.
@@ -2833,12 +2130,10 @@ Module Type SECNLUSSTCTRANSLATION
 
     (** Global freshness assumption for successful call instantiations.
 
-        This is lower-level than the previous [signature_calls_from_preservation]
-        placeholder: it talks only about the substitution interface exported by
-        [generate_constraints]. In the intended finished development, this
-        should be discharged from the shared name-generation environment in
-        [NameInterface] together with the fact that generated signatures are
-        scoped to their visible interface. *)
+        It talks only about the substitution interface exported by
+        [generate_constraints].  The intended discharge point is the shared
+        name-generation discipline in [NameInterface] together with generated
+        signature scopedness. *)
     Definition successful_call_substitutions_fresh : Prop :=
       forall sig inptyp ckty rstty outtyp cns st_init st',
         generate_constraints sig inptyp ckty rstty outtyp st_init = OK (cns, st') ->
@@ -2937,19 +2232,6 @@ Module Type SECNLUSSTCTRANSLATION
         The definitions below package those requirements explicitly so the
         public node/system/program theorems do not need to mention the opaque
         predicate [generated_signature_step_consistent]. *)
-    Definition generated_node_simplify_ready_global
-      (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
-      generated_node_simplify_ready env aux_names.
-
-    Corollary generated_node_simplify_ready_global_from_env:
-      forall all_nodes env aux_names,
-        generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_simplify_ready_global env aux_names.
-    Proof.
-      intros all_nodes env aux_names Henvgen.
-      exact (generated_node_simplify_ready_from_generated_env _ _ _ Henvgen).
-    Qed.
-
     Definition generated_signatures_preserved
       (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
       forall G1 G2 n nsig ssig,
@@ -2958,76 +2240,10 @@ Module Type SECNLUSSTCTRANSLATION
         SECSTCTYPING.generate_sys_signature G2 (translate_node n) env aux_names = OK ssig ->
         signatures_preserved nsig ssig.
 
-    Definition generated_node_signatures_scoped
-      (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
-      forall G n nsig,
-        SECNLUSTYPING.generate_node_sig G n env aux_names = OK nsig ->
-        signature_scoped nsig.
-
-    (** The node-side scopedness theorem now lives in [SecNLusTyping.v]:
-        [SECNLUSTYPING.generate_node_sig_scoped] proves the local one-node
-        result, and [SECNLUSTYPING.generate_all_signatures_scoped] lifts it to
-        a fully generated NLustre signature environment under the standard
-        source [wc_global] premise.
-
-        The pointwise predicate kept here is therefore stronger than what the
-        final theorem should expose.  It remains only because the current
-        translation-layer step theorem is still phrased for arbitrary
-        accumulators; once that step is refactored to consume generated globals
-        directly, this premise should disappear.  On the STC side, the base
-        scopedness theorems now live in [SecSTCTyping.v]
-        ([generate_sys_signature_scoped] and
-        [generate_all_sys_signatures_scoped]); this stronger pointwise wrapper
-        remains here only because the translation-layer step theorem is still
-        phrased over arbitrary accumulator globals. *)
-    Definition generated_system_signatures_scoped
-      (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
-      forall G s ssig,
-        SECSTCTYPING.generate_sys_signature G s env aux_names = OK ssig ->
-        signature_scoped ssig.
-
-    (** Pointwise-to-global scopedness for generated STC accumulators.
-
-        The stronger pointwise wrapper [generated_system_signatures_scoped] is
-        enough to recover [secglobal_scoped] for any accumulator produced by
-        [generate_all_sys_signatures'].  This avoids pulling STC clocking into
-        the translation file when only the scopedness invariant is needed. *)
-    Theorem generate_all_sys_signatures_scoped_from_pointwise':
-      forall nodes acc env aux_names G,
-        secglobal_scoped acc ->
-        generated_system_signatures_scoped env aux_names ->
-        SECSTCTYPING.generate_all_sys_signatures' acc (translate nodes) env aux_names = OK G ->
-        secglobal_scoped G.
-    Proof.
-      induction nodes as [|n nodes IH]; intros acc env aux_names G Hacc Hscoped Hgen.
-      - simpl in Hgen. inversion Hgen; subst. exact Hacc.
-      - simpl in Hgen.
-        destruct (SECSTCTYPING.generate_sys_signature acc (translate_node n) env aux_names)
-          as [ssig|] eqn:Hssig; try discriminate.
-        pose proof (Hscoped _ _ _ Hssig) as Hsigscoped.
-        exact (IH (ssig :: acc) env aux_names G
-                  (secglobal_scoped_cons _ _ Hsigscoped Hacc)
-                  Hscoped
-                  Hgen).
-    Qed.
-
-    Corollary generate_all_sys_signatures_scoped_from_pointwise:
-      forall nodes env aux_names G,
-        generated_system_signatures_scoped env aux_names ->
-        SECSTCTYPING.generate_all_sys_signatures (translate nodes) env aux_names = OK G ->
-        secglobal_scoped G.
-    Proof.
-      intros nodes env aux_names G Hscoped Hgen.
-      unfold SECSTCTYPING.generate_all_sys_signatures in Hgen.
-      eapply generate_all_sys_signatures_scoped_from_pointwise'; eauto.
-      exact secglobal_scoped_nil.
-    Qed.
-
     (** This is the semantic call bridge that still has to come from the
         signature-instantiation layer.
 
-        Unlike the older placeholder [signature_calls_from_preservation], this
-        formulation exposes the actual low-level requirements:
+        The formulation exposes the exact low-level requirements:
 
         - stored signatures must be scoped to their visible interface;
         - successful instantiations produced by [generate_constraints] must use
@@ -3081,23 +2297,6 @@ Module Type SECNLUSSTCTRANSLATION
         exists n2. simpl. rewrite Hneqb. auto.
     Qed.
 
-    (** The source-side generated-global scopedness theorem now belongs to the
-        NLustre typing layer.  This corollary is just the translation-facing
-        bridge from [generate_node_env] to the typing theorem's injective-env
-        premise, discharged by the naming-layer theorem
-        [NAMEGEN.generate_node_env_injective]. *)
-    Corollary generate_all_source_signatures_scoped:
-      forall all_nodes env aux_names G,
-        CloNL.wc_global all_nodes ->
-        generate_node_env all_nodes = OK (env, aux_names) ->
-        SECNLUSTYPING.generate_all_signatures all_nodes env aux_names = OK G ->
-        secglobal_scoped G.
-    Proof.
-      intros all_nodes env aux_names G Hwc Henvgen Hgen.
-      eapply SECNLUSTYPING.generate_all_signatures_scoped; eauto.
-      eapply NAMEGEN.generate_node_env_injective; eauto.
-    Qed.
-
     Corollary generate_all_translated_system_signatures_scoped:
       forall all_nodes env aux_names G,
         CloStc.wc_program (translate all_nodes) ->
@@ -3111,10 +2310,9 @@ Module Type SECNLUSSTCTRANSLATION
     Qed.
 
     (** This is the generated-signature form of [Signature_consistent_cons].
-        The generation equalities do not contribute to the proof directly, but
-        they make the statement line up with the accumulator step of the global
-        generators and with the intended later use: once a theorem establishes
-        [Signature_head_consistent] for the newly generated pair, the global
+        The generation equalities make the statement line up with the
+        accumulator step of the global generators: once one generated
+        source/target pair satisfies [Signature_head_consistent], the global
         invariant extends immediately. *)
     Theorem generated_signature_consistent_step:
       forall G1 G2 n env aux_names nsig ssig,
@@ -3129,19 +2327,10 @@ Module Type SECNLUSSTCTRANSLATION
 
     (** Per-step compatibility hypothesis used by the global generators.
 
-        The present development does not yet prove this property directly from
-        [generated_node_preserv_scoped], because that would require a completeness
-        argument for [SymTypes.simplify] with respect to call-time signature
-        instantiation. Instead, the global theorems below isolate that missing
-        bridge into this single hypothesis.
-
-        Abstract list induction over generated signatures.
-
-        The theorem isolates the accumulator argument from the still-separate
-        theorem that one freshly generated node/system signature pair satisfies
-        [Signature_head_consistent]. Once such a per-step theorem is available,
-        this induction lifts it to the entire generated global/program
-        signature lists. *)
+        This isolates the one-node bridge from the accumulator induction:
+        if one freshly generated node/system signature pair satisfies
+        [Signature_head_consistent], then the list induction lifts that fact to
+        the whole generated global signature lists. *)
     Theorem generate_all_signatures_consistent'_abstract:
       forall nodes acc1 acc2 env aux_names G1 G2,
         Signature_consistent acc1 acc2 ->
@@ -3183,20 +2372,18 @@ Module Type SECNLUSSTCTRANSLATION
       apply Signature_consistent_nil.
     Qed.
 
-    (** Concrete global-signature theorem without the older unscoped
-        append-closure route.
+    (** Concrete global-signature theorem.
 
-        Unlike the older abstract-generator route, this proof performs the accumulator
-        induction directly and uses the scoped simplify bridge for the current
-        head node, together with pointwise scopedness/call-preservation
-        hypotheses. *)
+        This proof performs the accumulator induction directly and uses the
+        scoped simplify bridge for the current head node, together with the
+        current scopedness and call-preservation hypotheses. *)
     Theorem generate_all_signatures_consistent_scoped':
       forall all_nodes nodes acc1 acc2 env aux_names G1 G2,
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_simplify_ready env aux_names ->
-        generated_node_signatures_scoped env aux_names ->
-        generated_system_signatures_scoped env aux_names ->
+        SECNLUSTYPINGCORRECTNESS.generated_node_simplify_ready env aux_names ->
+        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
+        SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
         CloNL.wc_global nodes ->
@@ -3250,8 +2437,8 @@ Module Type SECNLUSSTCTRANSLATION
       forall all_nodes env aux_names G1 G2,
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_signatures_scoped env aux_names ->
-        generated_system_signatures_scoped env aux_names ->
+        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
+        SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
         CloNL.wc_global all_nodes ->
@@ -3261,7 +2448,8 @@ Module Type SECNLUSSTCTRANSLATION
     Proof.
       intros all_nodes env aux_names G1 G2
              Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc.
-      pose proof (generated_node_simplify_ready_global_from_env all_nodes env aux_names Henvgen)
+      pose proof (SECNLUSTYPINGCORRECTNESS.generated_node_simplify_ready_global_from_env
+                    all_nodes env aux_names Henvgen)
         as Hready.
       unfold SECNLUSTYPING.generate_all_signatures in Hallnl.
       unfold SECSTCTYPING.generate_all_sys_signatures in Hallstc.
@@ -3275,18 +2463,16 @@ Module Type SECNLUSSTCTRANSLATION
 
     (** Concrete global-signature theorem.
 
-        This is the version intended for later use in the development: the
-        caller provides the concrete bridge premises, and the abstract
-        accumulator invariant is rebuilt internally.  The older derived
-        assumption [generated_node_simplify_ready_global] is no longer exposed:
-        it is reconstructed from [generate_node_env] and the remaining
-        call-shape premise. *)
+        The caller provides the remaining bridge premises, and the accumulator
+        invariant is rebuilt internally.  Source-side simplify readiness is
+        derived from
+        [SECNLUSTYPINGCORRECTNESS.generated_node_simplify_ready_global_from_env]. *)
     Corollary generate_all_signatures_consistent:
       forall all_nodes env aux_names G1 G2,
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_signatures_scoped env aux_names ->
-        generated_system_signatures_scoped env aux_names ->
+        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
+        SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
         CloNL.wc_global all_nodes ->
@@ -3299,26 +2485,19 @@ Module Type SECNLUSSTCTRANSLATION
       eapply generate_all_signatures_consistent_scoped; eauto.
     Qed.
 
-    (** Closed node theorem for globally generated signatures under the
-        concrete bridge premises.
+    (** Closed node theorem for globally generated signatures.
 
-        This is the first point where the explicit [Signature_consistent]
-        premise disappears from the node-level statement. The theorem rebuilds
-        that premise from the full generated signature lists by combining:
-
-        1. generated signature simplification completeness;
-        2. call preservation derived from [signatures_preserved];
-        3. the abstract list induction [generate_all_signatures_consistent_abstract];
-        4. the pointwise generated-node theorem
-           [generated_node_preserv_scoped]. *)
+        This theorem rebuilds [Signature_consistent] from the full generated
+        source/target globals and then reuses the node-level raw preservation
+        theorem. *)
     Theorem generated_node_preserv_global:
       forall all_nodes (n : node) (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
              (nsig ssig: signature),
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_signatures_scoped env aux_names ->
-        generated_system_signatures_scoped env aux_names ->
+        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
+        SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
         CloNL.wc_global all_nodes ->
@@ -3338,15 +2517,14 @@ Module Type SECNLUSSTCTRANSLATION
              Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hfind Hallnl Hallstc Hnsig Hssig.
       pose proof (generate_all_signatures_consistent
                     all_nodes env aux_names G1 G2 Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc) as Hcons.
-      pose proof (generate_all_sys_signatures_scoped_from_pointwise
-                    all_nodes env aux_names G2 Hsscoped Hallstc) as HscopedG2.
+      pose proof (SECSTCTYPINGCORRECTNESS.generate_all_sys_signatures_scoped_from_pointwise
+                    (translate all_nodes) env aux_names G2 Hsscoped Hallstc) as HscopedG2.
       eapply generated_node_preserv_scoped_global; eauto.
     Qed.
 
     (** Lookup-based closed node theorem.
 
-        Compared with the older lookup corollary, the
-        signature-consistency premise is now discharged internally from the
+        The signature-consistency premise is discharged internally from the
         global generation equalities. *)
     Corollary found_system_preserv_global:
       forall all_nodes f n s prog' (G1 G2: secglobal)
@@ -3354,8 +2532,8 @@ Module Type SECNLUSSTCTRANSLATION
              (nsig ssig: signature),
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_signatures_scoped env aux_names ->
-        generated_system_signatures_scoped env aux_names ->
+        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
+        SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
         CloNL.wc_global all_nodes ->
@@ -3376,16 +2554,61 @@ Module Type SECNLUSSTCTRANSLATION
              Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc Hfind Hsys Hnsig Hssig.
       pose proof (generate_all_signatures_consistent
                     all_nodes env aux_names G1 G2 Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc) as Hcons.
-      pose proof (generate_all_sys_signatures_scoped_from_pointwise
-                    all_nodes env aux_names G2 Hsscoped Hallstc) as HscopedG2.
+      pose proof (SECSTCTYPINGCORRECTNESS.generate_all_sys_signatures_scoped_from_pointwise
+                    (translate all_nodes) env aux_names G2 Hsscoped Hallstc) as HscopedG2.
       eapply found_system_preserv_scoped_global; eauto.
+    Qed.
+
+    (** Lookup-based signature theorem.
+
+        This is the public signature-level consequence of the global bridge:
+        once the source and target signatures are generated for matching source
+        and translated systems, the simplified signatures satisfy
+        [signatures_preserved] directly.  Internal NLustre/STC locals stay in
+        the bridge lemmas and do not appear in this exported statement. *)
+    Corollary found_system_signatures_preserved_global:
+      forall all_nodes f n s prog' (G1 G2: secglobal)
+             (env: Env.t ident) (aux_names: list node_aux_names)
+             (nsig ssig: signature),
+        Ids.sec <> Ids.sec_reset ->
+        generate_node_env all_nodes = OK (env, aux_names) ->
+        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
+        SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
+        successful_call_substitutions_fresh ->
+        signatures_preserved_calls ->
+        CloNL.wc_global all_nodes ->
+        SECNLUSTYPING.generate_all_signatures all_nodes env aux_names = OK G1 ->
+        SECSTCTYPING.generate_all_sys_signatures (translate all_nodes) env aux_names = OK G2 ->
+        find_node f all_nodes = Some n ->
+        SynStc.find_system f (translate all_nodes) = Some (s, prog') ->
+        SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
+        SECSTCTYPING.generate_sys_signature G2 s env aux_names = OK ssig ->
+        signatures_preserved nsig ssig.
+    Proof.
+      intros all_nodes f n s prog' G1 G2 env aux_names nsig ssig
+             Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc
+             Hfind Hsys Hnsig Hssig.
+      pose proof (generate_all_signatures_consistent
+                    all_nodes env aux_names G1 G2
+                    Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall
+                    Hwc Hallnl Hallstc) as Hcons.
+      pose proof (SECSTCTYPINGCORRECTNESS.generate_all_sys_signatures_scoped_from_pointwise
+                    (translate all_nodes) env aux_names G2 Hsscoped Hallstc) as HscopedG2.
+      edestruct (CloNL.wc_find_node all_nodes f n Hwc Hfind)
+        as (P'' & P' & _ & Hwcnode).
+      eapply find_system_translate in Hsys as (n' & Hfind' & Htr).
+      rewrite Hfind in Hfind'. inversion Hfind'. subst n'. subst s.
+      pose proof (find_node_name _ _ _ Hfind) as Hfname. subst f.
+      eapply generated_signatures_preserved_from_simplify_bridge_scoped
+        with (all_nodes := all_nodes) (P := P') (G1 := G1) (G2 := G2); eauto.
+      eapply SECNLUSTYPINGCORRECTNESS.generated_node_simplify_ready_global_from_env; eauto.
     Qed.
 
     (** Program-level preservation property.
 
         This packages the lookup corollary so that the final theorem can state
         directly that every translated system found in the target program
-        satisfies the same raw preservation relation as its source node. *)
+        satisfies the underlying raw preservation relation. *)
     Definition generated_program_preserves
       (all_nodes: global)
       (env: Env.t ident)
@@ -3405,10 +2628,8 @@ Module Type SECNLUSSTCTRANSLATION
 
     (** Final program theorem.
 
-        The final program theorem no longer exposes the derived readiness
-        predicate [generated_node_simplify_ready_global].  Instead it keeps the
-        remaining lower-level premise that still has to be discharged above
-        this layer:
+        The theorem keeps the remaining lower-level premises that still have to
+        be discharged above this layer:
 
         - generated NLustre/STC signatures are scoped to their visible
           interfaces;
@@ -3423,8 +2644,8 @@ Module Type SECNLUSSTCTRANSLATION
              (env: Env.t ident) (aux_names: list node_aux_names),
         Ids.sec <> Ids.sec_reset ->
         generate_node_env all_nodes = OK (env, aux_names) ->
-        generated_node_signatures_scoped env aux_names ->
-        generated_system_signatures_scoped env aux_names ->
+        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
+        SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
         successful_call_substitutions_fresh ->
         signatures_preserved_calls ->
         CloNL.wc_global all_nodes ->
@@ -3436,6 +2657,37 @@ Module Type SECNLUSSTCTRANSLATION
              Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc.
       intros f n s prog' nsig ssig Hfind Hsys Hnsig Hssig.
       eapply found_system_preserv_global; eauto.
+    Qed.
+
+    (** Program-level signature corollary.
+
+        This is the simplified reading of the final theorem: once both source
+        and target signatures are generated for matching source and translated
+        systems, those signatures satisfy [signatures_preserved].  Internal
+        NLustre locals remain hidden inside the raw bridge theorems. *)
+    Corollary generated_program_signatures_preserved_global:
+      forall all_nodes (G1 G2: secglobal)
+             (env: Env.t ident) (aux_names: list node_aux_names),
+        Ids.sec <> Ids.sec_reset ->
+        generate_node_env all_nodes = OK (env, aux_names) ->
+        SECNLUSTYPINGCORRECTNESS.generated_node_signatures_scoped env aux_names ->
+        SECSTCTYPINGCORRECTNESS.generated_system_signatures_scoped env aux_names ->
+        successful_call_substitutions_fresh ->
+        signatures_preserved_calls ->
+        CloNL.wc_global all_nodes ->
+        SECNLUSTYPING.generate_all_signatures all_nodes env aux_names = OK G1 ->
+        SECSTCTYPING.generate_all_sys_signatures (translate all_nodes) env aux_names = OK G2 ->
+        forall f n s prog' nsig ssig,
+          find_node f all_nodes = Some n ->
+          SynStc.find_system f (translate all_nodes) = Some (s, prog') ->
+          SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
+          SECSTCTYPING.generate_sys_signature G2 s env aux_names = OK ssig ->
+          signatures_preserved nsig ssig.
+    Proof.
+      intros all_nodes G1 G2 env aux_names
+             Hsec Henvgen Hnscoped Hsscoped Hfreshcalls Hcall Hwc Hallnl Hallstc
+             f n s prog' nsig ssig Hfind Hsys Hnsig Hssig.
+      eapply found_system_signatures_preserved_global; eauto.
     Qed.
   End NODESYSPRES.
 
@@ -3464,6 +2716,9 @@ Module SecNLusStcTranslation
   (Import IsD          : ISDEFINED Ids Op CESyn SynNL Mem)
   (Import IsFNL        : ISFREE Ids Op CESyn SynNL CEIsF)
   (Import CloNL        : NLCLOCKING Ids Op CESyn SynNL OrdNL Mem IsD CEIsF IsFNL CEClo)
+  (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING CEIsF CEClo OrdNL Mem IsD IsFNL CloNL)
+  (Import SECNLUSTYPINGCORRECTNESS
+      : SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo OrdNL Mem IsD IsFNL CloNL SECNLUSTYPING)
   (Import Last         : STCISLAST Ids Op CESyn SynStc)
   (Import Var          : STCISVARIABLE Ids Op CESyn SynStc)
   (Import Def          : STCISDEFINED Ids Op CESyn SynStc Var Last)
@@ -3471,9 +2726,10 @@ Module SecNLusStcTranslation
   (Import OrdStc       : STCORDERED Ids Op CESyn SynStc Syst)
   (Import IsFStc       : STCISFREE Ids Op CESyn SynStc CEIsF)
   (Import CloStc       : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst OrdStc CEClo)
-  (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING CEIsF CEClo OrdNL Mem IsD IsFNL CloNL)
   (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst OrdStc IsFStc CloStc)
-  <: SECNLUSSTCTRANSLATION Ids Lat Op SC SecTypes CESyn SynNL SynStc Mem Translation SIG NAMEGEN SECCETYPING CEIsF CEClo OrdNL IsD IsFNL CloNL Last Var Def Syst OrdStc IsFStc CloStc SECNLUSTYPING SECSTCTYPING.
+  (Import SECSTCTYPINGCORRECTNESS
+      : SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst OrdStc IsFStc CloStc SECSTCTYPING)
+  <: SECNLUSSTCTRANSLATION Ids Lat Op SC SecTypes CESyn SynNL SynStc Mem Translation SIG NAMEGEN SECCETYPING CEIsF CEClo OrdNL IsD IsFNL CloNL SECNLUSTYPING SECNLUSTYPINGCORRECTNESS Last Var Def Syst OrdStc IsFStc CloStc SECSTCTYPING SECSTCTYPINGCORRECTNESS.
 
-  Include SECNLUSSTCTRANSLATION Ids Lat Op SC SecTypes CESyn SynNL SynStc Mem Translation SIG NAMEGEN SECCETYPING CEIsF CEClo OrdNL IsD IsFNL CloNL Last Var Def Syst OrdStc IsFStc CloStc SECNLUSTYPING SECSTCTYPING.
+  Include SECNLUSSTCTRANSLATION Ids Lat Op SC SecTypes CESyn SynNL SynStc Mem Translation SIG NAMEGEN SECCETYPING CEIsF CEClo OrdNL IsD IsFNL CloNL SECNLUSTYPING SECNLUSTYPINGCORRECTNESS Last Var Def Syst OrdStc IsFStc CloStc SECSTCTYPING SECSTCTYPINGCORRECTNESS.
 End SecNLusStcTranslation.
