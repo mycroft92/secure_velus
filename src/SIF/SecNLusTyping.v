@@ -18,6 +18,7 @@ From Velus Require Import SIF.SecCETyping.
 From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF.NameInterface.
+From Velus Require Import Clocks.
 
 From Coq Require Import String. (*Required for Errors *)
 From Coq Require Import Lia.
@@ -33,15 +34,15 @@ Module Type SECNLUSTYPING
   (Import CESyn : CESYNTAX      Op)
   (Import SynNL : NLSYNTAX  Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
-  (Import SECCETYPING: SECCETYPING Ids Op CESyn).
-
-  Module CEIsF := CEIsFreeFun Ids Op CESyn.
-  Module CEClo := CEClockingFun Ids Op CESyn.
-  Module Ord := NLOrderedFun Ids Op CESyn SynNL.
-  Module Mem := MemoriesFun Ids Op CESyn SynNL.
-  Module IsD := IsDefinedFun Ids Op CESyn SynNL Mem.
-  Module IsF := IsFreeFun Ids Op CESyn SynNL CEIsF.
-  Module Clo := NLClockingFun Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo.
+  (Import SECCETYPING: SECCETYPING Ids Op CESyn)
+  (Import CEIsF : CEISFREE Ids Op CESyn)
+  (Import CEClo : CECLOCKING Ids Op CESyn)
+  (Import Ord   : NLORDERED Ids Op CESyn SynNL)
+  (Import Mem   : MEMORIES Ids Op CESyn SynNL)
+  (Import IsD   : ISDEFINED Ids Op CESyn SynNL Mem)
+  (Import IsF   : ISFREE Ids Op CESyn SynNL CEIsF)
+  (Import Clo   : NLCLOCKING Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo).
+  
 
   Import SECMONADNotations.
   
@@ -145,7 +146,7 @@ Module Type SECNLUSTYPING
 
   Lemma wc_clock_free_in_vars:
     forall vars x ck,
-      CEClo.wc_clock vars ck ->
+      wc_clock vars ck ->
       Is_free_in_clock x ck ->
       InMembers x vars.
   Proof.
@@ -157,51 +158,64 @@ Module Type SECNLUSTYPING
 
   Lemma wc_exp_free_in_vars:
     forall vars x e ck,
-      CEClo.wc_exp vars e ck ->
-      CEIsF.Is_free_in_exp x e ->
+      wc_exp vars e ck ->
+      Is_free_in_exp x e ->
       InMembers x vars.
   Proof.
     intros vars x e ck Hwc.
-    induction Hwc; intro Hfree; inversion Hfree; subst; eauto using In_InMembers.
+    induction Hwc; intro Hfree.
+    - inversion Hfree.
+    - inversion Hfree; subst; eauto using In_InMembers.
+    - inversion Hfree; subst; eauto using In_InMembers.
+    - inversion Hfree; subst; eauto.
+    - inversion Hfree; subst.
+      match goal with
+      | H : _ \/ _ |- _ => destruct H as [Hfree1|Hfree2]; eauto
+      end.
   Qed.
 
   Lemma wc_cexp_free_in_vars:
     forall vars x ce ck,
-      CEClo.wc_cexp vars ce ck ->
-      CEIsF.Is_free_in_cexp x ce ->
+      wc_cexp vars ce ck ->
+      Is_free_in_cexp x ce ->
       InMembers x vars.
   Proof.
     intros vars x ce ck Hwc.
-    induction Hwc; intro Hfree; inversion Hfree; subst; eauto using In_InMembers, wc_exp_free_in_vars.
+    induction Hwc; intro Hfree.
+    - inversion Hfree; subst; eauto using In_InMembers.
+    - inversion Hfree; subst; eauto using wc_exp_free_in_vars.
+    - inversion Hfree; subst; eauto using wc_exp_free_in_vars.
   Qed.
 
   Lemma assign_clk_type_scoped:
-    forall scope ck st,
-      In base_ty scope ->
+    forall base scope ck st,
+      In base scope ->
       (forall x, Is_free_in_clock x ck -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
-      assign_clk_type env base_ty ck = Some st ->
+      assign_clk_type env base ck = Some st ->
       st_scoped scope st.
   Proof.
-    intros scope ck.
+    intros base scope ck.
     induction ck as [|ck IH x b]; intros st Hbase Hfree Hassign.
     - simpl in Hassign. inversion Hassign; subst.
       apply st_scoped_singleton. exact Hbase.
     - simpl in Hassign.
-      destruct (assign_clk_type env base_ty ck) as [ckty|] eqn:Hck; try discriminate.
+      destruct (assign_clk_type env base ck) as [ckty|] eqn:Hck; try discriminate.
       destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
       inversion Hassign; subst st.
-      eapply st_scoped_merge.
-      + eapply IH; eauto.
+      apply st_scoped_merge.
+      * eapply IH.
+        1: exact Hbase.
         intros y Hy.
-        apply Hfree. now constructor 2.
-      + apply st_scoped_singleton.
-        destruct (Hfree x) as (? & Hfind' & Hin); [constructor 1|].
+        apply Hfree. now apply FreeCon2.
+        reflexivity.
+      * apply st_scoped_singleton.
+        destruct (Hfree x) as (? & Hfind' & Hin); [apply FreeCon1|].
         rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
   Qed.
 
   Lemma assign_exp_type_scoped:
     forall scope e st,
-      (forall x, CEIsF.Is_free_in_exp x e -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
+      (forall x, Is_free_in_exp x e -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
       assign_exp_type env e = Some st ->
       st_scoped scope st.
   Proof.
@@ -217,27 +231,30 @@ Module Type SECNLUSTYPING
       destruct (assign_exp_type env e) as [ety|] eqn:He; try discriminate.
       destruct (Env.find i env) as [xty|] eqn:Hfind; try discriminate.
       inversion Hassign; subst.
-      eapply st_scoped_merge.
-      + eapply IHe; eauto.
-        intros x Hx. apply Hfree. now constructor 1.
+      apply st_scoped_merge.
+      + eapply IHe.
+        * intros x Hx. apply Hfree. now apply FreeEwhen1.
+        * reflexivity.
       + apply st_scoped_singleton.
-        destruct (Hfree i) as (? & Hfind' & Hin); [constructor 2|].
+        destruct (Hfree i) as (? & Hfind' & Hin); [apply FreeEwhen2|].
         rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
     - simpl in Hassign. eauto.
     - simpl in Hassign.
       destruct (assign_exp_type env e1) as [sty1|] eqn:He1; try discriminate.
       destruct (assign_exp_type env e2) as [sty2|] eqn:He2; try discriminate.
       inversion Hassign; subst.
-      eapply st_scoped_merge.
-      + eapply IHe1; eauto.
-        intros x Hx. apply Hfree. now constructor 5; left.
-      + eapply IHe2; eauto.
-        intros x Hx. apply Hfree. now constructor 5; right.
+      apply st_scoped_merge.
+      + eapply IHe1.
+        * intros x Hx. apply Hfree. now apply FreeEbinop; left.
+        * reflexivity.
+      + eapply IHe2.
+        * intros x Hx. apply Hfree. now apply FreeEbinop; right.
+        * reflexivity.
   Qed.
 
   Lemma assign_cexp_type_scoped:
     forall scope ce st,
-      (forall x, CEIsF.Is_free_in_cexp x ce -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
+      (forall x, Is_free_in_cexp x ce -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
       assign_cexp_type env ce = Some st ->
       st_scoped scope st.
   Proof.
@@ -247,31 +264,53 @@ Module Type SECNLUSTYPING
       destruct (assign_cexp_type env ce1) as [sty1|] eqn:He1; try discriminate.
       destruct (assign_cexp_type env ce2) as [sty2|] eqn:He2; try discriminate.
       inversion Hassign; subst.
-      eapply st_scoped_merge.
-      + apply st_scoped_singleton.
-        destruct (Hfree i) as (? & Hfind' & Hin); [constructor 1|].
-        rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
-      + eapply st_scoped_merge.
-        * eapply IHce1; eauto.
-          intros x Hx. apply Hfree. now constructor 2.
-        * eapply IHce2; eauto.
-          intros x Hx. apply Hfree. now constructor 3.
+      change (st_scoped scope ((([xty] ⊔ sty1) ⊔ sty2))).
+      apply st_scoped_merge.
+      + change (st_scoped scope ([xty] ⊔ sty1)).
+        apply st_scoped_merge.
+        * apply st_scoped_singleton.
+          destruct (Hfree i) as (? & Hfind' & Hin); [apply FreeEmerge_cond|].
+          rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
+        * eapply IHce1.
+          -- intros x Hx. apply Hfree. now apply FreeEmerge_true.
+          -- reflexivity.
+      + eapply IHce2.
+        * intros x Hx. apply Hfree. now apply FreeEmerge_false.
+        * reflexivity.
     - simpl in Hassign.
       destruct (assign_exp_type env e) as [ety|] eqn:He; try discriminate.
       destruct (assign_cexp_type env ce1) as [sty1|] eqn:He1; try discriminate.
       destruct (assign_cexp_type env ce2) as [sty2|] eqn:He2; try discriminate.
       inversion Hassign; subst.
-      eapply st_scoped_merge.
-      + eapply assign_exp_type_scoped; eauto.
-        intros x Hx. apply Hfree. now constructor 4.
-      + eapply st_scoped_merge.
-        * eapply IHce1; eauto.
-          intros x Hx. apply Hfree. now constructor 5.
-        * eapply IHce2; eauto.
-          intros x Hx. apply Hfree. now constructor 6.
+      change (st_scoped scope (((ety ⊔ sty1) ⊔ sty2))).
+      apply st_scoped_merge.
+      + change (st_scoped scope (ety ⊔ sty1)).
+        apply st_scoped_merge.
+        * eapply assign_exp_type_scoped.
+          -- intros x Hx.
+             apply Hfree.
+             apply FreeEite_cond.
+             exact Hx.
+          -- exact He.
+        * eapply IHce1.
+          -- intros x Hx.
+             apply Hfree.
+             apply FreeEite_true.
+             exact Hx.
+          -- reflexivity.
+      + eapply IHce2.
+        * intros x Hx.
+           apply Hfree.
+           apply FreeEite_false.
+           exact Hx.
+        * reflexivity.
     - simpl in Hassign.
-      eapply assign_exp_type_scoped; eauto.
-      intros x Hx. apply Hfree. now constructor.
+      eapply assign_exp_type_scoped.
+      + intros x Hx.
+        apply Hfree.
+        apply FreeEexp.
+        exact Hx.
+      + exact Hassign.
   Qed.
 
   Lemma mmap_assign_exp_type_scoped:
@@ -279,7 +318,7 @@ Module Type SECNLUSTYPING
       Forall
         (fun e =>
            forall x,
-             CEIsF.Is_free_in_exp x e ->
+             Is_free_in_exp x e ->
              exists ty, Env.find x env = Some ty /\ In ty scope)
         es ->
       mmap (fun x => option_to_sec (assign_exp_type env x)) es st = OK (tys, st') ->
@@ -326,26 +365,28 @@ Module Type SECNLUSTYPING
 
   Lemma wc_call_clock_free_in_vars:
     forall P vars xs ck f les r x,
-      CEClo.wc_env vars ->
-      Clo.wc_equation P vars (EqApp xs ck f les r) ->
+      wc_env vars ->
+      wc_equation P vars (EqApp xs ck f les r) ->
       Is_free_in_clock x ck ->
       InMembers x vars.
   Proof.
     intros P vars xs ck f les r x Henv Hwc Hfree.
-    inversion Hwc as [|xs' ck' f' les' r' n sub Hfind Hins Houts Hr]; subst.
+    inversion Hwc as [x' ck' ce' Hx Hce
+                     |xs' ck' f' les' r' n sub Hfind Hins Houts Hr
+                     |x' ck' v le Hx Hle]; subst.
     destruct n.(n_in) as [|[xin [tin xck]] ins] eqn:Hinps.
-    { simpl in n.(n_ingt0). lia. }
+    { pose proof n.(n_ingt0) as Hgt0. rewrite Hinps in Hgt0. simpl in Hgt0. lia. }
     inversion Hins as [|? ? ? ? Hhead Htail]; subst.
     destruct Hhead as (_ & lck & Hexp & Hinst).
     assert (Hfree' : Is_free_in_clock x lck).
     { eapply instck_free_bck; eauto. }
-    assert (Hwc_lck : CEClo.wc_clock vars lck).
-    { eapply CEClo.wc_clock_exp; eauto. }
+    assert (Hwc_lck : wc_clock vars lck).
+    { eapply wc_clock_exp; eauto. }
     eapply wc_clock_free_in_vars; eauto.
   Qed.
 
   Lemma find_env_in_scope:
-    forall A vars scope x ann ty st st',
+    forall (A: Type) (vars: list (ident * A)) scope x (ann: A) ty st st',
       vars_env_scoped vars scope ->
       In (x, ann) vars ->
       find_env x env st = OK (ty, st') ->
@@ -371,32 +412,31 @@ Module Type SECNLUSTYPING
       - actual output variables are scoped because the instantiated call-output
         relation points back into that same environment. *)
   Lemma wc_call_args_scoped:
-    forall vars scope sub ck ins es,
+    forall vars scope sub ck (ins : list (ident * (type * clock))) (es : list exp),
       vars_env_scoped vars scope ->
       Forall2
         (fun '(x, (_, xck)) le =>
            SameVar (sub x) le
-           /\ exists lck, CEClo.wc_exp vars le lck /\ instck ck sub xck = Some lck)
+           /\ exists lck, wc_exp vars le lck /\ instck ck sub xck = Some lck)
         ins es ->
       Forall
         (fun e =>
            forall x,
-             CEIsF.Is_free_in_exp x e ->
+             Is_free_in_exp x e ->
              exists ty, Env.find x env = Some ty /\ In ty scope)
         es.
   Proof.
     intros vars scope sub ck ins es Hvars Hfor.
-    induction Hfor.
+    induction Hfor as [|[x [xty xck]] le ins es [Hsame [lck [Hexp Hinst]]] Hfor IH].
     - constructor.
     - constructor.
       + intros z Hz.
-        destruct H as (_ & lck & Hexp & _).
         destruct (Hvars z) as (ty & Hfind & Hscope); eauto using wc_exp_free_in_vars.
-      + exact IHHfor.
+      + exact IH.
   Qed.
 
   Lemma wc_call_outs_scoped:
-    forall vars scope sub ck outs xs,
+    forall vars scope sub ck (outs : list (ident * (type * clock))) (xs : list ident),
       vars_env_scoped vars scope ->
       Forall2
         (fun '(y, (_, yck)) x =>
@@ -408,140 +448,12 @@ Module Type SECNLUSTYPING
         exists ty, Env.find x env = Some ty /\ In ty scope.
   Proof.
     intros vars scope sub ck outs xs Hvars Hfor x Hin.
-    induction Hfor.
+    induction Hfor as [|[y [ty yck]] x0 outs xs [Hsub [xck [Hinx Hinst]]] Hfor IH].
     - inversion Hin.
     - simpl in Hin.
       destruct Hin as [Heq|Hin].
-      + subst y.
-        destruct H as (_ & xck & Hinx & _).
-        destruct (Hvars x) as (ty & Hfind & Hscope); eauto using In_InMembers.
-      + eapply IHHfor; eauto.
-  Qed.
-
-  Lemma generate_eqn_constraint_scoped:
-    forall P vars scope eq cns st st',
-      secglobal_scoped G ->
-      CEClo.wc_env vars ->
-      Clo.wc_equation P vars eq ->
-      vars_env_scoped vars scope ->
-      In base_ty scope ->
-      In rst_ty scope ->
-      generate_eqn_constraint eq st = OK (cns, st') ->
-      constraints_scoped scope cns.
-  Proof.
-    intros P vars scope eq cns st st'
-           Hscoped Henv Hwc Hvars Hbase Hrst Hgen.
-    destruct eq as [x ck ce|xs ck f exps r|x ck c0 exp].
-    - simpl in Hgen.
-      destruct (option_to_sec (assign_clk_type env base_ty ck) st) as [[ckty st1]|] eqn:Hck; try discriminate.
-      destruct (option_to_sec (assign_cexp_type env ce) st1) as [[expty st2]|] eqn:Hexp; try discriminate.
-      destruct (find_env x env st2) as [[xty st3]|] eqn:Hfind; try discriminate.
-      destruct (ret [(ckty ⊔ expty, [xty])] st3) as [[cns' st4]|] eqn:Hret; try discriminate.
-      inversion Hgen; subst cns st'.
-      inversion Hwc as [x' ck' ce' Hx Hce| |]; subst.
-      constructor.
-      intros y Hin.
-      unfold constraint_scope in Hin. simpl in Hin.
-      rewrite in_app_iff in Hin.
-      destruct Hin as [Hin|Hin].
-      + eapply assign_clk_type_scoped in Hin.
-        2:{
-          exact Hbase.
-        }
-        2:{
-          intros z Hz.
-          destruct (Hvars z) as (ty & Henv & Hscope); eauto using wc_clock_free_in_vars, CEClo.wc_clock_cexp.
-        }
-        exact Hin.
-      + rewrite in_app_iff in Hin.
-        destruct Hin as [Hin|Hin].
-        * eapply assign_cexp_type_scoped in Hin.
-          2:{
-            intros z Hz.
-            destruct (Hvars z) as (ty & Henv & Hscope); eauto using wc_cexp_free_in_vars.
-          }
-          exact Hin.
-        * simpl in Hin. destruct Hin as [Heq|[]]. subst y.
-          eapply find_env_in_scope with (A := clock) (ann := ck); eauto.
-    - inversion Hwc as [|xs' ck' f' exps' r' n sub Hfindnode Hinputs Houtputs Hreset]; subst.
-      destruct r as [[rx rck]|].
-      + simpl in Hgen. repeat secInv.
-        eapply generate_constraints_scoped; eauto.
-        * eapply Hscoped; eauto.
-        * eapply mmap_assign_exp_type_scoped; eauto.
-          eapply wc_call_args_scoped; eauto.
-        * eapply assign_clk_type_scoped; eauto.
-          intros z Hz.
-          destruct (Hvars z) as (ty & Henv & Hscope); eauto using wc_call_clock_free_in_vars.
-        * apply st_scoped_singleton.
-          eapply find_env_in_scope with (A := unit) (ann := (rx, rck)); eauto.
-          now apply Hreset.
-        * eapply mmap_find_env_scoped; eauto.
-          intros y Hy. eapply wc_call_outs_scoped; eauto.
-      + simpl in Hgen. repeat secInv.
-        eapply generate_constraints_scoped; eauto.
-        * eapply Hscoped; eauto.
-        * eapply mmap_assign_exp_type_scoped; eauto.
-          eapply wc_call_args_scoped; eauto.
-        * eapply assign_clk_type_scoped; eauto.
-          intros z Hz.
-          destruct (Hvars z) as (ty & Henv & Hscope); eauto using wc_call_clock_free_in_vars.
-        * apply st_scoped_singleton. exact Hrst.
-        * eapply mmap_find_env_scoped; eauto.
-          intros y Hy. eapply wc_call_outs_scoped; eauto.
-    - simpl in Hgen.
-      destruct (option_to_sec (assign_clk_type env base_ty ck) st) as [[ckty st1]|] eqn:Hck; try discriminate.
-      destruct (option_to_sec (assign_exp_type env exp) st1) as [[expty st2]|] eqn:Hexp; try discriminate.
-      destruct (find_env x env st2) as [[xty st3]|] eqn:Hfind; try discriminate.
-      destruct (ret [(ckty ⊔ expty, [xty])] st3) as [[cns' st4]|] eqn:Hret; try discriminate.
-      inversion Hgen; subst cns st'.
-      inversion Hwc as [| |x' ck' v exp' Hx Hexpwc]; subst.
-      constructor.
-      intros y Hin.
-      unfold constraint_scope in Hin. simpl in Hin.
-      rewrite in_app_iff in Hin.
-      destruct Hin as [Hin|Hin].
-      + eapply assign_clk_type_scoped in Hin.
-        2:{ exact Hbase. }
-        2:{
-          intros z Hz.
-          destruct (Hvars z) as (ty & Henv & Hscope); eauto using wc_clock_free_in_vars, CEClo.wc_clock_exp.
-        }
-        exact Hin.
-      + rewrite in_app_iff in Hin.
-        destruct Hin as [Hin|Hin].
-        * eapply assign_exp_type_scoped in Hin.
-          2:{
-            intros z Hz.
-            destruct (Hvars z) as (ty & Henv & Hscope); eauto using wc_exp_free_in_vars.
-          }
-          exact Hin.
-        * simpl in Hin. destruct Hin as [Heq|[]]. subst y.
-          eapply find_env_in_scope with (A := clock) (ann := ck); eauto.
-  Qed.
-
-  Theorem generate_eqns_constraints_scoped:
-    forall P vars scope eqs cns st st',
-      secglobal_scoped G ->
-      CEClo.wc_env vars ->
-      Forall (Clo.wc_equation P vars) eqs ->
-      vars_env_scoped vars scope ->
-      In base_ty scope ->
-      In rst_ty scope ->
-      generate_eqns_constraints eqs st = OK (cns, st') ->
-      constraints_scoped scope cns.
-  Proof.
-    induction eqs as [|eq eqs IH]; intros cns st st'
-                                      Hscoped Henv Hwc Hvars Hbase Hrst Hgen.
-    - simpl in Hgen. inversion Hgen; subst. constructor.
-    - inversion Hwc as [|? ? Hwc_eq Hwc_eqs]; subst.
-      simpl in Hgen.
-      eapply sec_bind_inv in Hgen as (c1 & st1 & Heq & Hgen).
-      eapply sec_bind_inv in Hgen as (c2 & st2 & Heqs & Hret).
-      unfold ret in Hret. inversion Hret; subst cns st'.
-      apply Forall_app.
-      split.
-      + eapply generate_eqn_constraint_scoped; eauto.
+      + subst x0.
+        destruct (Hvars x) as (ty' & Hfind & Hscope); eauto using In_InMembers.
       + eapply IH; eauto.
   Qed.
 
@@ -561,6 +473,208 @@ Module Type SECNLUSTYPING
         eapply sec_bind2_inv in H as [? [? [? [? ?]]]]
     end; simpl in *.
 
+  Lemma generate_eqn_constraint_scoped:
+    forall P vars scope eq cns st st',
+      secglobal_scoped G ->
+      wc_env vars ->
+      wc_equation P vars eq ->
+      vars_env_scoped vars scope ->
+      In base_ty scope ->
+      In rst_ty scope ->
+      generate_eqn_constraint eq st = OK (cns, st') ->
+      constraints_scoped scope cns.
+  Proof.
+    intros P vars scope eq cns st st'
+           Hscoped Henv Hwc Hvars Hbase Hrst Hgen.
+    destruct eq as [x ck ce|xs ck f exps r|x ck c0 exp].
+    - simpl in Hgen.
+      eapply sec_bind_inv in Hgen as (ckty & st1 & Hck & Hgen).
+      eapply sec_bind_inv in Hgen as (expty & st2 & Hexp & Hgen).
+      eapply sec_bind_inv in Hgen as (xty & st3 & Hfind & Hgen).
+      unfold ret in Hgen. inversion Hgen; subst. clear Hgen.
+      unfold option_to_sec in Hck.
+      destruct (assign_clk_type env base_ty ck) as [ckty'|] eqn:Hck'; try discriminate.
+      inversion Hck; subst.
+      unfold option_to_sec in Hexp.
+      destruct (assign_cexp_type env ce) as [expty'|] eqn:Hexp'; try discriminate.
+      inversion Hexp; subst.
+      unfold find_env in Hfind.
+      destruct (Env.find x env) as [xty'|] eqn:Hfind'; try discriminate.
+      inversion Hfind; subst.
+      inversion Hwc as [x' ck' ce' Hx Hce| |]; subst.
+      constructor.
+      + intros y Hin.
+        unfold constraint_scope in Hin. simpl in Hin.
+        rewrite in_app_iff in Hin.
+        destruct Hin as [Hin|Hin].
+        * apply in_merge_inv in Hin.
+          destruct Hin as [Hin|Hin].
+	          -- assert (Hsc_ck : st_scoped scope ckty).
+	          { eapply assign_clk_type_scoped with (base := base_ty) (ck := ck).
+	              - exact Hbase.
+	              - intros z Hz.
+	                assert (Hwc_ck : wc_clock vars ck) by (eapply wc_clock_cexp; eauto).
+	                pose proof (wc_clock_free_in_vars vars z ck Hwc_ck Hz) as Hmem.
+	                destruct (Hvars z) as (ty & Henv' & Hscope); [exact Hmem|].
+	                exists ty; split; assumption.
+	              - exact Hck'. }
+            exact (Hsc_ck _ Hin).
+          -- assert (Hsc_ce : st_scoped scope expty).
+            { eapply assign_cexp_type_scoped with (ce := ce).
+              - intros z Hz.
+                destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_cexp_free_in_vars.
+              - exact Hexp'. }
+            exact (Hsc_ce _ Hin).
+        * simpl in Hin. destruct Hin as [Heq|[]]. subst y.
+          eapply find_env_in_scope with (A := clock) (ann := ck) (st := st') (st' := st'); eauto.
+          unfold find_env. rewrite Hfind'. reflexivity.
+      + constructor.
+    - inversion Hwc as [x' ck' ce' Hx Hce
+                       |xs' ck' f' exps' r' n sub Hfindnode Hinputs Houtputs Hreset
+                       |x' ck' v le Hx Hle]; subst.
+      destruct xs as [|x0 xs0] eqn:Hxs.
+      + simpl in Hgen. inversion Hgen; subst. constructor.
+      + destruct r as [[rx rck]|].
+        * simpl in Hgen.
+          unfold find_signature in Hgen.
+          destruct (List.find (fun n0 => ident_eqb n0.(s_name) f) G) as [sig|] eqn:Hfindsig; simpl in Hgen; try discriminate.
+          assert (Hfindsig' : find_signature f G = Some sig).
+          { unfold find_signature. exact Hfindsig. }
+          eapply sec_bind_inv in Hgen as (ckty & st1 & Hck0 & Hgen).
+          eapply sec_bind_inv in Hgen as (rty & st2 & Hr0 & Hgen).
+          eapply sec_bind_inv in Hgen as (rstty & st3 & Hrst0 & Hgen).
+          eapply sec_bind_inv in Hgen as (inptyp & st4 & Hinp0 & Hgen).
+          eapply sec_bind_inv in Hgen as (outtyp & st5 & Hout0 & Hgc).
+          unfold option_to_sec in Hck0.
+          destruct (assign_clk_type env base_ty ck) as [ckty'|] eqn:Hck; try discriminate.
+          inversion Hck0; subst ckty' st1.
+          unfold find_env in Hr0.
+          destruct (Env.find rx env) as [rty'|] eqn:Hrfind; try discriminate.
+          unfold ret in Hr0. inversion Hr0; subst rty' st2.
+          unfold option_to_sec in Hrst0.
+          destruct (assign_clk_type env rst_ty rck) as [rstty'|] eqn:Hrstck; try discriminate.
+          inversion Hrst0; subst rstty' st3.
+          eapply generate_constraints_scoped.
+          -- exact (Hscoped f sig Hfindsig').
+          -- eapply mmap_assign_exp_type_scoped.
+             ++ eapply wc_call_args_scoped; eauto.
+             ++ exact Hinp0.
+          -- eapply assign_clk_type_scoped with (base := base_ty) (ck := ck).
+             ++ exact Hbase.
+             ++ intros z Hz.
+                destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_call_clock_free_in_vars.
+             ++ exact Hck.
+          -- apply st_scoped_merge.
+             ++ apply st_scoped_singleton.
+                destruct (Hvars rx) as (ty & Henv' & Hscope).
+                ** eapply In_InMembers. specialize (Hreset (rx, rck) eq_refl). exact Hreset.
+                ** rewrite Hrfind in Henv'. inversion Henv'. subst. exact Hscope.
+             ++ eapply assign_clk_type_scoped with (base := rst_ty) (ck := rck).
+                ** exact Hrst.
+                ** intros z Hz.
+                   assert (Hinr : In (rx, rck) vars) by (specialize (Hreset (rx, rck) eq_refl); exact Hreset).
+                   assert (Hwr : wc_clock vars rck) by (eapply wc_env_var; eauto).
+                   destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_clock_free_in_vars, In_InMembers.
+                ** exact Hrstck.
+          -- eapply mmap_find_env_scoped.
+             ++ intros y Hy. eapply wc_call_outs_scoped; eauto.
+             ++ exact Hout0.
+          -- exact Hgc.
+        * simpl in Hgen.
+          unfold find_signature in Hgen.
+          destruct (List.find (fun n0 => ident_eqb n0.(s_name) f) G) as [sig|] eqn:Hfindsig; simpl in Hgen; try discriminate.
+          assert (Hfindsig' : find_signature f G = Some sig).
+          { unfold find_signature. exact Hfindsig. }
+          eapply sec_bind_inv in Hgen as (ckty & st1 & Hck0 & Hgen).
+          eapply sec_bind_inv in Hgen as (inptyp & st2 & Hinp0 & Hgen).
+          eapply sec_bind_inv in Hgen as (outtyp & st3 & Hout0 & Hgc).
+          unfold option_to_sec in Hck0.
+          destruct (assign_clk_type env base_ty ck) as [ckty'|] eqn:Hck; try discriminate.
+          inversion Hck0; subst ckty' st1.
+          eapply generate_constraints_scoped.
+          -- exact (Hscoped f sig Hfindsig').
+          -- eapply mmap_assign_exp_type_scoped.
+             ++ eapply wc_call_args_scoped; eauto.
+             ++ exact Hinp0.
+          -- eapply assign_clk_type_scoped with (base := base_ty) (ck := ck).
+             ++ exact Hbase.
+             ++ intros z Hz.
+                destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_call_clock_free_in_vars.
+             ++ exact Hck.
+          -- apply st_scoped_singleton. exact Hrst.
+          -- eapply mmap_find_env_scoped.
+             ++ intros y Hy. eapply wc_call_outs_scoped; eauto.
+             ++ exact Hout0.
+          -- exact Hgc.
+    - simpl in Hgen.
+      eapply sec_bind_inv in Hgen as (ckty & st1 & Hck & Hgen).
+      eapply sec_bind_inv in Hgen as (expty & st2 & Hexp & Hgen).
+      eapply sec_bind_inv in Hgen as (xty & st3 & Hfind & Hgen).
+      unfold ret in Hgen. inversion Hgen; subst. clear Hgen.
+      unfold option_to_sec in Hck.
+      destruct (assign_clk_type env base_ty ck) as [ckty'|] eqn:Hck'; try discriminate.
+      inversion Hck; subst.
+      unfold option_to_sec in Hexp.
+      destruct (assign_exp_type env exp) as [expty'|] eqn:Hexp'; try discriminate.
+      inversion Hexp; subst.
+      unfold find_env in Hfind.
+      destruct (Env.find x env) as [xty'|] eqn:Hfind'; try discriminate.
+      inversion Hfind; subst.
+      inversion Hwc as [| |x' ck' v exp' Hx Hexpwc]; subst.
+      constructor.
+      + intros y Hin.
+        unfold constraint_scope in Hin. simpl in Hin.
+        rewrite in_app_iff in Hin.
+        destruct Hin as [Hin|Hin].
+        * apply in_merge_inv in Hin.
+          destruct Hin as [Hin|Hin].
+	          -- assert (Hsc_ck : st_scoped scope ckty).
+	          { eapply assign_clk_type_scoped with (base := base_ty) (ck := ck).
+	              - exact Hbase.
+	              - intros z Hz.
+	                assert (Hwc_ck : wc_clock vars ck) by (eapply wc_clock_exp; eauto).
+	                pose proof (wc_clock_free_in_vars vars z ck Hwc_ck Hz) as Hmem.
+	                destruct (Hvars z) as (ty & Henv' & Hscope); [exact Hmem|].
+	                exists ty; split; assumption.
+	              - exact Hck'. }
+            exact (Hsc_ck _ Hin).
+          -- assert (Hsc_exp : st_scoped scope expty).
+            { eapply assign_exp_type_scoped with (e := exp).
+              - intros z Hz.
+                destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_exp_free_in_vars.
+              - exact Hexp'. }
+            exact (Hsc_exp _ Hin).
+        * simpl in Hin. destruct Hin as [Heq|[]]. subst y.
+          eapply find_env_in_scope with (A := clock) (ann := ck) (st := st') (st' := st'); eauto.
+          unfold find_env. rewrite Hfind'. reflexivity.
+      + constructor.
+  Qed.
+
+  Theorem generate_eqns_constraints_scoped:
+    forall P vars scope eqs cns st st',
+      secglobal_scoped G ->
+      wc_env vars ->
+      Forall (wc_equation P vars) eqs ->
+      vars_env_scoped vars scope ->
+      In base_ty scope ->
+      In rst_ty scope ->
+      generate_eqns_constraints eqs st = OK (cns, st') ->
+      constraints_scoped scope cns.
+  Proof.
+    induction eqs as [|eq eqs IH]; intros cns st st'
+                                      Hscoped Henv Hwc Hvars Hbase Hrst Hgen.
+    - simpl in Hgen. inversion Hgen; subst. constructor.
+    - inversion Hwc as [|? ? Hwc_eq Hwc_eqs]; subst.
+      simpl in Hgen.
+      eapply sec_bind_inv in Hgen as (c1 & st1 & Heq & Hgen).
+      eapply sec_bind_inv in Hgen as (c2 & st2 & Heqs & Hret).
+      unfold ret in Hret. inversion Hret; subst.
+      apply Forall_app.
+      split.
+      + eapply generate_eqn_constraint_scoped; eauto.
+      + eapply IH; eauto.
+  Qed.
+
   Lemma get_mappings_app:
     forall xs ys txs tys,
       get_mappings xs env = Some txs ->
@@ -574,7 +688,7 @@ Module Type SECNLUSTYPING
       destruct (get_mappings xs env) as [txs'|] eqn:Htail; try discriminate.
       inversion Hxs; subst txs.
       simpl. rewrite Hfind.
-      rewrite (IH ys txs' tys Htail Hys).
+      rewrite (IH ys txs' tys eq_refl Hys).
       reflexivity.
   Qed.
 
@@ -594,30 +708,45 @@ Module Type SECNLUSTYPING
       apply NoDup_cons.
       + intro Hin.
         apply NoDup_cons_iff in Hnd as [Hnin _].
-        apply in_map_iff in Hin as ([|ty] & Heq & Hin'); inversion Heq; subst ty.
-        clear Heq.
         assert (exists y, In y xs /\ Env.find y env = Some xty).
         {
-          clear IH.
-          induction xs as [|y ys IHys].
-          - inversion Hin'.
+          clear IH Hmap.
+          revert tys' Htail Hin.
+          induction xs as [|y ys IHys]; intros tys' Htail Hin.
+          - simpl in Htail. inversion Htail; subst tys'. inversion Hin.
           - simpl in Htail.
             destruct (Env.find y env) as [yty|] eqn:Hyfind; try discriminate.
             destruct (get_mappings ys env) as [tys''|] eqn:Hys; try discriminate.
             inversion Htail; subst tys'.
-            simpl in Hin'.
-            destruct Hin' as [Heq|Hin''].
+            simpl in Hin.
+            destruct Hin as [Heq|Hin'].
             + inversion Heq; subst yty. exists y. split; [left; reflexivity|exact Hyfind].
-            + specialize (IHys Hys Hin'') as (z & Hinz & Hzfind).
+            + specialize (IHys (fun Hinys => Hnin (or_intror Hinys)) _ eq_refl Hin')
+                as (z & Hinz & Hzfind).
               exists z. split; [right; exact Hinz|exact Hzfind].
         }
         destruct H as (y & Hiny & Hyfind).
         assert (x = y) by (eapply Hinj; eauto).
         subst y. contradiction.
-      + apply IH.
-        * now apply NoDup_cons_iff in Hnd.
-        * exact Hinj.
-        * exact Htail.
+	      + apply IH.
+	        * now apply NoDup_cons_iff in Hnd.
+	        * exact Hinj.
+        * exact eq_refl.
+  Qed.
+
+  Lemma nodup_singleton_map:
+    forall (xs : list ident),
+      NoDup xs ->
+      NoDup (map (fun ty => [ty]) xs).
+  Proof.
+    intros xs Hnd.
+    induction Hnd as [|x xs Hnin Hnd IH]; simpl.
+    - constructor.
+    - constructor.
+      + intro Hin.
+        apply in_map_iff in Hin as (y & Hy & Hiny).
+        inversion Hy; subst y. contradiction.
+      + exact IH.
   Qed.
 
   Lemma mmap_find_env_inv:
@@ -653,50 +782,95 @@ Module Type SECNLUSTYPING
   Proof.
     intros eq cns st st' Hcall Hinj Hnd Hgen.
     destruct eq as [x ck ce|xs ck f exps r|x ck c0 exp].
-    - simpl in Hgen. repeat secInv.
-      unfold option_to_sec in H0. destruct (assign_clk_type env base_ty ck); try discriminate.
-      unfold option_to_sec in H2. destruct (assign_cexp_type env ce); try discriminate.
-      unfold find_env in H4. destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
-      unfold ret in H4. inversion H4; subst.
-      unfold ret in H5. inversion H5; subst cns st'.
-      exists [xty]. split.
-      + simpl. rewrite Hfind. reflexivity.
+    - simpl in Hgen.
+      eapply sec_bind_inv in Hgen as (ckty & st1 & Hck & Hgen).
+      eapply sec_bind_inv in Hgen as (expty & st2 & Hexp & Hgen).
+      eapply sec_bind_inv in Hgen as (xty & st3 & Hfind & Hgen).
+      unfold ret in Hgen. inversion Hgen; subst cns st'. clear Hgen.
+      unfold option_to_sec in Hck.
+      destruct (assign_clk_type env base_ty ck) as [ckty'|] eqn:Hck'; try discriminate.
+      inversion Hck; subst ckty st1.
+      unfold option_to_sec in Hexp.
+      destruct (assign_cexp_type env ce) as [expty'|] eqn:Hexp'; try discriminate.
+      inversion Hexp; subst expty st2.
+      unfold find_env in Hfind.
+      destruct (Env.find x env) as [xty'|] eqn:Hfind'; try discriminate.
+      unfold ret in Hfind. inversion Hfind; subst xty st3.
+      exists [xty']. split.
+      + simpl. rewrite Hfind'. reflexivity.
       + split; [reflexivity|].
         unfold wf_constraints. split.
         * constructor; [intro Hin; inversion Hin|constructor].
         * constructor; [simpl; reflexivity|constructor].
-    - destruct r as [[rx rck]|].
-      + simpl in Hgen. repeat secInv.
-        unfold option_to_sec in H0. destruct (assign_clk_type env base_ty ck); try discriminate.
-        unfold find_env in H2. destruct (Env.find rx env) as [rty|] eqn:Hrfind; try discriminate.
-        unfold ret in H2. inversion H2; subst.
-        unfold option_to_sec in H4. destruct (assign_clk_type env rst_ty rck); try discriminate.
-        assert (Houts : st6 = st5 /\ get_mappings xs env = Some x3).
-        { eapply mmap_find_env_inv; eauto. }
-        destruct Houts as [Hstouts Hmapouts]. subst st6.
-        eapply Hcall in H8; eauto.
-        * destruct H8 as [Hwf Hsnd].
-          exists x3. split; [exact Hmapouts|].
+    - destruct xs as [|x0 xs0] eqn:Hxs.
+      + simpl in Hgen. inversion Hgen; subst cns st'. exists []. split; [reflexivity|].
+        split; [reflexivity|]. unfold wf_constraints. split; constructor.
+      + simpl in Hnd.
+        destruct r as [[rx rck]|].
+        * simpl in Hgen.
+          unfold find_signature in Hgen.
+          destruct (List.find (fun n0 => ident_eqb n0.(s_name) f) G) as [sig|] eqn:Hfindsig; simpl in Hgen; try discriminate.
+          assert (Hfindsig' : find_signature f G = Some sig).
+          { unfold find_signature. exact Hfindsig. }
+          eapply sec_bind_inv in Hgen as (ckty & st1 & Hck0 & Hgen).
+          eapply sec_bind_inv in Hgen as (rty & st2 & Hr0 & Hgen).
+          eapply sec_bind_inv in Hgen as (rstty & st3 & Hrst0 & Hgen).
+          eapply sec_bind_inv in Hgen as (inptyp & st4 & Hinp0 & Hgen).
+          eapply sec_bind_inv in Hgen as (outtyp & st5 & Hout0 & Hgc).
+          unfold option_to_sec in Hck0.
+          destruct (assign_clk_type env base_ty ck) as [ckty'|] eqn:Hck; try discriminate.
+          inversion Hck0; subst ckty st1.
+          unfold find_env in Hr0.
+          destruct (Env.find rx env) as [rty'|] eqn:Hrfind; try discriminate.
+          unfold ret in Hr0. inversion Hr0; subst rty st2.
+          unfold option_to_sec in Hrst0.
+          destruct (assign_clk_type env rst_ty rck) as [rstty'|] eqn:Hrstck; try discriminate.
+          inversion Hrst0; subst rstty st3.
+          assert (Houts : st5 = st4 /\ get_mappings (x0 :: xs0) env = Some outtyp).
+          { eapply mmap_find_env_inv; eauto. }
+          destruct Houts as [Hstouts Hmapouts]. subst st5.
+          assert (Hndout : NoDup outtyp).
+          { eapply get_mappings_nodup; eauto. }
+          destruct (Hcall f sig inptyp ckty' ([rty'] ⊔ rstty') outtyp cns st4 st'
+                    Hfindsig' Hndout Hgc) as [Hwf Hsnd].
+          exists outtyp. split; [exact Hmapouts|].
           split; [exact Hsnd|exact Hwf].
-        * eapply get_mappings_nodup; eauto.
-      + simpl in Hgen. repeat secInv.
-        unfold option_to_sec in H0. destruct (assign_clk_type env base_ty ck); try discriminate.
-        assert (Houts : st4 = st3 /\ get_mappings xs env = Some x1).
-        { eapply mmap_find_env_inv; eauto. }
-        destruct Houts as [Hstouts Hmapouts]. subst st4.
-        eapply Hcall in H6; eauto.
-        * destruct H6 as [Hwf Hsnd].
-          exists x1. split; [exact Hmapouts|].
+        * simpl in Hgen.
+          unfold find_signature in Hgen.
+          destruct (List.find (fun n0 => ident_eqb n0.(s_name) f) G) as [sig|] eqn:Hfindsig; simpl in Hgen; try discriminate.
+          assert (Hfindsig' : find_signature f G = Some sig).
+          { unfold find_signature. exact Hfindsig. }
+          eapply sec_bind_inv in Hgen as (ckty & st1 & Hck0 & Hgen).
+          eapply sec_bind_inv in Hgen as (inptyp & st2 & Hinp0 & Hgen).
+          eapply sec_bind_inv in Hgen as (outtyp & st3 & Hout0 & Hgc).
+          unfold option_to_sec in Hck0.
+          destruct (assign_clk_type env base_ty ck) as [ckty'|] eqn:Hck; try discriminate.
+          inversion Hck0; subst ckty st1.
+          assert (Houts : st3 = st2 /\ get_mappings (x0 :: xs0) env = Some outtyp).
+          { eapply mmap_find_env_inv; eauto. }
+          destruct Houts as [Hstouts Hmapouts]. subst st3.
+          assert (Hndout : NoDup outtyp).
+          { eapply get_mappings_nodup; eauto. }
+          destruct (Hcall f sig inptyp ckty' [rst_ty] outtyp cns st2 st'
+                    Hfindsig' Hndout Hgc) as [Hwf Hsnd].
+          exists outtyp. split; [exact Hmapouts|].
           split; [exact Hsnd|exact Hwf].
-        * eapply get_mappings_nodup; eauto.
-    - simpl in Hgen. repeat secInv.
-      unfold option_to_sec in H0. destruct (assign_clk_type env base_ty ck); try discriminate.
-      unfold option_to_sec in H2. destruct (assign_exp_type env exp); try discriminate.
-      unfold find_env in H4. destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
-      unfold ret in H4. inversion H4; subst.
-      unfold ret in H5. inversion H5; subst cns st'.
-      exists [xty]. split.
-      + simpl. rewrite Hfind. reflexivity.
+    - simpl in Hgen.
+      eapply sec_bind_inv in Hgen as (ckty & st1 & Hck & Hgen).
+      eapply sec_bind_inv in Hgen as (expty & st2 & Hexp & Hgen).
+      eapply sec_bind_inv in Hgen as (xty & st3 & Hfind & Hgen).
+      unfold ret in Hgen. inversion Hgen; subst cns st'. clear Hgen.
+      unfold option_to_sec in Hck.
+      destruct (assign_clk_type env base_ty ck) as [ckty'|] eqn:Hck'; try discriminate.
+      inversion Hck; subst ckty st1.
+      unfold option_to_sec in Hexp.
+      destruct (assign_exp_type env exp) as [expty'|] eqn:Hexp'; try discriminate.
+      inversion Hexp; subst expty st2.
+      unfold find_env in Hfind.
+      destruct (Env.find x env) as [xty'|] eqn:Hfind'; try discriminate.
+      unfold ret in Hfind. inversion Hfind; subst xty st3.
+      exists [xty']. split.
+      + simpl. rewrite Hfind'. reflexivity.
       + split; [reflexivity|].
         unfold wf_constraints. split.
         * constructor; [intro Hin; inversion Hin|constructor].
@@ -722,24 +896,41 @@ Module Type SECNLUSTYPING
     - simpl in Hgen.
       eapply sec_bind_inv in Hgen as (c1 & st1 & Heq & Hgen).
       eapply sec_bind_inv in Hgen as (c2 & st2 & Heqs & Hret).
-      unfold ret in Hret. inversion Hret; subst cns st'.
+      unfold ret in Hret. inversion Hret; subst.
       assert (Hndsplit : NoDup (var_defined eq ++ vars_defined eqs)).
       { simpl in Hnd. exact Hnd. }
       apply NoDup_app'_iff in Hndsplit as [Hnd1 [Hnd2 Hdisj]].
       edestruct generate_eqn_constraint_shape as (tys1 & Hmap1 & Hsnd1 & Hwf1); eauto.
       edestruct IH as (tys2 & Hmap2 & Hsnd2 & Hwf2); eauto.
-      exists (tys1 ++ tys2). split.
-      + simpl. eapply get_mappings_app; eauto.
-      + split.
-        * rewrite map_app, Hsnd1, Hsnd2. reflexivity.
-        * unfold wf_constraints in *.
-          destruct Hwf1 as [Hndc1 Hfor1].
-          destruct Hwf2 as [Hndc2 Hfor2].
-          split.
-          -- rewrite map_app, Hsnd1, Hsnd2.
-             eapply get_mappings_nodup; eauto.
-             simpl. exact Hnd.
-          -- rewrite Forall_app. split; auto.
+	      exists (tys1 ++ tys2). split.
+	      + simpl. eapply get_mappings_app; eauto.
+	      + split.
+	        * rewrite map_app.
+	          transitivity (map (fun ty : ident => [ty]) tys1 ++ map snd c2).
+	          { f_equal. exact Hsnd1. }
+	          transitivity (map (fun ty : ident => [ty]) tys1 ++ map (fun ty : ident => [ty]) tys2).
+	          { f_equal. exact Hsnd2. }
+	          rewrite map_app. reflexivity.
+	        * unfold wf_constraints in *.
+	          destruct Hwf1 as [Hndc1 Hfor1].
+	          destruct Hwf2 as [Hndc2 Hfor2].
+	          assert (Hsnd :
+	                    map snd (c1 ++ c2) =
+	                    map (fun ty : ident => [ty]) (tys1 ++ tys2)).
+	          { rewrite map_app.
+	            transitivity (map (fun ty : ident => [ty]) tys1 ++ map snd c2).
+	            { f_equal. exact Hsnd1. }
+	            transitivity (map (fun ty : ident => [ty]) tys1 ++ map (fun ty : ident => [ty]) tys2).
+	            { f_equal. exact Hsnd2. }
+	            rewrite map_app. reflexivity. }
+	          split.
+	          -- rewrite Hsnd.
+	             eapply nodup_singleton_map.
+	             eapply get_mappings_nodup with (xs := vars_defined (eq :: eqs)) (tys := tys1 ++ tys2).
+	             ++ exact Hnd.
+	             ++ exact Hinj.
+	             ++ simpl. eapply get_mappings_app; eauto.
+	          -- rewrite Forall_app. split; auto.
   Qed.
 
   Corollary generate_eqns_constraints_wf:
@@ -844,7 +1035,7 @@ Module Type SECNLUSTYPING
           secglobal_scoped G ->
           call_constraints_shape G ->
           env_injective env ->
-          Clo.wc_node P n ->
+          wc_node P n ->
           generate_node_sig n env aux_names = OK sig ->
           signature_scoped sig.
       Proof.
@@ -852,17 +1043,18 @@ Module Type SECNLUSTYPING
                Hscoped Hcallshape Hinj Hwc Hsig.
         unfold generate_node_sig in Hsig.
         remember
-          (do (clk_id, rst_id) <- option_to_sec (get_node_aux (n.(n_name)) aux_names);
-           do clk_type <- option_to_sec (Env.find clk_id env);
-           do rst_type <- option_to_sec (Env.find rst_id env);
-           do inp <- option_to_sec (get_mappings_from_node (n.(n_in)) env);
-           do out <- option_to_sec (get_mappings_from_node (n.(n_out)) env);
-           do locals <- option_to_sec (get_mappings_from_node (n.(n_vars)) env);
-           do constraints' <- generate_eqns_constraints G env clk_type rst_type (n.(n_eqs));
-           ret (n_name n, inp, out, rst_type, clk_type, simplify constraints' locals, env))
-          init_state as gen eqn:Hgen.
-        destruct gen as [[[packed env0] st0]|]; try discriminate.
+          ((do (clk_id, rst_id) <- option_to_sec (get_node_aux (n.(n_name)) aux_names);
+            do clk_type <- option_to_sec (Env.find clk_id env);
+            do rst_type <- option_to_sec (Env.find rst_id env);
+            do inp <- option_to_sec (get_mappings_from_node (n.(n_in)) env);
+            do out <- option_to_sec (get_mappings_from_node (n.(n_out)) env);
+            do locals <- option_to_sec (get_mappings_from_node (n.(n_vars)) env);
+            do constraints' <- generate_eqns_constraints G env clk_type rst_type (n.(n_eqs));
+            ret (n_name n, inp, out, rst_type, clk_type, simplify constraints' locals, env))
+             init_state) as gen eqn:Hgen.
+        destruct gen as [[packed st0]|]; try discriminate.
         destruct packed as [[[[[[name inp] out] rst_type] clk_type] constraints] env1].
+        symmetry in Hgen.
         inversion Hsig; subst sig; clear Hsig.
         eapply sec_bind2_inv in Hgen as (clk_id & rst_id & st_aux & Haux & Hgen).
         eapply sec_bind_inv in Hgen as (clk_type' & st_clk & Hclk & Hgen).
@@ -890,45 +1082,75 @@ Module Type SECNLUSTYPING
         destruct (get_mappings_from_node (n.(n_vars)) env) as [locals0|] eqn:Hlocals0; try discriminate.
         inversion Hlocals; subst locals0 st_locals.
         unfold ret in Hret. inversion Hret; subst name inp out rst_type clk_type constraints env1 st0.
-        unfold signature_scoped, signature_scope.
-        eapply simplify_scoped.
-        - eapply get_mappings_nodup; eauto.
-          + apply fst_NoDupMembers.
-            eapply NoDupMembers_app_r, NoDupMembers_app_l.
-            exact n.(n_nodup).
-          + eapply get_mappings_from_node_eq; eauto.
-        - eapply generate_eqns_constraints_scoped; eauto.
-          + inversion Hwc as (_ & _ & Henv & Heqs).
-            exact Henv.
-          + inversion Hwc as (_ & _ & _ & Heqs).
-            exact Heqs.
-          + intros x Hmem.
-            apply InMembers_idck in Hmem.
-            apply InMembers_app in Hmem.
-            destruct Hmem as [Hin|Hin].
-            * destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hinp0) as (ty & Hfind & Hin').
-              exists ty. split; [exact Hfind|].
-              repeat rewrite in_app_iff. now left.
-            * apply InMembers_app in Hin.
-              destruct Hin as [Hin|Hin].
-              -- destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hlocals0) as (ty & Hfind & Hin').
-                 exists ty. split; [exact Hfind|].
-                 repeat rewrite in_app_iff. now right; left.
-              -- destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hout0) as (ty & Hfind & Hin').
-                 exists ty. split; [exact Hfind|].
-                 repeat rewrite in_app_iff. now right; right; left.
-          + repeat rewrite in_app_iff. now right; right; right; left.
-          + repeat rewrite in_app_iff. now right; right; right; right; left.
-        - intros d Hd.
-          apply in_app_iff in Hd.
-          destruct Hd as [Hd|[]].
-          edestruct get_mappings_from_node_In as (x & a & Hinvar & Hfindx); eauto.
-          assert (Hdefx : In x (vars_defined n.(n_eqs))).
-          { eapply IsD.node_variable_defined_in_eqs.
-            eapply fst_InMembers. exact Hinvar. }
-          edestruct generate_eqns_constraints_shape
-            as (tys & Hmapdefs & Hsnd & Hwf); eauto.
-          2: apply NoDup_var_defined_n_eqs.
+	        unfold signature_scoped, signature_scope.
+	        eapply simplify_scoped.
+	        - eapply get_mappings_nodup with (xs := map fst (n.(n_vars))) (tys := locals).
+	          + apply fst_NoDupMembers.
+	            pose proof n.(n_nodup) as Hnodup.
+	            apply NoDupMembers_app_r, NoDupMembers_app_l in Hnodup.
+	            exact Hnodup.
+	          + exact Hinj.
+	          + eapply get_mappings_from_node_eq; eauto.
+	        - eapply (generate_eqns_constraints_scoped
+	                    G env clk_type' rst_type' P
+	                    (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+	                    ((inp' ++ out' ++ [clk_type'; rst_type']) ++ locals)
+	                    (n.(n_eqs))).
+	          + exact Hscoped.
+	          + inversion Hwc as (_ & _ & Henv & _).
+	            exact Henv.
+	          + inversion Hwc as (_ & _ & _ & Heqs).
+	            exact Heqs.
+	          + intros x Hmem.
+	            apply InMembers_idck in Hmem.
+	            apply InMembers_app in Hmem.
+	            destruct Hmem as [Hin|Hin].
+	            * destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hinp0) as (ty & Hfind & Hin').
+	              exists ty. split; [exact Hfind|].
+	              apply in_or_app. left.
+	              apply in_or_app. left.
+	              exact Hin'.
+	            * apply InMembers_app in Hin.
+	              destruct Hin as [Hin|Hin].
+	              -- destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hlocals0) as (ty & Hfind & Hin').
+	                 exists ty. split; [exact Hfind|].
+	                 apply in_or_app. right.
+	                 exact Hin'.
+	              -- destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hout0) as (ty & Hfind & Hin').
+	                 exists ty. split; [exact Hfind|].
+	                 apply in_or_app. left.
+	                 apply in_or_app. right.
+	                 apply in_or_app. left.
+	                 exact Hin'.
+	          + apply in_or_app. left.
+	            apply in_or_app. right.
+	            apply in_or_app. right.
+	            simpl. now left.
+	          + apply in_or_app. left.
+	            apply in_or_app. right.
+	            apply in_or_app. right.
+	            simpl. now right; left.
+	          + exact Hraw.
+	        - intros d Hd.
+	          edestruct get_mappings_from_node_In as (x & a & Hinvar & Hfindx); eauto.
+	          assert (Hdefx : In x (vars_defined n.(n_eqs))).
+	          { apply IsD.Is_defined_in_vars_defined.
+	            eapply IsD.node_variable_defined_in_eqs.
+	            eapply in_map with (f := fst) in Hinvar.
+	            simpl in Hinvar.
+	            exact Hinvar. }
+	          assert (Hexshape :
+	                    exists tys,
+	                      get_mappings (vars_defined n.(n_eqs)) env = Some tys /\
+	                      map snd raw = map (fun ty => [ty]) tys /\
+	                      wf_constraints raw).
+	          { eapply (generate_eqns_constraints_shape
+	                      G env clk_type' rst_type' (n.(n_eqs)) raw init_state st_raw).
+	            - exact Hcallshape.
+	            - exact Hinj.
+	            - apply NoDup_var_defined_n_eqs.
+	            - exact Hraw. }
+	          destruct Hexshape as (tys & Hmapdefs & Hsnd & Hwf).
           eapply get_mappings_in in Hmapdefs as (ty & Hfindty & Hintys); eauto.
           rewrite Hfindx in Hfindty. inversion Hfindty; subst ty.
           rewrite Hsnd. apply in_map_iff.
@@ -970,8 +1192,8 @@ Module Type SECNLUSTYPING
         already-typed callees provide well-scoped assumptions for the next node
         in the list. *)
     Theorem generate_all_signatures_scoped':
-      forall nodes acc env aux_names G,
-        Clo.wc_global nodes ->
+        forall nodes acc env aux_names G,
+        wc_global nodes ->
         secglobal_scoped acc ->
         (forall G1, call_constraints_shape G1) ->
         env_injective env ->
@@ -983,19 +1205,21 @@ Module Type SECNLUSTYPING
       - simpl in Hgen. inversion Hgen; subst. exact Hacc.
       - inversion Hwc as [|n' ns Hwc_tail Hwc_head]; subst n' ns.
         simpl in Hgen.
-        destruct (generate_node_sig acc n env aux_names) as [sig|] eqn:Hsig;
-          try discriminate.
-        destruct (generate_all_signatures' (sig :: acc) nodes env aux_names) as [G'|] eqn:Htl;
-          try discriminate.
-        inversion Hgen; subst G'. clear Hgen.
-        eapply IH; eauto.
-        eapply secglobal_scoped_cons; eauto.
-        eapply generate_node_sig_scoped; eauto.
-    Qed.
+	        destruct (generate_node_sig acc n env aux_names) as [sig|] eqn:Hsig;
+	          simpl in Hgen;
+	          try discriminate.
+	        destruct (generate_all_signatures' (sig :: acc) nodes env aux_names) as [G'|] eqn:Htl;
+	          simpl in Hgen;
+	          try discriminate.
+	        inversion Hgen; subst. clear Hgen.
+	        eapply IH with (acc := sig :: acc) (env := env) (aux_names := aux_names); eauto.
+	        eapply secglobal_scoped_cons; eauto.
+	        eapply generate_node_sig_scoped; eauto.
+	    Qed.
 
     Corollary generate_all_signatures_scoped:
       forall nodes env aux_names G,
-        Clo.wc_global nodes ->
+        wc_global nodes ->
         (forall G1, call_constraints_shape G1) ->
         env_injective env ->
         generate_all_signatures nodes env aux_names = OK G ->
@@ -1022,15 +1246,23 @@ Module Type SECNLUSTYPING
 End SECNLUSTYPING.
 
 Module SecNLusTyping  
-  (Ids   : IDS)
-  (Op    : OPERATORS)
-  (SC    : SECMONAD Ids)
-  (CESyn : CESYNTAX      Op)
-  (SynNL : NLSYNTAX  Ids Op CESyn)
-  (SIG   : SIGNATURE   Ids SC)
-  (SECCETYPING: SECCETYPING Ids Op CESyn) <: SECNLUSTYPING Ids Op SC CESyn SynNL SIG  SECCETYPING.
+  (Import Ids   : IDS)
+  (Import Op    : OPERATORS)
+  (Import SC    : SECMONAD Ids)
+  (Import CESyn : CESYNTAX      Op)
+  (Import SynNL : NLSYNTAX  Ids Op CESyn)
+  (Import SIG   : SIGNATURE   Ids SC)
+  (Import SECCETYPING: SECCETYPING Ids Op CESyn)
+  (Import CEIsF : CEISFREE Ids Op CESyn)
+  (Import CEClo : CECLOCKING Ids Op CESyn)
+  (Import Ord   : NLORDERED Ids Op CESyn SynNL)
+  (Import Mem   : MEMORIES Ids Op CESyn SynNL)
+  (Import IsD   : ISDEFINED Ids Op CESyn SynNL Mem)
+  (Import IsF   : ISFREE Ids Op CESyn SynNL CEIsF)
+  (Import Clo   : NLCLOCKING Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo)
+  <: SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo.
 
-Include SECNLUSTYPING Ids Op SC CESyn SynNL SIG  SECCETYPING.
+Include SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo.
 
 
 End SecNLusTyping.
