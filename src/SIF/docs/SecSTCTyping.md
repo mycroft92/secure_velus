@@ -68,5 +68,5 @@ The older theorems
 remain as wrapper corollaries when a caller already knows that every reset-env
 lookup falls inside the chosen scope.
 
-That refined interface is the entry point for removing the remaining
-`preserves_on_app_closed` assumption from the translation proof.
+That refined interface is the entry point for the scoped composition step in
+the translation proof.
