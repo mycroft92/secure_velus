@@ -11,9 +11,10 @@
 
      1. [eqn_preserv]: one NLustre equation versus the STC constraints produced
         by [translate_eqn].
-     2. [eqns_preserv]: extension to a list of equations, using the fact that
-        both typing functions concatenate constraint lists.
-     3. [node_preserv]: instantiation of the list-level theorem for a translated
+     2. [eqns_preserv_scoped]: extension to a list of equations through the
+        scoped concatenation argument.
+     3. [node_preserv_scoped]: instantiation of the list-level theorem for a
+        translated
         node/system pair, with the scope chosen to be the interface variables,
         locals, clock type, and reset type. *)
 From Velus Require Import Common.
@@ -192,8 +193,8 @@ Module Type SECNLUSSTCTRANSLATION
 
     (** These definitions capture the stronger signature-level reading of the
         same idea. They are convenient summaries, although the main theorem we
-        prove in this development is the raw-constraint theorem [node_preserv]
-        below. *)
+        prove in this development is the raw-constraint theorem
+        [node_preserv_scoped] below. *)
     Definition sig_scope (sig: signature) : list ident :=
       sig.(s_in) ++ sig.(s_out) ++ (sig.(s_clk) :: sig.(s_reset) :: nil).
 
@@ -1367,15 +1368,16 @@ Module Type SECNLUSSTCTRANSLATION
 
   (** The node/system part of the development is organised in five layers:
 
-      1. [node_preserv] is the core theorem. It works for one already-aligned
+      1. [node_preserv_scoped] is the core theorem. It works for one
+         already-aligned
          node/system pair and assumes the relevant environment lookups plus the
          freshness of STC reset-instance variables.
       2. The freshness and inversion lemmas below are used only to discharge
          those assumptions when the environments and signatures come from the
          generators in [NameInterface], [SecNLusTyping], and [SecSTCTyping].
-      3. [generated_node_preserv] packages that discharge for generated
-         signatures, and [found_system_preserv] is the lookup-based corollary
-         obtained from [find_system_translate].
+      3. [generated_node_preserv_scoped] packages that discharge for generated
+         signatures, and [found_system_preserv_scoped_global] is the
+         lookup-based global corollary obtained from [find_system_translate].
       4. The bridge layer reconstructs per-node
          [Signature_head_consistent] from two explicit semantic ingredients:
          simplification completeness for generated signatures, and call-time
@@ -2412,9 +2414,8 @@ Module Type SECNLUSSTCTRANSLATION
         - local source clocking for [n];
         - scoped target signatures in [G2].
 
-        The older theorem [generated_node_preserv] is kept just below as an
-        obsolete-soon compatibility wrapper while the remaining theorem stack
-        is migrated. *)
+        This theorem is the generated bridge from node-level scoped
+        preservation to the later global corollaries. *)
     Theorem generated_node_preserv_scoped:
       forall P all_nodes (n : node) (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
@@ -2525,7 +2526,7 @@ Module Type SECNLUSSTCTRANSLATION
 
         This is the lookup-based version of
         [generated_node_preserv_scoped_global].  It is the natural later
-        replacement for [found_system_preserv] once the remaining global
+        replacement for the older lookup corollary once the remaining global
         consistency theorem stack is moved to the scoped route. *)
     Corollary found_system_preserv_scoped_global:
       forall all_nodes f n s prog' (G1 G2: secglobal)
@@ -2857,7 +2858,7 @@ Module Type SECNLUSSTCTRANSLATION
         The two obligations below isolate that gap exactly:
 
         - [signatures_preserved] must be derivable for generated signatures,
-          typically from [generated_node_preserv] plus a completeness result
+          typically from [generated_node_preserv_scoped] plus a completeness result
           for [SymTypes.simplify];
         - [Signature_call_preserves] must follow from
           [signatures_preserved], via a semantic correctness theorem for
@@ -3129,7 +3130,7 @@ Module Type SECNLUSSTCTRANSLATION
     (** Per-step compatibility hypothesis used by the global generators.
 
         The present development does not yet prove this property directly from
-        [generated_node_preserv], because that would require a completeness
+        [generated_node_preserv_scoped], because that would require a completeness
         argument for [SymTypes.simplify] with respect to call-time signature
         instantiation. Instead, the global theorems below isolate that missing
         bridge into this single hypothesis.
@@ -3308,7 +3309,8 @@ Module Type SECNLUSSTCTRANSLATION
         1. generated signature simplification completeness;
         2. call preservation derived from [signatures_preserved];
         3. the abstract list induction [generate_all_signatures_consistent_abstract];
-        4. the pointwise generated-node theorem [generated_node_preserv]. *)
+        4. the pointwise generated-node theorem
+           [generated_node_preserv_scoped]. *)
     Theorem generated_node_preserv_global:
       forall all_nodes (n : node) (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
@@ -3343,8 +3345,9 @@ Module Type SECNLUSSTCTRANSLATION
 
     (** Lookup-based closed node theorem.
 
-        Compared with [found_system_preserv], the signature-consistency premise
-        is now discharged internally from the global generation equalities. *)
+        Compared with the older lookup corollary, the
+        signature-consistency premise is now discharged internally from the
+        global generation equalities. *)
     Corollary found_system_preserv_global:
       forall all_nodes f n s prog' (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
