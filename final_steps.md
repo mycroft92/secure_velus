@@ -9,13 +9,12 @@ Current proof state:
 Remaining proof work:
 
 - discharge
-  `generated_system_signatures_scoped`
-  from the final theorem stack
-- discharge
   `successful_call_substitutions_fresh`
   and
   `signatures_preserved_calls`
   from the final theorem stack
+- resume by strengthening `NameInterface.v` first if the freshness proof does
+  not fall out directly from the current generated-name discipline
 - keep deriving `env_injective` from `generate_node_env` through
   `NameInterface.v`
 

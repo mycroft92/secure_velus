@@ -2,20 +2,13 @@
 
 ## Remaining theorem-stack cleanup
 
-- Eliminate the pointwise scopedness assumptions from the final theorem stack:
-  - `generated_system_signatures_scoped`
-
 - Eliminate the remaining call-side assumptions from the final theorem stack:
   - `successful_call_substitutions_fresh`
   - `signatures_preserved_calls`
 
 - Proof order:
-  - first eliminate
-    `generated_system_signatures_scoped`
-  - then eliminate
-    `successful_call_substitutions_fresh`
-    and
-    `signatures_preserved_calls`
+  - eliminate `successful_call_substitutions_fresh`
+  - then eliminate `signatures_preserved_calls`
 
 - Preferred first approach for the call-side assumptions:
   - strengthen `NameInterface.v` so the required caller/callee namespace

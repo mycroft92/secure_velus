@@ -84,22 +84,7 @@ The clean plan is to avoid proving these assumptions in their current strongest
 generic form unless necessary. The final public theorem only needs the
 generated-program case.
 
-### Step 1. Remove the scopedness assumptions first
-
-Before tackling the call bridge, remove:
-
-- `generated_system_signatures_scoped`
-
-by strengthening the accumulator invariant in the generated-global proof so it
-carries `secglobal_scoped` internally and derives local scopedness from:
-
-- `generate_node_sig_scoped`
-- `generate_sys_signature_scoped`
-
-This simplifies the remaining call problem because the generated signatures are
-then already known to be scoped inside the theorem stack.
-
-### Step 2. Prove generated-call freshness
+### Step 1. Prove generated-call freshness
 
 Instead of proving a fully generic freshness theorem first, prove the version
 actually needed by the final theorem:
@@ -114,7 +99,7 @@ This should be the bridge from the naming discipline to
 If the current naming discipline is too weak, strengthen `NameInterface`
 before trying to prove a maximally generic freshness lemma.
 
-### Step 3. Prove generated-call preservation from `signatures_preserved`
+### Step 2. Prove generated-call preservation from `signatures_preserved`
 
 Use:
 

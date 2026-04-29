@@ -167,6 +167,51 @@ Module Type SECNLUSTYPINGCORRECTNESS
       exact (sec_not_in_gensym_prefs Hinpre).
   Qed.
 
+  (** Source-local scope reconstruction from shared env mappings.
+
+      This lemma is purely NLustre-side: once the shared environment mappings
+      for inputs, outputs, and locals have been recovered, the standard visible
+      symbolic scope for the node contains the image of every source variable in
+      the clocking environment [idck (n_in ++ n_vars ++ n_out)].
+
+      The translation proof reuses this to feed target-side scopedness
+      generators, but the statement itself only depends on source node
+      structure. *)
+  Lemma node_vars_env_scoped_from_mappings:
+    forall n env inp out locals clk_type rst_type,
+      get_mappings_from_node (n.(n_in)) env = Some inp ->
+      get_mappings_from_node (n.(n_out)) env = Some out ->
+      get_mappings_from_node (n.(n_vars)) env = Some locals ->
+      SECNLUSTYPING.vars_env_scoped env
+        (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+        (inp ++ out ++ locals ++ clk_type :: rst_type :: nil).
+  Proof.
+    intros n env inp out locals clk_type rst_type Hinp Hout Hlocals x Hmem.
+    apply InMembers_idck in Hmem.
+    apply InMembers_app in Hmem.
+    destruct Hmem as [Hin|Hin].
+    - destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hinp)
+        as (ty & Hfind & Hscope).
+      exists ty. split; [exact Hfind|].
+      apply in_or_app. left.
+      exact Hscope.
+    - apply InMembers_app in Hin.
+      destruct Hin as [Hin|Hin].
+      + destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hlocals)
+          as (ty & Hfind & Hscope).
+        exists ty. split; [exact Hfind|].
+        apply in_or_app. right.
+        apply in_or_app. right.
+        apply in_or_app. left.
+        exact Hscope.
+      + destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hout)
+          as (ty & Hfind & Hscope).
+        exists ty. split; [exact Hfind|].
+        apply in_or_app. right.
+        apply in_or_app. left.
+        exact Hscope.
+  Qed.
+
   (** Structural side conditions for replaying [simplify_complete] on generated
       NLustre signatures.  This packages exactly the two source-side facts later
       needed by the translation proof: raw well-formedness and disjointness of
