@@ -352,42 +352,22 @@ Module Type SECSTCTYPINGCORRECTNESS
     eapply generate_reset_env'_has_reset_stmt; eauto.
   Qed.
 
-  Definition generated_system_signatures_scoped
-    (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
-    forall G s ssig,
-      SECSTCTYPING.generate_sys_signature G s env aux_names = OK ssig ->
-      signature_scoped ssig.
+  (** Target-only structural fact for reset-key extraction.
 
-  Theorem generate_all_sys_signatures_scoped_from_pointwise':
-    forall systems acc env aux_names G,
-      secglobal_scoped acc ->
-      generated_system_signatures_scoped env aux_names ->
-      SECSTCTYPING.generate_all_sys_signatures' acc systems env aux_names = OK G ->
-      secglobal_scoped G.
+      The helper [trconstrs_reset_keys] is later combined with NLustre reset
+      bookkeeping, but this append decomposition is purely STC-side and belongs
+      with the other reset-environment support lemmas. *)
+  Lemma trconstrs_reset_keys_app:
+    forall trs1 trs2,
+      SECSTCTYPING.trconstrs_reset_keys (trs1 ++ trs2)
+      = SECSTCTYPING.trconstrs_reset_keys trs1
+          ++ SECSTCTYPING.trconstrs_reset_keys trs2.
   Proof.
-    induction systems as [|s systems IH]; intros acc env aux_names G Hacc Hscoped Hgen.
-    - simpl in Hgen. inversion Hgen; subst. exact Hacc.
-    - simpl in Hgen.
-      destruct (SECSTCTYPING.generate_sys_signature acc s env aux_names)
-        as [ssig|] eqn:Hssig; try discriminate.
-      pose proof (Hscoped _ _ _ Hssig) as Hsigscoped.
-      exact (IH (ssig :: acc) env aux_names G
-                (secglobal_scoped_cons _ _ Hsigscoped Hacc)
-                Hscoped
-                Hgen).
+    induction trs1 as [|tr trs1 IH]; intros trs2; simpl.
+    - reflexivity.
+    - rewrite IH, app_assoc. reflexivity.
   Qed.
 
-  Corollary generate_all_sys_signatures_scoped_from_pointwise:
-    forall systems env aux_names G,
-      generated_system_signatures_scoped env aux_names ->
-      SECSTCTYPING.generate_all_sys_signatures systems env aux_names = OK G ->
-      secglobal_scoped G.
-  Proof.
-    intros systems env aux_names G Hscoped Hgen.
-    unfold SECSTCTYPING.generate_all_sys_signatures in Hgen.
-    eapply generate_all_sys_signatures_scoped_from_pointwise'; eauto.
-    exact secglobal_scoped_nil.
-  Qed.
 End SECSTCTYPINGCORRECTNESS.
 
 Module SecStcTypingCorrectness
