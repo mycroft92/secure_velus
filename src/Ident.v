@@ -94,6 +94,9 @@ Module Export Ids <: IDS.
       intros Heq; apply str_to_pos_injective in Heq; inv Heq
     end.
 
+  Lemma sec_neq_sec_reset : sec <> sec_reset.
+  Proof. prove_str_to_pos_neq. Qed.
+
   Definition gensym_prefs := [elab; norm1; norm2].
 
   Lemma gensym_prefs_NoDup : NoDup gensym_prefs.

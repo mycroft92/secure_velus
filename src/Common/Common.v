@@ -159,6 +159,7 @@ Module Type IDS.
   Parameter sec: ident.
   Parameter sec_clk: ident.
   Parameter sec_reset: ident.
+  Parameter sec_neq_sec_reset: sec <> sec_reset.
 
   Parameter elab : ident.
   Parameter norm1 : ident.

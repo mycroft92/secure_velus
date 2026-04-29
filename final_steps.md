@@ -22,7 +22,8 @@ Public theorem structure:
 
 - `generated_program_preserv_global` keeps the raw preservation statement
 - `generated_program_signatures_preserved_global` gives the signature-level
-  corollary without exposing internal locals
+  lookup corollary over the generated globals, without exposing internal locals
+  or rerunning per-node signature generation
 
 Validation discipline:
 

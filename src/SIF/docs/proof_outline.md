@@ -120,7 +120,6 @@ From `SecNLusTypingCorrectness.v` and `SecNLusStcTranslation.v`:
 - `generated_node_simplify_ready`
 - `generated_signatures_preserved_from_simplify_bridge_scoped`
 - `found_system_signatures_preserved_global`
-- `generated_program_signatures_preserved_global`
 
 This layer moves from raw generated constraints to stored simplified
 signatures.
@@ -148,6 +147,11 @@ The active dependency chain is:
 6. `generate_all_signatures_consistent`
 7. `generated_program_preserv_global`
 8. `generated_program_signatures_preserved_global`
+
+The public signature theorem at step 8 is now lookup-based: it reads the
+generated source/target signature globals through `find_signature` and returns
+`Signature_head_consistent` directly, instead of rerunning
+`generate_node_sig` / `generate_sys_signature`.
 
 ## Remaining Assumptions
 
