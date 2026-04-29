@@ -57,6 +57,8 @@ The equation-list proof works by:
   `generate_all_signatures_consistent`,
   `generated_program_preserv_global`,
   `generated_program_signatures_preserved_global`.
+  The last corollary is now lookup-based over the generated globals, so it no
+  longer reruns per-node signature generation in its statement.
 
 ## Current Proof Boundary
 
@@ -67,7 +69,7 @@ correctness facts live in:
 - `SecStcTypingCorrectness.v`
 
 The remaining proof work is to eliminate the final theorem assumptions coming
-from generated scopedness and call instantiation.
+from call instantiation.
 
 ## Relation to the Paper
 
