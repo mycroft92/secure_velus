@@ -3,14 +3,16 @@
 ## Remaining theorem-stack cleanup
 
 - Eliminate the remaining call-side assumptions from the final theorem stack:
-  - `successful_call_substitutions_fresh`
   - `signatures_preserved_calls`
   - later: discharge `sec_not_in_gensym_prefs` from the concrete `Ident` naming
     setup so it stops living as a background correctness-module hypothesis
 
 - Proof order:
-  - eliminate `successful_call_substitutions_fresh`
-  - then eliminate `signatures_preserved_calls`
+  - checkpoint status:
+    `successful_call_substitutions_fresh` is removed from the public theorem
+    path after the node-scoped env pivot and the scoped-env rebuild of
+    `generate_all_signatures_consistent_scoped'`
+  - next: eliminate `signatures_preserved_calls`
 
 - Preferred first approach for the call-side assumptions:
   - pivot `NameInterface.v` from one flat shared variable env to a node-scoped
@@ -36,16 +38,10 @@
   - migrate `SecNLusStcTranslation.v` from the old flat
     `generate_node_env`/`Env.t ident` theorem stack to the node-scoped env
     interfaces, then derive prefix-accumulator freshness there
-  - immediate blocker in `SecNLusStcTranslation.v`:
-    `generate_all_signatures_consistent_scoped'` still needs a
-    prefix-generated accumulator provenance invariant, because the new
-    generated-node bridge now consumes caller-scope freshness for the current
-    node instead of the old global
-    `successful_call_substitutions_fresh` premise
-  - then resume elimination of
-    `successful_call_substitutions_fresh`
-    and
-    `signatures_preserved_calls`
+  - current state:
+    the node-scoped env migration is in place through the public lookup-based
+    theorem, and the remaining work is now the semantic call-instantiation
+    bridge behind `signatures_preserved_calls`
 
 - Keep in mind:
   - inter-node reuse of the same raw input/local/output name must be allowed
@@ -57,7 +53,6 @@
   - `eqns_preserv_scoped`
   - `node_preserv_scoped`
   - `generated_node_preserv_scoped`
-  - `generated_program_preserv_global`
   - `generated_program_signatures_preserved_global`
 
 - Keep deriving `env_injective` from `generate_node_env` via `NameInterface.v`.

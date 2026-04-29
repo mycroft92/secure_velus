@@ -136,10 +136,10 @@ Module Type SECNLUSTYPINGCORRECTNESS
 
   Lemma local_node_scope_sec_range:
     forall n st env rec st'
-           clk_type rst_type inp out locals ty,
+           clk_id rst_id clk_type rst_type inp out locals ty,
       generate_local_env_for_node n st = OK ((env, rec), st') ->
-      Env.find rec.(nclk) env = Some clk_type ->
-      Env.find rec.(nrst) env = Some rst_type ->
+      Env.find clk_id env = Some clk_type ->
+      Env.find rst_id env = Some rst_type ->
       get_mappings_from_node n.(n_in) env = Some inp ->
       get_mappings_from_node n.(n_out) env = Some out ->
       get_mappings_from_node n.(n_vars) env = Some locals ->
@@ -147,7 +147,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
       exists m, ty = Ids.gensym Ids.sec m.
   Proof.
     intros n st env rec st'
-           clk_type rst_type inp out locals ty
+           clk_id rst_id clk_type rst_type inp out locals ty
            Hgen Hclk Hrst Hinp Hout Hlocals Hin.
     repeat rewrite in_app_iff in Hin.
     destruct Hin as [Hin|[Hin|[Hin|[Hin|[Hin|[]]]]]].
@@ -192,6 +192,105 @@ Module Type SECNLUSTYPINGCORRECTNESS
       apply SetoidList.InA_alt in Hinpre as (pre' & Heq' & Hinpre).
       subst pre'.
       exact (sec_not_in_gensym_prefs Hinpre).
+  Qed.
+
+  (** Source-local simplify replay side conditions.
+
+      This is the node-scoped counterpart of
+      [generated_node_simplify_ready_from_generated_env].  Once one node-local
+      security env has been generated, the raw NLustre constraints produced for
+      that node are:
+
+      - well formed, by the same structural typing argument as before; and
+      - safe to replay through [simplify_complete], because eliminated locals
+        stay outside the visible interface scope.
+
+      The translation proof uses this theorem when it reasons about one
+      generated caller node against previously accumulated callee signatures
+      under the node-scoped naming discipline. *)
+  Theorem generated_node_simplify_ready_from_local_env:
+    forall G1 n nsig env rec aux_names st st'
+           clk_type rst_type inp out locals raw st_n,
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
+      Env.find rec.(nclk) env = Some clk_type ->
+      Env.find rec.(nrst) env = Some rst_type ->
+      get_mappings_from_node n.(n_in) env = Some inp ->
+      get_mappings_from_node n.(n_out) env = Some out ->
+      get_mappings_from_node n.(n_vars) env = Some locals ->
+      generate_eqns_constraints G1 env clk_type rst_type n.(n_eqs) init_state = OK (raw, st_n) ->
+      nsig = {| s_name := n.(n_name);
+                s_in := inp;
+                s_out := out;
+                s_reset := rst_type;
+                s_clk := clk_type;
+                s_constraints := SymTypes.simplify raw locals |} ->
+      wf_constraints raw
+      /\ (forall x, In x locals -> ~ In x (signature_scope nsig)).
+  Proof.
+    intros G1 n nsig env rec aux_names st st'
+           clk_type rst_type inp out locals raw st_n
+           Hlocal Hnsig Hclk Hrst Hinp Hout Hlocals Hraw Hnsigdef.
+    split.
+    - eapply SECNLUSTYPING.generate_node_eqns_constraints_wf; eauto.
+      eapply NAMEGEN.generate_local_env_for_node_injective; eauto.
+    - intros ty Hinlocal Hinsig.
+      subst nsig.
+      unfold signature_scope in Hinsig.
+      repeat rewrite in_app_iff in Hinsig.
+      destruct (get_mappings_from_node_In _ _ _ _ _ Hlocals Hinlocal)
+        as (xlocal & alocal & Hxlocal & Hfindlocal).
+      pose proof (NAMEGEN.generate_local_env_for_node_injective _ _ _ _ _ Hlocal)
+        as Hinj.
+      assert (Hndvars : NoDup (map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
+      { apply fst_NoDupMembers. exact n.(n_nodup). }
+      destruct Hinsig as [Hininput|[Hinoutput|[Hinclk|[Hinrst|[]]]]].
+      + destruct (get_mappings_from_node_In _ _ _ _ _ Hinp Hininput)
+          as (xinp & ainp & Hxinp & Hfindinp).
+        assert (xlocal = xinp) by (eapply Hinj; eauto).
+        subst xinp.
+        repeat rewrite map_app in Hndvars.
+        eapply (NoDup_app_In xlocal
+                  (map fst (n.(n_in)))
+                  (map fst (n.(n_vars)) ++ map fst (n.(n_out)))) in Hndvars.
+        2:{
+          now apply in_map with (f := fst) in Hxinp.
+        }
+        apply Hndvars.
+        apply in_or_app. left.
+        now apply in_map with (f := fst) in Hxlocal.
+      + destruct (get_mappings_from_node_In _ _ _ _ _ Hout Hinoutput)
+          as (xout & aout & Hxout & Hfindout).
+        assert (xlocal = xout) by (eapply Hinj; eauto).
+        subst xout.
+        repeat rewrite map_app in Hndvars.
+        eapply NoDup_app_r in Hndvars.
+        eapply (NoDup_app_In xlocal
+                  (map fst (n.(n_vars)))
+                  (map fst (n.(n_out)))) in Hndvars.
+        2:{ now apply in_map with (f := fst) in Hxlocal. }
+        apply Hndvars.
+        now apply in_map with (f := fst) in Hxout.
+      + subst ty.
+        assert (xlocal = rec.(nclk)) by (eapply Hinj; eauto).
+        subst xlocal.
+        pose proof (NAMEGEN.generate_local_env_for_node_aux_sec_names
+                      n st env rec st' Hlocal) as [Hclkid _].
+        eapply (node_var_not_sec_gensym n rec.(nclk) st).
+        * rewrite map_app. apply in_or_app. right.
+          rewrite map_app. apply in_or_app. left.
+          now apply in_map with (f := fst) in Hxlocal.
+        * exact Hclkid.
+      + subst ty.
+        assert (xlocal = rec.(nrst)) by (eapply Hinj; eauto).
+        subst xlocal.
+        pose proof (NAMEGEN.generate_local_env_for_node_aux_sec_names
+                      n st env rec st' Hlocal) as [_ Hrstid].
+        eapply (node_var_not_sec_gensym n rec.(nrst) (Pos.succ st)).
+        * rewrite map_app. apply in_or_app. right.
+          rewrite map_app. apply in_or_app. left.
+          now apply in_map with (f := fst) in Hxlocal.
+        * exact Hrstid.
   Qed.
 
   (** Source-local scope reconstruction from shared env mappings.
