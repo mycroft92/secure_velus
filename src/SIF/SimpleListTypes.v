@@ -62,7 +62,7 @@ Section MergeIdentList.
      induction l using list_ind2; intros;  split; try (inversion H; simpl; lia);
      inversion H; destruct (split l) as [l1' l2']; 
      inversion H1; simpl; destruct (IHl l1' l2') as [P1 P2]; auto; lia.
-     Show Proof.
+     (* Show Proof. *)
   Qed.
 
   (*This function is the auxiliary merge that merges two sorted lists*)
