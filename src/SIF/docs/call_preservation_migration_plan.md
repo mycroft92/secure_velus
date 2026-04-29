@@ -59,17 +59,28 @@ This avoids proving an unrealistically general freshness theorem.
 
 ### 4. Use NameInterface strengthening only if needed
 
-First try to prove the required caller/callee separation from the current
-shared environment discipline:
+The flat shared-variable env turned out to be too strong: two different nodes
+may reuse the same raw input/local/output name, but the old naming pass
+rejected that.
 
-- generated signature variables are images of callee keys
-- actual call arguments/outputs are images of caller keys
-- `generate_node_env` enforces global key uniqueness
-- `generate_node_env_injective` transfers source-key separation to generated
-  security-name separation
+So the first concrete migration step is now:
 
-If that is not sufficient, then strengthen `NameInterface.v` or the
-`IDS`/`Ident` namespace setup in the smallest possible way.
+- replace the flat shared variable env by a node-scoped env-of-envs
+- outer env keyed by unique node names
+- inner env keyed by raw variable/helper names local to that node
+
+This keeps the typing layer on raw local names while making inter-node name
+reuse legal by construction.
+
+Once that pivot is in place, prove caller/callee separation from:
+
+- generated signature variables are images of callee local keys
+- actual call arguments/outputs are images of caller local keys
+- prefix/current-node separation in the outer naming pass
+- `generate_node_env_injective`-style range facts for generated security ids
+
+Only if that still proves insufficient should the `IDS`/`Ident` namespace
+setup itself be strengthened further.
 
 ## Expected End State
 

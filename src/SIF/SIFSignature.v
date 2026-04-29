@@ -168,6 +168,52 @@ Section Type_Substitutions.
   Definition signature_scoped (sig: signature) : Prop :=
     constraints_scoped (signature_scope sig) sig.(s_constraints).
 
+  (* Some later call-preservation arguments need the stronger fact that every
+     visible signature identifier lies in the ordinary [sec] namespace.  This
+     is a generic property of signatures, while the generated-source/target
+     proofs that establish it live in the corresponding correctness modules. *)
+  Definition signature_scope_sec (sig: signature) : Prop :=
+    forall ty, In ty (signature_scope sig) -> exists n, ty = Ids.gensym Ids.sec n.
+
+  Definition secglobal_scope_sec (G: secglobal) : Prop :=
+    forall f sig,
+      find_signature f G = Some sig ->
+      signature_scope_sec sig.
+
+  Lemma sec_reset_not_in_signature_scope:
+    forall sig rst_inst,
+      signature_scope_sec sig ->
+      (exists n, rst_inst = Ids.gensym Ids.sec_reset n) ->
+      ~ In rst_inst (signature_scope sig).
+  Proof.
+    intros sig rst_inst Hsec (nreset & Hrsteq) Hin.
+    specialize (Hsec _ Hin) as (nsec & Hseceq).
+    rewrite Hrsteq in Hseceq.
+    apply gensym_injective in Hseceq as [Hpref _].
+    symmetry in Hpref.
+    exact (Ids.sec_neq_sec_reset Hpref).
+  Qed.
+
+  Lemma secglobal_scope_sec_nil:
+    secglobal_scope_sec [].
+  Proof.
+    intros f sig Hfind.
+    simpl in Hfind. discriminate.
+  Qed.
+
+  Lemma secglobal_scope_sec_cons:
+    forall sig G,
+      signature_scope_sec sig ->
+      secglobal_scope_sec G ->
+      secglobal_scope_sec (sig :: G).
+  Proof.
+    intros sig G Hsig Hglob f sig' Hfind.
+    simpl in Hfind.
+    destruct (ident_eqb sig.(s_name) f) eqn:Hname.
+    - inversion Hfind; subst sig'. exact Hsig.
+    - eapply Hglob; eauto.
+  Qed.
+
   (* Every stored signature in the global environment only mentions its own
      visible interface variables. This is the reusable global invariant
      consumed by the NLustre and STC typing developments. *)

@@ -37,7 +37,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
   (Import IsD   : ISDEFINED Ids Op CESyn SynNL Mem)
   (Import IsF   : ISFREE Ids Op CESyn SynNL CEIsF)
   (Import Clo   : NLCLOCKING Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo)
-  (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo).
+  (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo).
 
   (** Source-side naming inversion for generated auxiliary clock/reset names. *)
   Lemma get_node_aux_In:
@@ -134,6 +134,33 @@ Module Type SECNLUSTYPINGCORRECTNESS
     - subst. eapply generate_node_env_sec_range; eauto.
   Qed.
 
+  Lemma local_node_scope_sec_range:
+    forall n st env rec st'
+           clk_type rst_type inp out locals ty,
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      Env.find rec.(nclk) env = Some clk_type ->
+      Env.find rec.(nrst) env = Some rst_type ->
+      get_mappings_from_node n.(n_in) env = Some inp ->
+      get_mappings_from_node n.(n_out) env = Some out ->
+      get_mappings_from_node n.(n_vars) env = Some locals ->
+      In ty (inp ++ out ++ locals ++ clk_type :: rst_type :: nil) ->
+      exists m, ty = Ids.gensym Ids.sec m.
+  Proof.
+    intros n st env rec st'
+           clk_type rst_type inp out locals ty
+           Hgen Hclk Hrst Hinp Hout Hlocals Hin.
+    repeat rewrite in_app_iff in Hin.
+    destruct Hin as [Hin|[Hin|[Hin|[Hin|[Hin|[]]]]]].
+    - destruct (get_mappings_from_node_In _ _ _ _ _ Hinp Hin) as (x & a & _ & Hfind).
+      eapply NAMEGEN.generate_local_env_for_node_sec_range; eauto.
+    - destruct (get_mappings_from_node_In _ _ _ _ _ Hout Hin) as (x & a & _ & Hfind).
+      eapply NAMEGEN.generate_local_env_for_node_sec_range; eauto.
+    - destruct (get_mappings_from_node_In _ _ _ _ _ Hlocals Hin) as (x & a & _ & Hfind).
+      eapply NAMEGEN.generate_local_env_for_node_sec_range; eauto.
+    - subst. eapply NAMEGEN.generate_local_env_for_node_sec_range; eauto.
+    - subst. eapply NAMEGEN.generate_local_env_for_node_sec_range; eauto.
+  Qed.
+
   (** IDS-side naming invariant.
 
       The concrete [Ident] implementation satisfies this because the thesis
@@ -210,6 +237,36 @@ Module Type SECNLUSTYPINGCORRECTNESS
         apply in_or_app. right.
         apply in_or_app. left.
         exact Hscope.
+  Qed.
+
+  (** Node-scoped source signature generation.
+
+      The node-scoped naming pivot changes only how the local security env is
+      recovered; once that env is projected out of the outer node-indexed
+      table, the underlying NLustre typing proof is the same as for the older
+      flat shared env.  This wrapper is the source-side correctness bridge used
+      later by the translation preservation proof. *)
+  Theorem generate_node_sig_scoped_env_scoped:
+    forall all_nodes G P n envs aux_names sig,
+      generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      secglobal_scoped G ->
+      wc_node P n ->
+      find_node n.(n_name) all_nodes = Some n ->
+      SECNLUSTYPING.generate_node_sig_scoped_env G n envs aux_names = OK sig ->
+      signature_scoped sig.
+  Proof.
+    intros all_nodes G P n envs aux_names sig
+           Henvsgen Hscoped Hwc Hfind Hsig.
+    unfold SECNLUSTYPING.generate_node_sig_scoped_env in Hsig.
+    destruct (find_node_env n.(n_name) envs) as [env|] eqn:Hfindenv; try discriminate.
+    eapply SECNLUSTYPING.generate_node_sig_scoped; eauto.
+    pose proof (find_node_In _ _ _ Hfind) as [_ Hin].
+    apply in_split in Hin as (prefix & suffix & Hall).
+    subst all_nodes.
+    edestruct NAMEGEN.generate_node_scoped_env_find_current
+      as (local_env & rec & st_pref & st_local & Hlocalgen & Hlocalfind); eauto.
+    rewrite Hfindenv in Hlocalfind. inversion Hlocalfind; subst local_env.
+    eapply NAMEGEN.generate_local_env_for_node_injective; eauto.
   Qed.
 
   (** Structural side conditions for replaying [simplify_complete] on generated
@@ -344,7 +401,7 @@ Module SecNLusTypingCorrectness
   (Import IsD   : ISDEFINED Ids Op CESyn SynNL Mem)
   (Import IsF   : ISFREE Ids Op CESyn SynNL CEIsF)
   (Import Clo   : NLCLOCKING Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo)
-  (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo)
+  (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo)
   <: SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING.
 
 Include SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING.

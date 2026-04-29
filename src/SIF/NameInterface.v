@@ -25,6 +25,17 @@ Record node_aux_names := mkNames {
     nclk: ident;
     nrst: ident;
 }.
+
+(** Outer env keyed by unique node names; inner env keyed by raw names local
+    to that node.  This is the migration target for the shared naming
+    interface, allowing inter-node variable-name reuse without changing the
+    local typing code. *)
+Definition local_sec_env : Type := Env.t ident.
+Definition node_scoped_env : Type := Env.t local_sec_env.
+
+Definition find_node_env (n: ident) (envs: node_scoped_env) : option local_sec_env :=
+  Env.find n envs.
+
 Import List.ListNotations.
 Fixpoint find_node_names (n: ident) (nnames: list node_aux_names) : option node_aux_names :=
     match nnames with
@@ -277,6 +288,118 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       NMret e'')
     end.
 
+  (** Node-scoped naming representation.
+
+      The original flat shared env maps raw variable identifiers directly to
+      security identifiers. That is too strong for real NLustre programs,
+      because two different nodes may legally reuse the same raw input/local/
+      output name.
+
+      The node-scoped variant keeps:
+      - an outer env keyed by unique node names;
+      - an inner env for each node, keyed by that node's raw identifiers plus
+        its generated clock/reset helper keys.
+
+      This lets the typing layers keep using raw local names inside one node
+      while avoiding any inter-node collisions. *)
+  Definition insert_node_env
+    (envs: node_scoped_env) (name: ident) (local_env: local_sec_env)
+    : Name node_scoped_env :=
+    NMret (Env.add name local_env envs).
+
+  Definition fresh_insert_node_env
+    (envs: node_scoped_env) (name: ident) (local_env: local_sec_env)
+    : Name node_scoped_env :=
+    if Env.mem name envs then
+      error (MSG "Node name declared more than once ":: [CTX name])
+    else
+      insert_node_env envs name local_env.
+
+  (** Local naming for one node under the node-scoped representation.
+
+      The local env is built from scratch for the current node.  Freshness of
+      the generated security identifiers still comes from the global name-state
+      threaded through the whole program. *)
+  Definition generate_local_env_for_node (n: node) : Name (local_sec_env * node_aux_names) :=
+    do clk_name <- fresh_ident_gen;
+    do rst_name <- fresh_ident_gen;
+    do env' <- fresh_map_list
+                 ([clk_name; rst_name]
+                    ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                 (Env.empty _);
+    NMret (env', {| nname := n.(n_name); nclk := clk_name; nrst := rst_name |}).
+
+  Fixpoint generate_node_scoped_env'
+    (ns: list node) (envs: node_scoped_env) (acc: list node_aux_names)
+    : Name (node_scoped_env * list node_aux_names) :=
+    match ns with
+    | [] => NMret (envs, acc)
+    | n :: ns' =>
+        do (local_env, r) <- generate_local_env_for_node n;
+        do envs' <- fresh_insert_node_env envs n.(n_name) local_env;
+        do (envs'', rs) <- generate_node_scoped_env' ns' envs' (r :: acc);
+        NMret (envs'', rs)
+    end.
+
+  Definition generate_node_scoped_env (ns: list node)
+    : res (node_scoped_env * list node_aux_names) :=
+    match generate_node_scoped_env' ns (Env.empty _) [] init_state with
+    | OK ((envs, names), _) => OK (envs, names)
+    | Error e => Error e
+    end.
+
+  Lemma generate_node_scoped_env'_app_inv:
+    forall ns1 ns2 envs acc st envs' aux st',
+      generate_node_scoped_env' (ns1 ++ ns2) envs acc st = OK ((envs', aux), st') ->
+      exists envs_mid aux_mid st_mid,
+        generate_node_scoped_env' ns1 envs acc st = OK ((envs_mid, aux_mid), st_mid)
+        /\ generate_node_scoped_env' ns2 envs_mid aux_mid st_mid = OK ((envs', aux), st').
+  Proof.
+    induction ns1 as [|n ns1 IH]; intros ns2 envs acc st envs' aux st' Hgen.
+    - simpl in Hgen.
+      exists envs, acc, st.
+      split; [reflexivity|exact Hgen].
+    - simpl in Hgen.
+      eapply name_bind2_inv in Hgen as (local_env & rec & st1 & Hstep & Hgen).
+      eapply name_bind_inv in Hgen as (envs1 & stins & Hins & Hgen).
+      eapply name_bind2_inv in Hgen as (envs2 & aux2 & st2 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst envs' aux st'.
+      edestruct IH as (envs_mid & aux_mid & st_mid & Hpref & Hsuf); eauto.
+      exists envs_mid, aux_mid, st_mid.
+      split.
+      + simpl.
+        unfold NMbind2.
+        rewrite Hstep.
+        simpl.
+        unfold NMbind.
+        rewrite Hins.
+        simpl.
+        rewrite Hpref.
+        reflexivity.
+      + exact Hsuf.
+  Qed.
+
+  Lemma generate_node_scoped_env'_split_node:
+    forall prefix n suffix envs acc st envs' aux st',
+      generate_node_scoped_env' (prefix ++ n :: suffix) envs acc st = OK ((envs', aux), st') ->
+      exists envs_pref aux_pref st_pref local_env rec st_local envs_cur st_cur,
+        generate_node_scoped_env' prefix envs acc st = OK ((envs_pref, aux_pref), st_pref)
+        /\ generate_local_env_for_node n st_pref = OK ((local_env, rec), st_local)
+        /\ fresh_insert_node_env envs_pref n.(n_name) local_env st_local = OK (envs_cur, st_cur)
+        /\ generate_node_scoped_env' suffix envs_cur (rec :: aux_pref) st_cur = OK ((envs', aux), st').
+  Proof.
+    intros prefix n suffix envs acc st envs' aux st' Hgen.
+    eapply generate_node_scoped_env'_app_inv in Hgen
+      as (envs_pref & aux_pref & st_pref & Hpref & Hrest).
+    simpl in Hrest.
+    eapply name_bind2_inv in Hrest as (local_env & rec & st_local & Hlocal & Hrest).
+    eapply name_bind_inv in Hrest as (envs_cur & st_cur & Hins & Hrest).
+    eapply name_bind2_inv in Hrest as (envs_end & aux_end & st_end & Htail & Hret).
+    unfold NMret in Hret. inversion Hret; subst envs' aux st'.
+    exists envs_pref, aux_pref, st_pref, local_env, rec, st_local, envs_cur, st_cur.
+    repeat split; auto.
+  Qed.
+
   (* Allocate clock/reset auxiliaries first, then fresh security variables for
      the node interface and locals in one shared environment. *)
   Definition generate_new_names_for_node (n: node) (e: Env.t ident): Name (Env.t ident * node_aux_names):=
@@ -293,6 +416,219 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       do (e'', rs) <- generate_node_env' ns' e' (r::acc);
       NMret (e'', rs)
     end.
+
+  (** Ordered-prefix decomposition for the shared naming pass.
+
+      The final call-preservation argument reasons about one caller node
+      against the signatures accumulated from earlier nodes.  This lemma is
+      the naming-layer counterpart of that paper proof pattern: a successful
+      run of [generate_node_env'] over [ns1 ++ ns2] can always be split into a
+      successful prefix run for [ns1], followed by a successful suffix run for
+      [ns2] started from the intermediate environment and auxiliary-name
+      accumulator. *)
+  Lemma generate_node_env'_app_inv:
+    forall ns1 ns2 env acc st env' aux st',
+      generate_node_env' (ns1 ++ ns2) env acc st = OK ((env', aux), st') ->
+      exists env_mid aux_mid st_mid,
+        generate_node_env' ns1 env acc st = OK ((env_mid, aux_mid), st_mid)
+        /\ generate_node_env' ns2 env_mid aux_mid st_mid = OK ((env', aux), st').
+  Proof.
+    induction ns1 as [|n ns1 IH]; intros ns2 env acc st env' aux st' Hgen.
+    - simpl in Hgen.
+      exists env, acc, st.
+      split; [reflexivity|exact Hgen].
+    - simpl in Hgen.
+      eapply name_bind2_inv in Hgen as (env1 & rec1 & st1 & Hstep & Hgen).
+      eapply name_bind2_inv in Hgen as (env2 & aux2 & st2 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst env' aux st'.
+      edestruct IH as (env_mid & aux_mid & st_mid & Hpref & Hsuf); eauto.
+      exists env_mid, aux_mid, st_mid.
+      split.
+      + simpl.
+        unfold NMbind2.
+        rewrite Hstep.
+        simpl.
+        rewrite Hpref.
+        reflexivity.
+      + exact Hsuf.
+  Qed.
+
+  (** One-node specialization of [generate_node_env'_app_inv].
+
+      This form matches the later generated-call proof directly: the global
+      naming run is split into a prefix environment, the current node's fresh
+      naming step, and the remaining suffix. *)
+  Lemma generate_node_env'_split_node:
+    forall prefix n suffix env acc st env' aux st',
+      generate_node_env' (prefix ++ n :: suffix) env acc st = OK ((env', aux), st') ->
+      exists env_pref aux_pref st_pref env_cur rec st_cur,
+        generate_node_env' prefix env acc st = OK ((env_pref, aux_pref), st_pref)
+        /\ generate_new_names_for_node n env_pref st_pref = OK ((env_cur, rec), st_cur)
+        /\ generate_node_env' suffix env_cur (rec :: aux_pref) st_cur = OK ((env', aux), st').
+  Proof.
+    intros prefix n suffix env acc st env' aux st' Hgen.
+    eapply generate_node_env'_app_inv in Hgen
+      as (env_pref & aux_pref & st_pref & Hpref & Hrest).
+    simpl in Hrest.
+    eapply name_bind2_inv in Hrest as (env_cur & rec & st_cur & Hstep & Hrest).
+    eapply name_bind2_inv in Hrest as (env_end & aux_end & st_end & Htail & Hret).
+    unfold NMret in Hret. inversion Hret; subst env' aux st'.
+    exists env_pref, aux_pref, st_pref, env_cur, rec, st_cur.
+    repeat split; auto.
+  Qed.
+
+  (** Freshness of previously allocated bindings under one insertion step.
+
+      This is the basic monotonicity fact needed later when we show that the
+      current caller node contributes genuinely new keys with respect to the
+      prefix environment built from earlier nodes. *)
+  Lemma fresh_insert_preserves_find:
+    forall env k st env' st' x ty,
+      fresh_insert env k st = OK (env', st') ->
+      Env.find x env = Some ty ->
+      Env.find x env' = Some ty.
+  Proof.
+    intros env k st env' st' x ty Hins Hfind.
+    unfold fresh_insert in Hins.
+    destruct (Env.mem k env) eqn:Hmem; try discriminate.
+    eapply name_bind_inv in Hins as (v & st1 & Hfresh & Hins).
+    eapply name_bind_inv in Hins as (e & st2 & Hins0 & Hret).
+    unfold fresh_ident_gen in Hfresh.
+    inversion Hfresh; subst v st1.
+    unfold insert_env, NMret in Hins0. inversion Hins0; subst e st2.
+    unfold NMret in Hret. inversion Hret; subst env' st'.
+    assert (Hxk : x <> k).
+    { intro Heq. subst x.
+      assert (Env.mem k env = true).
+      { apply Env.mem_1. unfold Env.In. eexists; exact Hfind. }
+      congruence. }
+    now rewrite Env.gso.
+  Qed.
+
+  Lemma fresh_insert_node_env_preserves_find:
+    forall envs name local_env st envs' st' x env,
+      fresh_insert_node_env envs name local_env st = OK (envs', st') ->
+      find_node_env x envs = Some env ->
+      find_node_env x envs' = Some env.
+  Proof.
+    intros envs name local_env st envs' st' x env Hins Hfind.
+    unfold fresh_insert_node_env in Hins.
+    destruct (Env.mem name envs) eqn:Hmem; try discriminate.
+    unfold insert_node_env, NMret in Hins. inversion Hins; subst envs' st'.
+    assert (Hxname : x <> name).
+    { intro Heq. subst x.
+      assert (Env.mem name envs = true).
+      { apply Env.mem_1. unfold Env.In. eexists. exact Hfind. }
+      congruence. }
+    unfold find_node_env in *.
+    now rewrite Env.gso.
+  Qed.
+
+  Lemma fresh_insert_node_env_finds_new:
+    forall envs name local_env st envs' st',
+      fresh_insert_node_env envs name local_env st = OK (envs', st') ->
+      find_node_env name envs' = Some local_env.
+  Proof.
+    intros envs name local_env st envs' st' Hins.
+    unfold fresh_insert_node_env in Hins.
+    destruct (Env.mem name envs) eqn:Hmem; try discriminate.
+    unfold insert_node_env, NMret in Hins. inversion Hins; subst envs' st'.
+    unfold find_node_env. now rewrite Env.gss.
+  Qed.
+
+  Lemma generate_node_scoped_env'_preserves_find:
+    forall ns envs acc st envs' aux st' x env,
+      generate_node_scoped_env' ns envs acc st = OK ((envs', aux), st') ->
+      find_node_env x envs = Some env ->
+      find_node_env x envs' = Some env.
+  Proof.
+    induction ns as [|n ns IH]; intros envs acc st envs' aux st' x env Hgen Hfind.
+    - simpl in Hgen. inversion Hgen; subst. exact Hfind.
+    - simpl in Hgen.
+      eapply name_bind2_inv in Hgen as (local_env & rec & st1 & Hlocal & Hgen).
+      eapply name_bind_inv in Hgen as (envs1 & stins & Hins & Hgen).
+      eapply name_bind2_inv in Hgen as (envs2 & aux2 & st2 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst envs' aux st'.
+      eapply IH; eauto.
+      eapply fresh_insert_node_env_preserves_find; eauto.
+  Qed.
+
+  Lemma generate_node_scoped_env_find_current:
+    forall prefix n suffix envs aux,
+      generate_node_scoped_env (prefix ++ n :: suffix) = OK (envs, aux) ->
+      exists local_env rec st_pref st_local,
+        generate_local_env_for_node n st_pref = OK ((local_env, rec), st_local)
+        /\ find_node_env n.(n_name) envs = Some local_env.
+  Proof.
+    intros prefix n suffix envs aux Hgen.
+    unfold generate_node_scoped_env in Hgen.
+    destruct (generate_node_scoped_env' (prefix ++ n :: suffix) (Env.empty _) [] init_state)
+      as [[[envs' aux'] st']|] eqn:Hrun; try discriminate.
+    inversion Hgen; subst envs aux.
+    eapply generate_node_scoped_env'_split_node in Hrun
+      as (envs_pref & aux_pref & st_pref & local_env & rec & st_local
+          & envs_cur & st_cur & Hpref & Hlocal & Hins & Htail).
+    exists local_env, rec, st_pref, st_local.
+    split; [exact Hlocal|].
+    eapply generate_node_scoped_env'_preserves_find; eauto.
+    eapply fresh_insert_node_env_finds_new; eauto.
+  Qed.
+
+
+  (** Keys inserted by one successful list allocation are fresh with respect to
+      the initial environment.  This is the naming-layer fact later reused to
+      separate the current caller scope from the already-generated callee
+      signatures in the global accumulator proof. *)
+  Lemma fresh_map_list_keys_fresh_from_initial:
+    forall ks env st env' st' k,
+      fresh_map_list ks env st = OK (env', st') ->
+      In k ks ->
+      ~ Env.In k env.
+  Proof.
+    induction ks as [|k0 ks IH]; intros env st env' st' k Hmap Hin.
+    - inversion Hin.
+    - simpl in Hmap.
+      eapply name_bind_inv in Hmap as (env1 & st1 & Hstep & Hmap).
+      eapply name_bind_inv in Hmap as (env2 & st2 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst env' st'.
+      simpl in Hin.
+      destruct Hin as [Heq|Hin].
+      + subst k.
+        intro Hink.
+        unfold fresh_insert in Hstep.
+        apply Env.mem_1 in Hink.
+        rewrite Hink in Hstep.
+        discriminate.
+      + intro Hink.
+        eapply (IH env1 st1 env2 st2 k Hrec Hin).
+        unfold Env.In.
+        destruct Hink as (ty & Hfind).
+        exists ty.
+        eapply fresh_insert_preserves_find; eauto.
+  Qed.
+
+  (** One-node specialization of [fresh_map_list_keys_fresh_from_initial].
+
+      The generated caller scope only depends on the auxiliary clock/reset keys
+      and on the source interface/local keys inserted for the current node.
+      This lemma records that all of those keys are absent from the prefix
+      environment produced for earlier nodes. *)
+  Lemma generate_new_names_for_node_keys_fresh_from_initial:
+    forall n env st env' aux st' k,
+      generate_new_names_for_node n env st = OK ((env', aux), st') ->
+      In k (aux.(nclk) :: aux.(nrst) :: map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+      ~ Env.In k env.
+  Proof.
+    intros n env st env' aux st' k Hgen Hin.
+    unfold generate_new_names_for_node in Hgen.
+    eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+    eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
+    unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
+    unfold NMret in Hret. inversion Hret; subst env' aux st'.
+    eapply fresh_map_list_keys_fresh_from_initial; eauto.
+  Qed.
 
   (* Generate the shared environment and per-node auxiliary-name table for an
      entire NLustre global. *)
@@ -326,6 +662,12 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   Definition env_sec_bounded (st: ident) (env: Env.t ident) : Prop :=
     forall x ty,
       Env.find x env = Some ty ->
+      exists n, ty = Ids.gensym Ids.sec n /\ (n < st)%positive.
+
+  Definition node_scoped_env_sec_bounded (st: ident) (envs: node_scoped_env) : Prop :=
+    forall name local_env x ty,
+      find_node_env name envs = Some local_env ->
+      Env.find x local_env = Some ty ->
       exists n, ty = Ids.gensym Ids.sec n /\ (n < st)%positive.
 
   Definition aux_sec_names (aux: list node_aux_names) : Prop :=
@@ -449,6 +791,83 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       eapply IH; eauto.
   Qed.
 
+  Lemma fresh_map_list_state_monotone:
+    forall ks env st env' st',
+      fresh_map_list ks env st = OK (env', st') ->
+      (st <= st')%positive.
+  Proof.
+    induction ks as [|k ks IH]; intros env st env' st' Hmap.
+    - simpl in Hmap. inversion Hmap; subst. reflexivity.
+    - simpl in Hmap.
+      eapply name_bind_inv in Hmap as (env1 & st1 & Hstep & Hmap).
+      eapply name_bind_inv in Hmap as (env2 & st2 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst env' st'.
+      unfold fresh_insert in Hstep.
+      destruct (Env.mem k env) eqn:Hmem; try discriminate.
+      eapply name_bind_inv in Hstep as (v & stv & Hfresh & Hstep).
+      eapply name_bind_inv in Hstep as (e & ste & Hins & Hret').
+      unfold fresh_ident_gen in Hfresh. inversion Hfresh; subst v stv.
+      unfold insert_env, NMret in Hins. inversion Hins; subst e ste.
+      unfold NMret in Hret'. inversion Hret'; subst env1 st1.
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+      eapply IH; eauto.
+  Qed.
+
+  (** Values produced by [fresh_map_list] are either inherited from the
+      initial env or are genuine fresh [sec] gensyms allocated from the
+      current state onward.  Starting from the empty env this becomes the
+      lower-bound fact later used to separate the current node's caller scope
+      from signatures accumulated for earlier nodes. *)
+  Lemma fresh_map_list_find_old_or_ge_start:
+    forall ks env st env' st' x ty,
+      fresh_map_list ks env st = OK (env', st') ->
+      Env.find x env' = Some ty ->
+      (Env.find x env = Some ty)
+      \/ exists n, ty = Ids.gensym Ids.sec n /\ (st <= n < st')%positive.
+  Proof.
+    induction ks as [|k ks IH]; intros env st env' st' x ty Hmap Hfind.
+    - simpl in Hmap. inversion Hmap; subst. now left.
+    - simpl in Hmap.
+      eapply name_bind_inv in Hmap as (env1 & st1 & Hstep & Hmap).
+      eapply name_bind_inv in Hmap as (env2 & st2 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst env' st'.
+      unfold fresh_insert in Hstep.
+      destruct (Env.mem k env) eqn:Hmem; try discriminate.
+      eapply name_bind_inv in Hstep as (v & stv & Hfresh & Hstep).
+      eapply name_bind_inv in Hstep as (e & ste & Hins & Hret').
+      unfold fresh_ident_gen in Hfresh. inversion Hfresh; subst v stv.
+      unfold insert_env, NMret in Hins. inversion Hins; subst e ste.
+      unfold NMret in Hret'. inversion Hret'; subst env1 st1.
+      specialize (IH _ _ _ _ _ _ Hrec Hfind) as [Hold|Hnew].
+      + 
+        destruct (ident_eq_dec x k) as [Heq|Hneq].
+        * subst x. rewrite Env.gss in Hold. inversion Hold; subst ty.
+          assert (Hmono : (Pos.succ st <= st2)%positive).
+          { eapply fresh_map_list_state_monotone; eauto. }
+          right. exists st. split; [reflexivity|].
+          split; [reflexivity|].
+          eapply Pos.lt_le_trans; [apply Pos.lt_succ_diag_r|exact Hmono].
+        * rewrite Env.gso in Hold by exact Hneq.
+          now left.
+      + right.
+        destruct Hnew as (n & Hty & [Hlo Hhi]).
+        exists n. split; [exact Hty|].
+        split; [eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|exact Hlo]|exact Hhi].
+  Qed.
+
+  Lemma fresh_map_list_find_ge_start_from_empty:
+    forall ks st env' st' x ty,
+      fresh_map_list ks (Env.empty _) st = OK (env', st') ->
+      Env.find x env' = Some ty ->
+      exists n, ty = Ids.gensym Ids.sec n /\ (st <= n < st')%positive.
+  Proof.
+    intros ks st env' st' x ty Hmap Hfind.
+    destruct (fresh_map_list_find_old_or_ge_start _ _ _ _ _ _ _ Hmap Hfind)
+      as [Hold|Hnew].
+    - rewrite Env.gempty in Hold. discriminate.
+    - exact Hnew.
+  Qed.
+
   Lemma generate_new_names_for_node_env_props:
     forall n env st env' aux st',
       env_sec_bounded st env ->
@@ -474,6 +893,206 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     split; [exact Hbound'|].
     split; [exact Hnodup'|].
     exists st, (Pos.succ st). auto.
+  Qed.
+
+  Lemma generate_local_env_for_node_injective:
+    forall n st env aux st',
+      generate_local_env_for_node n st = OK ((env, aux), st') ->
+      env_injective env.
+  Proof.
+    intros n st env aux st' Hgen.
+    unfold generate_local_env_for_node in Hgen.
+    eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+    eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
+    unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
+    unfold NMret in Hret. inversion Hret; subst env aux st'.
+    destruct (fresh_map_list_env_props
+                ([gensym Ids.sec st; gensym Ids.sec (Pos.succ st)]
+                   ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                (Env.empty _) (Pos.succ (Pos.succ st)) env0 st3)
+      as [_ Hnodup].
+    - intros x ty Hfind. rewrite Env.gempty in Hfind. discriminate.
+    - constructor.
+    - exact Hmap.
+    - eapply env_values_nodup_injective; eauto.
+  Qed.
+
+  Lemma generate_local_env_for_node_state_monotone:
+    forall n st env aux st',
+      generate_local_env_for_node n st = OK ((env, aux), st') ->
+      (st <= st')%positive.
+  Proof.
+    intros n st env aux st' Hgen.
+    unfold generate_local_env_for_node in Hgen.
+    eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+    eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
+    unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
+    unfold NMret in Hret. inversion Hret; subst env aux st'.
+    eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+    eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+    eapply fresh_map_list_state_monotone; eauto.
+  Qed.
+
+  Lemma generate_local_env_for_node_sec_range:
+    forall n st env aux st' x ty,
+      generate_local_env_for_node n st = OK ((env, aux), st') ->
+      Env.find x env = Some ty ->
+      exists nsec, ty = Ids.gensym Ids.sec nsec.
+  Proof.
+    intros n st env aux st' x ty Hgen Hfind.
+    unfold generate_local_env_for_node in Hgen.
+    eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+    eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
+    unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
+    unfold NMret in Hret. inversion Hret; subst env aux st'.
+    pose proof
+      (fresh_map_list_find_ge_start_from_empty
+         ([gensym Ids.sec st; gensym Ids.sec (Pos.succ st)]
+            ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+         (Pos.succ (Pos.succ st)) env0 st3 x ty Hmap Hfind)
+      as (nsec & Hsec & _).
+    now exists nsec.
+  Qed.
+
+  Lemma generate_local_env_for_node_lower_bound:
+    forall n st env aux st' x ty,
+      generate_local_env_for_node n st = OK ((env, aux), st') ->
+      Env.find x env = Some ty ->
+      exists nsec, ty = Ids.gensym Ids.sec nsec /\ (Pos.succ (Pos.succ st) <= nsec)%positive.
+  Proof.
+    intros n st env aux st' x ty Hgen Hfind.
+    unfold generate_local_env_for_node in Hgen.
+    eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+    eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
+    unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
+    unfold NMret in Hret. inversion Hret; subst env aux st'.
+    pose proof
+      (fresh_map_list_find_ge_start_from_empty
+         ([gensym Ids.sec st; gensym Ids.sec (Pos.succ st)]
+            ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+         (Pos.succ (Pos.succ st)) env0 st3 x ty Hmap Hfind)
+      as (nsec & Hsec & [Hlo _]).
+    exists nsec. split; auto.
+  Qed.
+
+  Lemma generate_local_env_for_node_bounded:
+    forall n st env aux st',
+      generate_local_env_for_node n st = OK ((env, aux), st') ->
+      env_sec_bounded st' env.
+  Proof.
+    intros n st env aux st' Hgen x ty Hfind.
+    unfold generate_local_env_for_node in Hgen.
+    eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+    eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
+    unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
+    unfold NMret in Hret. inversion Hret; subst env aux st'.
+    pose proof
+      (fresh_map_list_find_ge_start_from_empty
+         ([gensym Ids.sec st; gensym Ids.sec (Pos.succ st)]
+            ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+         (Pos.succ (Pos.succ st)) env0 st3 x ty Hmap Hfind)
+      as (nsec & Hsec & [_ Hhi]).
+    exists nsec. split; auto.
+  Qed.
+
+  Lemma generate_local_env_for_node_fresh_from_bound:
+    forall n st env aux st' x ty i,
+      generate_local_env_for_node n st = OK ((env, aux), st') ->
+      Env.find x env = Some ty ->
+      (i < Pos.succ (Pos.succ st))%positive ->
+      ty <> Ids.gensym Ids.sec i.
+  Proof.
+    intros n st env aux st' x ty i Hgen Hfind Hlt Heq.
+    unfold generate_local_env_for_node in Hgen.
+    eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+    eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
+    unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
+    unfold NMret in Hret. inversion Hret; subst env aux st'.
+    pose proof
+      (fresh_map_list_find_ge_start_from_empty
+         ([gensym Ids.sec st; gensym Ids.sec (Pos.succ st)]
+            ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+         (Pos.succ (Pos.succ st)) env0 st3 x ty Hmap Hfind)
+      as (nsec & Hsec & [Hlo _]).
+    rewrite Heq in Hsec.
+    apply gensym_injective in Hsec as [_ Hidx]. subst nsec.
+    eapply Pos.lt_irrefl.
+    eapply Pos.lt_le_trans; eauto.
+  Qed.
+
+  Lemma generate_node_scoped_env'_state_monotone:
+    forall ns envs acc st envs' aux st',
+      generate_node_scoped_env' ns envs acc st = OK ((envs', aux), st') ->
+      (st <= st')%positive.
+  Proof.
+    induction ns as [|n ns IH]; intros envs acc st envs' aux st' Hgen.
+    - simpl in Hgen. inversion Hgen; subst. reflexivity.
+    - simpl in Hgen.
+      eapply name_bind2_inv in Hgen as (local_env & rec & st_local & Hlocal & Hgen).
+      eapply name_bind_inv in Hgen as (envs1 & stins & Hins & Hgen).
+      unfold fresh_insert_node_env in Hins.
+      destruct (Env.mem n.(n_name) envs) eqn:Hmem; try discriminate.
+      unfold insert_node_env, NMret in Hins. inversion Hins; subst envs1 stins.
+      eapply name_bind2_inv in Hgen as (envs2 & aux2 & st2 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst envs' aux st'.
+      eapply Pos.le_trans.
+      + eapply generate_local_env_for_node_state_monotone; eauto.
+      + eapply IH; eauto.
+  Qed.
+
+  Lemma generate_node_scoped_env'_bounded:
+    forall ns envs acc st envs' aux st',
+      node_scoped_env_sec_bounded st envs ->
+      generate_node_scoped_env' ns envs acc st = OK ((envs', aux), st') ->
+      node_scoped_env_sec_bounded st' envs'.
+  Proof.
+    induction ns as [|n ns IH]; intros envs acc st envs' aux st' Hbound Hgen.
+    - simpl in Hgen. inversion Hgen; subst.
+      intros name local_env x ty Hfindenv Hfind.
+      specialize (Hbound _ _ _ _ Hfindenv Hfind) as (k & Hk & Hlt).
+      exists k. split; auto.
+    - simpl in Hgen.
+      eapply name_bind2_inv in Hgen as (local_env & rec & st_local & Hlocal & Hgen).
+      eapply name_bind_inv in Hgen as (envs1 & stins & Hins & Hgen).
+      unfold fresh_insert_node_env in Hins.
+      destruct (Env.mem n.(n_name) envs) eqn:Hmem; try discriminate.
+      unfold insert_node_env, NMret in Hins. inversion Hins; subst envs1 stins.
+      eapply name_bind2_inv in Hgen as (envs2 & aux2 & st2 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst envs' aux st'.
+      assert (Hmono : (st <= st_local)%positive).
+      { eapply generate_local_env_for_node_state_monotone; eauto. }
+      assert (Hstepbound : node_scoped_env_sec_bounded st_local (Env.add n.(n_name) local_env envs)).
+      {
+        intros name local_env' x ty Hfindenv Hfind.
+        unfold find_node_env in Hfindenv.
+        rewrite Env.gsspec in Hfindenv.
+        destruct (ident_eq_dec name n.(n_name)) as [Heq|Hneq].
+        - subst name.
+          destruct (Env.Props.P.F.eq_dec n.(n_name) n.(n_name)) as [_|Hneqself]; [|contradiction].
+          simpl in Hfindenv. inversion Hfindenv; subst local_env'.
+          eapply generate_local_env_for_node_bounded in Hlocal as Hlocalbound.
+          specialize (Hlocalbound _ _ Hfind) as (k & Hk & Hlt).
+          exists k. split; auto.
+        - destruct (Env.Props.P.F.eq_dec name n.(n_name)) as [Heq'|_].
+          { contradiction. }
+          simpl in Hfindenv.
+          specialize (Hbound _ _ _ _ Hfindenv Hfind) as (k & Hk & Hlt).
+          exists k. split; auto.
+          eapply Pos.lt_le_trans; eauto.
+      }
+      eapply IH; eauto.
   Qed.
 
   Lemma generate_node_env_props':
