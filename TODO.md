@@ -60,6 +60,26 @@
 ## Structural cleanup after proofs stabilize
 
 - Update the SIF markdown docs to reflect the post-refactor module ownership and theorem flow.
+- Move the generic valuation-update agreement infrastructure out of
+  `SecNLusStcTranslation.v` into `SecTypes.v`, in particular:
+  - `upd_type`
+  - `upd_ident`
+  - `upd_types`
+  - `upd_idents`
+  - `upd_types_agree_on`
+  - `upd_idents_agree_on`
+- Move the remaining generic call-instantiation evaluation metatheory out of
+  `SecNLusStcTranslation.v`, in particular the `hm_ext_*` substitution/update
+  lemmas, into `SymTypes.v` / `SecTypes.v` where they match the underlying
+  symbolic-type operations.
+- Move the signature-instantiation completeness/correctness lemmas now being
+  added in `SecNLusStcTranslation.v` into the signature layer
+  (`SIFSignature.v` / future `SecSignature` ownership) once the final
+  call-preservation proof is stable, in particular:
+  - `subst_ident_constraint_complete_out`
+  - `subst_ident_constraints_complete_out`
+  - `subst_inp_ident_in_constraint_complete`
+  - `subst_ident_in_constraints_complete`
 
 - After each accepted proof step:
   - validate locally with direct `_CoqProject`-compatible `coqc`

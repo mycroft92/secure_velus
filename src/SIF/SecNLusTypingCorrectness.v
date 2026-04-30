@@ -19,6 +19,7 @@ From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF.NameInterface.
 From Velus Require Import SIF.SecNLusTyping.
 From Velus Require Import Clocks.
+From Coq Require Import Sorting.Permutation.
 From compcert Require Import common.Errors.
 
 Module Type SECNLUSTYPINGCORRECTNESS
@@ -336,6 +337,457 @@ Module Type SECNLUSTYPINGCORRECTNESS
         apply in_or_app. right.
         apply in_or_app. left.
         exact Hscope.
+  Qed.
+
+  Lemma subAll_rhs_in_local:
+    forall cns d st rhs,
+      In rhs (map snd (subAll cns d st)) ->
+      In rhs (map snd cns).
+  Proof.
+    induction cns as [|(lhs, rhs0) cns IH]; intros d st rhs Hin; simpl in *.
+    - contradiction.
+    - destruct rhs0 as [|d0 rhs0'].
+      + right. eapply IH; eauto.
+      + destruct rhs0' as [|r rhs0'].
+        * destruct (ident_eqb d0 d) eqn:Hd0.
+          -- right. eapply IH; eauto.
+          -- simpl in Hin. destruct Hin as [Heq|Hin].
+             ++ subst rhs. left. reflexivity.
+             ++ right. eapply IH; eauto.
+        * right. eapply IH; eauto.
+  Qed.
+
+  Lemma subAll_preserves_other_rhs_local:
+    forall cns d st d0,
+      d0 <> d ->
+      In (d0 :: nil) (map snd cns) ->
+      In (d0 :: nil) (map snd (subAll cns d st)).
+  Proof.
+    induction cns as [|[lhs rhs] cns IH]; intros d st d0 Hneq Hin; simpl in *.
+    - contradiction.
+    - destruct rhs as [|r rhs'].
+      + destruct Hin as [Heq|Hin].
+        * discriminate Heq.
+        * apply IH; auto.
+      + destruct rhs' as [|r' rhs''].
+        * simpl in Hin.
+          destruct Hin as [Heq|Hin].
+          -- inversion Heq; subst r.
+             destruct (ident_eqb d0 d) eqn:Hd.
+             ++ apply ident_eqb_eq in Hd. contradiction.
+             ++ simpl. left. reflexivity.
+          -- destruct (ident_eqb r d) eqn:Hrd.
+             ++ apply IH; auto.
+             ++ simpl. right. apply IH; auto.
+        * destruct Hin as [Heq|Hin].
+          -- discriminate Heq.
+          -- apply IH; auto.
+  Qed.
+
+  Lemma simplify_rhs_in:
+    forall cns ds rhs,
+      In rhs (map snd (SymTypes.simplify cns ds)) ->
+      In rhs (map snd cns).
+  Proof.
+    intros cns ds.
+    revert cns.
+    induction ds as [|d ds IH]; intros cs rhs Hin; simpl in *.
+    - exact Hin.
+    - destruct (findST cs d) as [st|] eqn:Hfind.
+      + specialize (IH (subAll cs d st) rhs Hin).
+        eapply subAll_rhs_in_local. exact IH.
+      + eapply (IH cs rhs). exact Hin.
+  Qed.
+
+  Lemma simplify_preserves_other_rhs:
+    forall cns ds d0,
+      (forall d, In d ds -> d0 <> d) ->
+      In (d0 :: nil) (map snd cns) ->
+      In (d0 :: nil) (map snd (SymTypes.simplify cns ds)).
+  Proof.
+    intros cns ds.
+    revert cns.
+    induction ds as [|d ds IH]; intros cs d0 Hneq Hin; simpl.
+    - exact Hin.
+    - destruct (findST cs d) as [st|] eqn:Hfind.
+      + eapply (IH (subAll cs d st) d0).
+        * intros d' Hin'. apply Hneq. now right.
+        * eapply subAll_preserves_other_rhs_local; eauto.
+          apply Hneq. now left.
+      + eapply (IH cs d0); eauto.
+        intros d' Hin'. apply Hneq. now right.
+  Qed.
+
+  Lemma get_mappings_In_here_local:
+    forall xs env tys ty,
+      get_mappings xs env = Some tys ->
+      In ty tys ->
+      exists x, In x xs /\ Env.find x env = Some ty.
+  Proof.
+    induction xs as [|x xs IH]; intros env tys ty Hmap Hin.
+    - simpl in Hmap. inversion Hmap; subst. inversion Hin.
+    - simpl in Hmap.
+      destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
+      destruct (get_mappings xs env) as [tys'|] eqn:Htail; try discriminate.
+      inversion Hmap; subst tys.
+      simpl in Hin.
+      destruct Hin as [Heq|Hin].
+      + subst ty. exists x. split; [left; reflexivity|exact Hfind].
+      + destruct (IH _ _ _ Htail Hin) as (x' & Hinx' & Hfind').
+        exists x'. split; [right; exact Hinx'|exact Hfind'].
+  Qed.
+
+  Lemma subAll_nodup_local:
+    forall cns d st,
+      NoDup (map snd cns) ->
+      NoDup (map snd (subAll cns d st)).
+  Proof.
+    induction cns as [|[lhs rhs] cns IH]; intros d st Hnd; simpl.
+    - constructor.
+    - apply NoDup_cons_iff in Hnd as [Hnin Hnd].
+      destruct rhs as [|r rhs'].
+      + exact (IH _ _ Hnd).
+      + destruct rhs' as [|r' rhs''].
+        * destruct (ident_eqb r d) eqn:Hr.
+          -- exact (IH _ _ Hnd).
+          -- apply NoDup_cons_iff. split.
+             ++ intro Hin.
+                apply Hnin.
+                eapply subAll_rhs_in_local.
+                exact Hin.
+             ++ exact (IH _ _ Hnd).
+        * exact (IH _ _ Hnd).
+  Qed.
+
+  Lemma subAll_singleton_rhs_local:
+    forall cns d st,
+      Forall (fun '(_, rhs) => length rhs = 1) cns ->
+      Forall (fun '(_, rhs) => length rhs = 1) (subAll cns d st).
+  Proof.
+    induction cns as [|[lhs rhs] cns IH]; intros d st Hlen; simpl.
+    - constructor.
+    - inversion Hlen as [|[lhs0 rhs0] cns0 Hhd Htl]; subst lhs0 rhs0 cns0.
+      destruct rhs as [|r rhs'].
+      + discriminate Hhd.
+      + destruct rhs' as [|r' rhs''].
+        * destruct (ident_eqb r d) eqn:Hr.
+          -- exact (IH _ _ Htl).
+          -- constructor.
+             ++ simpl. reflexivity.
+             ++ exact (IH _ _ Htl).
+        * discriminate Hhd.
+  Qed.
+
+  Lemma simplify_nodup_local:
+    forall cns ds,
+      NoDup (map snd cns) ->
+      NoDup (map snd (SymTypes.simplify cns ds)).
+  Proof.
+    intros cns ds.
+    revert cns.
+    induction ds as [|d ds IH]; intros cns Hnd; simpl.
+    - exact Hnd.
+    - destruct (findST cns d) as [st|] eqn:Hfind.
+      + apply IH. eapply subAll_nodup_local. exact Hnd.
+      + apply IH. exact Hnd.
+  Qed.
+
+  Lemma simplify_singleton_rhs_local:
+    forall cns ds,
+      Forall (fun '(_, rhs) => length rhs = 1) cns ->
+      Forall (fun '(_, rhs) => length rhs = 1) (SymTypes.simplify cns ds).
+  Proof.
+    intros cns ds.
+    revert cns.
+    induction ds as [|d ds IH]; intros cns Hlen; simpl.
+    - exact Hlen.
+    - destruct (findST cns d) as [st|] eqn:Hfind.
+      + apply IH. eapply subAll_singleton_rhs_local. exact Hlen.
+      + apply IH. exact Hlen.
+  Qed.
+
+  Lemma get_mappings_perm:
+    forall xs ys env txs tys,
+      NoDup xs ->
+      Permutation xs ys ->
+      NAMEGEN.env_injective env ->
+      get_mappings xs env = Some txs ->
+      get_mappings ys env = Some tys ->
+      Permutation txs tys.
+  Proof.
+    intros xs ys env txs tys Hnd Hperm Hinj Hxs Hys.
+    apply NoDup_Permutation.
+    - eapply SECNLUSTYPING.get_mappings_nodup with (xs := xs) (tys := txs); eauto.
+    - eapply SECNLUSTYPING.get_mappings_nodup with (xs := ys) (tys := tys); eauto.
+      eapply Permutation_NoDup; eauto.
+    - intros ty; split; intro Hin.
+      + destruct (get_mappings_In_here_local _ _ _ _ Hxs Hin) as (x & Hinx & Hfind).
+        assert (Hiny : In x ys).
+        { eapply Permutation_in; eauto. }
+        destruct (get_mappings_in _ _ _ _ Hiny Hys) as (ty' & Hfind' & Hin').
+        rewrite Hfind in Hfind'. inversion Hfind'. subst ty'. exact Hin'.
+      + destruct (get_mappings_In_here_local _ _ _ _ Hys Hin) as (x & Hinx & Hfind).
+        assert (Hiny : In x xs).
+        { eapply Permutation_in; [symmetry; eauto|exact Hinx]. }
+        destruct (get_mappings_in _ _ _ _ Hiny Hxs) as (ty' & Hfind' & Hin').
+        rewrite Hfind in Hfind'. inversion Hfind'. subst ty'. exact Hin'.
+  Qed.
+
+  Lemma generate_node_sig_inv_local:
+    forall G n env aux_names sig,
+      SECNLUSTYPING.generate_node_sig G n env aux_names = OK sig ->
+      exists clk_id rst_id clk_type rst_type inp out locals nconst st_n,
+        get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id)
+        /\ Env.find clk_id env = Some clk_type
+        /\ Env.find rst_id env = Some rst_type
+        /\ get_mappings_from_node n.(n_in) env = Some inp
+        /\ get_mappings_from_node n.(n_out) env = Some out
+        /\ get_mappings_from_node n.(n_vars) env = Some locals
+        /\ generate_eqns_constraints G env clk_type rst_type n.(n_eqs) init_state = OK (nconst, st_n)
+        /\ sig = {| s_name := n.(n_name);
+                    s_in := inp;
+                    s_out := out;
+                    s_reset := rst_type;
+                    s_clk := clk_type;
+                    s_constraints := SymTypes.simplify nconst locals |}.
+  Proof.
+    intros G n env aux_names sig Hsig.
+    unfold SECNLUSTYPING.generate_node_sig in Hsig.
+    lazymatch type of Hsig with
+    | context [match ?m with | OK _ => _ | Error _ => _ end = _] =>
+        remember m as gen_res eqn:Hgen
+    end.
+    destruct gen_res as [[packed st_res]|]; try discriminate.
+    destruct packed as [packed env0].
+    destruct packed as [packed packed_constraints].
+    destruct packed as [packed packed_clk_type].
+    destruct packed as [packed packed_rst_type].
+    destruct packed as [packed packed_out].
+    destruct packed as [name packed_inp].
+    simpl in Hsig.
+    inversion Hsig; clear Hsig; subst.
+    symmetry in Hgen.
+    eapply sec_bind2_inv in Hgen as (clk_id & rst_id & st_aux & Haux & Hgen).
+    eapply sec_bind_inv in Hgen as (clk_type & st_clk & Hclk & Hgen).
+    eapply sec_bind_inv in Hgen as (rst_type & st_rst & Hrst & Hgen).
+    eapply sec_bind_inv in Hgen as (inp & st_inp & Hinp & Hgen).
+    eapply sec_bind_inv in Hgen as (out & st_out & Hout & Hgen).
+    eapply sec_bind_inv in Hgen as (locals & st_locals & Hlocals & Hgen).
+    eapply sec_bind_inv in Hgen as (nconst & st_n & Hnconst & Hret).
+    unfold option_to_sec in Haux.
+    destruct (get_node_aux (n.(n_name)) aux_names) as [[clk_id0 rst_id0]|] eqn:Haux0; try discriminate.
+    inversion Haux; subst clk_id0 rst_id0 st_aux.
+    unfold option_to_sec in Hclk.
+    destruct (Env.find clk_id env) as [clk_type0|] eqn:Hclk0; try discriminate.
+    inversion Hclk; subst clk_type0 st_clk.
+    unfold option_to_sec in Hrst.
+    destruct (Env.find rst_id env) as [rst_type0|] eqn:Hrst0; try discriminate.
+    inversion Hrst; subst rst_type0 st_rst.
+    unfold option_to_sec in Hinp.
+    destruct (get_mappings_from_node (n.(n_in)) env) as [inp0|] eqn:Hinp0; try discriminate.
+    inversion Hinp; subst inp0 st_inp.
+    unfold option_to_sec in Hout.
+    destruct (get_mappings_from_node (n.(n_out)) env) as [out0|] eqn:Hout0; try discriminate.
+    inversion Hout; subst out0 st_out.
+    unfold option_to_sec in Hlocals.
+    destruct (get_mappings_from_node (n.(n_vars)) env) as [locals0|] eqn:Hlocals0; try discriminate.
+    inversion Hlocals; subst locals0 st_locals.
+    unfold ret in Hret. inversion Hret; subst.
+    exists clk_id, rst_id, packed_clk_type, packed_rst_type, packed_inp, packed_out, locals, nconst, st_res.
+    repeat split; eauto.
+  Qed.
+
+  (** Generated source signatures are structurally good.
+
+      Beyond scopedness, later call-preservation arguments need the stronger
+      fact that a generated NLustre signature keeps exactly one visible
+      defining constraint per output after simplifying away locals.  This is
+      the source-side structural invariant behind the final call bridge. *)
+  Theorem generate_node_sig_good_from_local_env:
+    forall G1 P n env rec aux_names st st'
+           clk_type rst_type inp out locals raw st_n,
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      get_node_aux n.(n_name) aux_names = Some (rec.(nclk), rec.(nrst)) ->
+      secglobal_scoped G1 ->
+      wc_node P n ->
+      Env.find rec.(nclk) env = Some clk_type ->
+      Env.find rec.(nrst) env = Some rst_type ->
+      get_mappings_from_node n.(n_in) env = Some inp ->
+      get_mappings_from_node n.(n_out) env = Some out ->
+      get_mappings_from_node n.(n_vars) env = Some locals ->
+      generate_eqns_constraints G1 env clk_type rst_type n.(n_eqs) init_state = OK (raw, st_n) ->
+      signature_good
+        {| s_name := n.(n_name);
+           s_in := inp;
+           s_out := out;
+           s_reset := rst_type;
+           s_clk := clk_type;
+           s_constraints := SymTypes.simplify raw locals |}.
+  Proof.
+    intros G1 P n env rec aux_names st st'
+           clk_type rst_type inp out locals raw st_n
+           Hlocal Hauxmatch Hglobsc Hwc Hclk0 Hrst0 Hinp0 Hout0 Hlocals0 Hraw.
+    assert (Hsig :
+              SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK
+                {| s_name := n.(n_name);
+                   s_in := inp;
+                   s_out := out;
+                   s_reset := rst_type;
+                   s_clk := clk_type;
+                   s_constraints := SymTypes.simplify raw locals |}).
+    {
+      unfold SECNLUSTYPING.generate_node_sig.
+      unfold bind, bind2, option_to_sec, ret.
+      rewrite Hauxmatch. simpl.
+      rewrite Hclk0. simpl.
+      rewrite Hrst0. simpl.
+      rewrite Hinp0. simpl.
+      rewrite Hout0. simpl.
+      rewrite Hlocals0. simpl.
+      rewrite Hraw. simpl.
+      reflexivity.
+    }
+    assert (Hinj : SECNLUSTYPING.env_injective env).
+    { eapply NAMEGEN.generate_local_env_for_node_injective; eauto. }
+    pose proof
+      (SECNLUSTYPING.generate_node_sig_scoped
+         G1 P n env aux_names
+         {| s_name := n.(n_name);
+            s_in := inp;
+            s_out := out;
+            s_reset := rst_type;
+            s_clk := clk_type;
+            s_constraints := SymTypes.simplify raw locals |}
+         Hglobsc Hinj Hwc Hsig)
+      as Hsigscoped.
+    pose proof
+      (generated_node_simplify_ready_from_local_env
+         G1 n
+         {| s_name := n.(n_name);
+            s_in := inp;
+            s_out := out;
+            s_reset := rst_type;
+            s_clk := clk_type;
+            s_constraints := SymTypes.simplify raw locals |}
+         env rec aux_names st st'
+         clk_type rst_type inp out locals raw st_n
+         Hlocal Hsig Hclk0 Hrst0 Hinp0 Hout0 Hlocals0 Hraw eq_refl)
+      as Hready.
+    destruct Hready as [Hwfraw Hlocalsdisj].
+    assert (Hexshape :
+              exists tys,
+                get_mappings (vars_defined n.(n_eqs)) env = Some tys /\
+                map snd raw = map (fun ty => ty :: nil) tys /\
+                wf_constraints raw).
+    {
+      eapply SECNLUSTYPING.generate_eqns_constraints_shape
+        with (eqs := n.(n_eqs)) (cns := raw) (st := init_state) (st' := st_n).
+      - exact Hinj.
+      - apply NoDup_var_defined_n_eqs.
+      - exact Hraw.
+    }
+    destruct Hexshape as (tys & Hmapdefs & Hsndraw & _).
+    assert (Hmapvarsout :
+              get_mappings (map fst (n.(n_vars) ++ n.(n_out))) env = Some (locals ++ out)).
+    {
+      rewrite map_app.
+      eapply get_mappings_app.
+      - eapply get_mappings_from_node_eq; exact Hlocals0.
+      - eapply get_mappings_from_node_eq; exact Hout0.
+    }
+    assert (Hnddefs : NoDup (vars_defined n.(n_eqs))).
+    { apply NoDup_var_defined_n_eqs. }
+    assert (Hpermtys : Permutation tys (locals ++ out)).
+    {
+      eapply get_mappings_perm
+        with (xs := vars_defined n.(n_eqs))
+             (ys := map fst (n.(n_vars) ++ n.(n_out)))
+             (env := env)
+             (txs := tys)
+             (tys := locals ++ out).
+      - exact Hnddefs.
+      - exact n.(n_defd).
+      - exact Hinj.
+      - exact Hmapdefs.
+      - exact Hmapvarsout.
+    }
+    assert (Hpermraw : Permutation (map snd raw) (map (fun ty => ty :: nil) (locals ++ out))).
+    {
+      rewrite Hsndraw.
+      eapply Permutation_map.
+      exact Hpermtys.
+    }
+    assert (Hwf_simpl : wf_constraints (SymTypes.simplify raw locals)).
+    {
+      split.
+      - eapply simplify_nodup_local.
+        exact (proj1 Hwfraw).
+      - eapply simplify_singleton_rhs_local.
+        exact (proj2 Hwfraw).
+    }
+    unfold signature_good; cbn.
+    split.
+    - simpl. exact Hwf_simpl.
+    - apply NoDup_Permutation.
+      + exact (proj1 Hwf_simpl).
+      + assert (Hndall : NoDup (locals ++ out)).
+        {
+          eapply NoDup_map_inv with (f := fun ty => ty :: nil).
+          eapply Permutation_NoDup; [exact Hpermraw|].
+          exact (proj1 Hwfraw).
+        }
+        apply nodup_singleton_map.
+        eapply NoDup_app_r. exact Hndall.
+      + intros rhs; split; intro Hin.
+        * pose proof (simplify_rhs_in _ _ _ Hin) as Hinraw.
+          eapply Permutation_in in Hinraw; [|exact Hpermraw].
+          apply in_map_iff in Hinraw as (ty & Hrhs & Hinall).
+          subst rhs.
+          apply in_app_iff in Hinall.
+          destruct Hinall as [Hinlocal|Hinout].
+          -- exfalso.
+             assert (Hfindrhs : exists stc, findST (SymTypes.simplify raw locals) ty = Some stc).
+             { eapply findST_of_rhs_in. exact Hin. }
+             destruct Hfindrhs as (stc & Hfindrhs).
+             apply find_correct in Hfindrhs.
+             unfold signature_scoped, constraints_scoped in Hsigscoped.
+             rewrite Forall_forall in Hsigscoped.
+             specialize (Hsigscoped _ Hfindrhs).
+             assert (Hinscope : In ty (signature_scope
+                               {| s_name := n.(n_name);
+                                  s_in := inp;
+                                  s_out := out;
+                                  s_reset := rst_type;
+                                  s_clk := clk_type;
+                                  s_constraints := SymTypes.simplify raw locals |})).
+             { eapply constraint_scoped_rhs with (lhs := stc) (rhs := ty :: nil); eauto.
+               simpl. now left. }
+             exact (Hlocalsdisj ty Hinlocal Hinscope).
+          -- apply in_map_iff. exists ty. split; [reflexivity|exact Hinout].
+        * apply in_map_iff in Hin as (ty & Hrhs & Hinout).
+          subst rhs.
+          assert (Hinsigscope : In ty (signature_scope
+                                {| s_name := n.(n_name);
+                                   s_in := inp;
+                                   s_out := out;
+                                   s_reset := rst_type;
+                                   s_clk := clk_type;
+                                   s_constraints := SymTypes.simplify raw locals |})).
+          { unfold signature_scope.
+            apply in_or_app. right.
+            apply in_or_app. left.
+            exact Hinout. }
+          assert (Hinraw : In (ty :: nil) (map snd raw)).
+          {
+            eapply Permutation_in; [symmetry; exact Hpermraw|].
+            apply in_map_iff. exists ty. split; [reflexivity|].
+            apply in_or_app. right. exact Hinout.
+          }
+          eapply simplify_preserves_other_rhs.
+          -- intros d Hd Htyeq.
+             subst d.
+             exact (Hlocalsdisj ty Hd Hinsigscope).
+          -- exact Hinraw.
   Qed.
 
   (** Node-scoped source signature generation.

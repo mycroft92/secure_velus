@@ -9,10 +9,17 @@ Current proof state:
 Remaining proof work:
 
 - discharge
-  `successful_call_substitutions_fresh`
-  and
   `signatures_preserved_calls`
   from the final theorem stack
+- `successful_call_substitutions_fresh` is already gone from the public theorem
+  path; the remaining blocker is the semantic call bridge itself
+- the current call-instantiation metatheory now includes:
+  - output-substitution correctness/completeness
+  - input-substitution completeness
+  - reverse-order valuation reconstructions (`upd_types_rev`, `upd_idents_rev`)
+- the next step is to relate those reverse-order reconstructions back to the
+  forward `inst_valuation` under the generated freshness/distinctness facts,
+  then use that to prove the theorem replacing `signatures_preserved_calls`
 - the flat shared-variable env in `NameInterface.v` is now identified as too
   strong: two different nodes may legally reuse the same raw variable name, so
   the naming layer must move to a node-scoped env-of-envs before the final
