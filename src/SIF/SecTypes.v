@@ -1,3 +1,15 @@
+(* Generic symbolic-type and lattice-mapping metatheory.
+
+   This file is the common lattice-mapping substrate beneath the signature layer and
+   the NLustre/STC translation proof.  It owns:
+   - scopedness notions for symbolic constraints,
+   - agreement of lattice mappings on a chosen scope,
+   - weak preservation [preserves_on],
+   - and the generic update lemmas used later by call instantiation.
+
+   The final lookup theorem in [SecNLusStcTranslation] depends on this file
+   through [preserves_on_concat_scoped], [listSatisfiable_ext], and the update
+   agreement lemmas reused by [SIFSignature]. *)
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.
 (*From Coq Require Import Logic.Classical_Prop.*)
@@ -9,7 +21,7 @@ Require Import Coq.Program.Equality.
 Import List.ListNotations.
 
 (* Syntactic well-formedness of generated constraints.
-   This notion does not depend on the lattice semantics, so it is exposed at
+   This notion does not depend on the lattice-mapping interpretation, so it is exposed at
    the file level for the typing/signature developments. *)
 Definition wf_constraints (cs: list SymTypes.constraint) : Prop :=
   NoDup (map snd cs) /\ Forall (fun '(_, x) => length x = 1) cs.
@@ -765,10 +777,10 @@ Module Type SECTYPES(Import Lat: Lattice).
 
   Hint Resolve find_correct.
 
-  (** Extending a valuation with one eliminated variable.
+  (** Extending a lattice mapping with one eliminated variable.
 
       When [d] is eliminated using its defining symbolic type [st], the
-      reconstructed valuation keeps every other identifier unchanged and maps
+      reconstructed lattice mapping keeps every other identifier unchanged and maps
       [d] to the interpretation of [st] with [d] removed. *)
   Definition complete_subst (dlt: ident -> Lat.t) (d: ident) (st: ST)
     : ident -> Lat.t :=
@@ -1261,8 +1273,8 @@ Module Type SECTYPES(Import Lat: Lattice).
   Definition st_scoped (scope: list ident) (st: ST) : Prop :=
     forall x, In x st -> In x scope.
 
-  (* Agreement of two valuations on a chosen scope.  This is the generic
-     semantic relation underlying the later translation-preservation theorems,
+  (* Agreement of two lattice mappings on a chosen scope.  This is the generic
+     relation underlying the later translation-preservation theorems,
      so it belongs with the symbolic-type metatheory rather than any specific
      source/target phase bridge. *)
   Definition agree_on (xs: list ident) (dlt1 dlt2: ident -> Lat.t) : Prop :=
@@ -1288,8 +1300,8 @@ Module Type SECTYPES(Import Lat: Lattice).
   Qed.
 
   (* Weak preservation of one constraint list by another under a chosen shared
-     scope.  This is generic symbolic-type metatheory: the only semantic
-     ingredients are valuation agreement and constraint satisfiability. *)
+     scope.  This is generic symbolic-type metatheory: the only
+     lattice-mapping ingredients are agreement and constraint satisfiability. *)
   Definition preserves_on (xs: list ident) (cns1 cns2: list constraint) : Prop :=
     forall dlt,
       listSatisfiable dlt cns1 ->
@@ -1517,7 +1529,7 @@ Module Type SECTYPES(Import Lat: Lattice).
     apply Hagree, Hincl, Hin.
   Qed.
 
-  (* Pointwise valuation updates used by the call-instantiation metatheory.
+  (* Pointwise lattice-mapping updates used by the call-instantiation metatheory.
      They are generic symbolic-type operations, so the reusable definitions and
      their basic agreement lemmas live here. *)
   Definition upd_type (dlt: ident -> Lat.t) (x: ident) (st: ST) : ident -> Lat.t :=

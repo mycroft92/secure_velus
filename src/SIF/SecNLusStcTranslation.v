@@ -2,7 +2,7 @@
 
      This file proves a deliberately weak preservation statement.
 
-     - We do not require the NLustre and STC valuations to coincide everywhere.
+     - We do not require the NLustre and STC lattice mappings to coincide everywhere.
      - We only require agreement on a chosen list of shared variables.
      - STC is allowed to introduce additional auxiliary variables, in particular
        reset-instance variables created during the STC translation.
@@ -99,7 +99,7 @@ Module Type SECNLUSSTCTRANSLATION
       by translation. *)
   Section SECEQNPRES.
 
-    (** Generic valuation agreement now lives in [SecTypes].  This file keeps
+    (** Generic lattice-mapping agreement now lives in [SecTypes].  This file keeps
         only the weak preservation relation built on top of that shared notion. *)
 
     (** Signature-interface freshness and call-instantiation side conditions
@@ -1353,7 +1353,7 @@ Module Type SECNLUSSTCTRANSLATION
          signatures, and [found_system_preserv_scoped_global] is the
          lookup-based global corollary obtained from [find_system_translate].
       4. The bridge layer reconstructs per-node
-         [Signature_head_consistent] from two explicit semantic ingredients:
+         [Signature_head_consistent] from two explicit lattice-mapping ingredients:
          simplification completeness for generated signatures, and call-time
          preservation derived from [signatures_preserved].
       5. [Signature_consistent_cons] and the generated-signature induction then
@@ -2634,7 +2634,7 @@ Module Type SECNLUSSTCTRANSLATION
       Qed.
 
       (** The remaining gap to a fully proved signature-step theorem is not in
-        the global induction; it is in the semantic bridge from generated raw
+        the global induction; it is in the lattice-mapping bridge from generated raw
         node/system constraints to the simplified modular signatures used at
         call sites.
 
@@ -2644,7 +2644,7 @@ Module Type SECNLUSSTCTRANSLATION
           typically from [generated_node_preserv_scoped] plus a completeness result
           for [SymTypes.simplify];
         - [Signature_call_preserves] must follow from
-          [signatures_preserved], via a semantic correctness theorem for
+          [signatures_preserved], via a lattice-mapping correctness theorem for
           [generate_constraints] under consistent fresh-name instantiations.
 
         Once these two bridge lemmas are available, the abstract

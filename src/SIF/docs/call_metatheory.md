@@ -11,7 +11,8 @@ mentions either of the earlier call-side bridge assumptions:
 - `successful_call_substitutions_fresh`
 - `signatures_preserved_calls`
 
-Both are now discharged internally.
+Both are now discharged internally.  This note remains as the explanation of
+why the call bridge needed more structure than plain `signature_scoped`.
 
 ## Why These Assumptions Are Harder
 
@@ -22,7 +23,7 @@ The scopedness assumptions are structural:
 
 Those facts follow from local typing/scoping theorems plus list induction.
 
-The call-side assumptions are harder because they are semantic instantiation
+The call-side assumptions are harder because they are lattice-mapping instantiation
 facts. They quantify over future uses of a generated signature at call sites.
 
 ### 1. `successful_call_substitutions_fresh`
@@ -43,7 +44,7 @@ So this is not just a local typing lemma. It depends on:
 - `NameInterface.v`
 - the call cases in `SecNLusTyping.v`
 - the call cases in `SecSTCTyping.v`
-- the semantic interface of `generate_constraints`
+- the lattice-mapping interface of `generate_constraints`
 
 ### Fallback: strengthen `NameInterface`
 
@@ -68,7 +69,7 @@ too weak and why the proof migrated to the node-scoped environment design.
 
 ### 2. `signatures_preserved_calls`
 
-The current definition in `SecNLusStcTranslation.v` is:
+The historical definition in `SecNLusStcTranslation.v` was:
 
 ```coq
 Definition signatures_preserved_calls : Prop :=
@@ -79,14 +80,13 @@ Definition signatures_preserved_calls : Prop :=
     Signature_call_preserves nsig ssig.
 ```
 
-This assumption says that if source and target signatures satisfy
-`signatures_preserved`, then that preservation survives call-time
+It asked for source/target signature preservation to survive call-time
 instantiation.
 
 Semantically, the proof must:
 
 1. start from satisfiability of an instantiated NLustre call block
-2. reconstruct a valuation on the callee formal signature variables
+2. reconstruct a lattice mapping on the callee formal signature variables
 3. use `signatures_preserved` on the formal signature constraints
 4. transport the result back to the instantiated STC call block
 
@@ -98,7 +98,7 @@ scopedness result.
 
 ### Why the current statement is too weak
 
-The issue is not with the semantic goal `Signature_call_preserves`. The issue
+The issue is not with the lattice-mapping goal `Signature_call_preserves`. The issue
 is that the current premises only give `signature_scoped`, which controls
 *which identifiers may appear* in the stored signature constraints.
 
@@ -109,7 +109,7 @@ because `generate_constraints` does more than just substitute formal variables:
 2. then it rebuilds the final concrete call block by looking up each caller
    output through `findST`, in caller output order.
 
-To justify that final reorder step semantically, the stored signature needs a
+To justify that final reorder step at the lattice-mapping level, the stored signature needs a
 stronger structural invariant such as:
 
 - singleton RHS targets,
@@ -120,7 +120,7 @@ Those are exactly the kinds of facts packaged by `signature_good` for generated
 signatures. A merely scoped signature can still be malformed in ways that
 break the replay argument, even though generated signatures never are.
 
-So the honest end state is:
+The honest end state was:
 
 - keep the *public* theorem stack assumption-free;
 - strengthen the *internal* call bridge with the generated-signature
@@ -161,18 +161,12 @@ to derive:
 
 - `Signature_call_preserves`
 
-This is the theorem that should replace `signatures_preserved_calls`.
+This is the theorem shape that replaced `signatures_preserved_calls`.
 
 ### Step 4. Inline the generated-call bridge into the global theorem stack
 
-Once the generated-call bridge is proved, the final theorem family should no
-longer
-mention:
-
-- `signatures_preserved_calls`
-
-and should rebuild the call bridge internally inside the generated-global
-proofs.
+The final theorem family now rebuilds the call bridge internally inside the
+generated-global proofs.
 
 ## Expected Shape Of The Proof
 
@@ -180,7 +174,8 @@ proofs.
 
 - show that `generate_constraints` is formal-signature instantiation plus the
   caller-facing reshaping already introduced in the signature layer
-- reconstruct a valuation on formal variables from the caller valuation
+- reconstruct a lattice mapping on formal variables from the caller's lattice
+  mapping
 - apply `signatures_preserved`
 - push the result back to the caller-instantiated target constraints
 
@@ -202,7 +197,7 @@ separation properties, the intended repair is to strengthen
 `NameInterface.v`, not to leave a broad call-side assumption in the final
 theorem stack.
 
-The same principle applies to the last semantic bridge:
+The same principle applies to the last lattice-mapping bridge:
 
 - if `signatures_preserved_calls` is too weak in full generality,
 - strengthen the *internal* proof to use the real generated-signature

@@ -2,13 +2,13 @@
 
 ## Role
 
-`SecNLusStcTranslation.v` is the comparison layer between the NLustre and STC
-security typings.  It states and proves the weakened preservation theorem used
-by the thesis development.
+`SecNLusStcTranslation.v` is the cross-phase comparison layer between the
+NLustre and STC security typings.  It states and proves the weakened
+preservation theorem used by the thesis development.
 
-## Main Semantic Notions
+## Main Lattice-Mapping Notions
 
-- `agree_on`: two valuations coincide on the variables we care about.
+- `agree_on`: two lattice mappings coincide on the variables we care about.
 - `preserves_on`: source satisfiability transfers to target satisfiability while
   preserving `agree_on`.
 - `signatures_preserved`: signature-level version of the same idea.
@@ -52,15 +52,33 @@ The equation-list proof works by:
   `translated_reset_key_in_extras`,
   `translated_reset_key_fresh`.
 - The generated-signature bridge lives here:
-  `generated_signatures_preserved_from_simplify_bridge_scoped`.
+  `generated_signatures_preserved_from_simplify_bridge_local_env`.
 - The global consistency and program theorems also live here:
+  `generate_all_signatures_consistent_scoped'`,
   `generate_all_signatures_consistent`,
-  `generated_program_preserv_global`,
   `generated_program_signatures_preserved_global`.
   The last corollary is now lookup-based over the generated globals, so it no
   longer reruns per-node signature generation in its statement.
 
-## Current Proof Boundary
+## Final Theorem Flow
+
+The important theorem chain is now:
+
+1. `eqn_preserv`
+2. `eqns_preserv_scoped`
+3. `node_preserv_scoped`
+4. `generated_signatures_preserved_from_simplify_bridge_local_env`
+5. `generate_all_signatures_consistent_scoped'`
+6. `generate_all_signatures_consistent`
+7. `generated_program_signatures_preserved_global`
+
+`Signature_call_preserves` is proved internally in this file from:
+
+- `signature_good` and call-instantiation lemmas from `SIFSignature.v`
+- source-side generated-signature facts from `SecNLusTypingCorrectness.v`
+- target-side reset/scopedness facts from `SecStcTypingCorrectness.v`
+
+## Proof Boundary
 
 This file now owns only cross-phase results.  Source-local and target-local
 correctness facts live in:
@@ -68,8 +86,9 @@ correctness facts live in:
 - `SecNLusTypingCorrectness.v`
 - `SecStcTypingCorrectness.v`
 
-The remaining proof work is to eliminate the final theorem assumptions coming
-from call instantiation.
+The public theorem stack is now free of the old call-side assumptions.  The
+remaining work around this file is structural cleanup and documentation, not
+another lattice-mapping bridge.
 
 ## Relation to the Paper
 

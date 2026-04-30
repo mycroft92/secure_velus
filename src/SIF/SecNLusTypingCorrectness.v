@@ -1,3 +1,14 @@
+(* Source-local correctness facts for generated NLustre signatures.
+
+   This file owns the NLustre facts that are needed later by the
+   cross-phase translation proof but do not themselves mention STC:
+   - naming/range/injectivity consequences of [NameInterface],
+   - generated source-signature structural goodness,
+   - duplicate-freedom of the visible source interface scope,
+   - caller-scope freshness facts for generated source accumulators.
+
+   These theorems are the source-side discharge lemmas for the final
+   [Signature_head_consistent] proof in [SecNLusStcTranslation]. *)
 From Coq Require Import List.
 Import List.ListNotations.
 From Velus Require Import Common.
@@ -992,7 +1003,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
 
   (** Generated source signature interfaces are duplicate free.
 
-      The semantic call bridge only updates valuations on the visible
+      The call bridge only updates lattice mappings on the visible
       signature interface.  To show that those updates behave as intended, we
       need the source-side fact that the generated interface variables are
       pairwise distinct.  This comes entirely from the NLustre node-interface

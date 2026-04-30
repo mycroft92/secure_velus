@@ -2,11 +2,14 @@
 
 ## Goal
 
-Eliminate the final two call-side assumptions from the theorem stack in
-`SecNLusStcTranslation.v`:
+This document records the migration plan that was carried out to eliminate the
+call-side assumptions from the theorem stack in `SecNLusStcTranslation.v`:
 
 - `successful_call_substitutions_fresh`
 - `signatures_preserved_calls`
+
+Current status: completed.  The public theorem stack no longer mentions either
+assumption.
 
 ## Diagnosis
 
@@ -29,7 +32,7 @@ target signatures.
 This turns freshness into a local side condition of one call-preservation
 obligation instead of a separate global theorem assumption.
 
-### 2. Simplify the remaining semantic bridge
+### 2. Simplify the remaining lattice-mapping bridge
 
 After step 1, redefine `signatures_preserved_calls` so it no longer depends on
 `successful_call_substitutions_fresh`.
@@ -82,12 +85,13 @@ Once that pivot is in place, prove caller/callee separation from:
 Only if that still proves insufficient should the `IDS`/`Ident` namespace
 setup itself be strengthened further.
 
-## Expected End State
+## End State
 
-The final theorem stack should mention neither:
+The final theorem stack now mentions neither:
 
 - `successful_call_substitutions_fresh`
 - `signatures_preserved_calls`
 
-Instead, freshness should be proved locally where `EqApp`/`TcCall` preservation
-actually uses it.
+Freshness is proved locally where `EqApp`/`TcCall` preservation uses it, and
+the final call bridge is reconstructed internally from generated-signature
+facts.

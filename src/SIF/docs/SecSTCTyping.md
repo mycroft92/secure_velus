@@ -33,7 +33,20 @@ The structural flow mirrors the source side:
 - one-transition-constraint shape/scopedness lemmas,
 - list-level theorems for translated systems,
 - `generate_sys_signature_scoped`,
-- `generate_all_sys_signatures_scoped`.
+- `generate_all_sys_signatures_scoped`,
+- `generate_sys_signature_scoped_env`,
+- `generate_all_sys_signatures_scoped_env`.
+
+## Relation To The Final Theorem
+
+This file supplies the target-side generators used in the final theorem stack:
+
+1. `generate_sys_signature_scoped` is the local STC scopedness theorem.
+2. `generate_all_sys_signatures_scoped_env` builds the generated target global
+   from the shared node-scoped naming data.
+3. `SecStcTypingCorrectness.v` strengthens these results with reset-env and
+   namespace facts that the translation proof uses when proving
+   `Signature_head_consistent`.
 
 ## Relation to the Paper
 
