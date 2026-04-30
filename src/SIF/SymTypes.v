@@ -13,7 +13,7 @@ From Coq Require Import Recdef.
 Definition ST := list ident.
 Definition constraint := (ST*ST)%type.
 
-(* Definition wf_constraint (c: constraint): Prop :=  
+(* Definition wf_constraint (c: constraint): Prop :=
   match c with
   | (s1,s2) => (List.length s2 = 1) /\ sortedNoDup s1
   end.
@@ -29,12 +29,12 @@ Lemma my_set_mem_correct: forall a st, my_set_mem a st = true <-> In a st.
 Proof.
     intros. generalize dependent a. induction st; split; intros; auto.
     - inversion H.
-    - simpl in H. destruct (ident_eqb a a0) eqn:E. 
+    - simpl in H. destruct (ident_eqb a a0) eqn:E.
         * apply (ident_eqb_eq) in E. subst. simpl. left. auto.
-        * apply (ident_eqb_neq) in E. simpl. right. now apply IHst... 
-    - simpl.  destruct (ident_eqb a a0) eqn:E. 
+        * apply (ident_eqb_neq) in E. simpl. right. now apply IHst...
+    - simpl.  destruct (ident_eqb a a0) eqn:E.
         * auto.
-        * apply (ident_eqb_neq) in E. simpl in H. 
+        * apply (ident_eqb_neq) in E. simpl in H.
           destruct H as [H1|H2]. elim (E H1). (*a0 = a*)
           now apply IHst.
 Qed.
@@ -76,7 +76,7 @@ Fixpoint split {X:Type} (l:list X) : (list X * list X) :=
 
 Definition list_ind2:
   forall (A:Type) (P: list A -> Prop),
-    P [] -> (forall (a:A), P [a]) -> (forall (a b: A) (l: list A), P l -> P (a::b::l)) -> 
+    P [] -> (forall (a:A), P [a]) -> (forall (a b: A) (l: list A), P l -> P (a::b::l)) ->
     forall l: list A, P l :=
   fun (A: Type)
       (P: list A -> Prop)
@@ -109,23 +109,23 @@ Module MergeFacts.
     Proof.
       induction ls; auto.
     Qed.
-    
+
     Lemma merge_nil2: forall ls, merge [] ls = ls.
     Proof.
       induction ls; auto.
     Qed.
-    
+
     Lemma intersect_nil: forall ls, intersect ls [] = [].
     Proof.
       induction ls; auto.
     Qed.
-    
+
     Lemma intersect_nil2: forall ls, intersect [] ls = [].
     Proof.
       induction ls; auto.
     Qed.
 
-    
+
     Lemma intersect_correct: forall x y z, intersect x y = z -> forall a, In a z -> In a x.
     Proof.
       induction x as [|a_0 xs IHx]; intros.
@@ -141,7 +141,7 @@ Module MergeFacts.
              ++  apply IHx with (a:=a) in H; auto. now right.
              ++ apply IHy; auto.
     Qed.
-    
+
     Lemma intersect_comm: forall x y, intersect x y = intersect y x.
     Proof.
       induction x as [| a_0 xs IHx]; intros.
@@ -159,12 +159,12 @@ Module MergeFacts.
           + rewrite IHx. auto.
           (*impossible*)
           + apply Pos.compare_eq_iff in Eba. subst. rewrite Pos.compare_gt_iff in Eab. apply Pos.lt_irrefl in Eab. elim Eab.
-          
+
           + rewrite <- IHy. auto.
           (*impossible*)
           + rewrite Pos.compare_gt_iff in Eba. rewrite Pos.compare_gt_iff in Eab. elim (lt_gt_false b_0 a_0 Eab Eba).
     Qed.
-      
+
     Lemma intersect_correct2: forall x y z, intersect y x = z -> forall a, In a z -> In a x.
     Proof.
       intros. rewrite intersect_comm in H. eapply intersect_correct; eauto.
@@ -190,12 +190,12 @@ Module MergeFacts.
             ++ rewrite <-IHls2. reflexivity.
             ++ rewrite  Pos.compare_gt_iff in Eab. rewrite Pos.compare_gt_iff in Eba.  elim (lt_gt_false b a Eab Eba).
     Qed.
-    
-  
+
+
     Lemma sortedNoDup_hard: forall l a b, (sortedNoDup (a::l) -> b < a -> sortedNoDup (b:: a:: l))%positive.
     Proof.
       induction l; intros; auto.
- 
+
     Qed.
 
     Lemma sortedNoDup_hard2: forall l a b, (sortedNoDup (a::l) -> b <= a -> sortedNoDup (b:: l))%positive.
@@ -203,7 +203,7 @@ Module MergeFacts.
       induction l; intros; auto.
       inversion H; subst. assert (b < a)%positive. { lia. }
       auto.
- 
+
     Qed.
 
     (* The proofs are horrible, need to tidy them up*)
@@ -218,7 +218,7 @@ Module MergeFacts.
       | [H:  (_ ?= _)%positive = Eq |- _] =>  rewrite Pos.compare_eq_iff in H; subst
       | [H:  (_ ?= _)%positive = Lt |- _] =>  rewrite Pos.compare_lt_iff in H
       end.
-      
+
     Lemma merge1: forall a1 a2 l1 l2, (a1 < a2)%positive -> merge (a1::l1) (a2::l2) = a1 :: merge l1 (a2::l2).
     Proof.
       intros.
@@ -238,8 +238,8 @@ Module MergeFacts.
       intros. simpl.
       destruct (Pos.compare a a) eqn:E; pos_handler. auto.
     Qed.
-      
-    
+
+
     Lemma sorted_merge1: (forall x x1 l1 x2 l2,
         x < x1 -> x < x2 -> sortedNoDup (merge (x1::l1) (x2::l2)) ->
         sortedNoDup (x :: merge (x1::l1) (x2::l2)) )%positive.
@@ -247,13 +247,13 @@ Module MergeFacts.
       intros. simpl in *.
       destruct (Pos.compare x1 x2) eqn: E; repeat pos_handler; auto.
     Qed.
-    
-   
+
+
 
     Lemma sortedNoDup_merge: forall l1, sortedNoDup l1 -> forall l2, sortedNoDup l2 -> sortedNoDup (merge l1 l2).
     Proof.
       induction l1.
-      - intros. rewrite merge_nil2; auto.     
+      - intros. rewrite merge_nil2; auto.
       - induction l2; intros.
         * now rewrite merge_nil.
         * simpl; destruct (Pos.compare a a0) eqn:E; pos_handler.
@@ -267,7 +267,7 @@ Module MergeFacts.
          + destruct l2; auto.
            apply sorted_merge1; inversion H0; inversion H; subst; auto.
     Qed.
-    
+
     Lemma merge_refl: forall l, merge l l = l.
     Proof.
       induction l; simpl.
@@ -279,18 +279,18 @@ Module MergeFacts.
     Lemma merge_assoc: forall l0 l1 l2, merge (merge l0 l1) l2 = merge l0 (merge l1 l2).
     Proof.
       induction l0 as [| a0 l0 IHl0].
-      - induction l1 as [|a1 l1 IHl1]. 
+      - induction l1 as [|a1 l1 IHl1].
         * intros. now rewrite merge_nil,merge_nil2,merge_nil2.
         * intros. now repeat rewrite  merge_nil2.
       - induction l1 as [|a1 l1 IHl1].
         * intros. now repeat rewrite merge_nil,merge_nil2.
         * intros.  induction l2 as [|a2 l2 IHl2].
           + simpl ; destruct (Pos.compare a0 a1) eqn:E0; pos_handler; auto.
-          + simpl. destruct (Pos.compare a1 a2) eqn:E12. 
-             
+          + simpl. destruct (Pos.compare a1 a2) eqn:E12.
+
           ++ destruct (Pos.compare a0 a1) eqn:E01;  repeat pos_handler; auto.
              ** now rewrite merge3,IHl0.
-             ** simpl. destruct (Pos.compare a0 a2) eqn:E02; repeat pos_handler. now rewrite IHl0,merge3. 
+             ** simpl. destruct (Pos.compare a0 a2) eqn:E02; repeat pos_handler. now rewrite IHl0,merge3.
              ** rewrite merge3. rewrite IHl1. auto.
           ++ destruct (Pos.compare a0 a1) eqn:E01;  repeat pos_handler; auto.
              ** simpl. destruct (Pos.compare a1 a2) eqn:E12';  repeat pos_handler. now rewrite IHl0.
@@ -301,20 +301,20 @@ Module MergeFacts.
           ++ destruct (Pos.compare a0 a2) eqn:E02;  repeat pos_handler; auto.
              ** destruct (Pos.compare a2 a1) eqn:E21; repeat pos_handler. now rewrite merge3,IHl0.
              ** destruct (Pos.compare a0 a1) eqn:E01;  repeat pos_handler.
-             
+
                -- simpl. destruct  (Pos.compare a0 a2) eqn:E02';  repeat pos_handler. rewrite IHl0.
                   simpl. destruct  (Pos.compare a1 a2) eqn:E12';  repeat pos_handler; auto.
                -- lia.
              ** destruct (Pos.compare a0 a1) eqn:E01;  repeat pos_handler.
-                -- rewrite merge2; auto. now rewrite <- (merge3 a1),IHl2.  
+                -- rewrite merge2; auto. now rewrite <- (merge3 a1),IHl2.
                 -- rewrite merge2; auto. f_equal. rewrite <- merge1; auto.
-                -- rewrite merge2; auto. f_equal. simpl in IHl2. 
+                -- rewrite merge2; auto. f_equal. simpl in IHl2.
                    destruct (Pos.compare a0 a1) eqn:E01'; repeat pos_handler. auto.
     Qed.
-          
+
     Lemma merge_comm2: forall a ls1 ls2, merge (a::ls1) ls2 = merge [a] (merge ls1 ls2).
     Proof.
-    Admitted. 
+    Admitted.
 
 
 
@@ -325,9 +325,9 @@ Module MergeFacts.
         now rewrite merge_assoc, app_assoc.
       (*set the append correctly*)
       - simpl. destruct (canon α) eqn:E1. rewrite merge_refl. *)
-          
-        
-        
+
+
+
 End MergeFacts.
 
 Import MergeFacts.
@@ -356,6 +356,48 @@ Notation "x ⊔ y" := (merge x y) (at level 40, left associativity).
 Definition st_remove := List.remove ident_eq_dec.
 Definition st_mem    := my_set_mem.
 
+Lemma sym_st_remove_notin:
+  forall d st,
+    my_set_mem d st = false ->
+    st_remove d st = st.
+Proof.
+  intros d st.
+  induction st as [|a st IH]; intro Hmem; simpl in *; auto.
+  destruct (ident_eqb d a) eqn:Hda.
+  - apply ident_eqb_eq in Hda. subst a.
+    rewrite ident_eqb_refl in Hmem.
+    discriminate.
+  - apply ident_eqb_neq in Hda.
+    unfold st_remove. simpl.
+    destruct (ident_eq_dec d a) as [Heq|Hneq].
+    + contradiction.
+    + assert (Hda' : ident_eqb a d = false).
+      { apply (proj2 (ident_eqb_neq a d)). congruence. }
+      rewrite Hda' in Hmem.
+      f_equal. apply IH. exact Hmem.
+Qed.
+
+Lemma sym_st_remove_preserves_other_in:
+  forall x d st,
+    x <> d ->
+    In x st ->
+    In x (st_remove d st).
+Proof.
+  intros x d st Hneq Hin.
+  induction st as [|a st IH]; simpl in *.
+  - contradiction.
+  - destruct Hin as [Heq|Hin].
+    + subst a.
+      unfold st_remove. simpl.
+      destruct (ident_eq_dec d x) as [Hdx|Hdx].
+      * exfalso. apply Hneq. symmetry. exact Hdx.
+      * left. reflexivity.
+    + unfold st_remove. simpl.
+      destruct (ident_eq_dec d a) as [Hda|Hda].
+      * apply IH. exact Hin.
+      * right. apply IH. exact Hin.
+Qed.
+
 
 (*needs a precondition that c1 and c2 are sorted*)
 Fixpoint stEq (c1 c2: ST)  : Prop :=
@@ -368,60 +410,60 @@ Fixpoint stEq (c1 c2: ST)  : Prop :=
   | _ , [] => False
   | x::c1', y::c2' => if ident_eqb x y then eqst c1' c2'  else False
   end) c1 c2.
-  
+
   Fixpoint findST cns d: option ST :=
     match cns with
-    | []  => None 
+    | []  => None
     | (st,[d'])::cns'  => if ident_eqb d' d then Some st else findST cns' d
     | _ :: cns'        => findST cns' d
     end.
 
   (* Fixpoint findST cns d: option ST :=
     match cns with
-    | []  => None 
+    | []  => None
     | (st,d')::cns'  => if ident_eqb d' d then Some st else findST cns' d
     (* | _ :: cns'        => findST cns' d *)
     end. *)
 
-Lemma find_correct : forall cs d v, 
+Lemma find_correct : forall cs d v,
   findST cs d = Some v -> List.In (v,[d]) cs.
 Proof.
-  induction cs as [| (st',d') cs' IHcs]; intros d_0 v H; simpl in H. 
+  induction cs as [| (st',d') cs' IHcs]; intros d_0 v H; simpl in H.
   - inversion H.
   (* - destruct (ident_eqb d' d_0) eqn:E.
     * apply ident_eqb_eq in E. inversion H.  simpl. subst. auto.
     * simpl. right. now apply IHcs. *)
   (* ^Case when the constraint rhs is ident, not list. *)
-  - destruct d'  as [|d_1 d''] eqn:E' in H. 
+  - destruct d'  as [|d_1 d''] eqn:E' in H.
     * apply IHcs in H. simpl. right. auto.
     * destruct d''.
       + destruct (ident_eqb d_1 d_0) eqn:E in H.
         ** apply ident_eqb_eq in E. subst. inversion H. simpl. auto.
         ** simpl. right. apply IHcs. auto.
-      + apply IHcs in H. simpl. right. auto. 
+      + apply IHcs in H. simpl. right. auto.
 Qed.
 
 (*Substitute an ident d in st wtih st'*)
-Definition subST st d st' : ST := 
+Definition subST st d st' : ST :=
   match st_mem  d st with
   | false => st
   | true  => if st_mem d st' then (st_remove d st) ⊔ (st_remove d st') else (st_remove d st) ⊔ st'
-  end. 
+  end.
 
 
   (* Need to figure out a final constraint representation*)
 
 Fixpoint subAll cns d st' : list constraint :=
-  match cns with 
+  match cns with
   | [] => []
-  | (st, [d'])::cns' => if ident_eqb d' d then 
+  | (st, [d'])::cns' => if ident_eqb d' d then
                         subAll cns' d st'
                       else ((subST st d st'),[d']):: (subAll cns' d st')
   | _ :: cns'   => subAll cns' d st'
   end.
 
 Fixpoint simplify (cns: list constraint) (ds: list ident) : list constraint :=
-  match ds with 
+  match ds with
   | []    => cns
   | d::ds' => match findST cns d with
              | None    => simplify cns ds'
@@ -440,12 +482,12 @@ Section ConstraintOrdering.
     | [], [] => Eq
     | [], _  => Lt
     | _, []  => Gt
-    | a1::l1'', a2::l2'' => 
+    | a1::l1'', a2::l2'' =>
         match Pos.compare a1 a2 with
         | Lt => Lt
         | Gt => Gt
         | Eq => compare' l1'' l2''
-        end 
+        end
     end) l1' l2'.
 
   Definition ident_sorted_list_compare (l1 l2: list ident): comparison :=
@@ -454,12 +496,12 @@ Section ConstraintOrdering.
     | [], [] => Eq
     | [], _  => Lt
     | _, []  => Gt
-    | a1::l1'', a2::l2'' => 
+    | a1::l1'', a2::l2'' =>
         match Pos.compare a1 a2 with
         | Lt => Lt
         | Gt => Gt
         | Eq => compare' l1'' l2''
-        end 
+        end
     end) l1 l2.
 
   (*Constraint compare*)
@@ -493,16 +535,16 @@ End ConstraintOrdering.
 (*substitution also removes duplicate constraints with the     *)
 (*ident that is being removed(case 2), we only sub valid cns:3 *)
 (* Fixpoint subAll cns d st' : list constraint :=
-  match cns with 
+  match cns with
   | [] => []
-  | (st, d')::cns' => if ident_eqb d' d then 
+  | (st, d')::cns' => if ident_eqb d' d then
                         subAll cns' d st'
                       else ((subST st d st'),d'):: (subAll cns' d st')
   (* | _ :: cns'   => subAll cns' d st' *)
   end.
 
 Fixpoint simplify (cns: list constraint) (ds: list ident) : list constraint :=
-  match ds with 
+  match ds with
   | []    => cns
   | d::ds' => match findST cns d with
              | None    => simplify cns ds'

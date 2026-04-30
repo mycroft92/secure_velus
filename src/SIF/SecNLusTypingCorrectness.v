@@ -42,74 +42,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
   (Import Clo   : NLCLOCKING Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo)
   (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo).
 
-  (** Source-side naming inversion for generated auxiliary clock/reset names. *)
-  Lemma get_node_aux_In:
-    forall name aux clk_id rst_id,
-      get_node_aux name aux = Some (clk_id, rst_id) ->
-      exists rec,
-        In rec aux
-        /\ rec.(nname) = name
-        /\ rec.(nclk) = clk_id
-        /\ rec.(nrst) = rst_id.
-  Proof.
-    induction aux as [|rec aux IH]; intros clk_id rst_id Haux.
-    - unfold get_node_aux in Haux. simpl in Haux. discriminate.
-    - unfold get_node_aux in Haux. simpl in Haux.
-      destruct (ident_eqb name rec.(nname)) eqn:Hname.
-      + inversion Haux; subst clk_id rst_id.
-        apply ident_eqb_eq in Hname.
-        exists rec. split; [now left|].
-        repeat split; auto.
-      + eapply IH in Haux as (rec' & Hin & Hn & Hc & Hr).
-        exists rec'. split; [now right|].
-        repeat split; auto.
-  Qed.
-
-  Lemma generate_node_aux_sec_names:
-    forall all_nodes env aux_names name clk_id rst_id,
-      generate_node_env all_nodes = OK (env, aux_names) ->
-      get_node_aux name aux_names = Some (clk_id, rst_id) ->
-      exists i j,
-        clk_id = Ids.gensym Ids.sec i
-        /\ rst_id = Ids.gensym Ids.sec j.
-  Proof.
-    intros all_nodes env aux_names name clk_id rst_id Hgen Haux.
-    unfold generate_node_env in Hgen.
-    destruct (generate_node_env' all_nodes (Env.empty _) nil init_state)
-      as [[[env0 aux0] st0]|] eqn:Hgen'; try discriminate.
-    inversion Hgen; subst env aux_names.
-    destruct (generate_node_env_props' all_nodes (Env.empty _) nil init_state env0 aux0 st0)
-      as [_ [_ Hauxsec]];
-      eauto.
-    - intros x ty Hfind. rewrite Env.gempty in Hfind. discriminate.
-    - constructor.
-    - intros rec Hin. contradiction.
-    - eapply get_node_aux_In in Haux as (rec & Hin & _ & Hclk & Hrst).
-      specialize (Hauxsec rec Hin) as (i & j & Hi & Hj).
-      rewrite Hclk, Hrst in *. eauto.
-  Qed.
-
-  Lemma generate_node_env_sec_range:
-    forall all_nodes env aux_names x ty,
-      generate_node_env all_nodes = OK (env, aux_names) ->
-      Env.find x env = Some ty ->
-      exists n, ty = Ids.gensym Ids.sec n.
-  Proof.
-    intros all_nodes env aux_names x ty Hgen Hfind.
-    unfold generate_node_env in Hgen.
-    destruct (generate_node_env' all_nodes (Env.empty _) nil init_state)
-      as [[[env0 aux0] st0]|] eqn:Hgen'; try discriminate.
-    inversion Hgen; subst env aux_names.
-    destruct (generate_node_env_props' all_nodes (Env.empty _) nil init_state env0 aux0 st0)
-      as [Hbound _];
-      eauto.
-    - intros z tz Hz. rewrite Env.gempty in Hz. discriminate.
-    - constructor.
-    - intros rec Hin. contradiction.
-    - specialize (Hbound _ _ Hfind) as [n [Hty _]].
-      exists n. exact Hty.
-  Qed.
-
   Lemma node_scope_sec_range:
     forall all_nodes env aux_names n
            clk_id rst_id clk_type rst_type inp out locals ty,
@@ -128,13 +60,13 @@ Module Type SECNLUSTYPINGCORRECTNESS
     repeat rewrite in_app_iff in Hin.
     destruct Hin as [Hin|[Hin|[Hin|[Hin|[Hin|[]]]]]].
     - destruct (get_mappings_from_node_In _ _ _ _ _ Hinp Hin) as (x & a & _ & Hfind).
-      eapply generate_node_env_sec_range; eauto.
+      eapply NAMEGEN.generate_node_env_sec_range; eauto.
     - destruct (get_mappings_from_node_In _ _ _ _ _ Hout Hin) as (x & a & _ & Hfind).
-      eapply generate_node_env_sec_range; eauto.
+      eapply NAMEGEN.generate_node_env_sec_range; eauto.
     - destruct (get_mappings_from_node_In _ _ _ _ _ Hlocals Hin) as (x & a & _ & Hfind).
-      eapply generate_node_env_sec_range; eauto.
-    - subst. eapply generate_node_env_sec_range; eauto.
-    - subst. eapply generate_node_env_sec_range; eauto.
+      eapply NAMEGEN.generate_node_env_sec_range; eauto.
+    - subst. eapply NAMEGEN.generate_node_env_sec_range; eauto.
+    - subst. eapply NAMEGEN.generate_node_env_sec_range; eauto.
   Qed.
 
   Lemma local_node_scope_sec_range:
@@ -163,6 +95,39 @@ Module Type SECNLUSTYPINGCORRECTNESS
     - subst. eapply NAMEGEN.generate_local_env_for_node_sec_range; eauto.
     - subst. eapply NAMEGEN.generate_local_env_for_node_sec_range; eauto.
   Qed.
+
+  (** Source caller-scope freshness for one generated node environment.
+
+      This packages the exact freshness condition used later in the
+      translation-preservation head step: once the current node's visible
+      source scope has been recovered from the shared naming environment, every
+      signature already present in the source accumulator must stay disjoint
+      from that caller scope.  It is source-only and belongs in the NLustre
+      correctness layer rather than the cross-phase translation proof. *)
+  Definition node_scope_fresh_in_env
+    (n: node) (env: Env.t ident) (aux_names: list node_aux_names) (G: secglobal) : Prop :=
+    forall clk_id rst_id clk_type rst_type inp out locals,
+      get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
+      Env.find clk_id env = Some clk_type ->
+      Env.find rst_id env = Some rst_type ->
+      get_mappings_from_node n.(n_in) env = Some inp ->
+      get_mappings_from_node n.(n_out) env = Some out ->
+      get_mappings_from_node n.(n_vars) env = Some locals ->
+      SIG.secglobal_scope_fresh
+        (inp ++ out ++ locals ++ clk_type :: rst_type :: nil) G.
+
+  (** Global wrapper for source caller-scope freshness.
+
+      Later global preservation theorems quantify over the whole NLustre
+      program.  This wrapper turns the local node predicate above into the
+      program-level invariant that every generated caller node is fresh against
+      the current source accumulator. *)
+  Definition generated_callers_scope_fresh
+    (all_nodes: global) (env: Env.t ident) (aux_names: list node_aux_names)
+    (G: secglobal) : Prop :=
+    forall n,
+      find_node n.(n_name) all_nodes = Some n ->
+      node_scope_fresh_in_env n env aux_names G.
 
   (** IDS-side naming invariant.
 
@@ -599,6 +564,213 @@ Module Type SECNLUSTYPINGCORRECTNESS
     repeat split; eauto.
   Qed.
 
+  (** Public inversion view for generated source signatures.
+
+      This is the source-local generator shape used by later preservation
+      proofs.  It is just the reusable exported form of
+      [generate_node_sig_inv_local]. *)
+  Corollary generate_node_sig_inv:
+    forall G n env aux_names sig,
+      SECNLUSTYPING.generate_node_sig G n env aux_names = OK sig ->
+      exists clk_id rst_id clk_type rst_type inp out locals nconst st_n,
+        get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id)
+        /\ Env.find clk_id env = Some clk_type
+        /\ Env.find rst_id env = Some rst_type
+        /\ get_mappings_from_node n.(n_in) env = Some inp
+        /\ get_mappings_from_node n.(n_out) env = Some out
+        /\ get_mappings_from_node n.(n_vars) env = Some locals
+        /\ generate_eqns_constraints G env clk_type rst_type n.(n_eqs) init_state = OK (nconst, st_n)
+        /\ sig = {| s_name := n.(n_name);
+                    s_in := inp;
+                    s_out := out;
+                    s_reset := rst_type;
+                    s_clk := clk_type;
+                    s_constraints := SymTypes.simplify nconst locals |}.
+  Proof.
+    exact generate_node_sig_inv_local.
+  Qed.
+
+  (** Visible-field provenance for generated source signatures.
+
+      Any identifier that appears in the visible scope of a generated source
+      signature comes from a concrete key of the generating node: either one
+      of its inputs/outputs or one of the node-specific clock/reset keys
+      stored in [aux_names].  This is the source-local ingredient later used
+      by translation to derive generated call freshness from the naming
+      discipline. *)
+  Lemma generated_node_sig_scope_key:
+    forall G n env aux_names sig ty,
+      SECNLUSTYPING.generate_node_sig G n env aux_names = OK sig ->
+      In ty (signature_scope sig) ->
+      exists clk_id rst_id x,
+        get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id)
+        /\ (In x (map fst n.(n_in))
+            \/ In x (map fst n.(n_out))
+            \/ x = clk_id
+            \/ x = rst_id)
+        /\ Env.find x env = Some ty.
+  Proof.
+    intros G n env aux_names sig ty Hsig Hin.
+    edestruct generate_node_sig_inv_local as
+        (clk_id & rst_id & clk_type & rst_type & inp & out & locals & nconst & st_n
+         & Haux & Hclk & Hrst & Hinp & Hout & Hlocals & Hnconst & Hsigdef); eauto.
+    subst sig.
+    unfold signature_scope in Hin.
+    repeat rewrite in_app_iff in Hin.
+    destruct Hin as [Hin|[Hin|Hin]].
+    - destruct (get_mappings_from_node_In _ _ _ _ _ Hinp Hin)
+        as (x & a & Hinx & Hfindx).
+      exists clk_id, rst_id, x.
+      split; [exact Haux|].
+      split.
+      + left. now apply in_map with (f := fst) in Hinx.
+      + exact Hfindx.
+    - destruct (get_mappings_from_node_In _ _ _ _ _ Hout Hin)
+        as (x & a & Hinx & Hfindx).
+      exists clk_id, rst_id, x.
+      split; [exact Haux|].
+      split.
+      + right; left. now apply in_map with (f := fst) in Hinx.
+      + exact Hfindx.
+    - destruct Hin as [Hinclk|[Hinrst|[]]].
+      + subst ty.
+        exists clk_id, rst_id, clk_id.
+        split; [exact Haux|].
+        split.
+        * right; right; left; reflexivity.
+        * exact Hclk.
+      + subst ty.
+        exists clk_id, rst_id, rst_id.
+        split; [exact Haux|].
+        split.
+        * right; right; right; reflexivity.
+        * exact Hrst.
+  Qed.
+
+  (** Generated visible source signatures live in the [sec] namespace. *)
+  Lemma generated_node_sig_scope_sec:
+    forall all_nodes G n env aux_names sig,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      SECNLUSTYPING.generate_node_sig G n env aux_names = OK sig ->
+      signature_scope_sec sig.
+  Proof.
+    intros all_nodes G n env aux_names sig Henvgen Hsig ty Hin.
+    destruct (generated_node_sig_scope_key _ _ _ _ _ _ Hsig Hin)
+      as (_ & _ & x & _ & _ & Hfind).
+    eapply NAMEGEN.generate_node_env_sec_range in Hfind; eauto.
+  Qed.
+
+  (** Local lower bound for visible source signature identifiers. *)
+  Lemma generated_node_sig_scope_lower_bound_from_local_env:
+    forall G n env aux_names sig st rec st' ty,
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      SECNLUSTYPING.generate_node_sig G n env aux_names = OK sig ->
+      In ty (signature_scope sig) ->
+      exists m, ty = Ids.gensym Ids.sec m /\ (Pos.succ (Pos.succ st) <= m)%positive.
+  Proof.
+    intros G n env aux_names sig st rec st' ty Hlocal Hsig Hin.
+    destruct (generated_node_sig_scope_key _ _ _ _ _ _ Hsig Hin)
+      as (_ & _ & x & _ & _ & Hfind).
+    eapply NAMEGEN.generate_local_env_for_node_lower_bound in Hfind; eauto.
+  Qed.
+
+  (** Local upper bound for visible source signature identifiers. *)
+  Lemma generated_node_sig_scope_upper_bound_from_local_env:
+    forall G n env aux_names sig st rec st' ty,
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      SECNLUSTYPING.generate_node_sig G n env aux_names = OK sig ->
+      In ty (signature_scope sig) ->
+      exists m, ty = Ids.gensym Ids.sec m /\ (m < st')%positive.
+  Proof.
+    intros G n env aux_names sig st rec st' ty Hlocal Hsig Hin.
+    destruct (generated_node_sig_scope_key _ _ _ _ _ _ Hsig Hin)
+      as (_ & _ & x & _ & _ & Hfind).
+    edestruct (NAMEGEN.generate_local_env_for_node_bounded
+                 n st env rec st' Hlocal x ty Hfind)
+      as (m & Hm & Hlt).
+    exists m. split; assumption.
+  Qed.
+
+  Lemma node_scope_lower_bounded_from_local_env:
+    forall n st env rec st'
+           clk_id rst_id clk_type rst_type inp out locals,
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      Env.find clk_id env = Some clk_type ->
+      Env.find rst_id env = Some rst_type ->
+      get_mappings_from_node n.(n_in) env = Some inp ->
+      get_mappings_from_node n.(n_out) env = Some out ->
+      get_mappings_from_node n.(n_vars) env = Some locals ->
+      scope_lower_bounded (inp ++ out ++ locals ++ clk_type :: rst_type :: nil) st.
+  Proof.
+    intros n st env rec st'
+           clk_id rst_id clk_type rst_type inp out locals
+           Hlocal Hclk Hrst Hinp Hout Hlocals ty Hin.
+    repeat rewrite in_app_iff in Hin.
+    destruct Hin as [Hin|[Hin|[Hin|[Hin|[Hin|[]]]]]].
+    - destruct (get_mappings_from_node_In _ _ _ _ _ Hinp Hin)
+        as (xinp & ainp & _ & Hfindinp).
+      edestruct (NAMEGEN.generate_local_env_for_node_lower_bound
+                   n st env rec st' xinp ty Hlocal Hfindinp)
+        as (m & Hm & Hlo).
+      exists m. split; auto.
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|exact Hlo].
+    - destruct (get_mappings_from_node_In _ _ _ _ _ Hout Hin)
+        as (xout & aout & _ & Hfindout).
+      edestruct (NAMEGEN.generate_local_env_for_node_lower_bound
+                   n st env rec st' xout ty Hlocal Hfindout)
+        as (m & Hm & Hlo).
+      exists m. split; auto.
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|exact Hlo].
+    - destruct (get_mappings_from_node_In _ _ _ _ _ Hlocals Hin)
+        as (xlocal & alocal & _ & Hfindlocal).
+      edestruct (NAMEGEN.generate_local_env_for_node_lower_bound
+                   n st env rec st' xlocal ty Hlocal Hfindlocal)
+        as (m & Hm & Hlo).
+      exists m. split; auto.
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|exact Hlo].
+    - subst ty.
+      edestruct (NAMEGEN.generate_local_env_for_node_lower_bound
+                   n st env rec st' clk_id clk_type Hlocal Hclk)
+        as (m & Hm & Hlo).
+      exists m. split; auto.
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|exact Hlo].
+    - subst ty.
+      edestruct (NAMEGEN.generate_local_env_for_node_lower_bound
+                   n st env rec st' rst_id rst_type Hlocal Hrst)
+        as (m & Hm & Hlo).
+      exists m. split; auto.
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|exact Hlo].
+  Qed.
+
+  (** Source caller-scope freshness from local naming bounds.
+
+      This is the source-side bridge from the node-scoped naming discipline to
+      the freshness invariant consumed by the generated translation step.  The
+      current caller scope is lower-bounded by the start state of local
+      generation, while every already-generated callee signature in the source
+      accumulator is upper-bounded by the earlier accumulator state; the
+      signature-layer bound lemma then turns those two inequalities into
+      disjointness. *)
+  Lemma node_scope_fresh_in_env_from_bounds:
+    forall n st env aux_names G rec st',
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      SIG.secglobal_scope_bounded_above G st ->
+      node_scope_fresh_in_env n env aux_names G.
+  Proof.
+    intros n st env aux_names G rec st' Hlocal Hbound
+           clk_id rst_id clk_type rst_type inp out locals
+           Haux Hclk Hrst Hinp Hout Hlocals.
+    intros f sig Hfindsig.
+    eapply SIG.scope_fresh_from_bounds.
+    - eapply node_scope_lower_bounded_from_local_env; eauto.
+    - eapply Hbound; eauto.
+  Qed.
+
   (** Generated source signatures are structurally good.
 
       Beyond scopedness, later call-preservation arguments need the stronger
@@ -1028,7 +1200,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
       destruct (get_mappings_from_node_In _ _ _ _ _ Hlocals Hinlocal)
         as (xlocal & alocal & Hxlocal & Hfindlocal).
       pose proof (NAMEGEN.generate_node_env_injective _ _ _ Henvgen) as Hinj.
-      pose proof (generate_node_aux_sec_names _ _ _ _ _ _ Henvgen Haux)
+      pose proof (NAMEGEN.generate_node_aux_sec_names _ _ _ _ _ _ Henvgen Haux)
         as (iclk & irst & Hclkid & Hrstid).
       assert (Hndvars : NoDup (map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
       { apply fst_NoDupMembers. exact n.(n_nodup). }
@@ -1097,6 +1269,41 @@ Module Type SECNLUSTYPINGCORRECTNESS
     intros all_nodes env aux_names G Hwc Henvgen Hgen.
     eapply SECNLUSTYPING.generate_all_signatures_scoped; eauto.
     eapply NAMEGEN.generate_node_env_injective; eauto.
+  Qed.
+
+  Lemma generate_all_source_signatures_scope_sec':
+    forall all_nodes nodes acc env aux_names G,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      secglobal_scope_sec acc ->
+      SECNLUSTYPING.generate_all_signatures' acc nodes env aux_names = OK G ->
+      secglobal_scope_sec G.
+  Proof.
+    intros all_nodes nodes.
+    induction nodes as [|n nodes IH]; intros acc env aux_names G Henvgen Hacc Hgen.
+    - simpl in Hgen. inversion Hgen; subst. exact Hacc.
+    - simpl in Hgen.
+      destruct (SECNLUSTYPING.generate_node_sig acc n env aux_names) as [sig|e] eqn:Hsig;
+        simpl in Hgen; try discriminate.
+      destruct (SECNLUSTYPING.generate_all_signatures' (sig :: acc) nodes env aux_names)
+        as [G'|e] eqn:Htl; simpl in Hgen; try discriminate.
+      inversion Hgen; subst.
+      eapply IH with (acc := sig :: acc) (env := env) (aux_names := aux_names).
+      + exact Henvgen.
+      + eapply secglobal_scope_sec_cons; eauto.
+        eapply generated_node_sig_scope_sec; eauto.
+      + exact Htl.
+  Qed.
+
+  Corollary generate_all_source_signatures_scope_sec:
+    forall all_nodes env aux_names G,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      SECNLUSTYPING.generate_all_signatures all_nodes env aux_names = OK G ->
+      secglobal_scope_sec G.
+  Proof.
+    intros all_nodes env aux_names G Henvgen Hgen.
+    unfold SECNLUSTYPING.generate_all_signatures in Hgen.
+    eapply generate_all_source_signatures_scope_sec'; eauto.
+    apply secglobal_scope_sec_nil.
   Qed.
 End SECNLUSTYPINGCORRECTNESS.
 

@@ -13,7 +13,7 @@ From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF.SIFSignature.
 (* Fixpoint and wt_exp definitions*)
-Module Type SEC_LUSTRE_TYPING 
+Module Type SEC_LUSTRE_TYPING
     (Import Ids   : IDS)
     (Import Op    : OPERATORS)
     (Import OpAux : OPERATORS_AUX   Op)

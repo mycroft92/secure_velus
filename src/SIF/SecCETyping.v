@@ -13,13 +13,13 @@ From Coq Require Import List.
 Import ListNotations.
 
 
-Module Type SECCETYPING 
+Module Type SECCETYPING
     (Import Ids   : IDS)
     (Import Op    : OPERATORS)
     (Import CESyn : CESYNTAX Op).
 
-  Open Scope option_monad_scope.  
-  
+  Open Scope option_monad_scope.
+
     (* *)
   Section SecClkTypingCE.
     Variable ctxt: Env.t ident.
@@ -41,28 +41,28 @@ Module Type SECCETYPING
           | Some cty => Some [cty]
           | None     => None
           end) *)
-      | Con ck' x _ => 
+      | Con ck' x _ =>
           do ckty <- assign_clk_type ck';
           do xty  <- Env.find x ctxt;
           Some (ckty ⊔ [xty])
-      end. 
+      end.
 
-    Theorem assign_clk_correct: 
+    Theorem assign_clk_correct:
       forall ck st, wst_clock ck st -> assign_clk_type ck = Some st.
     Proof.
       induction ck; intros.
-      - simpl. (*now*) inversion H. now subst. 
-      (* destruct (Env.find bs_name ctxt) eqn:E.  
+      - simpl. (*now*) inversion H. now subst.
+      (* destruct (Env.find bs_name ctxt) eqn:E.
        * inversion H0; now subst.
        * congruence. *)
-      - unfold assign_clk_type. fold assign_clk_type. 
+      - unfold assign_clk_type. fold assign_clk_type.
         inversion H as [| ?????? H_find]. subst.
         assert (assign_clk_type ck = Some ckty) as H'. { now apply IHck. }
         rewrite H',H_find. reflexivity.
     Qed.
 
-    Lemma assign_clk_inv: 
-      forall ck i b st,  assign_clk_type (Con ck i b) = Some st -> 
+    Lemma assign_clk_inv:
+      forall ck i b st,  assign_clk_type (Con ck i b) = Some st ->
        exists st' ty, st = st' ⊔ [ty] /\ assign_clk_type ck = Some st' /\ Env.find i ctxt = Some ty.
     Proof.
       intros. simpl in *. destruct (assign_clk_type ck) eqn:E1.
@@ -109,12 +109,12 @@ Module Type SECCETYPING
       match e with
       | Econst const   => Some []
       | Evar x _       => do xty <- Env.find x ctxt; Some [xty]
-      | Ewhen exp x _  => 
+      | Ewhen exp x _  =>
           do ety <- assign_exp_type exp;
           do xty <- Env.find x ctxt;
           Some (ety ⊔ [xty])
       | Eunop _ e' _     => assign_exp_type e'
-      | Ebinop _ e1 e2 _ => 
+      | Ebinop _ e1 e2 _ =>
           do e1ty <- assign_exp_type e1;
           do e2ty <- assign_exp_type e2;
           Some (e1ty ⊔ e2ty)
@@ -134,15 +134,15 @@ Module Type SECCETYPING
           Some (ety ⊔ c1ty ⊔ c2ty)
       |  Eexp e    => assign_exp_type e
       end.
-    
 
-    
+
+
     Theorem assign_exp_correct:
       forall e st, wst_exp e st <-> assign_exp_type e = Some st.
     Proof.
       Admitted.
     (* Similar theorems needed for other syntactic levels*)
-  End SecExpTypingCE. 
+  End SecExpTypingCE.
 
 
 End SECCETYPING.

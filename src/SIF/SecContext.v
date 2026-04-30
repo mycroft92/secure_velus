@@ -20,29 +20,29 @@ Section MySecMonad.
   Definition Sec A := sec_state -> res (A * sec_state).
   Definition init_state : sec_state := xH.
   Definition initialize : ident -> sec_state := fun xi  => xi.
-  
+
   Definition ret (x : A) : Sec A := fun st => OK (x, st).
-  
+
   Definition bind {B : Type} (x : Sec A) (f : A -> Sec B) : Sec B :=
     fun st => match (x st) with
           | OK (a, st') => f a st'
           | Error err => Error err
           end.
-  
+
   Definition bind2 {A1 A2 B : Type} (x : Sec (A1 * A2)) (f : A1 -> A2 -> Sec B) : Sec B :=
     fun st => match (x st) with
           | OK ((a1, a2), st') => f a1 a2 st'
           | Error err => Error err
           end.
-  
+
   Definition error (msg : errmsg) : Sec A :=
     fun st => Error msg.
-  
+
   Definition fresh_ident : Sec ident :=
     fun n =>
       let id := Ids.gensym Ids.sec n in
       OK (id, Pos.succ n).
-  
+
   Definition gets : Sec sec_state :=
     fun st => OK (st, st).
 
@@ -72,13 +72,54 @@ Module SECMONADNotations.
     Notation "'do' X <- A ; B" :=
       (bind A (fun X => B))
         (at level 200, X ident, A at level 100, B at level 200).
-        
+
     Notation "'do' ( X , Y ) <- A ; B" :=
       (bind2 A (fun X Y => B))
       (at level 200, X ident, Y ident, A at level 100, B at level 200).
-        
+
 End SECMONADNotations.
 Import SECMONADNotations.
+
+Definition find_env (x: ident) (env: Env.t ident): Sec ident :=
+  match Env.find x env with
+  | Some x' => ret x'
+  | None    => error (MSG "Cannot find identifier in env: " :: [CTX x])
+  end.
+
+Lemma find_env_consistent:
+  forall x env st1 st2 st3 st4 xty xty2,
+    find_env x env st1 = OK (xty, st2) ->
+    find_env x env st3 = OK (xty2, st4) ->
+    xty = xty2.
+Proof.
+  intros x env st1 st2 st3 st4 xty xty2 H1 H2.
+  unfold find_env in *.
+  destruct (Env.find x env) eqn:Hfind; inversion H1; inversion H2; now subst.
+Qed.
+
+Lemma find_env_of_Env_find:
+  forall env x ty st,
+    Env.find x env = Some ty ->
+    find_env x env st = OK (ty, st).
+Proof.
+  intros env x ty st Hfind.
+  unfold find_env. rewrite Hfind. reflexivity.
+Qed.
+
+Lemma find_env_in_scope:
+  forall (A : Type) env (vars : list (ident * A)) scope x ann ty st st',
+    (forall y, InMembers y vars -> exists ty, Env.find y env = Some ty /\ In ty scope) ->
+    In (x, ann) vars ->
+    find_env x env st = OK (ty, st') ->
+    In ty scope.
+Proof.
+  intros A env vars scope x ann ty st st' Hvars Hin Hfind.
+  unfold find_env in Hfind.
+  destruct (Env.find x env) as [ty'|] eqn:Henv; try discriminate.
+  inversion Hfind; subst ty st'.
+  destruct (Hvars x) as (? & Hfind' & Hscope); eauto using In_InMembers.
+  rewrite Henv in Hfind'. inversion Hfind'. subst. exact Hscope.
+Qed.
 
 
 (* Extend the context with one fresh security variable. *)
@@ -90,14 +131,14 @@ Definition fresh_insert (k: ident) (env: Env.t ident): Sec (Env.t ident*ident) :
   if Env.mem k env then
    error (MSG "Key declared more than once ":: [CTX k])
   else
-    do v <- fresh_ident; 
+    do v <- fresh_ident;
     do e <- insert_env k v env;
     ret (e, v).
 
 Section mmap.
   Context {A B : Type}.
   Variable (f : A -> Sec B).
-  
+
   Fixpoint mmap (l: list A) {struct l} : Sec (list B) :=
     match l with
     | nil => ret nil
@@ -105,10 +146,33 @@ Section mmap.
     end.
 End mmap.
 
+Lemma mmap_find_env_scoped:
+  forall env scope xs tys st st',
+    (forall x, In x xs -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
+    mmap (fun x => find_env x env) xs st = OK (tys, st') ->
+    Forall (fun ty => In ty scope) tys.
+Proof.
+  intros env scope xs.
+  induction xs as [|x xs IH]; intros tys st st' Hscope Hmap.
+  - simpl in Hmap. inversion Hmap; subst. constructor.
+  - simpl in Hmap.
+    eapply sec_bind_inv in Hmap as (xty & st1 & Hhd & Hmap).
+    eapply sec_bind_inv in Hmap as (tys' & st2 & Htl & Hret).
+    unfold find_env in Hhd.
+    destruct (Env.find x env) as [xty'|] eqn:Hfind; try discriminate.
+    inversion Hhd; subst xty st1.
+    unfold ret in Hret. inversion Hret; subst tys st'.
+    constructor.
+    + destruct (Hscope x) as (? & Hfind' & Hin); [left; reflexivity|].
+      rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
+    + eapply IH; eauto.
+      intros y Hy. apply Hscope. now right.
+Qed.
+
 Fixpoint insert_vars' (xs: list ident) (acc: list ident) (env: Env.t ident): Sec (Env.t ident * list ident) :=
     (match xs with
     | nil    => ret (env, acc)
-    | x::xs => 
+    | x::xs =>
         do (env', v) <- fresh_insert x env;
         insert_vars' xs (acc++[v]) env'
     end).
@@ -118,8 +182,8 @@ Section mmap2.
   Context {A B1 B2 : Type}.
   Variable (f : A -> Sec (B1 * B2)).
 
-  
-  
+
+
   Fixpoint mmap2 (l: list A) {struct l} : Sec (list B1 * list B2) :=
     match l with
     | nil => ret (nil, nil)
@@ -218,7 +282,7 @@ Module MonadLaws (Ids  : IDS)
   (SC: SECMONAD Ids).
   Import SC.
 
-  
+
   Section laws.
     Variable A B C: Type.
     Lemma ret_helper: forall (x:A) st, ret x st = OK (x,st).
@@ -227,16 +291,16 @@ Module MonadLaws (Ids  : IDS)
     Qed.
 
     (* return a >>= k                  =  k a *)
-    Theorem left_unital_law: forall (x: A) (f: A -> Sec B) st, bind (ret x) f st = f x st.  
+    Theorem left_unital_law: forall (x: A) (f: A -> Sec B) st, bind (ret x) f st = f x st.
     Proof.
-      intros. unfold bind. 
+      intros. unfold bind.
       destruct (ret x st) as [(a,st')|] eqn:E; rewrite ret_helper in E; now inversion E.
     Qed.
 
     (*m        >>= return             =  m*)
     Theorem right_unital_law: forall (m: Sec A) st, bind m ret st = m st.
     Proof.
-      intros. unfold bind. now destruct (m st) as [(a & st')|] eqn:E . 
+      intros. unfold bind. now destruct (m st) as [(a & st')|] eqn:E .
     Qed.
 
     (* m        >>= (\x -> k x >>= h)  =  (m >>= k) >>= h *)

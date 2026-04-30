@@ -22,8 +22,8 @@ Section ListIdentInd.
     Variable P : list ident -> Prop.
     Hypothesis PNill : P []. (* The property to prove is on lists*)
     Hypothesis PSingl : forall (a: ident), P [a].
-    Hypothesis PCons  : 
-      forall (a1 a2: ident) (l: list ident), 
+    Hypothesis PCons  :
+      forall (a1 a2: ident) (l: list ident),
         P l -> P (a1 :: a2 :: l).
 
     Fixpoint list_ind2 (l: list ident): P l :=
@@ -49,11 +49,11 @@ Section MergeIdentList.
     end.
 
   Lemma split_length: forall (l l1 l2: list ident),
-    split l = (l1, l2) -> 
+    split l = (l1, l2) ->
     length l1 <= length l /\ length l2 <= length l.
   Proof.
      induction l using list_ind2; intros;  split; try (inversion H; simpl; lia);
-     inversion H; destruct (split l) as [l1' l2']; 
+     inversion H; destruct (split l) as [l1' l2'];
      inversion H1; simpl; destruct (IHl l1' l2') as [P1 P2]; auto; lia.
      Show Proof.
   Qed.
@@ -65,7 +65,7 @@ Section MergeIdentList.
       (match l1, l2 with
       | [], _ => l2
       | _, [] => l1
-      | a1::l1', a2::l2' => 
+      | a1::l1', a2::l2' =>
       (* Changed the order to greater than equals *)
         (match Pos.compare a1 a2 with
         | Lt => a2::(merge_aux l2')
@@ -75,7 +75,7 @@ Section MergeIdentList.
       end) in merge_aux l2.
 (* Need to do final mergesort*)
   Lemma merge_lt: forall (x1 x2: ident) r1 r2,
-    Pos.compare x1 x2 = Lt -> 
+    Pos.compare x1 x2 = Lt ->
       mergeType (x1::r1) (x2::r2) = x2:: mergeType (x1::r1) r2.
   Proof.
     intros. simpl.
@@ -86,7 +86,7 @@ Section MergeIdentList.
   Qed.
 
   Lemma merge_eq: forall (x1 x2: ident) r1 r2,
-    Pos.compare x1 x2 = Eq -> 
+    Pos.compare x1 x2 = Eq ->
       mergeType (x1::r1) (x2::r2) = x1:: mergeType r1 r2.
   Proof.
     intros. simpl.
@@ -116,25 +116,25 @@ Section MergeIdentList.
     end.
   Proof.
     (*Recursive calls on l1 and l2 terminate *)
-    - 
-      intros; simpl in *; 
+    -
+      intros; simpl in *;
       destruct (split l1) as [l1' l2'] eqn:E; inv teq1; destruct (split_length _ _ _ E);
       simpl; lia.
-    - 
-      intros. simpl in *.  
+    -
+      intros. simpl in *.
       destruct (split l1) as [l1' l2'] eqn:E; inv teq1; destruct (split_length _ _ _ E);
       simpl; lia.
   Defined.
 
-(* need to properly replace these with ident symbols and prove correctness*) 
-  Lemma sorted_merge1: (forall x x1 l1 x2 l2, 
+(* need to properly replace these with ident symbols and prove correctness*)
+  Lemma sorted_merge1: (forall x x1 l1 x2 l2,
     x > x1 -> x > x2 -> sortedDecNoDup (mergeType (x1::l1) (x2::l2)) -> sortedDecNoDup (x::mergeType (x1::l1) (x2::l2)))%positive.
   Proof.
     intros. simpl in *. destruct (x1 ?= x2)%positive eqn:Heqn.
     - apply Pos.compare_eq_iff in Heqn; subst.  now apply sort_consd.
     - rewrite Pos.compare_lt_iff in Heqn. now apply sort_consd.
     - rewrite Pos.compare_gt_iff in Heqn. now apply sort_consd.
-  Qed.  
+  Qed.
 
    Lemma sorted_merge: forall l1, sortedDecNoDup l1 -> forall l2, sortedDecNoDup l2 -> sortedDecNoDup (mergeType l1 l2).
    Proof.
@@ -142,7 +142,7 @@ Section MergeIdentList.
      - now rewrite merge_nil_l.
      - induction l2.
         + now rewrite merge_nil_r.
-        Admitted.  
+        Admitted.
 
   Lemma mergesort_correct: forall l, sortedDecNoDup (mergesort l).
   Proof.
@@ -163,12 +163,12 @@ Section ConstraintOrdering.
     | [], [] => Eq
     | [], _  => Lt
     | _, []  => Gt
-    | a1::l1'', a2::l2'' => 
+    | a1::l1'', a2::l2'' =>
         match Pos.compare a1 a2 with
         | Lt => Lt
         | Gt => Gt
         | Eq => compare' l1'' l2''
-        end 
+        end
     end) l1' l2'.
 
   Definition ident_sorted_list_compare (l1 l2: list ident): comparison :=
@@ -177,12 +177,12 @@ Section ConstraintOrdering.
     | [], [] => Eq
     | [], _  => Lt
     | _, []  => Gt
-    | a1::l1'', a2::l2'' => 
+    | a1::l1'', a2::l2'' =>
         match Pos.compare a1 a2 with
         | Lt => Lt
         | Gt => Gt
         | Eq => compare' l1'' l2''
-        end 
+        end
     end) l1 l2.
 
 
