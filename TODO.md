@@ -99,6 +99,17 @@
   - `signature_good_outputs_nodup`
   - `generate_constraints_complete_good`
 
+- Final reset-call bridge cleanup:
+  - ordinary call preservation is proved internally
+  - mixed-reset instantiation agreement is now proved internally
+  - underlying target call-block preservation for reset calls is now proved
+    internally
+  - the remaining blocker is the concrete translated `TcReset` prefix
+    constraint in `SecNLusStcTranslation.v`: prove the local semantic relation
+    between the STC reset-constraint lhs and the NLustre source reset actual,
+    or refactor the remaining reset clause so only that local fact stays
+    explicit
+
 - After each accepted proof step:
   - validate locally with direct `_CoqProject`-compatible `coqc`
   - validate globally with full repo `make`
