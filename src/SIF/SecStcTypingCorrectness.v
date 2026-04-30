@@ -200,7 +200,30 @@ Module Type SECSTCTYPINGCORRECTNESS
       1,2,4: eapply IH; eauto.
       eapply sec_bind2_inv in Hgen as (env1 & i & st1 & Hstep & Hrec).
       eapply IH; eauto.
-      eapply fresh_reset_insert_preserves_find; eauto.
+    eapply fresh_reset_insert_preserves_find; eauto.
+  Qed.
+
+  (** Node-scoped target signature generation.
+
+      This is the STC-side counterpart of
+      [SECNLUSTYPINGCORRECTNESS.generate_node_sig_scoped_env_scoped].  The
+      node-scoped naming layer only changes how the current system's local env
+      is recovered from the outer table; once that local env is projected, the
+      existing target typing proof applies unchanged. *)
+  Theorem generate_sys_signature_scoped_env_scoped:
+    forall G P s envs env aux_names sig,
+      secglobal_scoped G ->
+      Clo.wc_system P s ->
+      find_node_env s.(SynStc.s_name) envs = Some env ->
+      SECSTCTYPING.env_injective env ->
+      SECSTCTYPING.generate_sys_signature_scoped_env G s envs aux_names = OK sig ->
+      signature_scoped sig.
+  Proof.
+      intros G P s envs env aux_names sig
+             Hscoped Hwc Hfindenv Hinj Hsig.
+      unfold SECSTCTYPING.generate_sys_signature_scoped_env in Hsig.
+      rewrite Hfindenv in Hsig.
+      eapply SECSTCTYPING.generate_sys_signature_scoped; eauto.
   Qed.
 
   Lemma reset_env_sec_bounded_step:

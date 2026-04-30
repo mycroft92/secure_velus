@@ -34,6 +34,7 @@ Module Type SECNLUSTYPING
   (Import CESyn : CESYNTAX      Op)
   (Import SynNL : NLSYNTAX  Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
+  (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
@@ -1021,6 +1022,24 @@ Module Type SECNLUSTYPING
                 s_constraints := constraints|}
       end.  
 
+      (** Node-scoped migration entry point.
+
+          The shared naming layer now supports one outer environment keyed by
+          node name, with one local security environment per node.  This helper
+          projects the current node's local env and then reuses the existing
+          raw-node generator unchanged.  The local typing rules still operate
+          over raw node identifiers; only the outer lookup discipline changes.
+       *)
+      Definition generate_node_sig_scoped_env
+        (n: node) (envs: node_scoped_env) (aux_names: list node_aux_names)
+        : res signature :=
+        match find_node_env n.(n_name) envs with
+        | None =>
+            Error (MSG "Missing node-local security environment" :: [CTX n.(n_name)])
+        | Some env =>
+            generate_node_sig n env aux_names
+        end.
+
       (** Signature scopedness for generated NLustre nodes.
 
           The proof follows the implementation pipeline directly:
@@ -1176,6 +1195,21 @@ Module Type SECNLUSTYPING
     Definition generate_all_signatures (node_list: global) (env: Env.t ident) (aux_names: list node_aux_names): res (list signature) :=
       generate_all_signatures' [] node_list env aux_names.
 
+    Fixpoint generate_all_signatures_scoped_env'
+      (acc: list signature) (node_list: global) (envs: node_scoped_env)
+      (aux_names: list node_aux_names) : res (list signature) :=
+      match node_list with
+      | [] => OK acc
+      | n :: ns =>
+          do sig <- generate_node_sig_scoped_env acc n envs aux_names;
+          generate_all_signatures_scoped_env' (sig :: acc) ns envs aux_names
+      end.
+
+    Definition generate_all_signatures_scoped_env
+      (node_list: global) (envs: node_scoped_env) (aux_names: list node_aux_names)
+      : res (list signature) :=
+      generate_all_signatures_scoped_env' [] node_list envs aux_names.
+
     (** Global scopedness for generated NLustre signatures.
 
         The node theorem [generate_node_sig_scoped] is the paper-facing local
@@ -1254,6 +1288,7 @@ Module SecNLusTyping
   (Import CESyn : CESYNTAX      Op)
   (Import SynNL : NLSYNTAX  Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
+  (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
@@ -1262,9 +1297,9 @@ Module SecNLusTyping
   (Import IsD   : ISDEFINED Ids Op CESyn SynNL Mem)
   (Import IsF   : ISFREE Ids Op CESyn SynNL CEIsF)
   (Import Clo   : NLCLOCKING Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo)
-  <: SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo.
+  <: SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo.
 
-Include SECNLUSTYPING Ids Op SC CESyn SynNL SIG SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo.
+Include SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo.
 
 
 End SecNLusTyping.

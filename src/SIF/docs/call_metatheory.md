@@ -5,9 +5,10 @@
 This note records the remaining call-side metatheory behind the weakened
 NLustre-to-STC preservation theorem in `SecNLusStcTranslation.v`.
 
-The remaining hard assumptions are now the call-side ones:
+At the current stage of the development, the public theorem stack has already
+eliminated `successful_call_substitutions_fresh`. The only remaining top-level
+call-side assumption is:
 
-- `successful_call_substitutions_fresh`
 - `signatures_preserved_calls`
 
 ## Why These Assumptions Are Harder
@@ -59,7 +60,22 @@ The desired structural properties are:
 If those properties hold by construction, then the freshness proof becomes
 mostly a range/lookup theorem rather than a delicate capture-avoidance proof.
 
+This assumption is no longer part of the public theorem stack, but the
+diagnosis remains useful because it explains why the old flat naming scheme was
+too weak and why the proof migrated to the node-scoped environment design.
+
 ### 2. `signatures_preserved_calls`
+
+The current definition in `SecNLusStcTranslation.v` is:
+
+```coq
+Definition signatures_preserved_calls : Prop :=
+  forall nsig ssig,
+    signature_scoped nsig ->
+    signature_scoped ssig ->
+    signatures_preserved nsig ssig ->
+    Signature_call_preserves nsig ssig.
+```
 
 This assumption says that if source and target signatures satisfy
 `signatures_preserved`, then that preservation survives call-time
@@ -78,9 +94,39 @@ variable and one extra reset constraint.
 So this is the actual substitution/capture-avoidance metatheory, not just a
 scopedness result.
 
+### Why the current statement is too weak
+
+The issue is not with the semantic goal `Signature_call_preserves`. The issue
+is that the current premises only give `signature_scoped`, which controls
+*which identifiers may appear* in the stored signature constraints.
+
+That is not enough to replay `generate_constraints` backwards and forwards,
+because `generate_constraints` does more than just substitute formal variables:
+
+1. it substitutes inputs, clock, reset, and outputs;
+2. then it rebuilds the final concrete call block by looking up each caller
+   output through `findST`, in caller output order.
+
+To justify that final reorder step semantically, the stored signature needs a
+stronger structural invariant such as:
+
+- singleton RHS targets,
+- unique RHS targets,
+- RHS targets aligned with visible outputs.
+
+Those are exactly the kinds of facts packaged by `signature_good` for generated
+signatures. A merely scoped signature can still be malformed in ways that
+break the replay argument, even though generated signatures never are.
+
+So the honest end state is:
+
+- keep the *public* theorem stack assumption-free;
+- strengthen the *internal* call bridge with the generated-signature
+  structural invariant it really uses.
+
 ## Recommended Elimination Strategy
 
-The clean plan is to avoid proving these assumptions in their current strongest
+The clean plan is to avoid proving these assumptions in an unrealistically
 generic form unless necessary. The final public theorem only needs the
 generated-program case.
 
@@ -106,6 +152,7 @@ Use:
 - generated scoped source signature
 - generated scoped target signature
 - generated-call freshness
+- generated-signature structural goodness
 - `signatures_preserved`
 
 to derive:
@@ -116,10 +163,10 @@ This is the theorem that should replace `signatures_preserved_calls`.
 
 ### Step 4. Inline the generated-call bridge into the global theorem stack
 
-Once Steps 2 and 3 are proved, the final theorem family should no longer
+Once the generated-call bridge is proved, the final theorem family should no
+longer
 mention:
 
-- `successful_call_substitutions_fresh`
 - `signatures_preserved_calls`
 
 and should rebuild the call bridge internally inside the generated-global
@@ -152,3 +199,10 @@ Likewise, if the current name-generation scheme does not give the needed
 separation properties, the intended repair is to strengthen
 `NameInterface.v`, not to leave a broad call-side assumption in the final
 theorem stack.
+
+The same principle applies to the last semantic bridge:
+
+- if `signatures_preserved_calls` is too weak in full generality,
+- strengthen the *internal* proof to use the real generated-signature
+  invariant (`signature_good` or the exact structural facts derived from it),
+- but keep the final public theorem free of extra assumptions.

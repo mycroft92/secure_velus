@@ -1329,6 +1329,20 @@ Module Type SECSTCTYPING
                 s_constraints := constraints|}
       end.  
 
+    (** Node-scoped migration entry point.
+
+        This is the target-side counterpart of
+        [SECNLUSTYPING.generate_node_sig_scoped_env].  It projects the current
+        system's local env out of the outer node-scoped env table and then
+        reuses the existing STC generator on that local env. *)
+    Definition generate_sys_signature_scoped_env
+      (n: system) (envs: node_scoped_env) (aux_names: list node_aux_names)
+      : res signature :=
+      match find_node_env n.(SynStc.s_name) envs with
+      | None => Error (MSG "Missing system-local security environment" :: [CTX n.(SynStc.s_name)])
+      | Some env => generate_sys_signature n env aux_names
+      end.
+
     Lemma system_var_defined_in_tcs:
       forall s x,
         In x (map fst s.(SynStc.s_vars)) ->
@@ -1515,6 +1529,21 @@ Module Type SECSTCTYPING
       end.
     Definition generate_all_sys_signatures (sys_list: program) (env: Env.t ident) (aux_names: list node_aux_names): res (list signature) :=
       generate_all_sys_signatures' [] sys_list env aux_names.
+
+    Fixpoint generate_all_sys_signatures_scoped_env'
+      (acc: list signature) (sys_list: program) (envs: node_scoped_env)
+      (aux_names: list node_aux_names) : res (list signature) :=
+      match sys_list with
+      | [] => OK acc
+      | n :: ns =>
+          do sig <- generate_sys_signature_scoped_env acc n envs aux_names;
+          generate_all_sys_signatures_scoped_env' (sig :: acc) ns envs aux_names
+      end.
+
+    Definition generate_all_sys_signatures_scoped_env
+      (sys_list: program) (envs: node_scoped_env) (aux_names: list node_aux_names)
+      : res (list signature) :=
+      generate_all_sys_signatures_scoped_env' [] sys_list envs aux_names.
 
     (** Global scopedness for generated STC signatures.
 
