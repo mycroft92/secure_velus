@@ -74,12 +74,27 @@
   symbolic-type operations.
 - Move the signature-instantiation completeness/correctness lemmas now being
   added in `SecNLusStcTranslation.v` into the signature layer
-  (`SIFSignature.v` / future `SecSignature` ownership) once the final
+  (`SIFSignature.v`) once the final
   call-preservation proof is stable, in particular:
+  - `call_actuals_scoped`
+  - `call_subst_scoped`
+  - `overlay_scope`
+  - `overlay_scope_agree_on`
+  - `overlay_scope_agree_outside`
+  - `overlay_scope_agree_on_sig_scope`
+  - `hm_ext_agree_on_scoped_type`
   - `subst_ident_constraint_complete_out`
   - `subst_ident_constraints_complete_out`
   - `subst_inp_ident_in_constraint_complete`
   - `subst_ident_in_constraints_complete`
+  - `findST_none_notin_rhs`
+  - `wf_constraints_of_singleton_perm`
+  - `subst_rhs_ident_singletons_cons`
+  - `subst_ident_constraints_shape_out_step`
+  - `subst_constraints_out_map_shape_acc`
+  - `subst_constraints_out_map_shape`
+  - `signature_good_outputs_nodup`
+  - `generate_constraints_complete_good`
 
 - After each accepted proof step:
   - validate locally with direct `_CoqProject`-compatible `coqc`

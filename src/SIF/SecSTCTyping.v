@@ -1329,18 +1329,19 @@ Module Type SECSTCTYPING
                 s_constraints := constraints|}
       end.  
 
-    (** Node-scoped migration entry point.
+    (** Node-scoped migration entry point for STC systems.
 
-        This is the target-side counterpart of
-        [SECNLUSTYPING.generate_node_sig_scoped_env].  It projects the current
-        system's local env out of the outer node-scoped env table and then
-        reuses the existing STC generator on that local env. *)
+        The outer naming layer stores one local security environment per
+        system name. This helper recovers the current system's local env and
+        then reuses the existing environment-driven STC generator unchanged. *)
     Definition generate_sys_signature_scoped_env
       (n: system) (envs: node_scoped_env) (aux_names: list node_aux_names)
       : res signature :=
       match find_node_env n.(SynStc.s_name) envs with
-      | None => Error (MSG "Missing system-local security environment" :: [CTX n.(SynStc.s_name)])
-      | Some env => generate_sys_signature n env aux_names
+      | None =>
+          Error (MSG "Missing system-local security environment" :: [CTX n.(SynStc.s_name)])
+      | Some env =>
+          generate_sys_signature n env aux_names
       end.
 
     Lemma system_var_defined_in_tcs:

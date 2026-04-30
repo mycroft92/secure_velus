@@ -1039,6 +1039,7 @@ Module Type SECNLUSTYPING
         | Some env =>
             generate_node_sig n env aux_names
         end.
+      
 
       (** Signature scopedness for generated NLustre nodes.
 

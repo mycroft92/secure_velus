@@ -124,58 +124,10 @@ Module Type SECNLUSSTCTRANSLATION
       now subst.
     Qed.
 
-    Lemma option_to_sec_consistent:
-      forall (A: Type) (x: option A) st1 st2 y1 y2 st1' st2',
-        @option_to_sec A x st1 = OK (y1, st1') ->
-        @option_to_sec A x st2 = OK (y2, st2') ->
-        y1 = y2.
-    Proof.
-      intros A [a|] st1 st2 y1 y2 st1' st2' H1 H2;
-        unfold option_to_sec in *; inversion H1; inversion H2; now subst.
-    Qed.
-
-    Lemma mmap_consistent:
-      forall (A B: Type) (f g: A -> Sec B) xs st1 st2 ys1 ys2 st1' st2',
-        (forall x s1 s2 y1 y2 s1'' s2'',
-            f x s1 = OK (y1, s1'') ->
-            g x s2 = OK (y2, s2'') ->
-            y1 = y2) ->
-        mmap f xs st1 = OK (ys1, st1') ->
-        mmap g xs st2 = OK (ys2, st2') ->
-        ys1 = ys2.
-    Proof.
-      intros A B f g xs.
-      induction xs as [|x xs IH]; intros st1 st2 ys1 ys2 st1' st2' Hfg Hm1 Hm2.
-      - simpl in Hm1, Hm2. inversion Hm1; inversion Hm2. reflexivity.
-      - simpl in Hm1, Hm2.
-        eapply sec_bind_inv in Hm1 as [hd1 [st_mid1 [Hhd1 Hm1]]].
-        eapply sec_bind_inv in Hm1 as [tl1 [st_fin1 [Htl1 Hret1]]].
-        unfold ret in Hret1. inversion Hret1. subst ys1 st1'.
-        eapply sec_bind_inv in Hm2 as [hd2 [st_mid2 [Hhd2 Hm2]]].
-        eapply sec_bind_inv in Hm2 as [tl2 [st_fin2 [Htl2 Hret2]]].
-        unfold ret in Hret2. inversion Hret2. subst ys2 st2'.
-        f_equal.
-        + eapply Hfg; eauto.
-        + eapply IH; eauto.
-    Qed.
-
-    Lemma mmap_option_to_sec_consistent:
-      forall (A B: Type) (f: A -> option B) xs st1 st2 ys1 ys2 st1' st2',
-        mmap (fun x => option_to_sec (f x)) xs st1 = OK (ys1, st1') ->
-        mmap (fun x => option_to_sec (f x)) xs st2 = OK (ys2, st2') ->
-        ys1 = ys2.
-    Proof.
-      intros.
-      eapply (@mmap_consistent A B (fun x => option_to_sec (f x)) (fun x => option_to_sec (f x)) xs).
-      - intros. eapply option_to_sec_consistent; eauto.
-      - exact H.
-      - exact H0.
-    Qed.
-
     Lemma mmap_find_env_consistent_nl_stc:
       forall xs env st1 st2 ys1 ys2 st1' st2',
         mmap (fun x => SECNLUSTYPING.find_env x env) xs st1 = OK (ys1, st1') ->
-        mmap (fun x => find_env x env) xs st2 = OK (ys2, st2') ->
+        mmap (fun x => SECSTCTYPING.find_env x env) xs st2 = OK (ys2, st2') ->
         ys1 = ys2.
     Proof.
       intros.
@@ -185,22 +137,8 @@ Module Type SECNLUSSTCTRANSLATION
       - exact H0.
     Qed.
 
-    (** [agree_on xs dlt1 dlt2] means that two valuations coincide on the
-        variables we care about. The STC side may assign arbitrary values to
-        variables outside [xs]. *)
-	    Definition agree_on (xs: list ident) (dlt1 dlt2: ident -> Lat.t) : Prop :=
-	      forall x, In x xs -> dlt1 x = dlt2 x.
-
-	    Lemma agree_on_trans:
-	      forall xs dlt1 dlt2 dlt3,
-	        agree_on xs dlt1 dlt2 ->
-	        agree_on xs dlt2 dlt3 ->
-	        agree_on xs dlt1 dlt3.
-	    Proof.
-	      intros xs dlt1 dlt2 dlt3 H12 H23 x Hin.
-	      rewrite H12 by exact Hin.
-	      exact (H23 x Hin).
-	    Qed.
+    (** Generic valuation agreement now lives in [SecTypes].  This file keeps
+        only the weak preservation relation built on top of that shared notion. *)
 
     (** [preserves_on xs cns1 cns2] states the weak preservation property used
         throughout the file: every valuation satisfying the source constraints
@@ -212,59 +150,14 @@ Module Type SECNLUSSTCTRANSLATION
         exists dlt',
           agree_on xs dlt dlt' /\ listSatisfiable dlt' cns2.
 
-    (** These definitions capture the stronger signature-level reading of the
-        same idea. They are convenient summaries, although the main theorem we
-        prove in this development is the raw-constraint theorem
-        [node_preserv_scoped] below. *)
-    Definition sig_scope (sig: signature) : list ident :=
-      sig.(s_in) ++ sig.(s_out) ++ (sig.(s_clk) :: sig.(s_reset) :: nil).
-
-    Definition signature_fields_agree (n1 n2: signature) : Prop :=
-      n1.(s_in) = n2.(s_in)
-      /\ n1.(s_out) = n2.(s_out)
-      /\ n1.(s_reset) = n2.(s_reset)
-      /\ n1.(s_clk) = n2.(s_clk).
+    (** Signature-interface freshness and call-instantiation side conditions
+        now live in [SIFSignature].  We keep the local shorthand [sig_scope]
+        only to avoid rewriting the later translation proofs. *)
+    Local Notation sig_scope := signature_scope.
 
     Definition signatures_preserved (n1 n2: signature) : Prop :=
       signature_fields_agree n1 n2
       /\ preserves_on (sig_scope n1) n1.(s_constraints) n2.(s_constraints).
-
-    Definition type_fresh (scope: list ident) (st: ST) : Prop :=
-      Forall (fun x => ~ In x scope) st.
-
-    Definition types_fresh (scope: list ident) (sts: list ST) : Prop :=
-      Forall (type_fresh scope) sts.
-
-    Definition outputs_fresh (scope: list ident) (outs: list ident) : Prop :=
-      Forall (fun x => ~ In x scope) outs.
-
-    Definition call_subst_fresh
-      (sig: signature) (inptyp: list ST) (ckty rstty: ST) (outtyp: list ident) : Prop :=
-      types_fresh (sig_scope sig) inptyp
-      /\ type_fresh (sig_scope sig) ckty
-      /\ type_fresh (sig_scope sig) rstty
-      /\ outputs_fresh (sig_scope sig) outtyp.
-
-    Definition call_actuals_scoped
-      (scope: list ident) (inptyp: list ST) (ckty: ST) (outtyp: list ident) : Prop :=
-      Forall (st_scoped scope) inptyp
-      /\ st_scoped scope ckty
-      /\ Forall (fun x => In x scope) outtyp.
-
-    Definition call_subst_scoped
-      (scope: list ident) (inptyp: list ST) (ckty rstty: ST) (outtyp: list ident) : Prop :=
-      call_actuals_scoped scope inptyp ckty outtyp
-      /\ st_scoped scope rstty.
-
-    (** [scope_fresh scope sig] says that every identifier visible in the caller
-        scope is disjoint from the callee signature scope.  This is the precise
-        freshness condition the call cases actually need: once the actual
-        arguments, clock/reset types, and outputs are known to stay inside the
-        caller scope, [scope_fresh] turns that scopedness information into the
-        local [call_subst_fresh] premises consumed by
-        [Signature_call_preserves]. *)
-    Definition scope_fresh (scope: list ident) (sig: signature) : Prop :=
-      forall x, In x scope -> ~ In x (sig_scope sig).
 
     (** Generated-accumulator freshness is best expressed structurally:
         every callee signature currently stored in a source accumulator must be
@@ -277,16 +170,6 @@ Module Type SECNLUSSTCTRANSLATION
       forall f sig,
         find_signature f G = Some sig ->
         scope_fresh scope sig.
-
-    (** Resettable calls additionally need the target-local namespace fact that
-        visible signature identifiers stay in the ordinary [sec] namespace.
-        The generic notion [signature_scope_sec] lives in [SIFSignature.v];
-        here we only add the accumulator-level wrapper consumed by the
-        translation proof. *)
-    Definition secglobal_scope_sec (G: secglobal) : Prop :=
-      forall f sig,
-        find_signature f G = Some sig ->
-        signature_scope_sec sig.
 
     (** Structural caller-scope freshness for one generated node environment.
 
@@ -398,114 +281,6 @@ Module Type SECNLUSSTCTRANSLATION
       eapply signature_scope_bounded_above_monotone; eauto.
     Qed.
 
-    Lemma signature_fields_agree_scope_eq:
-      forall n1 n2,
-        signature_fields_agree n1 n2 ->
-        sig_scope n1 = sig_scope n2.
-    Proof.
-      intros n1 n2 [Hin [Hout [Hrst Hclk]]].
-      unfold sig_scope.
-      now rewrite Hin, Hout, Hclk, Hrst.
-    Qed.
-
-    Lemma scope_fresh_fields_agree:
-      forall scope n1 n2,
-        signature_fields_agree n1 n2 ->
-        scope_fresh scope n1 ->
-        scope_fresh scope n2.
-    Proof.
-      intros scope n1 n2 Hagree Hfresh x Hin.
-      rewrite <- (signature_fields_agree_scope_eq _ _ Hagree).
-      eauto.
-    Qed.
-
-    Lemma signature_scope_sec_fields_agree:
-      forall n1 n2,
-        signature_fields_agree n1 n2 ->
-        signature_scope_sec n1 ->
-        signature_scope_sec n2.
-    Proof.
-      intros n1 n2 Hagree Hsec ty Hin.
-      destruct Hagree as [Hin' [Hout' [Hrst' Hclk']]].
-      unfold signature_scope in *.
-      rewrite <- Hin', <- Hout', <- Hclk', <- Hrst' in Hin.
-      eauto.
-    Qed.
-
-    Lemma type_fresh_from_scope_fresh:
-      forall scope sig ty,
-        scope_fresh scope sig ->
-        st_scoped scope ty ->
-        type_fresh (sig_scope sig) ty.
-    Proof.
-      intros scope sig ty Hfresh Hsc.
-      unfold type_fresh.
-      rewrite Forall_forall.
-      intros x Hin Hsig.
-      eapply Hfresh; eauto.
-    Qed.
-
-    Lemma types_fresh_from_scope_fresh:
-      forall scope sig tys,
-        scope_fresh scope sig ->
-        Forall (st_scoped scope) tys ->
-        types_fresh (sig_scope sig) tys.
-    Proof.
-      intros scope sig tys Hfresh Htys.
-      induction Htys as [|ty tys Hty Htys IH]; constructor; auto.
-      eapply type_fresh_from_scope_fresh; eauto.
-    Qed.
-
-    Lemma outputs_fresh_from_scope_fresh:
-      forall scope sig outs,
-        scope_fresh scope sig ->
-        Forall (fun x => In x scope) outs ->
-        outputs_fresh (sig_scope sig) outs.
-    Proof.
-      intros scope sig outs Hfresh Houts.
-      induction Houts as [|x outs Hin Houts IH]; constructor; auto.
-    Qed.
-
-    Lemma call_subst_fresh_from_scope_fresh:
-      forall scope sig inptyp ckty rstty outtyp,
-        scope_fresh scope sig ->
-        Forall (st_scoped scope) inptyp ->
-        st_scoped scope ckty ->
-        st_scoped scope rstty ->
-        Forall (fun x => In x scope) outtyp ->
-        call_subst_fresh sig inptyp ckty rstty outtyp.
-    Proof.
-      intros scope sig inptyp ckty rstty outtyp
-             Hfresh Hinp Hclk Hrst Hout.
-      repeat split.
-      - eapply types_fresh_from_scope_fresh; eauto.
-      - eapply type_fresh_from_scope_fresh; eauto.
-      - eapply type_fresh_from_scope_fresh; eauto.
-      - eapply outputs_fresh_from_scope_fresh; eauto.
-    Qed.
-
-    Lemma call_subst_fresh_reset_from_scope_fresh:
-      forall scope sig inptyp ckty rst_inst outtyp,
-        scope_fresh scope sig ->
-        signature_scope_sec sig ->
-        Forall (st_scoped scope) inptyp ->
-        st_scoped scope ckty ->
-        (exists n, rst_inst = Ids.gensym Ids.sec_reset n) ->
-        Forall (fun x => In x scope) outtyp ->
-        call_subst_fresh sig inptyp ckty (rst_inst :: nil) outtyp.
-    Proof.
-      intros scope sig inptyp ckty rst_inst outtyp
-             Hfresh Hsigsec Hinp Hclk Hrstinst Hout.
-      repeat split.
-      - eapply types_fresh_from_scope_fresh; eauto.
-      - eapply type_fresh_from_scope_fresh; eauto.
-      - unfold type_fresh. rewrite Forall_forall.
-        intros x Hin Hsig.
-        simpl in Hin. destruct Hin as [Heq|[]]. subst x.
-        eapply sec_reset_not_in_signature_scope; eauto.
-      - eapply outputs_fresh_from_scope_fresh; eauto.
-    Qed.
-
     Definition successful_call_substitutions_fresh : Prop :=
       forall sig inptyp ckty rstty outtyp cns st_init st',
         generate_constraints sig inptyp ckty rstty outtyp st_init = OK (cns, st') ->
@@ -520,6 +295,7 @@ Module Type SECNLUSSTCTRANSLATION
           reset-instance constraint outside the shared scope. *)
     Definition Signature_call_preserves (n1 n2: signature) : Prop :=
       (forall scope inptyp ckty rstty outtyp nconst sconst st_init1 st_init2 st1 st2,
+          scope_fresh scope n1 ->
           call_subst_scoped scope inptyp ckty rstty outtyp ->
           call_subst_fresh n1 inptyp ckty rstty outtyp ->
           call_subst_fresh n2 inptyp ckty rstty outtyp ->
@@ -527,6 +303,7 @@ Module Type SECNLUSSTCTRANSLATION
           generate_constraints n2 inptyp ckty rstty outtyp st_init2 = OK (sconst, st2) ->
           preserves_on scope nconst sconst)
       /\ (forall scope inptyp ckty srcrst outtyp reset_lhs rst_inst nconst sconst st_init1 st_init2 st1 st2,
+            scope_fresh scope n1 ->
             call_subst_scoped scope inptyp ckty srcrst outtyp ->
             ~ In rst_inst scope ->
             call_subst_fresh n1 inptyp ckty srcrst outtyp ->
@@ -787,11 +564,6 @@ Module Type SECNLUSSTCTRANSLATION
                   ** exact Hinscope.
                   ** contradiction.
           * exact Ht2.
-    Qed.
-
-    Lemma agree_on_refl: forall xs dlt, agree_on xs dlt dlt.
-    Proof.
-      intros * x Hin. reflexivity.
     Qed.
 
     Lemma preserves_on_nil: forall scope, preserves_on scope nil nil.
@@ -1722,6 +1494,7 @@ Module Type SECNLUSSTCTRANSLATION
                                     end) rckty_stc)
 	                                rst_inst_reset
 	                                nconst c_call st_outtl_nl st_rstinst_call st1 st_call1
+	                                Hsnlfresh
 	                                (conj (conj HinpScope (conj Hckscope HoutScope)) Hsrcrstscope_call)
 	                                Hnin Hfresh_nl Hfresh_stc Hcall_nl Hcall_stc).
           * simpl in Htr. subst trs. simpl in Hnl, Hstc.
@@ -1803,6 +1576,7 @@ Module Type SECNLUSSTCTRANSLATION
 	            cbn [app].
 	            eexact (Hsimplecall scope inptyp_nl ckty_nl (rst_ty :: nil) (outhd_nl :: outtl_nl)
 	                                 nconst c_call st_outtl_nl st_outtl_stc st1 st_call1
+	                                 Hsnlfresh
 	                                 (conj (conj HinpScope (conj Hckscope HoutScope)) Hrstsingle)
 	                                 Hfresh_nl Hfresh_stc Hcall_nl Hcall_stc).
       - simpl in Htr. subst trs. simpl in Hnl, Hstc.
@@ -2015,6 +1789,7 @@ Module Type SECNLUSSTCTRANSLATION
          to remove the explicit [Signature_consistent] premise from the final
          node/system theorems. *)
   Section NODESYSPRES.
+    Local Notation sig_scope := signature_scope.
 
     (** The lemmas in this block are only used to discharge the freshness side
         conditions of the generated-node theorems. They establish that ordinary
@@ -3411,200 +3186,17 @@ Module Type SECNLUSSTCTRANSLATION
         [simplify] now lives in [SecTypes].  The translation proof only uses
         the imported lemmas, rather than carrying local copies here. *)
 
-	    Definition upd_type (dlt: ident -> Lat.t) (x: ident) (st: ST) : ident -> Lat.t :=
-	      fun y => if ident_eqb y x then hm_ext dlt st else dlt y.
-
-	    Definition upd_ident (dlt: ident -> Lat.t) (x v: ident) : ident -> Lat.t :=
-	      fun y => if ident_eqb y x then dlt v else dlt y.
-
-	    Fixpoint upd_types (dlt: ident -> Lat.t) (xs: list ident) (vs: list ST)
-	      : ident -> Lat.t :=
-	      match xs, vs with
-	      | x :: xs', v :: vs' => upd_types (upd_type dlt x v) xs' vs'
-	      | _, _ => dlt
-	      end.
-
-	    Fixpoint upd_types_rev (dlt: ident -> Lat.t) (xs: list ident) (vs: list ST)
-	      : ident -> Lat.t :=
-	      match xs, vs with
-	      | x :: xs', v :: vs' => upd_type (upd_types_rev dlt xs' vs') x v
-	      | _, _ => dlt
-	      end.
-
-	    Fixpoint upd_idents (dlt: ident -> Lat.t) (xs vs: list ident)
-	      : ident -> Lat.t :=
-	      match xs, vs with
-	      | x :: xs', v :: vs' => upd_idents (upd_ident dlt x v) xs' vs'
-	      | _, _ => dlt
-	      end.
-
-	    Fixpoint upd_idents_rev (dlt: ident -> Lat.t) (xs vs: list ident)
-	      : ident -> Lat.t :=
-	      match xs, vs with
-	      | x :: xs', v :: vs' => upd_ident (upd_idents_rev dlt xs' vs') x v
-	      | _, _ => dlt
-	      end.
-
 	    Definition inst_valuation
 	      (dlt: ident -> Lat.t) (sig: signature)
 	      (inp: list ST) (clk rst: ST) (out: list ident)
 	      : ident -> Lat.t :=
-	      upd_idents
+	      upd_types_rev
 	        (upd_type
 	           (upd_type
-	              (upd_types dlt sig.(s_in) inp)
-	              sig.(s_clk) clk)
-	           sig.(s_reset) rst)
-	        sig.(s_out) out.
-
-	    Definition overlay_scope
-	      (scope: list ident) (dlt_scope dlt_base: ident -> Lat.t)
-	      : ident -> Lat.t :=
-	      fun x => if in_dec ident_eq_dec x scope then dlt_scope x else dlt_base x.
-
-	    Lemma upd_type_outside:
-	      forall dlt x st y,
-	        x <> y ->
-	        upd_type dlt x st y = dlt y.
-	    Proof.
-	      intros dlt x st y Hneq.
-	      unfold upd_type.
-	      destruct (ident_eqb y x) eqn:Heq.
-	      - apply ident_eqb_eq in Heq. congruence.
-	      - reflexivity.
-	    Qed.
-
-	    Lemma upd_ident_outside:
-	      forall dlt x v y,
-	        x <> y ->
-	        upd_ident dlt x v y = dlt y.
-	    Proof.
-	      intros dlt x v y Hneq.
-	      unfold upd_ident.
-	      destruct (ident_eqb y x) eqn:Heq.
-	      - apply ident_eqb_eq in Heq. congruence.
-	      - reflexivity.
-	    Qed.
-
-	    Lemma upd_types_agree_on:
-	      forall dlt scope xs vs,
-	        Forall (fun x => ~ In x scope) xs ->
-	        agree_on scope dlt (upd_types dlt xs vs).
-	    Proof.
-	      intros dlt scope xs.
-	      revert dlt.
-	      induction xs as [|x xs IH]; intros dlt vs Hfresh y Hy.
-	      - destruct vs; reflexivity.
-	      - inversion Hfresh as [|x' xs' Hx Hxs]; subst x' xs'.
-	        destruct vs as [|v vs].
-	        + reflexivity.
-	        + specialize (IH (upd_type dlt x v) vs Hxs y Hy).
-	          unfold upd_types in IH |- *; simpl in IH |- *.
-	          destruct (ident_eqb y x) eqn:Heq.
-	          * apply ident_eqb_eq in Heq. subst y. exfalso. exact (Hx Hy).
-	          * transitivity ((upd_type dlt x v) y).
-	            -- symmetry. apply upd_type_outside. intros Heqxy. subst y. exact (Hx Hy).
-	            -- exact IH.
-	    Qed.
-
-	    Lemma upd_idents_agree_on:
-	      forall dlt scope xs vs,
-	        Forall (fun x => ~ In x scope) xs ->
-	        agree_on scope dlt (upd_idents dlt xs vs).
-	    Proof.
-	      intros dlt scope xs.
-	      revert dlt.
-	      induction xs as [|x xs IH]; intros dlt vs Hfresh y Hy.
-	      - destruct vs; reflexivity.
-	      - inversion Hfresh as [|x' xs' Hx Hxs]; subst x' xs'.
-	        destruct vs as [|v vs].
-	        + reflexivity.
-	        + specialize (IH (upd_ident dlt x v) vs Hxs y Hy).
-	          unfold upd_idents in IH |- *; simpl in IH |- *.
-	          destruct (ident_eqb y x) eqn:Heq.
-	          * apply ident_eqb_eq in Heq. subst y. exfalso. exact (Hx Hy).
-	          * transitivity ((upd_ident dlt x v) y).
-	            -- symmetry. apply upd_ident_outside. intros Heqxy. subst y. exact (Hx Hy).
-	            -- exact IH.
-	    Qed.
-
-	    Lemma upd_type_agree_on:
-	      forall dlt scope x st,
-	        ~ In x scope ->
-	        agree_on scope dlt (upd_type dlt x st).
-	    Proof.
-	      intros dlt scope x st Hfresh y Hin.
-	      unfold upd_type.
-	      destruct (ident_eqb y x) eqn:Heq.
-	      - apply ident_eqb_eq in Heq. subst y. exfalso. exact (Hfresh Hin).
-	      - reflexivity.
-	    Qed.
-
-	    Lemma upd_ident_agree_on:
-	      forall dlt scope x v,
-	        ~ In x scope ->
-	        agree_on scope dlt (upd_ident dlt x v).
-	    Proof.
-	      intros dlt scope x v Hfresh y Hin.
-	      unfold upd_ident.
-	      destruct (ident_eqb y x) eqn:Heq.
-	      - apply ident_eqb_eq in Heq. subst y. exfalso. exact (Hfresh Hin).
-	      - reflexivity.
-	    Qed.
-
-	    Lemma scope_fresh_notin_sig_scope:
-	      forall scope sig x,
-	        scope_fresh scope sig ->
-	        In x (sig_scope sig) ->
-	        ~ In x scope.
-	    Proof.
-	      intros scope sig x Hfresh Hsig Hscope.
-	      exact (Hfresh x Hscope Hsig).
-	    Qed.
-
-	    Lemma scope_fresh_notin_inputs:
-	      forall scope sig,
-	        scope_fresh scope sig ->
-	        Forall (fun x => ~ In x scope) sig.(s_in).
-	    Proof.
-	      intros scope sig Hfresh.
-	      rewrite Forall_forall.
-	      intros x Hin.
-	      eapply scope_fresh_notin_sig_scope; eauto.
-	      unfold sig_scope. apply in_or_app. now left.
-	    Qed.
-
-	    Lemma scope_fresh_notin_outputs:
-	      forall scope sig,
-	        scope_fresh scope sig ->
-	        Forall (fun x => ~ In x scope) sig.(s_out).
-	    Proof.
-	      intros scope sig Hfresh.
-	      rewrite Forall_forall.
-	      intros x Hin.
-	      eapply scope_fresh_notin_sig_scope; eauto.
-	      unfold sig_scope. apply in_or_app. right. apply in_or_app. left. exact Hin.
-	    Qed.
-
-	    Lemma scope_fresh_notin_clk:
-	      forall scope sig,
-	        scope_fresh scope sig ->
-	        ~ In sig.(s_clk) scope.
-	    Proof.
-	      intros scope sig Hfresh.
-	      eapply scope_fresh_notin_sig_scope; eauto.
-	      unfold sig_scope. apply in_or_app. right. apply in_or_app. right. simpl. left. reflexivity.
-	    Qed.
-
-	    Lemma scope_fresh_notin_reset:
-	      forall scope sig,
-	        scope_fresh scope sig ->
-	        ~ In sig.(s_reset) scope.
-	    Proof.
-	      intros scope sig Hfresh.
-	      eapply scope_fresh_notin_sig_scope; eauto.
-	      unfold sig_scope. apply in_or_app. right. apply in_or_app. right. simpl. right. left. reflexivity.
-	    Qed.
+	              (upd_idents_rev dlt sig.(s_out) out)
+	              sig.(s_reset) rst)
+	           sig.(s_clk) clk)
+	        sig.(s_in) inp.
 
 	    Lemma inst_valuation_agree_on_scope:
 	      forall dlt sig scope inp clk rst out,
@@ -3614,52 +3206,16 @@ Module Type SECNLUSSTCTRANSLATION
 	      intros dlt sig scope inp clk rst out Hfresh.
 	      unfold inst_valuation.
 	      eapply agree_on_trans.
-	      - eapply upd_types_agree_on.
-	        eapply scope_fresh_notin_inputs; eauto.
+	      - eapply upd_idents_rev_agree_on.
+	        eapply scope_fresh_notin_outputs; eauto.
 	      - eapply agree_on_trans.
 	        + eapply upd_type_agree_on.
-	          eapply scope_fresh_notin_clk; eauto.
+	          eapply scope_fresh_notin_reset; eauto.
 	        + eapply agree_on_trans.
 	          * eapply upd_type_agree_on.
-	            eapply scope_fresh_notin_reset; eauto.
-	          * eapply upd_idents_agree_on.
-	            eapply scope_fresh_notin_outputs; eauto.
-	    Qed.
-
-	    Lemma hm_ext_agree_on_st:
-	      forall dlt1 dlt2 st,
-	        agree_on st dlt1 dlt2 ->
-	        hm_ext dlt1 st = hm_ext dlt2 st.
-	    Proof.
-	      intros dlt1 dlt2 st Hagree.
-	      induction st as [|x st IH]; simpl; auto.
-	      rewrite (Hagree x).
-	      2:{ now left. }
-	      rewrite IH; auto.
-	      intros y Hy. apply Hagree. now right.
-	    Qed.
-
-	    Lemma overlay_scope_agree_on:
-	      forall scope dlt_scope dlt_base,
-	        agree_on scope dlt_scope (overlay_scope scope dlt_scope dlt_base).
-	    Proof.
-	      intros scope dlt_scope dlt_base x Hin.
-	      unfold overlay_scope.
-	      destruct (in_dec ident_eq_dec x scope) as [Hin'|Hnin].
-	      - reflexivity.
-	      - contradiction.
-	    Qed.
-
-	    Lemma overlay_scope_agree_outside:
-	      forall scope dlt_scope dlt_base x,
-	        ~ In x scope ->
-	        overlay_scope scope dlt_scope dlt_base x = dlt_base x.
-	    Proof.
-	      intros scope dlt_scope dlt_base x Hfresh.
-	      unfold overlay_scope.
-	      destruct (in_dec ident_eq_dec x scope) as [Hin|Hnin].
-	      - contradiction.
-	      - reflexivity.
+	            eapply scope_fresh_notin_clk; eauto.
+	          * eapply upd_types_rev_agree_on.
+	            eapply scope_fresh_notin_inputs; eauto.
 	    Qed.
 
 	    Lemma overlay_scope_agree_on_sig_scope:
@@ -3674,17 +3230,433 @@ Module Type SECNLUSSTCTRANSLATION
 	      exact (Hfresh x Hscope Hin).
 	    Qed.
 
-	    Lemma hm_ext_agree_on_scoped_type:
-	      forall scope ty dlt1 dlt2,
-	        st_scoped scope ty ->
-	        agree_on scope dlt1 dlt2 ->
-	        hm_ext dlt1 ty = hm_ext dlt2 ty.
+	    Lemma subst_constraints_inp_map_length:
+	      forall cs xs vs cs' st st',
+	        SIG.subst_constraints_inp_map cs xs vs st = OK (cs', st') ->
+	        List.length xs = List.length vs.
 	    Proof.
-	      intros scope ty dlt1 dlt2 Hsc Hagree.
-	      apply hm_ext_agree_on_st.
+	      intros cs xs.
+	      revert cs.
+	      induction xs as [|x xs IH]; intros cs vs cs' st st' Hsub.
+	      - destruct vs as [|v vs]; simpl in Hsub; try discriminate.
+	        reflexivity.
+	      - destruct vs as [|v vs]; simpl in Hsub; try discriminate.
+	        eapply sec_bind_inv in Hsub as (cs1 & st1 & Hhd & Htl).
+	        simpl. f_equal. eapply IH. exact Htl.
+	    Qed.
+
+	    Lemma subst_constraints_out_map_length:
+	      forall cs xs vs cs' st st',
+	        SIG.subst_constraints_out_map cs xs vs st = OK (cs', st') ->
+	        List.length xs = List.length vs.
+	    Proof.
+	      intros cs xs.
+	      revert cs.
+	      induction xs as [|x xs IH]; intros cs vs cs' st st' Hsub.
+	      - destruct vs as [|v vs]; simpl in Hsub; try discriminate.
+	        reflexivity.
+	      - destruct vs as [|v vs]; simpl in Hsub; try discriminate.
+	        destruct (SymTypes.findST cs v) eqn:Hfind; try discriminate.
+	        eapply sec_bind_inv in Hsub as (cs1 & st1 & Hhd & Htl).
+	        simpl. f_equal. eapply IH. exact Htl.
+	    Qed.
+
+	    Lemma Forall2_impl_local:
+	      forall A B (P Q : A -> B -> Prop) xs ys,
+	        Forall2 P xs ys ->
+	        (forall x y, P x y -> Q x y) ->
+	        Forall2 Q xs ys.
+	    Proof.
+	      intros A B P Q xs ys Hrel Himpl.
+	      induction Hrel.
+	      - constructor.
+	      - constructor.
+	        + eapply Himpl; eauto.
+	        + eapply IHHrel; eauto.
+	    Qed.
+
+	    Lemma Forall2_upd_ident_outside_base:
+	      forall (d0 dlt: ident -> Lat.t) x v xs vs,
+	        ~ In x xs ->
+	        Forall2 (fun y vy => d0 y = dlt vy) xs vs ->
+	        Forall2 (fun y vy => upd_ident d0 x v y = dlt vy) xs vs.
+	    Proof.
+	      intros d0 dlt x v xs vs Hnin Hrel.
+	      induction Hrel.
+	      - constructor.
+	      - constructor.
+	        + unfold upd_ident.
+	          destruct (ident_eqb x0 x) eqn:Heq.
+	          * apply ident_eqb_eq in Heq. subst x0.
+	            exfalso. apply Hnin. now left.
+	          * exact H.
+	        + apply IHHrel.
+	          intro Hin. apply Hnin. now right.
+	    Qed.
+
+	    Lemma Forall2_upd_type_outside_base:
+	      forall (d0 dlt: ident -> Lat.t) x ty xs tys,
+	        ~ In x xs ->
+	        Forall2 (fun y ty' => d0 y = hm_ext dlt ty') xs tys ->
+	        Forall2 (fun y ty' => upd_type d0 x ty y = hm_ext dlt ty') xs tys.
+	    Proof.
+	      intros d0 dlt x ty xs tys Hnin Hrel.
+	      induction Hrel.
+	      - constructor.
+	      - constructor.
+	        + unfold upd_type.
+	          destruct (ident_eqb x0 x) eqn:Heq.
+	          * apply ident_eqb_eq in Heq. subst x0.
+	            exfalso. apply Hnin. now left.
+	          * exact H.
+	        + apply IHHrel.
+	          intro Hin. apply Hnin. now right.
+	    Qed.
+
+	    Lemma upd_idents_rev_eq_on_pairs:
+	      forall dlt xs vs scope,
+	        incl xs scope ->
+	        outputs_fresh scope vs ->
+	        NoDup xs ->
+	        List.length xs = List.length vs ->
+	        Forall2 (fun x v => upd_idents_rev dlt xs vs x = dlt v) xs vs.
+	    Proof.
+	      induction xs as [|x xs IH]; intros vs scope Hincl Hfresh Hnd Hlen.
+	      - destruct vs as [|v vs]; simpl in Hlen; try discriminate.
+	        constructor.
+	      - destruct vs as [|v vs]; simpl in Hlen; try discriminate.
+	        inversion Hfresh as [|v' vs' Hv Hfresh']; subst v' vs'.
+	        inversion Hnd as [|x' xs' Hxnotin Hnd']; subst x' xs'.
+	        inversion Hlen; subst.
+	        constructor.
+	        + simpl. unfold upd_ident. rewrite ident_eqb_refl.
+	          rewrite upd_idents_rev_outside.
+	          * reflexivity.
+	          * intro Hin. apply Hv. apply Hincl. now right.
+	        + specialize (IH vs scope
+	                         (fun y Hy => Hincl y (or_intror Hy))
+	                         Hfresh' Hnd' H0) as Htail.
+	          eapply Forall2_upd_ident_outside_base; eauto.
+	    Qed.
+
+	    Lemma upd_types_rev_eq_on_pairs:
+	      forall dlt xs tys scope,
+	        incl xs scope ->
+	        types_fresh scope tys ->
+	        NoDup xs ->
+	        List.length xs = List.length tys ->
+	        Forall2 (fun x ty => upd_types_rev dlt xs tys x = hm_ext dlt ty) xs tys.
+	    Proof.
+	      induction xs as [|x xs IH]; intros tys scope Hincl Hfresh Hnd Hlen.
+	      - destruct tys as [|ty tys]; simpl in Hlen; try discriminate.
+	        constructor.
+	      - destruct tys as [|ty tys]; simpl in Hlen; try discriminate.
+	        inversion Hfresh as [|ty' tys' Hty Hfresh']; subst ty' tys'.
+	        inversion Hnd as [|x' xs' Hxnotin Hnd']; subst x' xs'.
+	        inversion Hlen; subst.
+	        constructor.
+	        + simpl. unfold upd_type. rewrite ident_eqb_refl.
+	          assert (Hfreshxs : Forall (fun z => ~ In z ty) xs).
+	          {
+	            rewrite Forall_forall.
+	            intros z Hz Hzin.
+	            unfold type_fresh in Hty.
+	            rewrite Forall_forall in Hty.
+	            specialize (Hty _ Hzin).
+	            apply Hty. apply Hincl. now right.
+	          }
+	          pose proof (upd_types_rev_agree_on dlt ty xs tys Hfreshxs) as Hagree.
+	          apply hm_ext_agree_on_st in Hagree.
+	          symmetry. exact Hagree.
+	        + specialize (IH tys scope
+	                         (fun y Hy => Hincl y (or_intror Hy))
+	                         Hfresh' Hnd' H0) as Htail.
+	          eapply Forall2_upd_type_outside_base; eauto.
+	    Qed.
+
+	    Lemma sig_scope_nodup_decomp:
+	      forall sig,
+	        NoDup (sig_scope sig) ->
+	        NoDup sig.(s_in)
+	        /\ NoDup sig.(s_out)
+	        /\ Forall (fun x => ~ In x (sig.(s_out) ++ [sig.(s_clk); sig.(s_reset)])) sig.(s_in)
+	        /\ Forall (fun x => ~ In x [sig.(s_clk); sig.(s_reset)]) sig.(s_out)
+	        /\ sig.(s_clk) <> sig.(s_reset).
+	    Proof.
+	      intros sig Hnd.
+	      unfold sig_scope in Hnd.
+	      apply NoDup_app'_iff in Hnd as [Hnin [Hnoutclk Hfreshin]].
+	      apply NoDup_app'_iff in Hnoutclk as [Hnout [Hclkreset Hfreshout]].
+	      apply NoDup_cons_iff in Hclkreset as [Hclkneq Hrstnil].
+	      simpl in Hclkneq.
+	      split; [exact Hnin|].
+	      split; [exact Hnout|].
+	      split; [exact Hfreshin|].
+	      split.
+	      - exact Hfreshout.
+	      - intro Heq. apply Hclkneq. now left.
+	    Qed.
+
+	    Lemma type_fresh_notin_sig_scope:
+	      forall sig ty x,
+	        type_fresh (sig_scope sig) ty ->
+	        In x (sig_scope sig) ->
+	        ~ In x ty.
+	    Proof.
+	      intros sig ty x Hfresh Hin.
+	      unfold type_fresh in Hfresh.
+	      rewrite Forall_forall in Hfresh.
+	      intro Hxty.
+	      eapply Hfresh; eauto.
+	    Qed.
+
+	    Lemma hm_ext_after_output_updates_on_fresh_type:
+	      forall dlt sig out ty,
+	        type_fresh (sig_scope sig) ty ->
+	        hm_ext (upd_idents_rev dlt sig.(s_out) out) ty = hm_ext dlt ty.
+	    Proof.
+	      intros dlt sig out ty Hfresh.
+	      assert (Hagree :
+	                agree_on ty dlt (upd_idents_rev dlt sig.(s_out) out)).
+	      {
+	        eapply upd_idents_rev_agree_on.
+	        rewrite Forall_forall.
+	        intros x Hinout.
+	        eapply type_fresh_notin_sig_scope; eauto.
+	        unfold sig_scope. apply in_or_app. right. apply in_or_app. left. exact Hinout.
+	      }
+	      symmetry. eapply hm_ext_agree_on_st; eauto.
+	    Qed.
+
+	    Lemma hm_ext_after_output_reset_updates_on_fresh_type:
+	      forall dlt sig out rst ty,
+	        type_fresh (sig_scope sig) ty ->
+	        hm_ext
+	          (upd_type (upd_idents_rev dlt sig.(s_out) out) sig.(s_reset) rst) ty =
+	        hm_ext dlt ty.
+	    Proof.
+	      intros dlt sig out rst ty Hfresh.
+	      assert (Hrstfresh : ~ In sig.(s_reset) ty).
+	      {
+	        eapply type_fresh_notin_sig_scope; eauto.
+	        unfold sig_scope. apply in_or_app. right. apply in_or_app. right.
+	        simpl. right. left. reflexivity.
+	      }
+	      rewrite <- (hm_ext_after_output_updates_on_fresh_type dlt sig out ty Hfresh).
+	      symmetry.
+	      eapply hm_ext_agree_on_st.
 	      intros x Hin.
-	      apply Hagree.
-	      exact (Hsc _ Hin).
+	      unfold upd_type.
+	      destruct (ident_eqb x sig.(s_reset)) eqn:Heq; auto.
+	      apply ident_eqb_eq in Heq. subst x. contradiction.
+	    Qed.
+
+	    Lemma hm_ext_after_output_reset_clk_updates_on_fresh_type:
+	      forall dlt sig out clk rst ty,
+	        type_fresh (sig_scope sig) ty ->
+	        hm_ext
+	          (upd_type
+	             (upd_type (upd_idents_rev dlt sig.(s_out) out) sig.(s_reset) rst)
+	             sig.(s_clk) clk) ty =
+	        hm_ext dlt ty.
+	    Proof.
+	      intros dlt sig out clk rst ty Hfresh.
+	      assert (Hclkfresh : ~ In sig.(s_clk) ty).
+	      {
+	        eapply type_fresh_notin_sig_scope; eauto.
+	        unfold sig_scope. apply in_or_app. right. apply in_or_app. right.
+	        simpl. left. reflexivity.
+	      }
+	      rewrite <- (hm_ext_after_output_reset_updates_on_fresh_type dlt sig out rst ty Hfresh).
+	      symmetry.
+	      eapply hm_ext_agree_on_st.
+	      intros x Hin.
+	      unfold upd_type.
+	      destruct (ident_eqb x sig.(s_clk)) eqn:Heq; auto.
+	      apply ident_eqb_eq in Heq. subst x. contradiction.
+	    Qed.
+
+	    Lemma inst_valuation_outside_sig_scope:
+	      forall dlt sig inp clk rst out y,
+	        ~ In y (sig_scope sig) ->
+	        inst_valuation dlt sig inp clk rst out y = dlt y.
+	    Proof.
+	      intros dlt sig inp clk rst out y Hnout.
+	      unfold inst_valuation.
+	      rewrite upd_types_rev_outside.
+	      2:{
+	        intro Hin.
+	        apply Hnout.
+	        unfold sig_scope. apply in_or_app. left. exact Hin.
+	      }
+	      rewrite upd_type_outside.
+	      2:{
+	        intro Heq. subst y.
+	        apply Hnout.
+	        unfold sig_scope. apply in_or_app. right. apply in_or_app. right.
+	        simpl. left. reflexivity.
+	      }
+	      rewrite upd_type_outside.
+	      2:{
+	        intro Heq. subst y.
+	        apply Hnout.
+	        unfold sig_scope. apply in_or_app. right. apply in_or_app. right.
+	        simpl. right. left. reflexivity.
+	      }
+	      rewrite upd_idents_rev_outside.
+	      - reflexivity.
+	      - intro Hin.
+	        apply Hnout.
+	        unfold sig_scope. apply in_or_app. right. apply in_or_app. left. exact Hin.
+	    Qed.
+
+	    Lemma hm_ext_inst_valuation_on_fresh_type:
+	      forall dlt sig inp clk rst out ty,
+	        type_fresh (sig_scope sig) ty ->
+	        hm_ext (inst_valuation dlt sig inp clk rst out) ty = hm_ext dlt ty.
+	    Proof.
+	      intros dlt sig inp clk rst out ty Hfresh.
+	      unfold inst_valuation.
+	      assert (Hagree :
+	                agree_on ty
+	                  (upd_type
+	                     (upd_type (upd_idents_rev dlt sig.(s_out) out) sig.(s_reset) rst)
+	                     sig.(s_clk) clk)
+	                  (upd_types_rev
+	                     (upd_type
+	                        (upd_type (upd_idents_rev dlt sig.(s_out) out) sig.(s_reset) rst)
+	                        sig.(s_clk) clk)
+	                     sig.(s_in) inp)).
+	      {
+	        eapply upd_types_rev_agree_on.
+	        rewrite Forall_forall.
+	        intros x Hin.
+	        eapply type_fresh_notin_sig_scope; eauto.
+	        unfold sig_scope. apply in_or_app. left. exact Hin.
+	      }
+	      rewrite <- (hm_ext_agree_on_st _ _ _ Hagree).
+	      eapply hm_ext_after_output_reset_clk_updates_on_fresh_type; eauto.
+	    Qed.
+
+	    Lemma inst_valuation_outputs_eq:
+	      forall dlt sig inp clk rst out,
+	        call_subst_fresh sig inp clk rst out ->
+	        NoDup (sig_scope sig) ->
+	        List.length sig.(s_out) = List.length out ->
+	        Forall2
+	          (fun x v =>
+	             inst_valuation dlt sig inp clk rst out v =
+	             inst_valuation dlt sig inp clk rst out x)
+	          sig.(s_out) out.
+	    Proof.
+	      intros dlt sig inp clk rst out Hfresh Hndscope Hlen.
+	      destruct sig as [sname sin sout sreset sclk sconstraints].
+	      simpl in *.
+	      destruct Hfresh as [_ [_ [_ Houtfresh]]].
+	      set (sigfull :=
+	             {| s_name := sname;
+	                s_in := sin;
+	                s_out := sout;
+	                s_reset := sreset;
+	                s_clk := sclk;
+	                s_constraints := sconstraints |}).
+	      set (ival := inst_valuation dlt sigfull inp clk rst out).
+	      destruct (sig_scope_nodup_decomp sigfull Hndscope)
+	        as [_ [Hnout [Hfreshin [Houtnotin _]]]].
+	      assert (Htail :
+	                Forall2 (fun x v => upd_idents_rev dlt sout out x = dlt v)
+	                        sout out).
+	      {
+	        eapply upd_idents_rev_eq_on_pairs.
+	        - intros x Hin. unfold sig_scope. apply in_or_app. right.
+	          apply in_or_app. left. exact Hin.
+	        - exact Houtfresh.
+	        - exact Hnout.
+	        - exact Hlen.
+	      }
+	      assert (Houtsafe :
+	                forall x,
+	                  In x sout ->
+	                  ~ In x sin /\ ~ In x [sclk; sreset]).
+	      {
+	        intros x Hinout.
+	        split.
+	        - intro Hinin.
+	          rewrite Forall_forall in Hfreshin.
+	          specialize (Hfreshin _ Hinin).
+	          apply Hfreshin.
+	          apply in_app_iff. left. exact Hinout.
+	        - rewrite Forall_forall in Houtnotin.
+	          exact (Houtnotin _ Hinout).
+	      }
+	      assert (Hformal :
+	                forall x,
+	                  In x sout ->
+	                  ival x = upd_idents_rev dlt sout out x).
+	      {
+	        intros x Hinout.
+	        unfold ival, inst_valuation.
+	        rewrite upd_types_rev_outside.
+	        2:{
+	          destruct (Houtsafe x Hinout) as [Hxin _].
+	          exact Hxin.
+	        }
+	        rewrite upd_type_outside.
+	        2:{
+	          destruct (Houtsafe x Hinout) as [_ Hxclkreset].
+	          intro Heq. apply Hxclkreset. now left; symmetry.
+	        }
+	        rewrite upd_type_outside.
+	        2:{
+	          destruct (Houtsafe x Hinout) as [_ Hxclkreset].
+	          intro Heq. apply Hxclkreset. now right; left; symmetry.
+	        }
+	        reflexivity.
+	      }
+	      assert (Hactual :
+	                forall v,
+	                  In v out ->
+	                  ival v = dlt v).
+	      {
+	        intros v Hinout.
+	        unfold ival.
+	        eapply inst_valuation_outside_sig_scope.
+	        unfold outputs_fresh in Houtfresh.
+	        rewrite Forall_forall in Houtfresh.
+	        exact (Houtfresh _ Hinout).
+	      }
+	      assert (HformalF : Forall (fun x => ival x = upd_idents_rev dlt sout out x) sout).
+	      {
+	        rewrite Forall_forall.
+	        intros x Hin.
+	        exact (Hformal x Hin).
+	      }
+	      assert (HactualF : Forall (fun v => ival v = dlt v) out).
+	      {
+	        rewrite Forall_forall.
+	        intros v Hin.
+	        exact (Hactual v Hin).
+	      }
+	      assert
+	        (Hconv :
+	           forall xs ys,
+	             Forall2 (fun x v => upd_idents_rev dlt sout out x = dlt v) xs ys ->
+	             Forall (fun x => ival x = upd_idents_rev dlt sout out x) xs ->
+	             Forall (fun v => ival v = dlt v) ys ->
+	             Forall2 (fun x v => ival v = ival x) xs ys).
+	      {
+	        intros xs ys Hrel.
+	        induction Hrel; intros Hf1 Hf2.
+	        - constructor.
+	        - inversion Hf1 as [|x' xs' Hx Hxs]; subst.
+	          inversion Hf2 as [|y' ys' Hy Hys]; subst.
+	          constructor.
+	          + transitivity (dlt y).
+	            * exact Hy.
+	            * rewrite Hx. symmetry. exact H.
+	          + eapply IHHrel; eauto.
+	      }
+	      eapply Hconv; eauto.
 	    Qed.
 
 	    Lemma upd_ident_eq_upd_type_singleton:
@@ -4191,6 +4163,22 @@ Module Type SECNLUSSTCTRANSLATION
 	          eapply subst_ident_constraints_correct_out; eauto.
 	    Qed.
 
+	    Lemma subst_constraints_inp_map_rhs:
+	      forall cs xs tys cs' st st',
+	        SIG.subst_constraints_inp_map cs xs tys st = OK (cs', st') ->
+	        map snd cs' = map snd cs.
+	    Proof.
+	      intros cs xs.
+	      revert cs.
+	      induction xs as [|x xs IH]; intros cs tys cs' st st' Hsub.
+	      - destruct tys as [|ty tys]; simpl in Hsub; try discriminate.
+	        unfold ret in Hsub. inversion Hsub; subst. reflexivity.
+	      - destruct tys as [|ty tys]; simpl in Hsub; try discriminate.
+	        eapply sec_bind_inv in Hsub as (cs1 & st1 & Hhd & Htl).
+	        rewrite (IH _ _ _ _ _ Htl).
+	        exact (SIG.subst_ident_in_constraints_rhs _ _ _ _ _ _ Hhd).
+	    Qed.
+
 	    Lemma subst_constraints_out_map_complete:
 	      forall cs xs vs cs' st st',
 	        SIG.subst_constraints_out_map cs xs vs st = OK (cs', st') ->
@@ -4233,6 +4221,242 @@ Module Type SECNLUSSTCTRANSLATION
 	        pose proof (IH cs1 tys cs' st1 st' Hfresh' Htl dlt Hsat) as Hmid.
 	        change (listSatisfiable (upd_type (upd_types_rev dlt xs tys) x ty) cs).
 	        eapply subst_ident_in_constraints_complete; eauto.
+	    Qed.
+
+	    Lemma findST_none_notin_rhs:
+	      forall cs x,
+	        findST cs x = None ->
+	        ~ In [x] (map snd cs).
+	    Proof.
+	      intros cs x Hfind Hin.
+	      destruct (findST_of_rhs_in _ _ Hin) as (st & Hsome).
+	      rewrite Hfind in Hsome. discriminate.
+	    Qed.
+
+	    Lemma wf_constraints_of_singleton_perm:
+	      forall cs outs,
+	        NoDup outs ->
+	        Permutation (map snd cs) (map (fun x => [x]) outs) ->
+	        wf_constraints cs.
+	    Proof.
+	      intros cs outs Hnd Hperm.
+	      split.
+	      - eapply Permutation_NoDup.
+	        + apply Permutation_sym. exact Hperm.
+	        + eapply SIG.nodup_singleton_map. exact Hnd.
+	      - rewrite Forall_forall.
+	        intros [lhs rhs] Hin.
+	        assert (Hinrhs : In rhs (map snd cs)).
+	        { apply in_map_iff. exists (lhs, rhs). split; [reflexivity|exact Hin]. }
+	        eapply Permutation_in in Hinrhs; [|exact Hperm].
+	        apply in_map_iff in Hinrhs as (x & Heq & _).
+	        inversion Heq. reflexivity.
+	    Qed.
+
+	    Lemma subst_rhs_ident_singletons_cons:
+	      forall x v tail,
+	        ~ In x tail ->
+	        map (SIG.subst_rhs_ident x v) (map (fun y => [y]) (x :: tail)) =
+	        map (fun y => [y]) (v :: tail).
+	    Proof.
+	      intros x v tail Hnotin.
+	      simpl. rewrite ident_eqb_refl.
+	      f_equal.
+	      induction tail as [|a tail IH]; simpl; auto.
+	      assert (Hneq : x <> a).
+	      { intro Heq. subst a. apply Hnotin. left. reflexivity. }
+	      rewrite (proj2 (ident_eqb_neq x a) Hneq).
+	      f_equal.
+	      apply IH.
+	      intro Hin. apply Hnotin. right. exact Hin.
+	    Qed.
+
+	    Lemma subst_ident_constraints_shape_out_step:
+	      forall cs x v tail cs' st st',
+	        wf_constraints cs ->
+	        Permutation (map snd cs) (map (fun y => [y]) (x :: tail)) ->
+	        findST cs v = None ->
+	        SIG.subst_ident_constraints cs x v st = OK (cs', st') ->
+	        wf_constraints cs'
+	        /\ Permutation (map snd cs') (map (fun y => [y]) (v :: tail)).
+	    Proof.
+	      intros cs x v tail cs' st st' Hwf Hperm Hfind Hsub.
+	      pose proof (SIG.subst_ident_constraints_rhs _ _ _ _ _ _ Hsub) as Hrhs.
+	      assert (Hnd_cs : NoDup (map snd cs)).
+	      { exact (proj1 Hwf). }
+	      assert (Hnd_xtail_map : NoDup (map (fun y => [y]) (x :: tail))).
+	      { eapply Permutation_NoDup; [exact Hperm|exact Hnd_cs]. }
+	      assert (Hnd_xtail : NoDup (x :: tail)).
+	      { eapply NoDup_map_inv with (f := fun y => [y]). exact Hnd_xtail_map. }
+	      assert (Hxnotin : ~ In x tail).
+	      { apply NoDup_cons_iff in Hnd_xtail. exact (proj1 Hnd_xtail). }
+	      assert (Hvnotin_xtail : ~ In v (x :: tail)).
+	      {
+	        intro Hin.
+	        apply (findST_none_notin_rhs _ _ Hfind).
+	        eapply Permutation_in.
+	        - apply Permutation_sym. exact Hperm.
+	        - apply in_map_iff. exists v. split; [reflexivity|exact Hin].
+	      }
+	      assert (Hperm_map :
+	                Permutation (map (SIG.subst_rhs_ident x v) (map snd cs))
+	                            (map (SIG.subst_rhs_ident x v)
+	                                 (map (fun y => [y]) (x :: tail)))).
+	      { eapply Permutation_map. exact Hperm. }
+	      replace (map (SIG.subst_rhs_ident x v) (map snd cs)) with (map snd cs') in Hperm_map
+	        by (symmetry; exact Hrhs).
+	      rewrite (subst_rhs_ident_singletons_cons x v tail Hxnotin) in Hperm_map.
+	      split.
+	      - eapply wf_constraints_of_singleton_perm.
+	        + apply NoDup_cons_iff. split.
+	          * intro Hin. apply Hvnotin_xtail. right. exact Hin.
+	          * apply NoDup_cons_iff in Hnd_xtail. exact (proj2 Hnd_xtail).
+	        + exact Hperm_map.
+	      - exact Hperm_map.
+	    Qed.
+
+	    Lemma singleton_map_perm_middle:
+	      forall (xs : list ident) (v : ident) (acc : list ident),
+	        Permutation (map (fun y => [y]) (v :: xs ++ acc))
+	                    (map (fun y => [y]) (xs ++ v :: acc)).
+	    Proof.
+	      intros xs v acc.
+	      simpl.
+	      rewrite !map_app.
+	      simpl.
+	      apply Permutation_middle.
+	    Qed.
+
+	    Lemma subst_constraints_out_map_shape_acc:
+	      forall cs xs vs acc cs' st st',
+	        wf_constraints cs ->
+	        Permutation (map snd cs) (map (fun y => [y]) (xs ++ acc)) ->
+	        SIG.subst_constraints_out_map cs xs vs st = OK (cs', st') ->
+	        wf_constraints cs'
+	        /\ Permutation (map snd cs') (map (fun y => [y]) (vs ++ acc)).
+	    Proof.
+	      intros cs xs.
+	      revert cs.
+	      induction xs as [|x xs IH]; intros cs vs acc cs' st st' Hwf Hperm Hsub.
+	      - destruct vs as [|v vs]; simpl in Hsub; try discriminate.
+	        unfold ret in Hsub. inversion Hsub; subst. split; [exact Hwf|exact Hperm].
+	      - destruct vs as [|v vs]; simpl in Hsub; try discriminate.
+	        simpl in Hperm.
+	        revert Hsub.
+	        destruct (SymTypes.findST cs v) eqn:Hfind; intro Hsub; simpl in Hsub.
+	        + discriminate.
+	        + eapply sec_bind_inv in Hsub as (cs1 & st1 & Hhd & Htl).
+	          destruct (subst_ident_constraints_shape_out_step
+	                      cs x v (xs ++ acc) cs1 st st1 Hwf Hperm Hfind Hhd)
+	            as [Hwf1 Hperm1].
+	          assert (Hperm1' :
+	                    Permutation (map snd cs1)
+	                                (map (fun y => [y]) (xs ++ v :: acc))).
+	          {
+	            eapply Permutation_trans; [exact Hperm1|].
+	            apply singleton_map_perm_middle.
+	          }
+	          destruct (IH cs1 vs (v :: acc) cs' st1 st' Hwf1 Hperm1' Htl)
+	            as [Hwf2 Hperm2].
+	          split; [exact Hwf2|].
+	          eapply Permutation_trans; [exact Hperm2|].
+	          apply Permutation_sym.
+	          apply singleton_map_perm_middle.
+	    Qed.
+
+	    Corollary subst_constraints_out_map_shape:
+	      forall cs xs vs cs' st st',
+	        wf_constraints cs ->
+	        Permutation (map snd cs) (map (fun y => [y]) xs) ->
+	        SIG.subst_constraints_out_map cs xs vs st = OK (cs', st') ->
+	        wf_constraints cs'
+	        /\ Permutation (map snd cs') (map (fun y => [y]) vs).
+	    Proof.
+	      intros cs xs vs cs' st st' Hwf Hperm Hsub.
+	      assert (Hperm_nil :
+	                Permutation (map snd cs) (map (fun y => [y]) (xs ++ nil))).
+	      { rewrite app_nil_r. exact Hperm. }
+	      destruct (subst_constraints_out_map_shape_acc
+	                  cs xs vs nil cs' st st' Hwf Hperm_nil Hsub)
+	        as [Hwf' Hperm'].
+	      rewrite app_nil_r in Hperm'.
+	      split.
+	      - exact Hwf'.
+	      - exact Hperm'.
+	    Qed.
+
+	    Lemma signature_good_outputs_nodup:
+	      forall sig,
+	        signature_good sig ->
+	        NoDup sig.(s_out).
+	    Proof.
+	      intros sig [Hwf Hperm].
+	      assert (Hnd_map : NoDup (map (fun y => [y]) sig.(s_out))).
+	      { eapply Permutation_NoDup; [exact Hperm|exact (proj1 Hwf)]. }
+	      eapply NoDup_map_inv with (f := fun y => [y]).
+	      exact Hnd_map.
+	    Qed.
+
+	    Theorem generate_constraints_complete_good:
+	      forall sig inp clk rst out cns st st',
+	        signature_good sig ->
+	        generate_constraints sig inp clk rst out st = OK (cns, st') ->
+	        forall dlt,
+	          listSatisfiable dlt cns ->
+	          Forall2 (fun x ty => ~ In x ty) sig.(s_in) inp ->
+	          ~ In sig.(s_clk) clk ->
+	          ~ In sig.(s_reset) rst ->
+	          listSatisfiable
+	            (upd_types_rev
+	               (upd_type
+	                  (upd_type
+	                     (upd_idents_rev dlt sig.(s_out) out)
+	                     sig.(s_reset) rst)
+	                  sig.(s_clk) clk)
+	               sig.(s_in) inp)
+	            sig.(s_constraints).
+	    Proof.
+	      intros sig inp clk rst out cns st st' Hgood Hgen dlt Hsat Hinfresh Hclkfresh Hrstfresh.
+	      destruct Hgood as [Hwf0 Hperm0].
+	      assert (Hndout0 : NoDup sig.(s_out)).
+	      { eapply signature_good_outputs_nodup. exact (conj Hwf0 Hperm0). }
+	      unfold generate_constraints in Hgen.
+	      eapply sec_bind_inv in Hgen as (c1 & st1 & HinpSub & Hgen).
+	      eapply sec_bind_inv in Hgen as (c2 & st2 & HclkSub & Hgen).
+	      eapply sec_bind_inv in Hgen as (c3 & st3 & HrstSub & Hgen).
+	      eapply sec_bind_inv in Hgen as (c4 & st4 & HoutSub & Hreorder).
+	      pose proof (subst_constraints_inp_map_rhs _ _ _ _ _ _ HinpSub) as Hrhs1.
+	      pose proof (SIG.subst_ident_in_constraints_rhs _ _ _ _ _ _ HclkSub) as Hrhs2.
+	      pose proof (SIG.subst_ident_in_constraints_rhs _ _ _ _ _ _ HrstSub) as Hrhs3.
+	      assert (Hperm1 : Permutation (map snd c1) (map (fun y => [y]) sig.(s_out))).
+	      { rewrite Hrhs1. exact Hperm0. }
+	      assert (Hwf1 : wf_constraints c1).
+	      { eapply wf_constraints_of_singleton_perm; eauto. }
+	      assert (Hperm2 : Permutation (map snd c2) (map (fun y => [y]) sig.(s_out))).
+	      { rewrite Hrhs2, Hrhs1. exact Hperm0. }
+	      assert (Hwf2 : wf_constraints c2).
+	      { eapply wf_constraints_of_singleton_perm; eauto. }
+	      assert (Hperm3 : Permutation (map snd c3) (map (fun y => [y]) sig.(s_out))).
+	      { rewrite Hrhs3, Hrhs2, Hrhs1. exact Hperm0. }
+	      assert (Hwf3 : wf_constraints c3).
+	      { eapply wf_constraints_of_singleton_perm; eauto. }
+	      destruct (subst_constraints_out_map_shape _ _ _ _ _ _ Hwf3 Hperm3 HoutSub)
+	        as [Hwf4 Hperm4].
+	      assert (Hsat4 : listSatisfiable dlt c4).
+	      { eapply reorder_constraints_complete; eauto. }
+	      assert (Hsat3 : listSatisfiable (upd_idents_rev dlt sig.(s_out) out) c3).
+	      { eapply subst_constraints_out_map_complete; eauto. }
+	      assert (Hsat2 :
+	                listSatisfiable
+	                  (upd_type (upd_idents_rev dlt sig.(s_out) out) sig.(s_reset) rst) c2).
+	      { eapply subst_ident_in_constraints_complete; eauto. }
+	      assert (Hsat1 :
+	                listSatisfiable
+	                  (upd_type
+	                     (upd_type (upd_idents_rev dlt sig.(s_out) out) sig.(s_reset) rst)
+	                     sig.(s_clk) clk) c1).
+	      { eapply subst_ident_in_constraints_complete; eauto. }
+	      eapply subst_constraints_inp_map_complete; eauto.
 	    Qed.
 
 	    (** The remaining gap to a fully proved signature-step theorem is not in
