@@ -76,6 +76,9 @@
   added in `SecNLusStcTranslation.v` into the signature layer
   (`SIFSignature.v`) once the final
   call-preservation proof is stable, in particular:
+  - thread `SIGNATURE_PROOFS` explicitly into the translation layer so
+    `SecNLusStcTranslation.v` can reuse the existing signature metatheory
+    instead of carrying local duplicates
   - `call_actuals_scoped`
   - `call_subst_scoped`
   - `overlay_scope`
