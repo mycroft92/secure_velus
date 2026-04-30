@@ -2,17 +2,15 @@
 
 ## Remaining theorem-stack cleanup
 
-- Eliminate the remaining call-side assumptions from the final theorem stack:
-  - `signatures_preserved_calls`
-  - later: discharge `sec_not_in_gensym_prefs` from the concrete `Ident` naming
-    setup so it stops living as a background correctness-module hypothesis
+- Discharge `sec_not_in_gensym_prefs` from the concrete `Ident` naming setup so
+  it stops living as a background correctness-module hypothesis.
 
 - Proof order:
   - checkpoint status:
-    `successful_call_substitutions_fresh` is removed from the public theorem
-    path after the node-scoped env pivot and the scoped-env rebuild of
-    `generate_all_signatures_consistent_scoped'`
-  - next: eliminate `signatures_preserved_calls`
+    both call-side proof artifacts are now gone from the public theorem path:
+    - `successful_call_substitutions_fresh`
+    - `signatures_preserved_calls`
+  - next: prove `sec_not_in_gensym_prefs` concretely and then do cleanup moves
 
 - Preferred first approach for the call-side assumptions:
   - pivot `NameInterface.v` from one flat shared variable env to a node-scoped
@@ -40,8 +38,7 @@
     interfaces, then derive prefix-accumulator freshness there
   - current state:
     the node-scoped env migration is in place through the public lookup-based
-    theorem, and the remaining work is now the semantic call-instantiation
-    bridge behind `signatures_preserved_calls`
+    theorem, and the semantic call-instantiation bridge is now fully internal
 
 - Keep in mind:
   - inter-node reuse of the same raw input/local/output name must be allowed
@@ -99,16 +96,13 @@
   - `signature_good_outputs_nodup`
   - `generate_constraints_complete_good`
 
-- Final reset-call bridge cleanup:
+- Final call-bridge state:
   - ordinary call preservation is proved internally
-  - mixed-reset instantiation agreement is now proved internally
-  - underlying target call-block preservation for reset calls is now proved
-    internally
-  - the remaining blocker is the concrete translated `TcReset` prefix
-    constraint in `SecNLusStcTranslation.v`: prove the local semantic relation
-    between the STC reset-constraint lhs and the NLustre source reset actual,
-    or refactor the remaining reset clause so only that local fact stays
-    explicit
+  - reset underlying call-block preservation is proved internally
+  - the translated `TcReset` prefix constraint is now handled internally as
+    part of the reset-call bridge
+  - `generated_program_signatures_preserved_global` no longer assumes any
+    call-side bridge premise
 
 - After each accepted proof step:
   - validate locally with direct `_CoqProject`-compatible `coqc`

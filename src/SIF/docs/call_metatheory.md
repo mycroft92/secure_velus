@@ -2,14 +2,16 @@
 
 ## Role
 
-This note records the remaining call-side metatheory behind the weakened
+This note records the call-side metatheory behind the weakened
 NLustre-to-STC preservation theorem in `SecNLusStcTranslation.v`.
 
-At the current stage of the development, the public theorem stack has already
-eliminated `successful_call_substitutions_fresh`. The only remaining top-level
-call-side assumption is:
+At the current stage of the development, the public theorem stack no longer
+mentions either of the earlier call-side bridge assumptions:
 
+- `successful_call_substitutions_fresh`
 - `signatures_preserved_calls`
+
+Both are now discharged internally.
 
 ## Why These Assumptions Are Harder
 

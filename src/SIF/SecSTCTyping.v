@@ -222,18 +222,18 @@ Module Type SECSTCTYPING
     Qed.
 
     Lemma assign_clk_type_scoped:
-      forall scope ck st,
-        In base_ty scope ->
+      forall base scope ck st,
+        In base scope ->
         (forall x, Is_free_in_clock x ck -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
-        assign_clk_type env base_ty ck = Some st ->
+        assign_clk_type env base ck = Some st ->
         st_scoped scope st.
     Proof.
-      intros scope ck.
+      intros base scope ck.
       induction ck as [|ck IH x b]; intros st Hbase Hfree Hassign.
       - simpl in Hassign. inversion Hassign; subst.
         apply st_scoped_singleton. exact Hbase.
       - simpl in Hassign.
-        destruct (assign_clk_type env base_ty ck) as [ckty|] eqn:Hck; try discriminate.
+        destruct (assign_clk_type env base ck) as [ckty|] eqn:Hck; try discriminate.
         destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
 	        inversion Hassign; subst st.
 	        eapply st_scoped_merge.
@@ -712,6 +712,11 @@ Module Type SECSTCTYPING
               generate_constraints n inptyp ckty [rst_inst] outtyp
           | None => error (MSG "Signature not found for: " :: [CTX f])
           end
+      | TcReset x (Con ckr r true) f =>
+          do rty      <- find_env r env;
+          do rstckty  <- option_to_sec (assign_clk_type env rst_ty ckr);
+          do rst_inst <- find_env x reset_env;
+          ret [(([rty] ⊔ rstckty), [rst_inst])]
       | TcReset x rck f =>
           do rckty    <- option_to_sec (assign_clk_type env base_ty rck);
           do rst_inst <- find_env x reset_env;
@@ -782,7 +787,7 @@ Module Type SECSTCTYPING
           destruct (assign_cexp_type env ce) eqn:Hexp'; try discriminate.
           inversion Hexp; subst. reflexivity. }
         assert (Hckscope : st_scoped scope ckty).
-        { eapply (assign_clk_type_scoped scope ck ckty); [exact Hbase| |exact Hckopt].
+        { eapply (assign_clk_type_scoped base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
           intros z Hz.
           pose proof (wc_clock_cexp _ _ _ Henv Hce) as Hceck.
           assert (Hinm : InMembers z vars) by (eapply wc_clock_free_in_vars; eauto).
@@ -821,7 +826,7 @@ Module Type SECSTCTYPING
           destruct (assign_exp_type env e) eqn:Hexp'; try discriminate.
           inversion Hexp; subst. reflexivity. }
         assert (Hckscope : st_scoped scope ckty).
-        { eapply (assign_clk_type_scoped scope ck ckty); [exact Hbase| |exact Hckopt].
+        { eapply (assign_clk_type_scoped base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
           intros z Hz.
           pose proof (wc_clock_exp _ _ _ Henv Hexpwc) as Hckwc.
           assert (Hinm : InMembers z vars) by (eapply wc_clock_free_in_vars; eauto).
@@ -845,34 +850,99 @@ Module Type SECSTCTYPING
                    (x := x) (ann := ck) (st := st2) (st' := st'); eauto.
         + constructor.
       - simpl in Hgen.
-        eapply sec_bind_inv in Hgen as (rckty & st1 & Hck & Hgen).
-        eapply sec_bind_inv in Hgen as (rst_inst & st2 & Hrstinst & Hgen).
-        unfold ret in Hgen.
-        inversion Hgen; subst; clear Hgen.
         inversion Hwc as [| |x' ck' f' Hckwc|]; subst.
-        assert (Hckopt : assign_clk_type env base_ty ck = Some rckty).
-        { unfold option_to_sec in Hck.
-          destruct (assign_clk_type env base_ty ck) eqn:Hck'; try discriminate.
-          inversion Hck; subst. reflexivity. }
-        assert (Hckscope : st_scoped scope rckty).
-        { eapply (assign_clk_type_scoped scope ck rckty); [exact Hbase| |exact Hckopt].
-          intros z Hz.
-          assert (Hinm : InMembers z vars) by (eapply wc_clock_free_in_vars; eauto).
-          exact (Hvars z Hinm). }
-        assert (Hlhsscope : st_scoped scope ([rst_ty] ⊔ rckty)).
-        { eapply st_scoped_merge.
-          - apply st_scoped_singleton. exact Hrst.
-          - exact Hckscope. }
-        constructor.
-        + intros y Hin.
-          unfold constraint_scope in Hin. simpl in Hin.
-          rewrite in_app_iff in Hin.
-          destruct Hin as [Hin|Hin].
-          * exact (Hlhsscope _ Hin).
-          * simpl in Hin. destruct Hin as [Heq|[]]. subst y.
-            eapply Hreset; eauto.
-            simpl. now left.
-        + constructor.
+        destruct ck as [|ck0 r0 b0].
+        + simpl in Hgen.
+          eapply sec_bind_inv in Hgen as (rckty & st1 & Hck & Hgen).
+          eapply sec_bind_inv in Hgen as (rst_inst & st2 & Hrstinst & Hgen).
+          unfold ret in Hgen.
+          inversion Hgen; subst; clear Hgen.
+          assert (Hckopt : assign_clk_type env base_ty Cbase = Some rckty).
+          { unfold option_to_sec in Hck.
+            simpl in Hck. inversion Hck; subst. reflexivity. }
+          assert (Hckscope : st_scoped scope rckty).
+          { eapply (assign_clk_type_scoped base_ty scope Cbase rckty); [exact Hbase| |exact Hckopt].
+            intros z Hz. inversion Hz. }
+          assert (Hlhsscope : st_scoped scope ([rst_ty] ⊔ rckty)).
+          { eapply st_scoped_merge.
+            - apply st_scoped_singleton. exact Hrst.
+            - exact Hckscope. }
+          constructor.
+          * intros y Hin.
+            unfold constraint_scope in Hin. simpl in Hin.
+            rewrite in_app_iff in Hin.
+            destruct Hin as [Hin|Hin].
+            -- exact (Hlhsscope _ Hin).
+            -- simpl in Hin. destruct Hin as [Heq|[]]. subst y.
+               eapply Hreset; eauto.
+               simpl. now left.
+          * constructor.
+        + destruct b0.
+          * simpl in Hgen.
+            eapply sec_bind_inv in Hgen as (rty & st1 & Hr & Hgen).
+            eapply sec_bind_inv in Hgen as (rstckty & st2 & Hck & Hgen).
+            eapply sec_bind_inv in Hgen as (rst_inst & st3 & Hrstinst & Hgen).
+            unfold ret in Hgen.
+            inversion Hgen; subst; clear Hgen.
+            unfold find_env in Hr.
+            destruct (Env.find r0 env) as [rty'|] eqn:Hrfind; try discriminate.
+            unfold ret in Hr. inversion Hr; subst rty st1.
+            assert (Hrstckopt : assign_clk_type env rst_ty ck0 = Some rstckty).
+            { unfold option_to_sec in Hck.
+              destruct (assign_clk_type env rst_ty ck0) eqn:Hck'; try discriminate.
+              inversion Hck; subst. reflexivity. }
+            assert (Hrscope : st_scoped scope [rty']).
+            { apply st_scoped_singleton.
+              assert (Hinm : InMembers r0 vars) by (eapply wc_clock_free_in_vars; eauto; constructor 1).
+              destruct (Hvars r0 Hinm) as (ty & Hfind & Hinscope).
+              rewrite Hrfind in Hfind. inversion Hfind; subst. exact Hinscope. }
+            assert (Hrstckscope : st_scoped scope rstckty).
+            { eapply (assign_clk_type_scoped rst_ty scope ck0 rstckty); [exact Hrst| |exact Hrstckopt].
+              intros z Hz.
+              assert (Hinm : InMembers z vars) by (eapply wc_clock_free_in_vars; eauto).
+              exact (Hvars z Hinm). }
+            assert (Hlhsscope : st_scoped scope ([rty'] ⊔ rstckty)).
+            { eapply st_scoped_merge; eauto. }
+            constructor.
+            -- intros y Hin.
+               unfold constraint_scope in Hin. simpl in Hin.
+               rewrite in_app_iff in Hin.
+               destruct Hin as [Hin|Hin].
+               ++ exact (Hlhsscope _ Hin).
+               ++ simpl in Hin. destruct Hin as [Heq|[]]. subst y.
+                  eapply Hreset; eauto.
+                  simpl. now left.
+            -- constructor.
+          * simpl in Hgen.
+            eapply sec_bind_inv in Hgen as (rckty & st1 & Hck & Hgen).
+            eapply sec_bind_inv in Hgen as (rst_inst & st2 & Hrstinst & Hgen).
+            unfold ret in Hgen.
+            inversion Hgen; subst; clear Hgen.
+            assert (Hckopt : assign_clk_type env base_ty (Con ck0 r0 false) = Some rckty).
+            { unfold option_to_sec in Hck.
+              simpl in Hck.
+              destruct (assign_clk_type env base_ty ck0) as [ckty'|] eqn:Hck0; try discriminate.
+              destruct (Env.find r0 env) as [xty'|] eqn:Hr0; try discriminate.
+              inversion Hck; subst. simpl. rewrite Hck0, Hr0. reflexivity. }
+            assert (Hckscope : st_scoped scope rckty).
+            { eapply (assign_clk_type_scoped base_ty scope (Con ck0 r0 false) rckty); [exact Hbase| |exact Hckopt].
+              intros z Hz.
+              assert (Hinm : InMembers z vars) by (eapply wc_clock_free_in_vars; eauto).
+              exact (Hvars z Hinm). }
+            assert (Hlhsscope : st_scoped scope ([rst_ty] ⊔ rckty)).
+            { eapply st_scoped_merge.
+              - apply st_scoped_singleton. exact Hrst.
+              - exact Hckscope. }
+            constructor.
+            -- intros y Hin.
+               unfold constraint_scope in Hin. simpl in Hin.
+               rewrite in_app_iff in Hin.
+               destruct Hin as [Hin|Hin].
+               ++ exact (Hlhsscope _ Hin).
+               ++ simpl in Hin. destruct Hin as [Heq|[]]. subst y.
+                  eapply Hreset; eauto.
+                  simpl. now left.
+            -- constructor.
       - destruct b.
         + simpl in Hgen.
           destruct xs as [|x1 xs']; simpl in Hgen.
@@ -888,7 +958,7 @@ Module Type SECSTCTYPING
               destruct (assign_clk_type env base_ty ck) eqn:Hck'; try discriminate.
               inversion Hck; subst. reflexivity. }
             assert (Hckscope : st_scoped scope ckty).
-            { eapply (assign_clk_type_scoped scope ck ckty); [exact Hbase| |exact Hckopt].
+            { eapply (assign_clk_type_scoped base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
               intros z Hz.
               assert (Hinm : InMembers z vars) by (eapply wc_tc_clock_free_in_vars; eauto).
               exact (Hvars z Hinm). }
@@ -924,7 +994,7 @@ Module Type SECSTCTYPING
               destruct (assign_clk_type env base_ty ck) eqn:Hck'; try discriminate.
               inversion Hck; subst. reflexivity. }
             assert (Hckscope : st_scoped scope ckty).
-            { eapply (assign_clk_type_scoped scope ck ckty); [exact Hbase| |exact Hckopt].
+            { eapply (assign_clk_type_scoped base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
               intros z Hz.
               assert (Hinm : InMembers z vars) by (eapply wc_tc_clock_free_in_vars; eauto).
               exact (Hvars z Hinm). }
@@ -1102,19 +1172,48 @@ Module Type SECSTCTYPING
         unfold wf_constraints. split.
         * constructor; [intro Hin; inversion Hin|constructor].
         * constructor; [simpl; reflexivity|constructor].
-    - simpl in Hgen.
-      eapply sec_bind_inv in Hgen as (rckty & st1 & Hck & Hgen).
-      eapply sec_bind_inv in Hgen as (rst_inst & st2 & Hfind & Hgen).
-      unfold ret in Hgen. inversion Hgen; subst cns st'; clear Hgen.
-      unfold find_env in Hfind.
-      destruct (Env.find x reset_env) as [rst_inst'|] eqn:Henv; try discriminate.
-      inversion Hfind; subst rst_inst st2.
-      exists [rst_inst']. split.
-      + simpl. rewrite Henv. reflexivity.
-      + split; [reflexivity|].
-        unfold wf_constraints. split.
-        * constructor; [intro Hin; inversion Hin|constructor].
-        * constructor; [simpl; reflexivity|constructor].
+    - destruct ck as [|ck0 r0 b0].
+      + simpl in Hgen.
+        eapply sec_bind_inv in Hgen as (rckty & st1 & Hck & Hgen).
+        eapply sec_bind_inv in Hgen as (rst_inst & st2 & Hfind & Hgen).
+        unfold ret in Hgen. inversion Hgen; subst cns st'; clear Hgen.
+        unfold find_env in Hfind.
+        destruct (Env.find x reset_env) as [rst_inst'|] eqn:Henv; try discriminate.
+        inversion Hfind; subst rst_inst st2.
+        exists [rst_inst']. split.
+        * simpl. rewrite Henv. reflexivity.
+        * split; [reflexivity|].
+          unfold wf_constraints. split.
+          -- constructor; [intro Hin; inversion Hin|constructor].
+          -- constructor; [simpl; reflexivity|constructor].
+      + destruct b0.
+        * simpl in Hgen.
+          eapply sec_bind_inv in Hgen as (rty & st1 & Hr & Hgen).
+          eapply sec_bind_inv in Hgen as (rstckty & st2 & Hck & Hgen).
+          eapply sec_bind_inv in Hgen as (rst_inst & st3 & Hfind & Hgen).
+          unfold ret in Hgen. inversion Hgen; subst cns st'; clear Hgen.
+          unfold find_env in Hfind.
+          destruct (Env.find x reset_env) as [rst_inst'|] eqn:Henv; try discriminate.
+          inversion Hfind; subst rst_inst st3.
+          exists [rst_inst']. split.
+          -- simpl. rewrite Henv. reflexivity.
+          -- split; [reflexivity|].
+             unfold wf_constraints. split.
+             ++ constructor; [intro Hin; inversion Hin|constructor].
+             ++ constructor; [simpl; reflexivity|constructor].
+        * simpl in Hgen.
+          eapply sec_bind_inv in Hgen as (rckty & st1 & Hck & Hgen).
+          eapply sec_bind_inv in Hgen as (rst_inst & st2 & Hfind & Hgen).
+          unfold ret in Hgen. inversion Hgen; subst cns st'; clear Hgen.
+          unfold find_env in Hfind.
+          destruct (Env.find x reset_env) as [rst_inst'|] eqn:Henv; try discriminate.
+          inversion Hfind; subst rst_inst st2.
+          exists [rst_inst']. split.
+          -- simpl. rewrite Henv. reflexivity.
+          -- split; [reflexivity|].
+             unfold wf_constraints. split.
+             ++ constructor; [intro Hin; inversion Hin|constructor].
+             ++ constructor; [simpl; reflexivity|constructor].
     - destruct b.
       + destruct xs as [|x1 xs'].
         * simpl in Hgen. unfold ret in Hgen. inversion Hgen; subst cns st'.
