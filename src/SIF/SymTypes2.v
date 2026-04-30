@@ -17,7 +17,7 @@ Inductive nonCanonST: Type :=
 with uConstraint: Type :=
     | CNil : uConstraint
     (* This version takes an ident. I need a way to escalate it to nonCanonST level *)
-    | Cns  : (nonCanonST * ident) -> uConstraint -> uConstraint. 
+    | Cns  : (nonCanonST * ident) -> uConstraint -> uConstraint.
 
 Definition ST := list ident.
 Definition constraint := (ST*ident)%type.
@@ -33,12 +33,12 @@ Lemma my_set_mem_correct: forall a st, my_set_mem a st = true <-> In a st.
 Proof.
     intros. generalize dependent a. induction st; split; intros; auto.
     - inversion H.
-    - simpl in H. destruct (ident_eqb a a0) eqn:E. 
+    - simpl in H. destruct (ident_eqb a a0) eqn:E.
         * apply (ident_eqb_eq) in E. subst. simpl. left. auto.
-        * apply (ident_eqb_neq) in E. simpl. right. now apply IHst... 
-    - simpl.  destruct (ident_eqb a a0) eqn:E. 
+        * apply (ident_eqb_neq) in E. simpl. right. now apply IHst...
+    - simpl.  destruct (ident_eqb a a0) eqn:E.
         * auto.
-        * apply (ident_eqb_neq) in E. simpl in H. 
+        * apply (ident_eqb_neq) in E. simpl in H.
           destruct H as [H1|H2]. elim (E H1). (*a0 = a*)
           now apply IHst.
 Qed.
@@ -59,9 +59,9 @@ Fixpoint canonicalizeType (nc: nonCanonST): (ST * (list constraint)) :=
                    let (s1, c1)  := canonicalizeType x1 in
                     (mergesort s1 s2, c1 ++ c2)
     | Qual x c  => let c2 := canonicalizeConstraints c in
-                   let (s1, c1)  := canonicalizeType x in  
+                   let (s1, c1)  := canonicalizeType x in
                     (s1, c1++c2)
-    end 
+    end
 with canonicalizeConstraints (c: uConstraint):  (list constraint) :=
     match c with
     | CNil             => []

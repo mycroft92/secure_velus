@@ -356,7 +356,7 @@ Module Type SECTYPES(Import Lat: Lattice).
         | a0 :: st' => if ident_eqb a0 a then true else my_set_mem a st'
         end.
 
-    Section merge.    
+    Section merge.
       Fail Fixpoint merge (c1 c2: ST): ST :=
       match c1, c2 with
       | [], _ => c2
@@ -379,7 +379,7 @@ Module Type SECTYPES(Import Lat: Lattice).
                               | Gt => y:: (merge' ys)
                               end
             end.
-  
+
       Fixpoint intersect (c1: ST): ST -> ST :=
         fix intersect' c2 :=
           match c1, c2 with
@@ -391,7 +391,7 @@ Module Type SECTYPES(Import Lat: Lattice).
                             | Gt => intersect' ys
                             end
           end.
-      
+
       Fixpoint canon (x: nonCanonST): ST :=
         match x with
         | Bot => []
@@ -399,15 +399,13 @@ Module Type SECTYPES(Import Lat: Lattice).
         | Lub y z => let c1 := canon y in
                      let c2 := canon z in
                      merge c1 c2
-        end. 
-
-      
+        end.
 
       Lemma merge_nil: forall ls, merge ls [] = ls.
       Proof.
         induction ls; auto.
       Qed.
-    
+
       Lemma merge_nil2: forall ls, merge [] ls = ls.
       Proof.
         induction ls; auto.
@@ -417,14 +415,14 @@ Module Type SECTYPES(Import Lat: Lattice).
       Proof.
         induction ls; auto.
       Qed.
-    
+
       Lemma intersect_nil2: forall ls, intersect [] ls = [].
       Proof.
         induction ls; auto.
       Qed.
 
 
-      
+
       Lemma lt_gt_false: forall a b, (a < b)%positive -> (b < a)%positive -> False.
       Proof.
         assert (RelationClasses.Asymmetric Pos.lt). { apply RelationClasses.StrictOrder_Asymmetric. apply Pos.lt_strorder. }
@@ -464,12 +462,12 @@ Module Type SECTYPES(Import Lat: Lattice).
             + rewrite IHx. auto.
             (*impossible*)
             + apply Pos.compare_eq_iff in Eba. subst. rewrite Pos.compare_gt_iff in Eab. apply Pos.lt_irrefl in Eab. elim Eab.
-            
+
             + rewrite <- IHy. auto.
             (*impossible*)
             + rewrite Pos.compare_gt_iff in Eba. rewrite Pos.compare_gt_iff in Eab. elim (lt_gt_false b_0 a_0 Eab Eba).
       Qed.
-      
+
       Lemma intersect_correct2: forall x y z, intersect y x = z -> forall a, In a z -> In a x.
       Proof.
         intros. rewrite intersect_comm in H. eapply intersect_correct; eauto.
@@ -503,12 +501,12 @@ Module Type SECTYPES(Import Lat: Lattice).
     Proof.
         intros. generalize dependent a. induction st; split; intros; auto.
         - inversion H.
-        - simpl in H. destruct (ident_eqb a a0) eqn:E. 
+        - simpl in H. destruct (ident_eqb a a0) eqn:E.
             * apply (ident_eqb_eq) in E. subst. simpl. left. auto.
-            * apply (ident_eqb_neq) in E. simpl. right. now apply IHst... 
-        - simpl.  destruct (ident_eqb a a0) eqn:E. 
+            * apply (ident_eqb_neq) in E. simpl. right. now apply IHst...
+        - simpl.  destruct (ident_eqb a a0) eqn:E.
             * auto.
-            * apply (ident_eqb_neq) in E. simpl in H. 
+            * apply (ident_eqb_neq) in E. simpl in H.
               destruct H as [H1|H2]. elim (E H1). (*a0 = a*)
               now apply IHst.
     Qed.
@@ -516,24 +514,21 @@ Module Type SECTYPES(Import Lat: Lattice).
     Fixpoint my_set_union (st_1 st_2: ST): ST :=
     match st_2 with
     | []     => st_1
-    | a::st_2' => if my_set_mem a st_1 then my_set_union st_1 st_2' 
+    | a::st_2' => if my_set_mem a st_1 then my_set_union st_1 st_2'
                 else a:: (my_set_union st_1 st_2')
-    end. 
-  
-  
+    end.
+
+
   Hint Resolve my_set_mem_correct.
   Hint Unfold my_set_union.
 
-  (* Notation "x ⊔ y" := (my_set_union x y) (at level 40, left associativity). *)
-  Notation "x ⊔ y" := (merge x y) (at level 40, left associativity).
 
-
-  Fixpoint hm_ext (delta: ident -> Lat.t ) (xs: ST): Lat.t := 
+  Fixpoint hm_ext (delta: ident -> Lat.t ) (xs: ST): Lat.t :=
     match xs with
     | nil   => Lat.bottom
     | x::xs' => join  (delta x) (hm_ext delta xs')
     end.
-  
+
   Definition st_remove := List.remove ident_eq_dec.
   Definition st_mem    := my_set_mem.
   (*Local hint data bases from Lattices*)
@@ -557,24 +552,24 @@ Module Type SECTYPES(Import Lat: Lattice).
     hm_ext dlt st ⊑ hm_ext dlt (d::st).
   Proof.
     induction st as [|a st IHst]; simpl; auto.
-  Qed. 
-  
-  Lemma set_rm_lub_l : forall dlt (d:Lat.t) (d_0:ident) (st:ST), 
+  Qed.
+
+  Lemma set_rm_lub_l : forall dlt (d:Lat.t) (d_0:ident) (st:ST),
     hm_ext dlt (d_0::st) ⊑ d -> dlt d_0 ⊑ d.
   Proof.
     intros * H. simpl in *.
     eapply order_trans. eapply join_bound1. eapply H.
   Qed.
 
-  Lemma set_rm_lub_r : forall dlt (d:Lat.t) (d_0:ident) (st:ST), 
+  Lemma set_rm_lub_r : forall dlt (d:Lat.t) (d_0:ident) (st:ST),
     hm_ext dlt (d_0::st) ⊑ d -> hm_ext dlt st ⊑ d.
   Proof.
     intros * H. simpl in *. apply join_upper_bound_r in H; auto.
   Qed.
 
-  Lemma set_rm_lub_l_d : forall dlt (d d_0:ident) (st:ST), 
+  Lemma set_rm_lub_l_d : forall dlt (d d_0:ident) (st:ST),
     hm_ext dlt (d_0::st) ⊑ dlt d -> dlt d_0 ⊑ dlt d.
-  Proof. 
+  Proof.
     intros dlt d d_0 st. apply set_rm_lub_l.
   Qed.
 
@@ -587,11 +582,11 @@ Module Type SECTYPES(Import Lat: Lattice).
   Lemma set_rm_lub2 : forall dlt  (d:Lat.t) (d_0:ident) (st:ST),
     hm_ext dlt st ⊑ d -> hm_ext dlt (st_remove d_0 st) ⊑ d.
   Proof.
-    intros dlt. induction st as [| a st' IHst]; intros * H. simpl in *. auto. 
+    intros dlt. induction st as [| a st' IHst]; intros * H. simpl in *. auto.
     destruct (ident_eq_dec d_0 a) as [Heq|Hneq] eqn:E;  intros;simpl.
       - subst a. rewrite E.  apply join_upper_bound_r in H; auto.
-      - rewrite E. apply set_rm_lub_r in H as H'. 
-       eapply join_least_upper_bound. eapply set_rm_lub_l in H; eassumption. 
+      - rewrite E. apply set_rm_lub_r in H as H'.
+       eapply join_least_upper_bound. eapply set_rm_lub_l in H; eassumption.
        apply IHst. auto.
   Qed.
 
@@ -601,18 +596,18 @@ Module Type SECTYPES(Import Lat: Lattice).
   Lemma set_union_null : forall st1,
       my_set_union  [] st1 = st1.
   Proof.
-    intros. induction st1 as [|a st' IHst]; simpl; 
+    intros. induction st1 as [|a st' IHst]; simpl;
     try (rewrite IHst); auto.
   Qed.
 
 
   Lemma hm_ext_distributive : forall (dlt:ident -> Lat.t) (st1 st2: ST) d1,
-    hm_ext dlt st1 ⊑ d1 -> 
+    hm_ext dlt st1 ⊑ d1 ->
     hm_ext dlt st2 ⊑ d1 -> hm_ext dlt (st2 ⊔ st1) ⊑ d1.
   Proof.
     induction st1 as [|a st' IHst]; intros * H1 H2.
     - rewrite merge_nil. auto.
-    - rewrite merge_comm. simpl. 
+    - rewrite merge_comm. simpl.
       induction st2 as [|b st2 IHst2].
       * auto.
       * destruct (Pos.compare a b) eqn:Hab.
@@ -631,7 +626,7 @@ Module Type SECTYPES(Import Lat: Lattice).
   Proof.
     intros dlt a. induction a as [|a_0 a IHa]; auto.
     intros. apply join_least_upper_bound.
-    - induction b as [|b_0 b IHb]. 
+    - induction b as [|b_0 b IHb].
         + simpl. apply join_bound1.
         + simpl. destruct (Pos.compare a_0 b_0) eqn:E.
           * simpl. apply join_bound1.
@@ -646,7 +641,7 @@ Module Type SECTYPES(Import Lat: Lattice).
           * rewrite merge_comm in IHb. apply order_trans with (y:=hm_ext dlt (b ⊔ (a_0::a))). apply IHb.
             rewrite merge_comm. simpl. auto.
   Qed.
-              
+
 
   Lemma hm_ext_concat_r : forall dlt a b,
     hm_ext dlt b ⊑ hm_ext dlt (a ⊔ b).
@@ -664,7 +659,7 @@ Module Type SECTYPES(Import Lat: Lattice).
   Lemma order_comm2 : forall dlt a b c,
     hm_ext dlt c ⊑ hm_ext dlt (a ⊔ b ⊔ c).
   Proof.
-    intros. eapply order_trans. eapply hm_ext_concat_r. eauto. 
+    intros. eapply order_trans. eapply hm_ext_concat_r. eauto.
   Qed.
   Import MergeFacts.
   Lemma hm_ext_distributive2: forall st1 st2 dlt,  hm_ext dlt (st1 ⊔ st2) ⊑ join (hm_ext dlt st1) (hm_ext dlt st2).
@@ -677,33 +672,33 @@ Module Type SECTYPES(Import Lat: Lattice).
   Qed.
   Hint Resolve hm_ext_concat_l hm_ext_concat_r  hm_ext_distributive
   hm_ext_distributive2  hm_ext_list_in1.
-  
+
   (*Constraints and substitutions*)
   (*Under dlt, s_0 ⊑ s_1 *)
-  Definition satisfiable (dlt: ident -> Lat.t) (s_0 s_1: ST) := 
+  Definition satisfiable (dlt: ident -> Lat.t) (s_0 s_1: ST) :=
     (hm_ext dlt s_0) ⊑ (hm_ext dlt s_1).
 
   Definition constraintSatisfiable (dlt: ident-> Lat.t) (c: constraint) := let (lhs, rhs) := c in
     satisfiable dlt lhs rhs.
-  
+
   Definition listSatisfiable (dlt: ident -> Lat.t) (cns: list constraint) := Forall (fun c => constraintSatisfiable dlt c) cns.
     (* Forall (fun '(s,x) => satisfiable dlt s x) cns. *)
 
   Hint Unfold satisfiable constraintSatisfiable listSatisfiable.
-   
+
   Fixpoint findST cns d: option ST :=
     match cns with
-    | []  => None 
+    | []  => None
     | (st,[d'])::cns'  => if ident_eqb d' d then Some st else findST cns' d
     | _ :: cns'        => findST cns' d
     end.
 
-  Lemma find_correct : forall cs d v, 
+  Lemma find_correct : forall cs d v,
     findST cs d = Some v -> List.In (v,[d]) cs.
   Proof.
-    induction cs as [| (st',d') cs' IHcs]; intros d_0 v H; simpl in H. 
+    induction cs as [| (st',d') cs' IHcs]; intros d_0 v H; simpl in H.
     - inversion H.
-    - destruct d'  as [|d_1 d''] eqn:E' in H. 
+    - destruct d'  as [|d_1 d''] eqn:E' in H.
       * apply IHcs in H. simpl. right. auto.
       * destruct d''.
         + destruct (ident_eqb d_1 d_0) eqn:E in H.
@@ -713,10 +708,10 @@ Module Type SECTYPES(Import Lat: Lattice).
   Qed.
 
   Example NoDup_1:  (NoDup [[1];[2]]).
-  Proof. apply NoDup_cons. 
-  - unfold not. intros. unfold In in H. 
+  Proof. apply NoDup_cons.
+  - unfold not. intros. unfold In in H.
     destruct H as [Hl |Hr]; [congruence | destruct Hr].
-  - apply NoDup_cons. 
+  - apply NoDup_cons.
     * unfold not. intros. unfold In in H. destruct H.
     * apply NoDup_nil.
   Qed.
@@ -734,7 +729,7 @@ Module Type SECTYPES(Import Lat: Lattice).
 
   Definition wf_constraints (cs: list constraint) : Prop :=
     NoDup (map snd cs) /\ Forall (fun '(_,x) => length x = 1 ) cs.
-  
+
   (*Properties of well formed constraints*)
   Lemma wf_constraints_no_nil: forall x cs,
     wf_constraints (x::cs) -> wf_constraints cs.
@@ -742,13 +737,13 @@ Module Type SECTYPES(Import Lat: Lattice).
     intros * H.  unfold wf_constraints in *. destruct H as [Hl Hr]. split.
     - apply NoDup_cons_iff in Hl as [Hll Hlr]. apply Hlr.
     - inversion Hr. auto.
-  Qed. 
+  Qed.
 
-  Hint Resolve wf_constraints_no_nil. 
+  Hint Resolve wf_constraints_no_nil.
   Hint Unfold wf_constraints.
 
   Lemma list_len_1 : forall A (x:list A), length x = 1 <-> exists d, x = [d].
-  Proof. 
+  Proof.
     split.
     - intros. unfold length in H. destruct x eqn:E in H.
       * discriminate H.
@@ -757,7 +752,7 @@ Module Type SECTYPES(Import Lat: Lattice).
         + exists a. subst l. auto.
     - intros. destruct H. subst x. reflexivity.
   Qed.
-  
+
   Lemma wf_constraints_shape : forall cs x y,
     wf_constraints cs -> List.In (y,x) cs -> exists d, x = [d].
   Proof.
@@ -922,7 +917,7 @@ Module Type SECTYPES(Import Lat: Lattice).
         apply order_refl, eq_refl.
   Qed.
 
-  (*Substituting st_0 for d in st (results in st_1),             *)   
+  (*Substituting st_0 for d in st (results in st_1),             *)
   (*preseves satisfiability of st ⊑ x (meaning st_1 ⊑ x)        *)
   (*provided st_0 ⊑ [d]                                         *)
   Lemma subST_correct : forall dlt st x d st_0 st_1,
@@ -930,36 +925,36 @@ Module Type SECTYPES(Import Lat: Lattice).
   Proof.
     intros * H_0 H_1 H_2. unfold satisfiable in *. simpl in H_0.
     rewrite <- join_bottom_eq1 in H_0. subst st_1.
-    unfold subST. 
+    unfold subST.
     destruct (st_mem d st) eqn:Edst; auto.
     destruct (st_mem d st_0) eqn:Edst_0.
       * apply hm_ext_distributive.
-        + apply set_rm_lub2. apply my_set_mem_correct in Edst. 
+        + apply set_rm_lub2. apply my_set_mem_correct in Edst.
           apply hm_ext_list_in1 with (dlt:=dlt) in Edst.
           eapply order_trans. eauto. eapply order_trans; eauto.
         + auto.
-      * apply hm_ext_distributive. 
+      * apply hm_ext_distributive.
         + apply my_set_mem_correct in Edst. apply hm_ext_list_in1 with (dlt:=dlt) in Edst.
           eapply order_trans. eauto. eapply order_trans; eauto.
         + auto.
   Qed.
 
   Hint Resolve subST_correct.
-  
+
   (*Substituting ident: d with st' in a list of constraints cns  *)
   (*substitution also removes duplicate constraints with the     *)
   (*ident that is being removed(case 2), we only sub valid cns:3 *)
   Fixpoint subAll cns d st' : list constraint :=
-    match cns with 
+    match cns with
     | [] => []
-    | (st, [d'])::cns' => if ident_eqb d' d then 
+    | (st, [d'])::cns' => if ident_eqb d' d then
                           subAll cns' d st'
                         else ((subST st d st'),[d']):: (subAll cns' d st')
     | _ :: cns'   => subAll cns' d st'
     end.
 
   (* Check Forall_inv.
-  Check Forall_inv_tail. 
+  Check Forall_inv_tail.
   Check Forall_cons. *)
   Lemma subAll_is_correct :  forall dlt cns d v cns',
     satisfiable dlt v [d] ->
@@ -978,9 +973,9 @@ Module Type SECTYPES(Import Lat: Lattice).
           (*d_0 = d*)
           ** inversion H_2. apply IHcns; auto.
           (*d_0 /=d*)
-          ** subst cns'. unfold listSatisfiable in *. apply Forall_cons. 
+          ** subst cns'. unfold listSatisfiable in *. apply Forall_cons.
             (*Newly generated constraint after subbing d is sat*)
-            ++ remember (subST l d v) as st_0 eqn:Hst_0. symmetry in Hst_0. 
+            ++ remember (subST l d v) as st_0 eqn:Hst_0. symmetry in Hst_0.
                apply Forall_inv in H_2 as H_2'. apply (subST_correct dlt l [d_0] d v st_0); auto.
             (*induction case*)
             ++ remember (subAll cns d v) as cns_0 eqn:Hcns_0. inversion  H_2; auto.
@@ -1105,10 +1100,10 @@ Module Type SECTYPES(Import Lat: Lattice).
             -- rewrite complete_subst_neq; eauto.
         * eapply IH with (cns' := subAll cns d v); eauto.
   Qed.
-  
+
   (*Substitutes a given ident d by searching in the list of constraints: cns for (v,[d])*)
 
-  
+
   (*We currently don't have wellformedness baked into simplify but subST and subALL enforce them*)
   (*We might need a seperate result that the constraints generated from NL are always wellformed*)
   Inductive simplifyRel  : list constraint -> list ident ->  list constraint -> Prop :=
@@ -1117,7 +1112,7 @@ Module Type SECTYPES(Import Lat: Lattice).
   | elimCase1 : forall cns d st_0 cns' ds cns'',
     simplifyRel cns' ds cns'' ->
     findST cns d = Some st_0 ->
-    subAll cns d st_0 = cns' ->    
+    subAll cns d st_0 = cns' ->
     simplifyRel cns (d::ds)  cns''
   | elimCase2 : forall cns d cns' ds,
     findST cns d = None ->
@@ -1189,7 +1184,7 @@ Module Type SECTYPES(Import Lat: Lattice).
   Qed.
 
   Fixpoint simplify (cns: list constraint) (ds: list ident) : list constraint :=
-    match ds with 
+    match ds with
     | []    => cns
     | d::ds' => match findST cns d with
                | None    => simplify cns ds'
@@ -1292,6 +1287,236 @@ Module Type SECTYPES(Import Lat: Lattice).
     reflexivity.
   Qed.
 
+  (* Weak preservation of one constraint list by another under a chosen shared
+     scope.  This is generic symbolic-type metatheory: the only semantic
+     ingredients are valuation agreement and constraint satisfiability. *)
+  Definition preserves_on (xs: list ident) (cns1 cns2: list constraint) : Prop :=
+    forall dlt,
+      listSatisfiable dlt cns1 ->
+      exists dlt',
+        agree_on xs dlt dlt' /\ listSatisfiable dlt' cns2.
+
+  Lemma constraintSatisfiable_ext:
+    forall c scope dlt1 dlt2,
+      constraint_scoped scope c ->
+      agree_on scope dlt1 dlt2 ->
+      constraintSatisfiable dlt1 c ->
+      constraintSatisfiable dlt2 c.
+  Proof.
+    intros [lhs rhs] scope dlt1 dlt2 Hsc Hagree Hsat.
+    unfold constraintSatisfiable, satisfiable in *.
+    assert (Hlhs: hm_ext dlt1 lhs = hm_ext dlt2 lhs).
+    {
+      clear Hsat.
+      induction lhs as [|x xs IH]; simpl; auto.
+      rewrite (Hagree x).
+      2:{ eapply constraint_scoped_lhs; eauto. now left. }
+      rewrite IH; auto.
+      intros y Hy.
+      eapply Hsc.
+      unfold constraint_scope in *. simpl in *. right. exact Hy.
+    }
+    assert (Hrhs: hm_ext dlt1 rhs = hm_ext dlt2 rhs).
+    {
+      clear Hsat Hlhs.
+      induction rhs as [|x xs IH]; simpl; auto.
+      rewrite (Hagree x).
+      2:{ eapply constraint_scoped_rhs; eauto. now left. }
+      rewrite IH; auto.
+      intros y Hy.
+      eapply Hsc.
+      unfold constraint_scope in *. simpl in *.
+      apply in_app_iff in Hy.
+      apply in_app_iff.
+      destruct Hy as [Hy|Hy].
+      + left. exact Hy.
+      + right. right. exact Hy.
+    }
+    rewrite <- Hlhs.
+    rewrite <- Hrhs.
+    exact Hsat.
+  Qed.
+
+  Lemma listSatisfiable_ext:
+    forall cns scope dlt1 dlt2,
+      constraints_scoped scope cns ->
+      agree_on scope dlt1 dlt2 ->
+      listSatisfiable dlt1 cns ->
+      listSatisfiable dlt2 cns.
+  Proof.
+    intros cns scope dlt1 dlt2 Hsc Hagree Hsat.
+    induction Hsc as [|c cns Hc Hcs IH] in Hsat |- *.
+    - constructor.
+    - inversion Hsat; subst.
+      constructor.
+      + eapply constraintSatisfiable_ext; eauto.
+      + eapply IH; eauto.
+  Qed.
+
+  Lemma constraint_scoped_incl:
+    forall scope1 scope2 c,
+      incl scope1 scope2 ->
+      constraint_scoped scope1 c ->
+      constraint_scoped scope2 c.
+  Proof.
+    intros scope1 scope2 c Hincl Hsc x Hin.
+    apply Hincl, Hsc, Hin.
+  Qed.
+
+  Lemma constraints_scoped_incl:
+    forall scope1 scope2 cns,
+      incl scope1 scope2 ->
+      constraints_scoped scope1 cns ->
+      constraints_scoped scope2 cns.
+  Proof.
+    intros scope1 scope2 cns Hincl Hsc.
+    induction Hsc as [|c cns Hc Hcs IH]; constructor.
+    - eapply constraint_scoped_incl; eauto.
+    - exact IH.
+  Qed.
+
+  Definition agree_on_notin
+    (scope extras: list ident)
+    (dlt base: ident -> Lat.t) : ident -> Lat.t :=
+    fun x =>
+      if in_dec ident_eq_dec x extras then dlt x
+      else base x.
+
+  Lemma agree_on_notin_scope:
+    forall scope extras dlt base,
+      (forall x, In x extras -> ~ In x scope) ->
+      agree_on scope base (agree_on_notin scope extras dlt base).
+  Proof.
+    intros scope extras dlt base Hfresh x Hin.
+    unfold agree_on_notin.
+    destruct (in_dec ident_eq_dec x extras) as [Hinextra|Hnin]; auto.
+    exfalso.
+    eapply (Hfresh x); eauto.
+  Qed.
+
+  Lemma agree_on_notin_extras:
+    forall scope extras dlt base,
+      NoDup extras ->
+      (forall x, In x extras -> ~ In x scope) ->
+      agree_on (scope ++ extras) dlt base ->
+      agree_on (scope ++ extras) dlt (agree_on_notin scope extras dlt base).
+  Proof.
+    intros scope extras dlt base Hnd Hfresh Hagree x Hin.
+    unfold agree_on_notin.
+    destruct (in_dec ident_eq_dec x extras) as [Hinextra|Hnin].
+    - reflexivity.
+    - apply Hagree.
+      apply in_app_iff in Hin.
+      apply in_app_iff.
+      destruct Hin as [Hin|Hin].
+      + now left.
+      + right.
+        exfalso. apply Hnin. exact Hin.
+  Qed.
+
+  Lemma preserves_on_concat_scoped:
+    forall scope extras1 extras2 c1 c2 t1 t2,
+      NoDup (extras1 ++ extras2) ->
+      (forall x, In x (extras1 ++ extras2) -> ~ In x scope) ->
+      constraints_scoped (scope ++ extras1) t1 ->
+      constraints_scoped (scope ++ extras2) t2 ->
+      preserves_on scope c1 t1 ->
+      preserves_on scope c2 t2 ->
+      preserves_on scope (c1 ++ c2) (t1 ++ t2).
+  Proof.
+    intros scope extras1 extras2 c1 c2 t1 t2 Hnd Hfresh Hsc1 Hsc2 Hpres1 Hpres2 dlt Hsat.
+    unfold listSatisfiable in Hsat.
+    rewrite Forall_app in Hsat.
+    destruct Hsat as [Hsat1 Hsat2].
+    destruct (Hpres1 dlt Hsat1) as (dlt1 & Hagree1 & Ht1).
+    destruct (Hpres2 dlt Hsat2) as (dlt2 & Hagree2 & Ht2).
+    set (dlt' := agree_on_notin scope extras1 dlt1
+                   (agree_on_notin scope extras2 dlt2 dlt)).
+    exists dlt'. split.
+    - intros x Hin.
+      unfold dlt', agree_on_notin.
+      destruct (in_dec ident_eq_dec x extras1) as [Hin1|Hnin1].
+      + exfalso.
+        eapply (Hfresh x).
+        * now apply in_or_app; left.
+        * exact Hin.
+      + destruct (in_dec ident_eq_dec x extras2) as [Hin2|Hnin2].
+        * exfalso.
+          eapply (Hfresh x).
+          -- now apply in_or_app; right.
+          -- exact Hin.
+        * reflexivity.
+    - unfold listSatisfiable. rewrite Forall_app. split.
+      + eapply listSatisfiable_ext.
+        * exact Hsc1.
+        * unfold dlt'. intros x Hin.
+          unfold agree_on_notin.
+          destruct (in_dec ident_eq_dec x extras1) as [Hin1|Hnin1].
+          -- reflexivity.
+          -- destruct (in_dec ident_eq_dec x extras2) as [Hin2|Hnin2].
+             ++ exfalso.
+                apply in_app_iff in Hin.
+                destruct Hin as [Hinscope|Hin1'].
+                ** assert (Hin12: In x (extras1 ++ extras2)).
+                   { apply in_app_iff. right. exact Hin2. }
+                   pose proof (Hfresh x Hin12) as Hninscope.
+                   contradiction.
+                ** apply Hnin1. exact Hin1'.
+             ++ symmetry. apply Hagree1.
+                apply in_app_iff in Hin.
+                destruct Hin as [Hinscope|Hin1'].
+                ** exact Hinscope.
+                ** contradiction.
+        * exact Ht1.
+      + eapply listSatisfiable_ext.
+        * exact Hsc2.
+        * unfold dlt'. intros x Hin.
+          unfold agree_on_notin.
+          destruct (in_dec ident_eq_dec x extras1) as [Hin1|Hnin1].
+          -- exfalso.
+             apply in_app_iff in Hin.
+             destruct Hin as [Hinscope|Hin2].
+             ++ assert (Hin12: In x (extras1 ++ extras2)).
+                { apply in_app_iff. left. exact Hin1. }
+                pose proof (Hfresh x Hin12) as Hninscope.
+                contradiction.
+             ++ assert (~ In x extras2).
+                { intro Hcontra.
+                  eapply (NoDup_app_In x) in Hnd; eauto. }
+                contradiction.
+          -- destruct (in_dec ident_eq_dec x extras2) as [Hin2|Hnin2].
+             ++ reflexivity.
+             ++ symmetry. apply Hagree2.
+                apply in_app_iff in Hin.
+                destruct Hin as [Hinscope|Hin2'].
+                ** exact Hinscope.
+                ** contradiction.
+        * exact Ht2.
+  Qed.
+
+  Lemma preserves_on_nil:
+    forall scope,
+      preserves_on scope nil nil.
+  Proof.
+    intros scope dlt Hsat.
+    exists dlt. split.
+    - apply agree_on_refl.
+    - exact Hsat.
+  Qed.
+
+  Lemma preserves_on_weaken:
+    forall scope1 scope2 c1 c2,
+      incl scope1 scope2 ->
+      preserves_on scope2 c1 c2 ->
+      preserves_on scope1 c1 c2.
+  Proof.
+    intros scope1 scope2 c1 c2 Hincl Hpres dlt Hsat.
+    destruct (Hpres dlt Hsat) as (dlt' & Hagree & Htgt).
+    exists dlt'. split; [|exact Htgt].
+    intros x Hin.
+    apply Hagree, Hincl, Hin.
+  Qed.
+
   (* Pointwise valuation updates used by the call-instantiation metatheory.
      They are generic symbolic-type operations, so the reusable definitions and
      their basic agreement lemmas live here. *)
@@ -1356,6 +1581,99 @@ Module Type SECTYPES(Import Lat: Lattice).
     destruct (ident_eqb y x) eqn:Heq.
     - apply ident_eqb_eq in Heq. congruence.
     - reflexivity.
+  Qed.
+
+  Lemma Forall2_upd_ident_outside_base:
+    forall (d0 dlt: ident -> Lat.t) x v xs vs,
+      ~ In x xs ->
+      Forall2 (fun y vy => d0 y = dlt vy) xs vs ->
+      Forall2 (fun y vy => upd_ident d0 x v y = dlt vy) xs vs.
+  Proof.
+    intros d0 dlt x v xs vs Hnin Hrel.
+    induction Hrel.
+    - constructor.
+    - constructor.
+      + unfold upd_ident.
+        destruct (ident_eqb x0 x) eqn:Heq.
+        * apply ident_eqb_eq in Heq. subst x0.
+          exfalso. apply Hnin. now left.
+        * exact H.
+      + apply IHHrel.
+        intro Hin. apply Hnin. now right.
+  Qed.
+
+  Lemma Forall2_upd_type_outside_base:
+    forall (d0 dlt: ident -> Lat.t) x ty xs tys,
+      ~ In x xs ->
+      Forall2 (fun y ty' => d0 y = hm_ext dlt ty') xs tys ->
+      Forall2 (fun y ty' => upd_type d0 x ty y = hm_ext dlt ty') xs tys.
+  Proof.
+    intros d0 dlt x ty xs tys Hnin Hrel.
+    induction Hrel.
+    - constructor.
+    - constructor.
+      + unfold upd_type.
+        destruct (ident_eqb x0 x) eqn:Heq.
+        * apply ident_eqb_eq in Heq. subst x0.
+          exfalso. apply Hnin. now left.
+        * exact H.
+      + apply IHHrel.
+        intro Hin. apply Hnin. now right.
+  Qed.
+
+  Lemma upd_ident_eq_upd_type_singleton:
+    forall dlt x v y,
+      x <> v ->
+      upd_ident dlt x v y = upd_type dlt x ([v]) y.
+  Proof.
+    intros dlt x v y Hneq.
+    unfold upd_ident, upd_type.
+    destruct (ident_eqb y x) eqn:Hyx.
+    - simpl. rewrite <- join_bottom_eq1. reflexivity.
+    - reflexivity.
+  Qed.
+
+  Lemma In_nth_error_ex:
+    forall (A: Type) (x: A) xs,
+      In x xs ->
+      exists n, nth_error xs n = Some x.
+  Proof.
+    intros A x xs Hin.
+    induction xs as [|y ys IH]; simpl in Hin.
+    - contradiction.
+    - destruct Hin as [Heq|Hin].
+      + subst y. exists 0%nat. reflexivity.
+      + destruct (IH Hin) as [n Hnth].
+        exists (S n). exact Hnth.
+  Qed.
+
+  Lemma nth_error_In_local:
+    forall (A: Type) xs n (x: A),
+      nth_error xs n = Some x ->
+      In x xs.
+  Proof.
+    intros A xs.
+    induction xs as [|y ys IH]; intros n x Hnth; simpl in Hnth.
+    - destruct n; inversion Hnth.
+    - destruct n as [|n].
+      + inversion Hnth; subst. now left.
+      + right. eapply IH. exact Hnth.
+  Qed.
+
+  Lemma Forall2_nth_error_inv:
+    forall (A B: Type) (P: A -> B -> Prop) xs ys n x,
+      Forall2 P xs ys ->
+      nth_error xs n = Some x ->
+      exists y, nth_error ys n = Some y /\ P x y.
+  Proof.
+    intros A B P xs ys n x Hrel.
+    revert n x.
+    induction Hrel as [|x0 y0 xs ys Hxy Hrel IH]; intros n x Hnth.
+    - destruct n; simpl in Hnth; discriminate.
+    - destruct n; simpl in Hnth.
+      + inversion Hnth; subst. exists y0. split; [reflexivity|exact Hxy].
+      + eapply IH in Hnth as (y & Hnthy & HP).
+        exists y. split; [exact Hnthy|exact HP].
   Qed.
 
   Lemma upd_types_agree_on:

@@ -26,7 +26,7 @@ Inductive nonCanonST : Type :=
 | Var   : ident -> nonCanonST
 | Lub   : nonCanonST -> nonCanonST  -> nonCanonST
 | Qual  : nonCanonST -> uConstraint -> nonCanonST
-with uConstraint: Type := 
+with uConstraint: Type :=
 | CNil  : uConstraint
 | Cns   : (nonCanonST * nonCanonST) -> uConstraint -> uConstraint.
 
@@ -42,7 +42,7 @@ Fixpoint canonicalizeT (ty: ncST) : (ST * (list constraint)):=
   match ty with
   | bot => ([], [])
   | lubs ls => (ls, [])
-  | qual ty' cxs => 
+  | qual ty' cxs =>
     let (cty, cns') := canonicalizeT ty' in
     let cns'' := canonicalizeConstraints cxs in
     (cty, constraint_merge cns' cns'')
@@ -50,11 +50,11 @@ Fixpoint canonicalizeT (ty: ncST) : (ST * (list constraint)):=
 with canonicalizeConstraints cn : list constraint :=
   match cn with
   | cnil => []
-  | cns (lhs, rhs) cxs => 
+  | cns (lhs, rhs) cxs =>
     let  cxs' := canonicalizeConstraints cxs in
     let (s1, c1) := canonicalizeT lhs in
     let (s2, c2) := canonicalizeT rhs in
-      constraint_merge [(s1,s2)] (constraint_merge (constraint_merge c1 c2) cxs') 
+      constraint_merge [(s1,s2)] (constraint_merge (constraint_merge c1 c2) cxs')
   end.
 
 (* Needs to return a type and a constraint set *)
@@ -71,7 +71,7 @@ Fixpoint canonicalizeType (ty: nonCanonST) : (ST * (list constraint)) :=
                    (x', constraint_merge cs xcs)
     end
 with canonicalizeConstraint (cons: uConstraint) : (list constraint) :=
-  
+
   match cons with
   | CNil => []
   | Cns (lhs, rhs) cxs => let  cxs' := canonicalizeConstraint cxs in

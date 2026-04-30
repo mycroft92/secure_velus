@@ -14,7 +14,7 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
     Import ListNotations.
     Import MergeFacts.
     (** Upgrading to Helper-Sorting stuff*)
-  
+
   Hint Resolve my_set_mem_correct.
   (* Hint Unfold my_set_union. *)
 
@@ -22,18 +22,18 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
   Notation "x ⊔ y" := (merge x y) (at level 40, left associativity).
 
 
-  Fixpoint hm_ext (delta: ident -> Lat.t ) (xs: ST): Lat.t := 
+  Fixpoint hm_ext (delta: ident -> Lat.t ) (xs: ST): Lat.t :=
     match xs with
     | nil    => Lat.bottom
     | x::xs' => join  (delta x) (hm_ext delta xs')
     end.
-  
+
   (* Definition st_remove := List.remove ident_eq_dec.
   Definition st_mem    := my_set_mem. *)
   (*Local hint data bases from Lattices*)
   Hint Immediate eq_sym.
 
-  Hint Resolve merge_nil merge_nil2 merge_comm intersect_nil intersect_nil2 intersect_comm eq_refl eq_trans   
+  Hint Resolve merge_nil merge_nil2 merge_comm intersect_nil intersect_nil2 intersect_comm eq_refl eq_trans
     eqb_refl order_refl order_antisym order_trans join_bound1 join_bound2 join_least_upper_bound
     meet_bound1 meet_bound2 meet_greatest_lower_bound bottom_is_bottom top_is_top.
 
@@ -50,24 +50,24 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
     hm_ext dlt st ⊑ hm_ext dlt (d::st).
   Proof.
     induction st as [|a st IHst]; simpl; auto.
-  Qed. 
-  
-  Lemma set_rm_lub_l : forall dlt (d:Lat.t) (d_0:ident) (st:ST), 
+  Qed.
+
+  Lemma set_rm_lub_l : forall dlt (d:Lat.t) (d_0:ident) (st:ST),
     hm_ext dlt (d_0::st) ⊑ d -> dlt d_0 ⊑ d.
   Proof.
     intros * H. simpl in *.
     eapply order_trans. eapply join_bound1. eapply H.
   Qed.
 
-  Lemma set_rm_lub_r : forall dlt (d:Lat.t) (d_0:ident) (st:ST), 
+  Lemma set_rm_lub_r : forall dlt (d:Lat.t) (d_0:ident) (st:ST),
     hm_ext dlt (d_0::st) ⊑ d -> hm_ext dlt st ⊑ d.
   Proof.
     intros * H. simpl in *. apply join_upper_bound_r in H; auto.
   Qed.
 
-  Lemma set_rm_lub_l_d : forall dlt (d d_0:ident) (st:ST), 
+  Lemma set_rm_lub_l_d : forall dlt (d d_0:ident) (st:ST),
     hm_ext dlt (d_0::st) ⊑ dlt d -> dlt d_0 ⊑ dlt d.
-  Proof. 
+  Proof.
     intros dlt d d_0 st. apply set_rm_lub_l.
   Qed.
 
@@ -80,11 +80,11 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
   Lemma set_rm_lub2 : forall dlt  (d:Lat.t) (d_0:ident) (st:ST),
     hm_ext dlt st ⊑ d -> hm_ext dlt (st_remove d_0 st) ⊑ d.
   Proof.
-    intros dlt. induction st as [| a st' IHst]; intros * H. simpl in *. auto. 
+    intros dlt. induction st as [| a st' IHst]; intros * H. simpl in *. auto.
     destruct (ident_eq_dec d_0 a) as [Heq|Hneq] eqn:E;  intros;simpl.
       - subst a. rewrite E.  apply join_upper_bound_r in H; auto.
-      - rewrite E. apply set_rm_lub_r in H as H'. 
-        eapply join_least_upper_bound. eapply set_rm_lub_l in H; eassumption. 
+      - rewrite E. apply set_rm_lub_r in H as H'.
+        eapply join_least_upper_bound. eapply set_rm_lub_l in H; eassumption.
         apply IHst. auto.
   Qed.
 
@@ -92,12 +92,12 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
                 set_rm_lub_r_d set_rm_lub_l_d.
 
   Lemma hm_ext_distributive : forall (dlt:ident -> Lat.t) (st1 st2: ST) d1,
-    hm_ext dlt st1 ⊑ d1 -> 
+    hm_ext dlt st1 ⊑ d1 ->
     hm_ext dlt st2 ⊑ d1 -> hm_ext dlt (st2 ⊔ st1) ⊑ d1.
   Proof.
     induction st1 as [|a st' IHst]; intros * H1 H2.
     - rewrite merge_nil. auto.
-    - rewrite merge_comm. simpl. 
+    - rewrite merge_comm. simpl.
       induction st2 as [|b st2 IHst2].
       * auto.
       * destruct (Pos.compare a b) eqn:Hab.
@@ -116,7 +116,7 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
   Proof.
     intros dlt a. induction a as [|a_0 a IHa]; auto.
     intros. apply join_least_upper_bound.
-    - induction b as [|b_0 b IHb]. 
+    - induction b as [|b_0 b IHb].
         + simpl. apply join_bound1.
         + simpl. destruct (Pos.compare a_0 b_0) eqn:E.
           * simpl. apply join_bound1.
@@ -131,7 +131,7 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
           * rewrite merge_comm in IHb. apply order_trans with (y:=hm_ext dlt (b ⊔ (a_0::a))). apply IHb.
             rewrite merge_comm. simpl. auto.
   Qed.
-              
+
 
   Lemma hm_ext_concat_r : forall dlt a b,
     hm_ext dlt b ⊑ hm_ext dlt (a ⊔ b).
@@ -149,28 +149,28 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
   Lemma order_comm2 : forall dlt a b c,
     hm_ext dlt c ⊑ hm_ext dlt (a ⊔ b ⊔ c).
   Proof.
-    intros. eapply order_trans. eapply hm_ext_concat_r. eauto. 
+    intros. eapply order_trans. eapply hm_ext_concat_r. eauto.
   Qed.
 
-  Hint Resolve hm_ext_concat_l hm_ext_concat_r  hm_ext_distributive 
+  Hint Resolve hm_ext_concat_l hm_ext_concat_r  hm_ext_distributive
   hm_ext_list_in1.
-  
+
   (*Constraints and substitutions*)
   (*Under dlt, s_0 ⊑ s_1 *)
-  Definition satisfiable (dlt: ident -> Lat.t) (s_0 s_1: ST) := 
+  Definition satisfiable (dlt: ident -> Lat.t) (s_0 s_1: ST) :=
     (hm_ext dlt s_0) ⊑ (hm_ext dlt s_1).
-  
+
   Definition listSatisfiable (dlt: ident -> Lat.t) (cns: list constraint) :=
     Forall (fun '(s,x) => satisfiable dlt s x) cns.
 
   Hint Unfold satisfiable listSatisfiable.
-  
+
   Print NoDup.
   Example NoDup_1:  (NoDup [[1];[2]]).
-  Proof. apply NoDup_cons. 
-  - unfold not. intros. unfold In in H. 
+  Proof. apply NoDup_cons.
+  - unfold not. intros. unfold In in H.
     destruct H as [Hl |Hr]; [congruence | destruct Hr].
-  - apply NoDup_cons. 
+  - apply NoDup_cons.
     * unfold not. intros. unfold In in H. destruct H.
     * apply NoDup_nil.
   Qed.
@@ -188,7 +188,7 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
 
   Definition wf_constraints (cs: list constraint) : Prop :=
     NoDup (map snd cs) /\ Forall (fun '(_,x) => length x = 1 ) cs.
-  
+
   Print Forall.
 
   (*Properties of well formed constraints*)
@@ -198,13 +198,13 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
     intros * H.  unfold wf_constraints in *. destruct H as [Hl Hr]. split.
     - apply NoDup_cons_iff in Hl as [Hll Hlr]. apply Hlr.
     - inversion Hr. auto.
-  Qed. 
+  Qed.
 
-  Hint Resolve wf_constraints_no_nil. 
+  Hint Resolve wf_constraints_no_nil.
   Hint Unfold wf_constraints.
 
 
-  
+
   Lemma wf_constraints_shape : forall cs x y,
     wf_constraints cs -> List.In (y,x) cs -> exists d, x = [d].
   Proof.
@@ -216,9 +216,9 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
 
 
   Hint Resolve find_correct.
-  
 
-  (*Substituting st_0 for d in st (results in st_1),             *)   
+
+  (*Substituting st_0 for d in st (results in st_1),             *)
   (*preseves satisfiability of st ⊑ x (meaning st_1 ⊑ x)        *)
   (*provided st_0 ⊑ [d]                                         *)
   Lemma subST_correct : forall dlt st x d st_0 st_1,
@@ -226,26 +226,26 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
   Proof.
     intros * H_0 H_1 H_2. unfold satisfiable in *. simpl in H_0.
     rewrite <- join_bottom_eq1 in H_0. subst st_1.
-    unfold subST. 
+    unfold subST.
     destruct (st_mem d st) eqn:Edst; auto.
     destruct (st_mem d st_0) eqn:Edst_0.
       * apply hm_ext_distributive.
-        + apply set_rm_lub2. apply my_set_mem_correct in Edst. 
+        + apply set_rm_lub2. apply my_set_mem_correct in Edst.
           apply hm_ext_list_in1 with (dlt:=dlt) in Edst.
           eapply order_trans. eauto. eapply order_trans; eauto.
         + auto.
-      * apply hm_ext_distributive. 
+      * apply hm_ext_distributive.
         + apply my_set_mem_correct in Edst. apply hm_ext_list_in1 with (dlt:=dlt) in Edst.
           eapply order_trans. eauto. eapply order_trans; eauto.
         + auto.
   Qed.
 
   Hint Resolve subST_correct.
-  
-  
+
+
 
   (* Check Forall_inv.
-  Check Forall_inv_tail. 
+  Check Forall_inv_tail.
   Check Forall_cons. *)
   Lemma subAll_is_correct :  forall Δ cns δ v cns',
     satisfiable Δ v [δ] ->
@@ -264,9 +264,9 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
           (*d_0 = d*)
           ** inversion H_2. apply IHcns; auto.
           (*d_0 /=d*)
-          ** subst cns'. unfold listSatisfiable in *. apply Forall_cons. 
+          ** subst cns'. unfold listSatisfiable in *. apply Forall_cons.
             (*Newly generated constraint after subbing d is sat*)
-            ++ remember (subST l d v) as st_0 eqn:Hst_0. symmetry in Hst_0. 
+            ++ remember (subST l d v) as st_0 eqn:Hst_0. symmetry in Hst_0.
                 apply Forall_inv in H_2 as H_2'. apply (subST_correct Δ l [d_0] d v st_0); auto.
             (*induction case*)
             ++ remember (subAll cns d v) as cns_0 eqn:Hcns_0. inversion  H_2; auto.
@@ -275,10 +275,10 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
   Qed.
   Hint Resolve subAll_is_correct.
   (*Skipping subAll_noDup and subAll_notin, since the main proof doesn't use it*)
-  
+
   (*Substitutes a given ident d by searching in the list of constraints: cns for (v,[d])*)
 
-  
+
   (*We currently don't have wellformedness baked into simplify but subST and subALL enforce them*)
   (*We might need a seperate result that the constraints generated from NL are always wellformed*)
   Inductive simplifyRel  : list constraint -> list ident ->  list constraint -> Prop :=
@@ -287,7 +287,7 @@ Module Type SECTYPESEXTENDED(Import Lat: Lattice).
   | elimCase1 : forall cns d st_0 cns' ds cns'',
     simplifyRel cns' ds cns'' ->
     findST cns d = Some st_0 ->
-    subAll cns d st_0 = cns' ->    
+    subAll cns d st_0 = cns' ->
     simplifyRel cns (d::ds)  cns''
   | elimCase2 : forall cns d cns' ds,
     findST cns d = None ->
@@ -328,12 +328,12 @@ End SECTYPESEXTENDED.
 
 (*
 - Syntactic subset checks might make most of the effort easier.
-- make types Canonical (order the identifiers within the list) 
+- make types Canonical (order the identifiers within the list)
     - make sure the LUB properties hold
 - Confluence (* would need an inductive predicate along the lines of sorted*)
 - Soundness for the extended form (of the type equalities)
 - Add constraint simplification (refer to the notes on15th Oct)
-    a <= b, c <= b => a ⊔ c <= b 
+    a <= b, c <= b => a ⊔ c <= b
 (*subset properties on lists required for this*)
 - New fresh monad representation, on "st ident"
 - Abstract on the fresh name, don't push the generated names into record

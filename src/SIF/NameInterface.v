@@ -42,7 +42,7 @@ Fixpoint find_node_names (n: ident) (nnames: list node_aux_names) : option node_
     | [] => None
     | name::nnames' => if (ident_eqb n name.(nname)) then Some name else find_node_names n nnames'
     end.
-   
+
 Definition get_node_aux (n: ident) (nnames: list node_aux_names) : option (ident*ident) :=
     let nsearch := find_node_names n nnames in
     match nsearch with
@@ -59,7 +59,7 @@ Section Env_helpers.
               do ts <- get_mappings xs env;
               Some (t::ts)
     end.
-  
+
   Fixpoint get_mappings_from_node {A: Type} (ns: list (ident * A) ) (env: Env.t ident) : option (list ident):=
     match ns with
     | [] => Some []
@@ -183,7 +183,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   (Import CESyn : CESYNTAX      Op)
   (Import SynNL : NLSYNTAX  Ids Op CESyn).
 
- 
+
 
   Section NameMonad.
   Context {A : Type}.
@@ -194,28 +194,28 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   Definition Name A := name_state -> res (A * name_state).
   Definition init_state : name_state := xH.
   Definition initialize : ident -> name_state := fun xi  => xi.
-  
+
   Definition NMret (x : A) : Name A := fun st =>  OK (x, st).
-  
+
   Definition NMbind {B : Type} (x : Name A) (f : A -> Name B) : Name B :=
     fun st => match (x st) with
           | OK (a, st') => f a st'
           | Error err => Error err
           end.
-  
+
   Definition NMbind2 {A1 A2 B : Type} (x : Name (A1 * A2)) (f : A1 -> A2 -> Name B) : Name B :=
     fun st => match (x st) with
           | OK ((a1, a2), st') => f a1 a2 st'
-          | Error err => Error err      
+          | Error err => Error err
           end.
    Definition error (msg : errmsg) : Name A :=
     fun st => Error msg.
-  
+
   Definition fresh_ident_gen : Name ident :=
     fun n =>
       let id := Ids.gensym Ids.sec n in
       OK (id, Pos.succ n).
-  
+
   Definition gets : Name name_state :=
     fun st =>  OK (st, st).
 
@@ -245,11 +245,11 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     Notation "'do' X <- A ; B" :=
       (NMbind A (fun X => B))
         (at level 200, X ident, A at level 100, B at level 200).
-        
+
     Notation "'do' ( X , Y ) <- A ; B" :=
       (NMbind2 A (fun X Y => B))
       (at level 200, X ident, Y ident, A at level 100, B at level 200).
-        
+
   End NAMEMONADNotations.
   Import NAMEMONADNotations.
 
@@ -263,10 +263,10 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     if Env.mem k env then
      error (MSG "Key declared more than once ":: [CTX k])
     else
-      do v <- fresh_ident_gen; 
+      do v <- fresh_ident_gen;
       do e <- insert_env env k v;
       NMret e.
-  
+
   Section mmap.
   Context {A B : Type}.
   Variable (f : A -> Name B).
@@ -277,8 +277,8 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     | hd :: tl => do hd' <- f hd; do tl' <- mmap tl; NMret (hd' :: tl')
     end.
   End mmap.
-    
-  
+
+
   Fixpoint fresh_map_list (ks: list ident) (env: Env.t ident): Name (Env.t ident) :=
     match ks with
     | nil => NMret env
@@ -438,7 +438,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   Fixpoint generate_node_env' (ns: list node) (e: Env.t ident) (acc: list node_aux_names): Name (Env.t ident * list node_aux_names) :=
     match ns with
     | [] => NMret (e, acc)
-    | n::ns' => 
+    | n::ns' =>
       do (e',r) <- generate_new_names_for_node n e;
       do (e'', rs) <- generate_node_env' ns' e' (r::acc);
       NMret (e'', rs)
@@ -530,6 +530,43 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       { apply Env.mem_1. unfold Env.In. eexists; exact Hfind. }
       congruence. }
     now rewrite Env.gso.
+  Qed.
+
+  Lemma fresh_map_list_preserves_find:
+    forall ks env st env' st' x ty,
+      fresh_map_list ks env st = OK (env', st') ->
+      Env.find x env = Some ty ->
+      Env.find x env' = Some ty.
+  Proof.
+    induction ks as [|k ks IH]; intros env st env' st' x ty Hmap Hfind.
+    - simpl in Hmap. inversion Hmap; subst. exact Hfind.
+    - simpl in Hmap.
+      eapply name_bind_inv in Hmap as (env1 & st1 & Hstep & Hrec).
+      eapply name_bind_inv in Hrec as (env2 & st2 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst env' st'.
+      eapply IH; eauto.
+      eapply fresh_insert_preserves_find; eauto.
+  Qed.
+
+  Lemma get_mappings_In:
+    forall xs env tys ty,
+      get_mappings xs env = Some tys ->
+      In ty tys ->
+      exists x, In x xs /\ Env.find x env = Some ty.
+  Proof.
+    induction xs as [|x xs IH]; intros env tys ty Hmap Hin.
+    - simpl in Hmap. inversion Hmap; subst. inversion Hin.
+    - simpl in Hmap.
+      destruct (Env.find x env) as [xty|] eqn:Hfind.
+      2: discriminate.
+      destruct (get_mappings xs env) as [tys'|] eqn:Hmaps.
+      2: discriminate.
+      inversion Hmap; subst tys.
+      simpl in Hin.
+      destruct Hin as [Heq|Hin].
+      + subst ty. exists x. split; [left; reflexivity|exact Hfind].
+      + specialize (IH env tys' ty Hmaps Hin) as (x' & Hin' & Hfind').
+        exists x'. split; [right; exact Hin'|exact Hfind'].
   Qed.
 
   Lemma fresh_insert_node_env_preserves_find:
@@ -918,7 +955,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       unfold insert_env, NMret in Hins. inversion Hins; subst e ste.
       unfold NMret in Hret'. inversion Hret'; subst env1 st1.
       specialize (IH _ _ _ _ _ _ Hrec Hfind) as [Hold|Hnew].
-      + 
+      +
         destruct (ident_eq_dec x k) as [Heq|Hneq].
         * subst x. rewrite Env.gss in Hold. inversion Hold; subst ty.
           assert (Hmono : (Pos.succ st <= st2)%positive).
@@ -1302,6 +1339,27 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     - eapply get_node_aux_In in Haux as (rec & Hin & _ & Hclk & Hrst).
       specialize (Hauxsec rec Hin) as (i & j & Hi & Hj).
       rewrite Hclk, Hrst in *. eauto.
+  Qed.
+
+  Lemma generate_node_env_sec_range:
+    forall all_nodes env aux_names x ty,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      Env.find x env = Some ty ->
+      exists n, ty = Ids.gensym Ids.sec n.
+  Proof.
+    intros all_nodes env aux_names x ty Hgen Hfind.
+    unfold generate_node_env in Hgen.
+    destruct (generate_node_env' all_nodes (Env.empty _) nil init_state)
+      as [[[env0 aux0] st0]|] eqn:Hgen'; try discriminate.
+    inversion Hgen; subst env aux_names.
+    destruct (generate_node_env_props' all_nodes (Env.empty _) nil init_state env0 aux0 st0)
+      as [Hbound _];
+      eauto.
+    - intros z tz Hz. rewrite Env.gempty in Hz. discriminate.
+    - constructor.
+    - intros rec Hin. contradiction.
+    - specialize (Hbound _ _ Hfind) as [n [Hty _]].
+      exists n. exact Hty.
   Qed.
 
 End NAMEGEN.

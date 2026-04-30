@@ -15,7 +15,7 @@ Module Type Lattice.
   Parameter eqb_refl : forall x y, eqb x y = true <-> eq x y.
   Parameter eq_no_red: forall x y, eq x y <-> x = y.
   (*This is needed for proof in cexp.*)
-  Parameter eq_sym : forall x y : t, eq x y -> eq y x.  
+  Parameter eq_sym : forall x y : t, eq x y -> eq y x.
   Parameter eq_trans : forall x y z : t, eq x y -> eq y z -> eq x z.
   Parameter eq_dec : forall x y : t, {eq x y}+{~ eq x y}.
 

@@ -4,6 +4,7 @@ From Velus Require Import Operators.
 From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import CoreExpr.CEIsFree.
 From Velus Require Import CoreExpr.CEClocking.
+From Velus Require Import NLustre.NLSyntax.
 From Velus Require Import Stc.StcSyntax.
 From Velus Require Import Stc.StcIsLast.
 From Velus Require Import Stc.StcIsVariable.
@@ -25,8 +26,10 @@ Module Type SECSTCTYPINGCORRECTNESS
   (Import Op    : OPERATORS)
   (Import SC    : SECMONAD Ids)
   (Import CESyn : CESYNTAX Op)
+  (Import SynNL : NLSYNTAX Ids Op CESyn)
   (Import SynStc: STCSYNTAX Ids Op CESyn)
   (Import SIG   : SIGNATURE Ids SC)
+  (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
@@ -226,6 +229,149 @@ Module Type SECSTCTYPINGCORRECTNESS
       eapply SECSTCTYPING.generate_sys_signature_scoped; eauto.
   Qed.
 
+  (** Public inversion view for generated STC signatures. *)
+  Lemma generate_sys_signature_inv:
+    forall G s env aux_names sig,
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      exists clk_id rst_id clk_type rst_type inp out slocals slasts
+             reset_env rids st_reset sconst st_s,
+        get_node_aux s.(SynStc.s_name) aux_names = Some (clk_id, rst_id)
+        /\ Env.find clk_id env = Some clk_type
+        /\ Env.find rst_id env = Some rst_type
+        /\ get_mappings_from_node s.(SynStc.s_in) env = Some inp
+        /\ get_mappings_from_node s.(SynStc.s_out) env = Some out
+        /\ get_mappings_from_node s.(SynStc.s_vars) env = Some slocals
+        /\ get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts
+        /\ generate_reset_env s.(SynStc.s_tcs) init_state = OK ((reset_env, rids), st_reset)
+        /\ generate_trconstrs_constraints G env reset_env clk_type rst_type s.(SynStc.s_tcs) st_reset = OK (sconst, st_s)
+        /\ sig = {| s_name := s.(SynStc.s_name);
+                    s_in := inp;
+                    s_out := out;
+                    s_reset := rst_type;
+                    s_clk := clk_type;
+                    s_constraints := SymTypes.simplify sconst (SECSTCTYPING.hidden_sys_vars slocals slasts rids) |}.
+  Proof.
+    intros G s env aux_names sig Hsig.
+    unfold SECSTCTYPING.generate_sys_signature in Hsig.
+    lazymatch type of Hsig with
+    | context [match ?m with | OK _ => _ | Error _ => _ end = _] =>
+        remember m as gen_res eqn:Hgen
+    end.
+    destruct gen_res as [[packed st_res]|]; try discriminate.
+    destruct packed as [packed env0].
+    destruct packed as [packed packed_constraints].
+    destruct packed as [packed packed_clk_type].
+    destruct packed as [packed packed_rst_type].
+    destruct packed as [packed_inp packed_out].
+    simpl in Hsig.
+    inversion Hsig; clear Hsig; subst.
+    symmetry in Hgen.
+    eapply sec_bind2_inv in Hgen as (clk_id & rst_id & st_aux & Haux & Hgen).
+    eapply sec_bind_inv in Hgen as (clk_type & st_clk & Hclk & Hgen).
+    eapply sec_bind_inv in Hgen as (rst_type & st_rst & Hrst & Hgen).
+    eapply sec_bind_inv in Hgen as (inp & st_inp & Hinp & Hgen).
+    eapply sec_bind_inv in Hgen as (out & st_out & Hout & Hgen).
+    eapply sec_bind_inv in Hgen as (slocals & st_locals & Hslocals & Hgen).
+    eapply sec_bind_inv in Hgen as (slasts & st_lasts & Hslasts & Hgen).
+    eapply sec_bind2_inv in Hgen as (reset_env & rids & st_reset & Hresetenv & Hgen).
+    eapply sec_bind_inv in Hgen as (sconst & st_s & Hsconst & Hret).
+    unfold option_to_sec in Haux.
+    destruct (get_node_aux (s.(SynStc.s_name)) aux_names) as [[clk_id0 rst_id0]|] eqn:Haux0; try discriminate.
+    inversion Haux; subst clk_id0 rst_id0 st_aux.
+    unfold option_to_sec in Hclk.
+    destruct (Env.find clk_id env) as [clk_type0|] eqn:Hclk0; try discriminate.
+    inversion Hclk; subst clk_type0 st_clk.
+    unfold option_to_sec in Hrst.
+    destruct (Env.find rst_id env) as [rst_type0|] eqn:Hrst0; try discriminate.
+    inversion Hrst; subst rst_type0 st_rst.
+    unfold option_to_sec in Hinp.
+    destruct (get_mappings_from_node (s.(SynStc.s_in)) env) as [inp0|] eqn:Hinp0; try discriminate.
+    inversion Hinp; subst inp0 st_inp.
+    unfold option_to_sec in Hout.
+    destruct (get_mappings_from_node (s.(SynStc.s_out)) env) as [out0|] eqn:Hout0; try discriminate.
+    inversion Hout; subst out0 st_out.
+    unfold option_to_sec in Hslocals.
+    destruct (get_mappings_from_node (s.(SynStc.s_vars)) env) as [slocals0|] eqn:Hslocals0; try discriminate.
+    inversion Hslocals; subst slocals0 st_locals.
+    unfold option_to_sec in Hslasts.
+    destruct (get_mappings_from_node (s.(SynStc.s_lasts)) env) as [slasts0|] eqn:Hslasts0; try discriminate.
+    inversion Hslasts; subst slasts0 st_lasts.
+    unfold ret in Hret. inversion Hret; subst.
+    exists clk_id, rst_id, packed_clk_type, packed_rst_type, packed_inp, packed_out,
+           slocals, slasts, reset_env, rids, st_reset, sconst, st_res.
+    repeat split; eauto.
+  Qed.
+
+  (** Visible-field provenance for generated STC signatures. *)
+  Lemma generated_sys_signature_scope_key:
+    forall G s env aux_names sig ty,
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      In ty (signature_scope sig) ->
+      exists clk_id rst_id x,
+        get_node_aux s.(SynStc.s_name) aux_names = Some (clk_id, rst_id)
+        /\ (In x (map fst s.(SynStc.s_in))
+            \/ In x (map fst s.(SynStc.s_out))
+            \/ x = clk_id
+            \/ x = rst_id)
+        /\ Env.find x env = Some ty.
+  Proof.
+    intros G s env aux_names sig ty Hsig Hin.
+    edestruct generate_sys_signature_inv as
+        (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
+         & reset_env & rids & st_reset & sconst & st_s
+         & Haux & Hclk & Hrst & Hinp & Hout & Hslocals & Hslasts
+         & Hresetenv & Hsconst & Hsigdef); eauto.
+    subst sig.
+    unfold signature_scope in Hin.
+    repeat rewrite in_app_iff in Hin.
+    destruct Hin as [Hin|[Hin|Hin]].
+    - destruct (get_mappings_from_node_In _ _ _ _ _ Hinp Hin)
+        as (x & a & Hinx & Hfindx).
+      exists clk_id, rst_id, x.
+      split; [exact Haux|].
+      split.
+      + left. now apply in_map with (f := fst) in Hinx.
+      + exact Hfindx.
+    - destruct (get_mappings_from_node_In _ _ _ _ _ Hout Hin)
+        as (x & a & Hinx & Hfindx).
+      exists clk_id, rst_id, x.
+      split; [exact Haux|].
+      split.
+      + right; left. now apply in_map with (f := fst) in Hinx.
+      + exact Hfindx.
+    - destruct Hin as [Hinclk|[Hinrst|[]]].
+      + subst ty.
+        exists clk_id, rst_id, clk_id.
+        split; [exact Haux|].
+        split.
+        * right; right; left; reflexivity.
+        * exact Hclk.
+      + subst ty.
+        exists clk_id, rst_id, rst_id.
+        split; [exact Haux|].
+        split.
+        * right; right; right; reflexivity.
+        * exact Hrst.
+  Qed.
+
+  (** Shared-environment range fact for generated STC signature fields.
+
+      This is the target-side namespace corollary paired with
+      [generated_sys_signature_scope_key].  It belongs here because it talks
+      only about STC signature generation plus the shared naming interface,
+      and is reused by translation as the STC-side source of [signature_scope_sec]. *)
+  Lemma generated_sys_signature_scope_sec:
+    forall all_nodes G s env aux_names sig,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      signature_scope_sec sig.
+  Proof.
+    intros all_nodes G s env aux_names sig Henvgen Hsig ty Hin.
+    destruct (generated_sys_signature_scope_key _ _ _ _ _ _ Hsig Hin)
+      as (clk_id & rst_id & x & _ & _ & Hfind).
+    eapply NAMEGEN.generate_node_env_sec_range in Hfind; eauto.
+  Qed.
+
   Lemma reset_env_sec_bounded_step:
     forall st env,
       reset_env_sec_bounded st env ->
@@ -398,8 +544,10 @@ Module SecStcTypingCorrectness
   (Import Op    : OPERATORS)
   (Import SC    : SECMONAD Ids)
   (Import CESyn : CESYNTAX Op)
+  (Import SynNL : NLSYNTAX Ids Op CESyn)
   (Import SynStc: STCSYNTAX Ids Op CESyn)
   (Import SIG   : SIGNATURE Ids SC)
+  (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
@@ -411,8 +559,8 @@ Module SecStcTypingCorrectness
   (Import IsF   : STCISFREE Ids Op CESyn SynStc CEIsF)
   (Import Clo   : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst Ord CEClo)
   (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo)
-  <: SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo SECSTCTYPING.
+  <: SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc SIG NAMEGEN SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo SECSTCTYPING.
 
-Include SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo SECSTCTYPING.
+Include SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc SIG NAMEGEN SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo SECSTCTYPING.
 
 End SecStcTypingCorrectness.
