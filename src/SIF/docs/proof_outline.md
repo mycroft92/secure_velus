@@ -153,12 +153,14 @@ generated source/target signature globals through `find_signature` and returns
 `Signature_head_consistent` directly, instead of rerunning
 `generate_node_sig` / `generate_sys_signature`.
 
-## Remaining Assumptions
+## Call-Side Status
 
-The final theorem stack still mentions:
+The final theorem stack no longer mentions either of the old call-side bridge
+premises:
 
 - `successful_call_substitutions_fresh`
 - `signatures_preserved_calls`
 
-The next proof work is to discharge these assumptions from within the generated
-program theorem stack.
+Both are now discharged internally in `SecNLusStcTranslation.v` through the
+node-scoped naming provenance, generated-signature structural lemmas, and the
+final reset-call bridge.

@@ -1,3 +1,5 @@
+From Coq Require Import List.
+Import List.ListNotations.
 From Velus Require Import Common.
 From Velus Require Import SecLattice.
 From Velus Require Import Environment.
@@ -636,14 +638,40 @@ Module Type SECNLUSTYPINGCORRECTNESS
                    s_clk := clk_type;
                    s_constraints := SymTypes.simplify raw locals |}).
     {
-      unfold SECNLUSTYPING.generate_node_sig.
-      unfold bind, bind2, option_to_sec, ret.
-      rewrite Hauxmatch. simpl.
-      rewrite Hclk0. simpl.
-      rewrite Hrst0. simpl.
-      rewrite Hinp0. simpl.
-      rewrite Hout0. simpl.
-      rewrite Hlocals0. simpl.
+      assert (Hsigshape :
+                SECNLUSTYPING.generate_node_sig G1 n env aux_names =
+                match
+                  bind
+                    (generate_eqns_constraints G1 env clk_type rst_type n.(n_eqs))
+                    (fun constraints' =>
+                       ret
+                         (n.(n_name), inp, out, rst_type, clk_type,
+                          SymTypes.simplify constraints' locals, env))
+                    init_state
+                with
+                | OK ((name, inp', out', rst_type', clk_type', constraints, _), _) =>
+                    OK
+                      {| s_name := name;
+                         s_in := inp';
+                         s_out := out';
+                         s_reset := rst_type';
+                         s_clk := clk_type';
+                         s_constraints := constraints |}
+                | Error e => Error e
+                end).
+      {
+        unfold SECNLUSTYPING.generate_node_sig.
+        cbn [bind bind2 option_to_sec ret].
+        rewrite Hauxmatch. cbn [bind bind2 option_to_sec ret].
+        rewrite Hclk0. cbn [bind bind2 option_to_sec ret].
+        rewrite Hrst0. cbn [bind bind2 option_to_sec ret].
+        rewrite Hinp0. cbn [bind bind2 option_to_sec ret].
+        rewrite Hout0. cbn [bind bind2 option_to_sec ret].
+        rewrite Hlocals0. cbn [bind bind2 option_to_sec ret].
+        reflexivity.
+      }
+      rewrite Hsigshape.
+      unfold bind, ret.
       rewrite Hraw. simpl.
       reflexivity.
     }
@@ -788,6 +816,142 @@ Module Type SECNLUSTYPINGCORRECTNESS
              subst d.
              exact (Hlocalsdisj ty Hd Hinsigscope).
           -- exact Hinraw.
+  Qed.
+
+  (** Generated source signature interfaces are duplicate free.
+
+      The semantic call bridge only updates valuations on the visible
+      signature interface.  To show that those updates behave as intended, we
+      need the source-side fact that the generated interface variables are
+      pairwise distinct.  This comes entirely from the NLustre node-interface
+      uniqueness discipline plus injectivity of the node-local naming
+      environment. *)
+  Theorem generate_node_sig_scope_nodup_from_local_env:
+    forall n env rec st st' clk_type rst_type inp out,
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      Env.find rec.(nclk) env = Some clk_type ->
+      Env.find rec.(nrst) env = Some rst_type ->
+      get_mappings_from_node n.(n_in) env = Some inp ->
+      get_mappings_from_node n.(n_out) env = Some out ->
+      NoDup
+        (signature_scope
+           {| s_name := n.(n_name);
+              s_in := inp;
+              s_out := out;
+              s_reset := rst_type;
+              s_clk := clk_type;
+              s_constraints := nil |}).
+  Proof.
+    intros n env rec st st' clk_type rst_type inp out
+           Hlocal Hclk Hrst Hinp Hout.
+    unfold signature_scope.
+    pose proof (NAMEGEN.generate_local_env_for_node_injective _ _ _ _ _ Hlocal)
+      as Hinj.
+    pose proof (NAMEGEN.generate_local_env_for_node_aux_sec_names
+                  _ _ _ _ _ Hlocal) as [Hclkid Hrstid].
+    assert (Hmapio :
+              get_mappings (map fst (n.(n_in) ++ n.(n_out))) env = Some (inp ++ out)).
+    {
+      rewrite map_app.
+      eapply get_mappings_app.
+      - eapply get_mappings_from_node_eq; exact Hinp.
+      - eapply get_mappings_from_node_eq; exact Hout.
+    }
+    assert (Hmapclk :
+              get_mappings [rec.(nclk); rec.(nrst)] env = Some [clk_type; rst_type]).
+    {
+      simpl. rewrite Hclk, Hrst. reflexivity.
+    }
+    assert (Hmapall :
+              get_mappings
+                (map fst (n.(n_in) ++ n.(n_out)) ++ [rec.(nclk); rec.(nrst)]) env =
+              Some (inp ++ out ++ [clk_type; rst_type])).
+    {
+      replace (inp ++ out ++ [clk_type; rst_type])
+        with ((inp ++ out) ++ [clk_type; rst_type]) by now rewrite app_assoc.
+      eapply get_mappings_app
+        with (txs := inp ++ out) (tys := [clk_type; rst_type]); eauto.
+    }
+    assert (Hndio : NoDup (map fst (n.(n_in) ++ n.(n_out)))).
+    {
+      rewrite map_app.
+      eapply NoDup_app'.
+      - pose proof n.(n_nodup) as Hnodup.
+        rewrite app_assoc in Hnodup.
+        apply NoDupMembers_app_l in Hnodup.
+        apply NoDupMembers_app_l in Hnodup.
+        now apply fst_NoDupMembers.
+      - pose proof n.(n_nodup) as Hnodup.
+        rewrite app_assoc in Hnodup.
+        apply NoDupMembers_app_r in Hnodup.
+        now apply fst_NoDupMembers.
+      - rewrite Forall_forall.
+        intros x Hinx Hxout.
+        pose proof n.(n_nodup) as Hndall.
+        apply fst_NoDupMembers in Hndall.
+        rewrite !map_app in Hndall.
+        rewrite app_assoc in Hndall.
+        apply NoDup_app'_iff in Hndall as [_ [_ Hfresh]].
+        rewrite Forall_forall in Hfresh.
+        eapply Hfresh.
+        + apply in_or_app. left. exact Hinx.
+        + exact Hxout.
+    }
+    assert (Hclkneqrst : rec.(nclk) <> rec.(nrst)).
+    {
+      intro Heq.
+      rewrite Hclkid, Hrstid in Heq.
+      apply gensym_injective in Heq as [_ Heq].
+      pose proof (Pos.lt_succ_diag_r st) as Hlt.
+      rewrite <- Heq in Hlt.
+      exact (Pos.lt_irrefl _ Hlt).
+    }
+    assert (Hndkeys :
+              NoDup (map fst (n.(n_in) ++ n.(n_out)) ++ [rec.(nclk); rec.(nrst)])).
+    {
+      eapply NoDup_app'.
+      - exact Hndio.
+      - repeat constructor.
+        + intro Hin.
+          simpl in Hin. destruct Hin as [Heq|[]].
+          apply Hclkneqrst. symmetry. exact Heq.
+        + intro Hin. inversion Hin.
+      - rewrite Forall_forall.
+        intros x Hinx Hinaux.
+        simpl in Hinaux.
+        destruct Hinaux as [Heqclk|[Heqrst|[]]].
+        + subst x.
+          apply in_map_iff in Hinx as (xraw & Hxraw & Hinxraw).
+          inversion Hxraw; subst.
+          eapply (node_var_not_sec_gensym n rec.(nclk) st).
+          * rewrite app_assoc, !map_app.
+            apply in_app_iff in Hinxraw.
+            apply in_or_app.
+            destruct Hinxraw as [Hinin|Hinout].
+            -- left. apply in_or_app. left.
+               apply in_map with (f := fst) in Hinin. simpl in Hinin.
+               rewrite H0 in Hinin. exact Hinin.
+            -- right.
+               apply in_map with (f := fst) in Hinout. simpl in Hinout.
+               rewrite H0 in Hinout. exact Hinout.
+          * exact Hclkid.
+        + subst x.
+          apply in_map_iff in Hinx as (xraw & Hxraw & Hinxraw).
+          inversion Hxraw; subst.
+          eapply (node_var_not_sec_gensym n rec.(nrst) (Pos.succ st)).
+          * rewrite app_assoc, !map_app.
+            apply in_app_iff in Hinxraw.
+            apply in_or_app.
+            destruct Hinxraw as [Hinin|Hinout].
+            -- left. apply in_or_app. left.
+               apply in_map with (f := fst) in Hinin. simpl in Hinin.
+               rewrite H0 in Hinin. exact Hinin.
+            -- right.
+               apply in_map with (f := fst) in Hinout. simpl in Hinout.
+               rewrite H0 in Hinout. exact Hinout.
+          * exact Hrstid.
+    }
+    eapply SECNLUSTYPING.get_mappings_nodup; eauto.
   Qed.
 
   (** Node-scoped source signature generation.

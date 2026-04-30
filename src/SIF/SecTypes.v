@@ -1266,6 +1266,277 @@ Module Type SECTYPES(Import Lat: Lattice).
   Definition st_scoped (scope: list ident) (st: ST) : Prop :=
     forall x, In x st -> In x scope.
 
+  (* Agreement of two valuations on a chosen scope.  This is the generic
+     semantic relation underlying the later translation-preservation theorems,
+     so it belongs with the symbolic-type metatheory rather than any specific
+     source/target phase bridge. *)
+  Definition agree_on (xs: list ident) (dlt1 dlt2: ident -> Lat.t) : Prop :=
+    forall x, In x xs -> dlt1 x = dlt2 x.
+
+  Lemma agree_on_trans:
+    forall xs dlt1 dlt2 dlt3,
+      agree_on xs dlt1 dlt2 ->
+      agree_on xs dlt2 dlt3 ->
+      agree_on xs dlt1 dlt3.
+  Proof.
+    intros xs dlt1 dlt2 dlt3 H12 H23 x Hin.
+    rewrite H12 by exact Hin.
+    exact (H23 x Hin).
+  Qed.
+
+  Lemma agree_on_refl:
+    forall xs dlt,
+      agree_on xs dlt dlt.
+  Proof.
+    intros xs dlt x Hin.
+    reflexivity.
+  Qed.
+
+  (* Pointwise valuation updates used by the call-instantiation metatheory.
+     They are generic symbolic-type operations, so the reusable definitions and
+     their basic agreement lemmas live here. *)
+  Definition upd_type (dlt: ident -> Lat.t) (x: ident) (st: ST) : ident -> Lat.t :=
+    fun y => if ident_eqb y x then hm_ext dlt st else dlt y.
+
+  Definition upd_ident (dlt: ident -> Lat.t) (x v: ident) : ident -> Lat.t :=
+    fun y => if ident_eqb y x then dlt v else dlt y.
+
+  Fixpoint upd_types (dlt: ident -> Lat.t) (xs: list ident) (vs: list ST)
+    : ident -> Lat.t :=
+    match xs, vs with
+    | x :: xs', v :: vs' => upd_types (upd_type dlt x v) xs' vs'
+    | _, _ => dlt
+    end.
+
+  Fixpoint upd_types_rev (dlt: ident -> Lat.t) (xs: list ident) (vs: list ST)
+    : ident -> Lat.t :=
+    match xs, vs with
+    | x :: xs', v :: vs' => upd_type (upd_types_rev dlt xs' vs') x v
+    | _, _ => dlt
+    end.
+
+  Fixpoint upd_idents (dlt: ident -> Lat.t) (xs vs: list ident)
+    : ident -> Lat.t :=
+    match xs, vs with
+    | x :: xs', v :: vs' => upd_idents (upd_ident dlt x v) xs' vs'
+    | _, _ => dlt
+    end.
+
+  Fixpoint upd_idents_rev (dlt: ident -> Lat.t) (xs vs: list ident)
+    : ident -> Lat.t :=
+    match xs, vs with
+    | x :: xs', v :: vs' => upd_ident (upd_idents_rev dlt xs' vs') x v
+    | _, _ => dlt
+    end.
+
+  Definition overlay_scope
+    (scope: list ident) (dlt_scope dlt_base: ident -> Lat.t)
+    : ident -> Lat.t :=
+    fun x => if in_dec ident_eq_dec x scope then dlt_scope x else dlt_base x.
+
+  Lemma upd_type_outside:
+    forall dlt x st y,
+      x <> y ->
+      upd_type dlt x st y = dlt y.
+  Proof.
+    intros dlt x st y Hneq.
+    unfold upd_type.
+    destruct (ident_eqb y x) eqn:Heq.
+    - apply ident_eqb_eq in Heq. congruence.
+    - reflexivity.
+  Qed.
+
+  Lemma upd_ident_outside:
+    forall dlt x v y,
+      x <> y ->
+      upd_ident dlt x v y = dlt y.
+  Proof.
+    intros dlt x v y Hneq.
+    unfold upd_ident.
+    destruct (ident_eqb y x) eqn:Heq.
+    - apply ident_eqb_eq in Heq. congruence.
+    - reflexivity.
+  Qed.
+
+  Lemma upd_types_agree_on:
+    forall dlt scope xs vs,
+      Forall (fun x => ~ In x scope) xs ->
+      agree_on scope dlt (upd_types dlt xs vs).
+  Proof.
+    intros dlt scope xs.
+    revert dlt.
+    induction xs as [|x xs IH]; intros dlt vs Hfresh y Hy.
+    - destruct vs; reflexivity.
+    - inversion Hfresh as [|x' xs' Hx Hxs]; subst x' xs'.
+      destruct vs as [|v vs].
+      + reflexivity.
+      + specialize (IH (upd_type dlt x v) vs Hxs y Hy).
+        unfold upd_types in IH |- *; simpl in IH |- *.
+        destruct (ident_eqb y x) eqn:Heq.
+        * apply ident_eqb_eq in Heq. subst y. exfalso. exact (Hx Hy).
+        * transitivity ((upd_type dlt x v) y).
+          -- symmetry. apply upd_type_outside. intros Heqxy. subst y. exact (Hx Hy).
+          -- exact IH.
+  Qed.
+
+  Lemma upd_types_rev_agree_on:
+    forall dlt scope xs vs,
+      Forall (fun x => ~ In x scope) xs ->
+      agree_on scope dlt (upd_types_rev dlt xs vs).
+  Proof.
+    intros dlt scope xs.
+    revert dlt.
+    induction xs as [|x xs IH]; intros dlt vs Hfresh y Hy.
+    - destruct vs; reflexivity.
+    - inversion Hfresh as [|x' xs' Hx Hxs]; subst x' xs'.
+      destruct vs as [|v vs].
+      + reflexivity.
+      + unfold upd_types_rev; simpl.
+        rewrite upd_type_outside.
+        * apply IH; auto.
+        * intros Heqxy. subst y. exact (Hx Hy).
+  Qed.
+
+  Lemma upd_idents_agree_on:
+    forall dlt scope xs vs,
+      Forall (fun x => ~ In x scope) xs ->
+      agree_on scope dlt (upd_idents dlt xs vs).
+  Proof.
+    intros dlt scope xs.
+    revert dlt.
+    induction xs as [|x xs IH]; intros dlt vs Hfresh y Hy.
+    - destruct vs; reflexivity.
+    - inversion Hfresh as [|x' xs' Hx Hxs]; subst x' xs'.
+      destruct vs as [|v vs].
+      + reflexivity.
+      + specialize (IH (upd_ident dlt x v) vs Hxs y Hy).
+        unfold upd_idents in IH |- *; simpl in IH |- *.
+        destruct (ident_eqb y x) eqn:Heq.
+        * apply ident_eqb_eq in Heq. subst y. exfalso. exact (Hx Hy).
+        * transitivity ((upd_ident dlt x v) y).
+          -- symmetry. apply upd_ident_outside. intros Heqxy. subst y. exact (Hx Hy).
+          -- exact IH.
+  Qed.
+
+  Lemma upd_idents_rev_agree_on:
+    forall dlt scope xs vs,
+      Forall (fun x => ~ In x scope) xs ->
+      agree_on scope dlt (upd_idents_rev dlt xs vs).
+  Proof.
+    intros dlt scope xs.
+    revert dlt.
+    induction xs as [|x xs IH]; intros dlt vs Hfresh y Hy.
+    - destruct vs; reflexivity.
+    - inversion Hfresh as [|x' xs' Hx Hxs]; subst x' xs'.
+      destruct vs as [|v vs].
+      + reflexivity.
+      + unfold upd_idents_rev; simpl.
+        rewrite upd_ident_outside.
+        * apply IH; auto.
+        * intros Heqxy. subst y. exact (Hx Hy).
+  Qed.
+
+  Lemma upd_type_agree_on:
+    forall dlt scope x st,
+      ~ In x scope ->
+      agree_on scope dlt (upd_type dlt x st).
+  Proof.
+    intros dlt scope x st Hfresh y Hin.
+    unfold upd_type.
+    destruct (ident_eqb y x) eqn:Heq.
+    - apply ident_eqb_eq in Heq. subst y. exfalso. exact (Hfresh Hin).
+    - reflexivity.
+  Qed.
+
+  Lemma upd_ident_agree_on:
+    forall dlt scope x v,
+      ~ In x scope ->
+      agree_on scope dlt (upd_ident dlt x v).
+  Proof.
+    intros dlt scope x v Hfresh y Hin.
+    unfold upd_ident.
+    destruct (ident_eqb y x) eqn:Heq.
+    - apply ident_eqb_eq in Heq. subst y. exfalso. exact (Hfresh Hin).
+    - reflexivity.
+  Qed.
+
+  Lemma upd_types_rev_outside:
+    forall dlt xs vs y,
+      ~ In y xs ->
+      upd_types_rev dlt xs vs y = dlt y.
+  Proof.
+    induction xs as [|x xs IH]; intros vs y Hnin.
+    - destruct vs; reflexivity.
+    - destruct vs as [|v vs]; simpl.
+      + reflexivity.
+      + rewrite upd_type_outside.
+        * eapply IH. intros Hin. apply Hnin. now right.
+        * intro Heq. subst y. apply Hnin. now left.
+  Qed.
+
+  Lemma upd_idents_rev_outside:
+    forall dlt xs vs y,
+      ~ In y xs ->
+      upd_idents_rev dlt xs vs y = dlt y.
+  Proof.
+    induction xs as [|x xs IH]; intros vs y Hnin.
+    - destruct vs; reflexivity.
+    - destruct vs as [|v vs]; simpl.
+      + reflexivity.
+      + rewrite upd_ident_outside.
+        * eapply IH. intros Hin. apply Hnin. now right.
+        * intro Heq. subst y. apply Hnin. now left.
+  Qed.
+
+  Lemma hm_ext_agree_on_st:
+    forall dlt1 dlt2 st,
+      agree_on st dlt1 dlt2 ->
+      hm_ext dlt1 st = hm_ext dlt2 st.
+  Proof.
+    intros dlt1 dlt2 st Hagree.
+    induction st as [|x st IH]; simpl; auto.
+    rewrite (Hagree x).
+    2:{ now left. }
+    rewrite IH; auto.
+    intros y Hy. apply Hagree. now right.
+  Qed.
+
+  Lemma overlay_scope_agree_on:
+    forall scope dlt_scope dlt_base,
+      agree_on scope dlt_scope (overlay_scope scope dlt_scope dlt_base).
+  Proof.
+    intros scope dlt_scope dlt_base x Hin.
+    unfold overlay_scope.
+    destruct (in_dec ident_eq_dec x scope) as [Hin'|Hnin].
+    - reflexivity.
+    - contradiction.
+  Qed.
+
+  Lemma overlay_scope_agree_outside:
+    forall scope dlt_scope dlt_base x,
+      ~ In x scope ->
+      overlay_scope scope dlt_scope dlt_base x = dlt_base x.
+  Proof.
+    intros scope dlt_scope dlt_base x Hfresh.
+    unfold overlay_scope.
+    destruct (in_dec ident_eq_dec x scope) as [Hin|Hnin].
+    - contradiction.
+    - reflexivity.
+  Qed.
+
+  Lemma hm_ext_agree_on_scoped_type:
+    forall scope ty dlt1 dlt2,
+      st_scoped scope ty ->
+      agree_on scope dlt1 dlt2 ->
+      hm_ext dlt1 ty = hm_ext dlt2 ty.
+  Proof.
+    intros scope ty dlt1 dlt2 Hsc Hagree.
+    apply hm_ext_agree_on_st.
+    intros x Hin.
+    apply Hagree.
+    exact (Hsc _ Hin).
+  Qed.
+
   Lemma st_scoped_weaken:
     forall scope1 scope2 st,
       incl scope1 scope2 ->

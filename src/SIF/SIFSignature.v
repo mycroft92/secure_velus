@@ -30,6 +30,7 @@ Definition secglobal := list signature.
 Definition find_signature (f : ident) : secglobal -> option signature :=
     List.find (fun n=> ident_eqb n.(s_name) f).
 
+
 Section Type_Substitutions.
 
   Local Definition subst_ident_in_type (ty: ST) (x: ident) (v: ST): ST :=
@@ -212,6 +213,207 @@ Section Type_Substitutions.
     destruct (ident_eqb sig.(s_name) f) eqn:Hname.
     - inversion Hfind; subst sig'. exact Hsig.
     - eapply Hglob; eauto.
+  Qed.
+
+  (* Signature-interface agreement and call-instantiation freshness live at the
+     signature layer.  They are reused by the later NLustre/STC bridge, but do
+     not depend on any translation-specific theorem shape. *)
+  Definition signature_fields_agree (n1 n2: signature) : Prop :=
+    n1.(s_in) = n2.(s_in)
+    /\ n1.(s_out) = n2.(s_out)
+    /\ n1.(s_reset) = n2.(s_reset)
+    /\ n1.(s_clk) = n2.(s_clk).
+
+  Definition type_fresh (scope: list ident) (st: ST) : Prop :=
+    Forall (fun x => ~ In x scope) st.
+
+  Definition types_fresh (scope: list ident) (sts: list ST) : Prop :=
+    Forall (type_fresh scope) sts.
+
+  Definition outputs_fresh (scope: list ident) (outs: list ident) : Prop :=
+    Forall (fun x => ~ In x scope) outs.
+
+  Definition call_subst_fresh
+    (sig: signature) (inptyp: list ST) (ckty rstty: ST) (outtyp: list ident) : Prop :=
+    types_fresh (signature_scope sig) inptyp
+    /\ type_fresh (signature_scope sig) ckty
+    /\ type_fresh (signature_scope sig) rstty
+    /\ outputs_fresh (signature_scope sig) outtyp.
+
+  Definition call_actuals_scoped
+    (scope: list ident) (inptyp: list ST) (ckty: ST) (outtyp: list ident) : Prop :=
+    Forall (st_scoped scope) inptyp
+    /\ st_scoped scope ckty
+    /\ Forall (fun x => In x scope) outtyp.
+
+  Definition call_subst_scoped
+    (scope: list ident) (inptyp: list ST) (ckty rstty: ST) (outtyp: list ident) : Prop :=
+    call_actuals_scoped scope inptyp ckty outtyp
+    /\ st_scoped scope rstty.
+
+  Definition scope_fresh (scope: list ident) (sig: signature) : Prop :=
+    forall x, In x scope -> ~ In x (signature_scope sig).
+
+  Lemma signature_fields_agree_scope_eq:
+    forall n1 n2,
+      signature_fields_agree n1 n2 ->
+      signature_scope n1 = signature_scope n2.
+  Proof.
+    intros n1 n2 [Hin [Hout [Hrst Hclk]]].
+    unfold signature_scope.
+    now rewrite Hin, Hout, Hclk, Hrst.
+  Qed.
+
+  Lemma scope_fresh_fields_agree:
+    forall scope n1 n2,
+      signature_fields_agree n1 n2 ->
+      scope_fresh scope n1 ->
+      scope_fresh scope n2.
+  Proof.
+    intros scope n1 n2 Hagree Hfresh x Hin.
+    rewrite <- (signature_fields_agree_scope_eq _ _ Hagree).
+    eauto.
+  Qed.
+
+  Lemma signature_scope_sec_fields_agree:
+    forall n1 n2,
+      signature_fields_agree n1 n2 ->
+      signature_scope_sec n1 ->
+      signature_scope_sec n2.
+  Proof.
+    intros n1 n2 Hagree Hsec ty Hin.
+    destruct Hagree as [Hin' [Hout' [Hrst' Hclk']]].
+    unfold signature_scope in *.
+    rewrite <- Hin', <- Hout', <- Hclk', <- Hrst' in Hin.
+    eauto.
+  Qed.
+
+  Lemma scope_fresh_notin_sig_scope:
+    forall scope sig x,
+      scope_fresh scope sig ->
+      In x (signature_scope sig) ->
+      ~ In x scope.
+  Proof.
+    intros scope sig x Hfresh Hsig Hscope.
+    exact (Hfresh x Hscope Hsig).
+  Qed.
+
+  Lemma scope_fresh_notin_inputs:
+    forall scope sig,
+      scope_fresh scope sig ->
+      Forall (fun x => ~ In x scope) sig.(s_in).
+  Proof.
+    intros scope sig Hfresh.
+    rewrite Forall_forall.
+    intros x Hin.
+    eapply scope_fresh_notin_sig_scope; eauto.
+    unfold signature_scope. apply in_or_app. now left.
+  Qed.
+
+  Lemma scope_fresh_notin_outputs:
+    forall scope sig,
+      scope_fresh scope sig ->
+      Forall (fun x => ~ In x scope) sig.(s_out).
+  Proof.
+    intros scope sig Hfresh.
+    rewrite Forall_forall.
+    intros x Hin.
+    eapply scope_fresh_notin_sig_scope; eauto.
+    unfold signature_scope. apply in_or_app. right. apply in_or_app. left. exact Hin.
+  Qed.
+
+  Lemma scope_fresh_notin_clk:
+    forall scope sig,
+      scope_fresh scope sig ->
+      ~ In sig.(s_clk) scope.
+  Proof.
+    intros scope sig Hfresh.
+    eapply scope_fresh_notin_sig_scope; eauto.
+    unfold signature_scope. apply in_or_app. right. apply in_or_app. right. simpl. left. reflexivity.
+  Qed.
+
+  Lemma scope_fresh_notin_reset:
+    forall scope sig,
+      scope_fresh scope sig ->
+      ~ In sig.(s_reset) scope.
+  Proof.
+    intros scope sig Hfresh.
+    eapply scope_fresh_notin_sig_scope; eauto.
+    unfold signature_scope. apply in_or_app. right. apply in_or_app. right. simpl. right. left. reflexivity.
+  Qed.
+
+  Lemma type_fresh_from_scope_fresh:
+    forall scope sig ty,
+      scope_fresh scope sig ->
+      st_scoped scope ty ->
+      type_fresh (signature_scope sig) ty.
+  Proof.
+    intros scope sig ty Hfresh Hsc.
+    unfold type_fresh.
+    rewrite Forall_forall.
+    intros x Hin Hsig.
+    eapply Hfresh; eauto.
+  Qed.
+
+  Lemma types_fresh_from_scope_fresh:
+    forall scope sig tys,
+      scope_fresh scope sig ->
+      Forall (st_scoped scope) tys ->
+      types_fresh (signature_scope sig) tys.
+  Proof.
+    intros scope sig tys Hfresh Htys.
+    induction Htys as [|ty tys Hty Htys IH]; constructor; auto.
+    eapply type_fresh_from_scope_fresh; eauto.
+  Qed.
+
+  Lemma outputs_fresh_from_scope_fresh:
+    forall scope sig outs,
+      scope_fresh scope sig ->
+      Forall (fun x => In x scope) outs ->
+      outputs_fresh (signature_scope sig) outs.
+  Proof.
+    intros scope sig outs Hfresh Houts.
+    induction Houts as [|x outs Hin Houts IH]; constructor; auto.
+  Qed.
+
+  Lemma call_subst_fresh_from_scope_fresh:
+    forall scope sig inptyp ckty rstty outtyp,
+      scope_fresh scope sig ->
+      Forall (st_scoped scope) inptyp ->
+      st_scoped scope ckty ->
+      st_scoped scope rstty ->
+      Forall (fun x => In x scope) outtyp ->
+      call_subst_fresh sig inptyp ckty rstty outtyp.
+  Proof.
+    intros scope sig inptyp ckty rstty outtyp
+           Hfresh Hinp Hclk Hrst Hout.
+    repeat split.
+    - eapply types_fresh_from_scope_fresh; eauto.
+    - eapply type_fresh_from_scope_fresh; eauto.
+    - eapply type_fresh_from_scope_fresh; eauto.
+    - eapply outputs_fresh_from_scope_fresh; eauto.
+  Qed.
+
+  Lemma call_subst_fresh_reset_from_scope_fresh:
+    forall scope sig inptyp ckty rst_inst outtyp,
+      scope_fresh scope sig ->
+      signature_scope_sec sig ->
+      Forall (st_scoped scope) inptyp ->
+      st_scoped scope ckty ->
+      (exists n, rst_inst = Ids.gensym Ids.sec_reset n) ->
+      Forall (fun x => In x scope) outtyp ->
+      call_subst_fresh sig inptyp ckty (rst_inst :: nil) outtyp.
+  Proof.
+    intros scope sig inptyp ckty rst_inst outtyp
+           Hfresh Hsigsec Hinp Hclk Hrstinst Hout.
+    repeat split.
+    - eapply types_fresh_from_scope_fresh; eauto.
+    - eapply type_fresh_from_scope_fresh; eauto.
+    - unfold type_fresh. rewrite Forall_forall.
+      intros x Hin Hsig.
+      simpl in Hin. destruct Hin as [Heq|[]]. subst x.
+      eapply sec_reset_not_in_signature_scope; eauto.
+    - eapply outputs_fresh_from_scope_fresh; eauto.
   Qed.
 
   (* Every stored signature in the global environment only mentions its own

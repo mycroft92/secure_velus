@@ -8,33 +8,23 @@ Current proof state:
 
 Remaining proof work:
 
-- discharge
-  `signatures_preserved_calls`
-  from the final theorem stack
-- `successful_call_substitutions_fresh` is already gone from the public theorem
-  path; the remaining blocker is the semantic call bridge itself
-- the current call-instantiation metatheory now includes:
-  - output-substitution correctness/completeness
-  - input-substitution completeness
-  - reverse-order valuation reconstructions (`upd_types_rev`, `upd_idents_rev`)
-- the next step is to relate those reverse-order reconstructions back to the
-  forward `inst_valuation` under the generated freshness/distinctness facts,
-  then use that to prove the theorem replacing `signatures_preserved_calls`
-- the flat shared-variable env in `NameInterface.v` is now identified as too
-  strong: two different nodes may legally reuse the same raw variable name, so
-  the naming layer must move to a node-scoped env-of-envs before the final
-  call-freshness proof can be completed cleanly
-- resume by migrating `NameInterface.v`, `SecNLusTyping.v`, and
-  `SecSTCTyping.v` to that node-scoped naming representation first
-- keep deriving `env_injective` from `generate_node_env` through
-  `NameInterface.v`
+- the public theorem stack no longer assumes:
+  - `successful_call_substitutions_fresh`
+  - `signatures_preserved_calls`
+- the node-scoped naming pivot is complete enough for the final lookup theorem
+  and the call-instantiation bridge is now internal
+- remaining proof-side work is only:
+  - discharge `sec_not_in_gensym_prefs` concretely
+  - move generic helper lemmas out of `SecNLusStcTranslation.v`
+  - refresh the module/theorem-flow documentation after those moves
 
 Public theorem structure:
 
 - `generated_program_preserv_global` keeps the raw preservation statement
 - `generated_program_signatures_preserved_global` gives the signature-level
-  lookup corollary over the generated globals, without exposing internal locals
-  or rerunning per-node signature generation
+  lookup corollary over the generated globals, without exposing internal locals,
+  rerunning per-node signature generation, or assuming any extra call-side
+  bridge theorem
 
 Validation discipline:
 

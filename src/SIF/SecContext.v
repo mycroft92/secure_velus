@@ -1,12 +1,14 @@
 From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import SIF.SymTypes.
-
+From Velus Require Import Environment.
 
 From Coq Require Import String. (*Required for Errors *)
 From compcert Require Import common.Errors.
+From Coq Require Import List.
 
-Open Scope list_scope.
+
+Import List.ListNotations.
 
 Module Type SECMONAD (Import Ids   : IDS).
 
@@ -77,7 +79,7 @@ Module SECMONADNotations.
         
 End SECMONADNotations.
 Import SECMONADNotations.
-Import List.ListNotations.
+
 
 (* Extend the context with one fresh security variable. *)
 Definition insert_env (k v: ident) (env: Env.t ident): Sec (Env.t ident) :=
@@ -150,8 +152,59 @@ Section option_to_sec.
     | None    => error (msg "Nothing to convert")
     end.
 End option_to_sec.
-End SECMONAD.
 
+(* Generic monadic determinism facts used throughout the SIF development.
+   They do not depend on any specific source/target language, only on the
+   state/error structure of the security monad. *)
+Lemma option_to_sec_consistent:
+  forall (A: Type) (x: option A) st1 st2 y1 y2 st1' st2',
+    @option_to_sec A x st1 = OK (y1, st1') ->
+    @option_to_sec A x st2 = OK (y2, st2') ->
+    y1 = y2.
+Proof.
+  intros A [a|] st1 st2 y1 y2 st1' st2' H1 H2;
+    unfold option_to_sec in *; inversion H1; inversion H2; now subst.
+Qed.
+
+Lemma mmap_consistent:
+  forall (A B: Type) (f g: A -> Sec B) xs st1 st2 ys1 ys2 st1' st2',
+    (forall x s1 s2 y1 y2 s1'' s2'',
+        f x s1 = OK (y1, s1'') ->
+        g x s2 = OK (y2, s2'') ->
+        y1 = y2) ->
+    mmap f xs st1 = OK (ys1, st1') ->
+    mmap g xs st2 = OK (ys2, st2') ->
+    ys1 = ys2.
+Proof.
+  intros A B f g xs.
+  induction xs as [|x xs IH]; intros st1 st2 ys1 ys2 st1' st2' Hfg Hm1 Hm2.
+  - simpl in Hm1, Hm2. inversion Hm1; inversion Hm2. reflexivity.
+  - simpl in Hm1, Hm2.
+    eapply sec_bind_inv in Hm1 as [hd1 [st_mid1 [Hhd1 Hm1]]].
+    eapply sec_bind_inv in Hm1 as [tl1 [st_fin1 [Htl1 Hret1]]].
+    unfold ret in Hret1. inversion Hret1. subst ys1 st1'.
+    eapply sec_bind_inv in Hm2 as [hd2 [st_mid2 [Hhd2 Hm2]]].
+    eapply sec_bind_inv in Hm2 as [tl2 [st_fin2 [Htl2 Hret2]]].
+    unfold ret in Hret2. inversion Hret2. subst ys2 st2'.
+    f_equal.
+    + eapply Hfg; eauto.
+    + eapply IH; eauto.
+Qed.
+
+Lemma mmap_option_to_sec_consistent:
+  forall (A B: Type) (f: A -> option B) xs st1 st2 ys1 ys2 st1' st2',
+    mmap (fun x => option_to_sec (f x)) xs st1 = OK (ys1, st1') ->
+    mmap (fun x => option_to_sec (f x)) xs st2 = OK (ys2, st2') ->
+    ys1 = ys2.
+Proof.
+  intros.
+  eapply (@mmap_consistent A B (fun x => option_to_sec (f x)) (fun x => option_to_sec (f x)) xs).
+  - intros. eapply option_to_sec_consistent; eauto.
+  - exact H.
+  - exact H0.
+Qed.
+
+End SECMONAD.
 
 
 

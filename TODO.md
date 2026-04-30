@@ -2,17 +2,15 @@
 
 ## Remaining theorem-stack cleanup
 
-- Eliminate the remaining call-side assumptions from the final theorem stack:
-  - `signatures_preserved_calls`
-  - later: discharge `sec_not_in_gensym_prefs` from the concrete `Ident` naming
-    setup so it stops living as a background correctness-module hypothesis
+- Discharge `sec_not_in_gensym_prefs` from the concrete `Ident` naming setup so
+  it stops living as a background correctness-module hypothesis.
 
 - Proof order:
   - checkpoint status:
-    `successful_call_substitutions_fresh` is removed from the public theorem
-    path after the node-scoped env pivot and the scoped-env rebuild of
-    `generate_all_signatures_consistent_scoped'`
-  - next: eliminate `signatures_preserved_calls`
+    both call-side proof artifacts are now gone from the public theorem path:
+    - `successful_call_substitutions_fresh`
+    - `signatures_preserved_calls`
+  - next: prove `sec_not_in_gensym_prefs` concretely and then do cleanup moves
 
 - Preferred first approach for the call-side assumptions:
   - pivot `NameInterface.v` from one flat shared variable env to a node-scoped
@@ -40,8 +38,7 @@
     interfaces, then derive prefix-accumulator freshness there
   - current state:
     the node-scoped env migration is in place through the public lookup-based
-    theorem, and the remaining work is now the semantic call-instantiation
-    bridge behind `signatures_preserved_calls`
+    theorem, and the semantic call-instantiation bridge is now fully internal
 
 - Keep in mind:
   - inter-node reuse of the same raw input/local/output name must be allowed
@@ -74,12 +71,38 @@
   symbolic-type operations.
 - Move the signature-instantiation completeness/correctness lemmas now being
   added in `SecNLusStcTranslation.v` into the signature layer
-  (`SIFSignature.v` / future `SecSignature` ownership) once the final
+  (`SIFSignature.v`) once the final
   call-preservation proof is stable, in particular:
+  - thread `SIGNATURE_PROOFS` explicitly into the translation layer so
+    `SecNLusStcTranslation.v` can reuse the existing signature metatheory
+    instead of carrying local duplicates
+  - `call_actuals_scoped`
+  - `call_subst_scoped`
+  - `overlay_scope`
+  - `overlay_scope_agree_on`
+  - `overlay_scope_agree_outside`
+  - `overlay_scope_agree_on_sig_scope`
+  - `hm_ext_agree_on_scoped_type`
   - `subst_ident_constraint_complete_out`
   - `subst_ident_constraints_complete_out`
   - `subst_inp_ident_in_constraint_complete`
   - `subst_ident_in_constraints_complete`
+  - `findST_none_notin_rhs`
+  - `wf_constraints_of_singleton_perm`
+  - `subst_rhs_ident_singletons_cons`
+  - `subst_ident_constraints_shape_out_step`
+  - `subst_constraints_out_map_shape_acc`
+  - `subst_constraints_out_map_shape`
+  - `signature_good_outputs_nodup`
+  - `generate_constraints_complete_good`
+
+- Final call-bridge state:
+  - ordinary call preservation is proved internally
+  - reset underlying call-block preservation is proved internally
+  - the translated `TcReset` prefix constraint is now handled internally as
+    part of the reset-call bridge
+  - `generated_program_signatures_preserved_global` no longer assumes any
+    call-side bridge premise
 
 - After each accepted proof step:
   - validate locally with direct `_CoqProject`-compatible `coqc`
