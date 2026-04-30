@@ -1,3 +1,14 @@
+(* Target-side symbolic security typing for STC.
+
+   This file mirrors [SecNLusTyping] on the target side:
+   - translate STC transition constraints into symbolic constraints,
+   - track the STC-only reset-instance environment explicitly,
+   - package the visible result into STC signatures through
+     [generate_sys_signature_scoped_env]/[generate_all_sys_signatures_scoped_env].
+
+   The later translation proof uses these generation theorems together with
+   [SecStcTypingCorrectness] to recover the target-local scopedness and reset
+   namespace facts needed by the final signature-preservation theorem. *)
 
 From Velus Require Import Common.
 From Velus Require Import SecLattice.

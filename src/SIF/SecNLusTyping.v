@@ -1,3 +1,16 @@
+(* Source-side symbolic security typing for NLustre.
+
+   This file turns NLustre equations and nodes into symbolic constraints using
+   the shared naming information from [NameInterface].  Its local theorem flow
+   is:
+   - generate raw constraints for equations and equation lists,
+   - prove those constraints well formed and scoped,
+   - package them into source signatures through
+     [generate_node_sig_scoped_env]/[generate_all_signatures_scoped_env].
+
+   The final lookup theorem does not use this file directly.  Instead,
+   [SecNLusTypingCorrectness] strengthens these generation theorems with the
+   source-local facts needed by [SecNLusStcTranslation]. *)
 
 From Velus Require Import Common.
 From Velus Require Import SecLattice.

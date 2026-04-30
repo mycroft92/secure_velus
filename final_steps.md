@@ -5,6 +5,8 @@ Current proof state:
   - `SecStcTypingCorrectness.v`
 - `SecNLusStcTranslation.v` now keeps the cross-phase proof layer
 - the full repo `make` succeeds in the current branch state
+- the SIF module/theorem-flow docs have been refreshed to match the current
+  ownership split and the final lookup-based signature theorem
 
 Remaining proof work:
 

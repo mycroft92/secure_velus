@@ -1,4 +1,17 @@
-(** Security signatures and their call-time instantiation. *)
+(** Security signatures and their call-time instantiation.
+
+    This is the signature-local bridge between raw generated node/system
+    summaries and the modular call reasoning used in the final translation
+    theorem.
+
+    The proof flow here is:
+    - generated signatures satisfy the structural invariant [signature_good];
+    - [generate_constraints] instantiates one stored signature inside a caller;
+    - [inst_valuation] and the surrounding lattice-mapping replay lemmas relate that concrete
+      call block back to the stored signature constraints;
+    - [SecNLusStcTranslation] then uses those results to prove
+      [Signature_call_preserves] internally, without a separate public
+      call-side assumption. *)
 From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import SIF.Helpers.

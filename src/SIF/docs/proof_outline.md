@@ -2,10 +2,10 @@
 
 ## Goal
 
-The active thesis theorem is the weakened NLustre-to-STC preservation result in
-`SecNLusStcTranslation.v`, ending at:
+The active thesis theorem is the weakened NLustre-to-STC signature
+preservation result in `SecNLusStcTranslation.v`, ending at:
 
-- `generated_program_preserv_global`
+- `generated_program_signatures_preserved_global`
 
 The theorem preserves agreement on the shared interface and local scope while
 allowing STC-only auxiliary variables such as reset-instance names.
@@ -28,6 +28,42 @@ Owns target-side symbolic typing:
 - reset-environment generation
 - STC signature generation
 - scopedness results for translated STC constraints and generated STC signatures
+
+### `NameInterface.v`
+
+Owns the shared naming provenance:
+
+- node-scoped environment generation
+- split lemmas for prefix/current-node reasoning
+- security-name range and injectivity facts
+- generated-name freshness from bounds
+
+### `SecContext.v`
+
+Owns the generic monadic/environment interface:
+
+- the state/error monad
+- lookup consistency lemmas
+- generic `mmap` / `option_to_sec` extensionality facts
+
+### `SecTypes.v`
+
+Owns the generic lattice-mapping layer:
+
+- `agree_on`
+- `preserves_on`
+- scoped concatenation
+- lattice-mapping update agreement lemmas
+
+### `SIFSignature.v`
+
+Owns signature-local call-instantiation metatheory:
+
+- `signature_good`
+- `generate_constraints`
+- `call_subst_fresh` / `call_subst_scoped`
+- `inst_valuation` and lattice-mapping replay lemmas
+- correctness/completeness of instantiated call constraints
 
 ### `SecNLusTypingCorrectness.v`
 
@@ -117,9 +153,8 @@ the reset-extra bookkeeping used for translated reset calls.
 
 From `SecNLusTypingCorrectness.v` and `SecNLusStcTranslation.v`:
 
-- `generated_node_simplify_ready`
-- `generated_signatures_preserved_from_simplify_bridge_scoped`
-- `found_system_signatures_preserved_global`
+- `generated_node_simplify_ready_from_local_env`
+- `generated_signatures_preserved_from_simplify_bridge_local_env`
 
 This layer moves from raw generated constraints to stored simplified
 signatures.
@@ -143,15 +178,14 @@ The active dependency chain is:
 2. `eqns_preserv_scoped`
 3. `node_preserv_scoped`
 4. `generated_node_preserv_scoped`
-5. `generated_signatures_preserved_from_simplify_bridge_scoped`
+5. `generated_signatures_preserved_from_simplify_bridge_local_env`
 6. `generate_all_signatures_consistent`
-7. `generated_program_preserv_global`
-8. `generated_program_signatures_preserved_global`
+7. `generated_program_signatures_preserved_global`
 
-The public signature theorem at step 8 is now lookup-based: it reads the
-generated source/target signature globals through `find_signature` and returns
-`Signature_head_consistent` directly, instead of rerunning
-`generate_node_sig` / `generate_sys_signature`.
+The public signature theorem at step 7 is lookup-based: it reads the generated
+source/target signature globals through `find_signature` and returns
+`Signature_head_consistent` directly, instead of rerunning per-node signature
+generation.
 
 ## Call-Side Status
 
@@ -161,6 +195,9 @@ premises:
 - `successful_call_substitutions_fresh`
 - `signatures_preserved_calls`
 
-Both are now discharged internally in `SecNLusStcTranslation.v` through the
-node-scoped naming provenance, generated-signature structural lemmas, and the
-final reset-call bridge.
+Both are now discharged internally in `SecNLusStcTranslation.v` through:
+
+- node-scoped naming provenance from `NameInterface.v`
+- generated-signature structure from `SecNLusTypingCorrectness.v`
+- target reset-env facts from `SecStcTypingCorrectness.v`
+- call-instantiation metatheory from `SIFSignature.v`

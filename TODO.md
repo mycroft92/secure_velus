@@ -56,7 +56,18 @@
 
 ## Structural cleanup after proofs stabilize
 
-- Update the SIF markdown docs to reflect the post-refactor module ownership and theorem flow.
+- Keep the SIF markdown docs aligned if later ownership moves happen again.
+  The current post-refactor theorem-flow docs have been refreshed for:
+  - `NameInterface`
+  - `SecContext`
+  - `SecTypes`
+  - `SIFSignature`
+  - `SecNLusTyping`
+  - `SecNLusTypingCorrectness`
+  - `SecSTCTyping`
+  - `SecStcTypingCorrectness`
+  - `SecNLusStcTranslation`
+  - `proof_outline`
 - Move the generic valuation-update agreement infrastructure out of
   `SecNLusStcTranslation.v` into `SecTypes.v`, in particular:
   - `upd_type`

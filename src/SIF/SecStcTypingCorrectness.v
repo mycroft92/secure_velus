@@ -1,3 +1,14 @@
+(* Target-local correctness facts for generated STC signatures.
+
+   This file packages the STC facts that are needed later by the final
+   translation proof but do not themselves compare NLustre and STC:
+   - reset-environment injectivity and namespace separation,
+   - generated target-signature scopedness,
+   - target-side visible-name range facts in the shared [sec] namespace.
+
+   These lemmas are the target-local discharge layer used by
+   [SecNLusStcTranslation] when reconstructing
+   [Signature_head_consistent] for generated source/target signatures. *)
 From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import Operators.

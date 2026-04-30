@@ -13,6 +13,17 @@ naming environment.
 `generate_eqn_constraint` assigns symbolic constraints to one NLustre equation.
 This is the entry point for source-side raw constraint generation.
 
+### Node-Scoped Naming Input
+
+The current generation path is parameterized by the shared node-scoped naming
+environment from `NameInterface.v`:
+
+- `generate_node_sig_scoped_env`
+- `generate_all_signatures_scoped_env`
+
+These are the source-side generators consumed by the final lookup-based
+translation theorem.
+
 ### Shape and Well-Formedness
 
 The central structural flow is:
@@ -38,6 +49,18 @@ The scopedness flow is:
 This is the source-side input used later by the translation proof when it needs
 to show that generated NLustre signatures mention only interface variables.
 
+## Relation To The Final Theorem
+
+This file supplies the source-side generation theorems used in the final proof
+stack:
+
+1. `generate_node_sig_scoped` is the local source scopedness theorem.
+2. `generate_all_signatures_scoped_env` lifts that to generated source
+   globals.
+3. `SecNLusTypingCorrectness.v` then strengthens those results with
+   `signature_good`, `NoDup (signature_scope ...)`, and naming/freshness facts
+   that are consumed by `SecNLusStcTranslation.v`.
+
 ## Relation to the Paper
 
 This file is the NLustre half of the paper's symbolic typing story.  It proves
@@ -46,6 +69,6 @@ scoped before they are compared against STC.
 
 ## Current Design Note
 
-The call case should no longer depend on an external
-`call_constraints_shape` theorem premise.  Instead it should consume the
-signature-layer facts provided by `SIFSignature.v`.
+The call case no longer depends on an external `call_constraints_shape`
+premise.  It consumes the signature-layer call-instantiation facts provided by
+`SIFSignature.v`.
