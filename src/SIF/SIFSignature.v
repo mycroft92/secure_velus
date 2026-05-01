@@ -1013,8 +1013,8 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
   (Import SIG: SIGNATURE Ids SC)
   (Import Lat: Lattice)
   (Import SecTypes: SECTYPES Lat).
-Import MergeFacts.
-Local Notation sig_scope := signature_scope.
+  Import MergeFacts.
+  Local Notation sig_scope := signature_scope.
   Lemma st_remove_correct: forall dlt ty x, hm_ext dlt (SymTypes.st_remove x ty) ⊑ hm_ext dlt ty.
   Proof.
     induction ty; intros.
