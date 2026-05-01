@@ -717,15 +717,7 @@ Module Type SECNLUSSTCTRANSLATION
              Hscoped Henv Hwc Hvars Hbase Hrst Hreset Hgen.
       eapply (SECSTCTYPING.generate_trconstrs_constraints_scoped_on_keys
                 G2 env rst_env base_ty rst_ty
-                (translate P) vars scope (translate_eqns eqs) cns st st').
-      - exact Hscoped.
-      - exact Henv.
-      - eapply translate_eqns_wc_local; eauto.
-      - exact Hvars.
-      - exact Hbase.
-      - exact Hrst.
-      - exact Hreset.
-      - exact Hgen.
+                (translate P) vars scope (translate_eqns eqs) cns st st'); eauto using translate_eqns_wc_local.
     Qed.
 
     (** Concrete scopedness corollary using [eqns_reset_extras].
