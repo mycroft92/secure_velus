@@ -1245,19 +1245,8 @@ Module Type SECNLUSSTCTRANSLATION
                                       Hextras Hnd Hrstgen Hfresh Hnl Hstc.
       - eapply (eqns_preserv_scoped_nil
                   scope P vars G1 G2 extras env rst_env base_ty rst_ty
-                  nconst sconst init_state1 init_state2 st1 st2).
-        + exact Hsig.
-        + exact Hscoped.
-        + exact Henv.
-        + exact Hwc.
-        + exact Hvars.
-        + exact Hbase.
-        + exact Hrst.
-        + exact Hextras.
-        + exact Hnd.
-        + exact Hfresh.
-        + exact Hnl.
-        + exact Hstc.
+                  nconst sconst init_state1 init_state2 st1 st2);eauto.
+
       - inversion Hwc as [|eq eqs Hwc_e Hwc_es]; subst eq eqs.
         simpl in Hextras.
         destruct (eqn_reset_extras rst_env e) as [extras1|] eqn:Hextra1;
@@ -1280,62 +1269,19 @@ Module Type SECNLUSSTCTRANSLATION
           * exact Hin.
         + eapply (translated_eqn_constraints_scoped
                     P G2 vars scope e env rst_env base_ty rst_ty
-                    extras1 sconst1 init_state2 st_mid).
-          * exact Hscoped.
-          * exact Henv.
-          * exact Hwc_e.
-          * exact Hvars.
-          * exact Hbase.
-          * exact Hrst.
-          * exact Hextra1.
-          * exact Hstc1.
+                    extras1 sconst1 init_state2 st_mid); eauto.
+
         + eapply (translated_eqns_constraints_scoped
                     P G2 vars scope es env rst_env base_ty rst_ty
-                    extras2 sconst2 st_mid st2).
-          * exact Hscoped.
-          * exact Henv.
-          * exact Hwc_es.
-          * exact Hvars.
-          * exact Hbase.
-          * exact Hrst.
-          * exact Hextra2.
-          * exact Hstc2.
+                    extras2 sconst2 st_mid st2); eauto.
         + match goal with
           | Hnl1 : generate_eqn_constraint G1 env base_ty rst_ty e init_state1 = OK (_, _),
             Hstc1' : generate_trconstrs_constraints G2 env rst_env base_ty rst_ty (translate_eqn e) init_state2 = OK (_, _) |- _ =>
               eapply (eqn_preserv scope P vars G1 G2 e (translate_eqn e) env rst_env base_ty rst_ty
                                   _ _ init_state1 init_state2 _ _)
-          end;
-          [ exact Hsig
-          | exact Hscopefresh
-          | exact Hglobsec
-          | exact Henv
-          | exact Hwc_e
-          | exact Hvars
-          | exact Hbase
-          | exact Hrst
-          | reflexivity
-          | exact Hrstgen
-          | exact Hfresh
-          | eassumption
-          | eassumption ].
+          end; eauto.
         + eapply (IH extras2 env rst_env base_ty rst_ty x1 sconst2
-                     x0 st_mid st1 st2).
-          * exact Hsig.
-          * exact Hscopefresh.
-          * exact Hglobsec.
-          * exact Hscoped.
-          * exact Henv.
-          * exact Hwc_es.
-          * exact Hvars.
-          * exact Hbase.
-          * exact Hrst.
-          * exact Hextra2.
-          * eapply NoDup_app_r; eauto.
-          * exact Hrstgen.
-          * exact Hfresh.
-          * exact Hbind1.
-          * exact Hstc2.
+                     x0 st_mid st1 st2); eauto using NoDup_app_r.
     Qed.
 
   End SECEQNPRES.
