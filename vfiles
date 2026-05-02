@@ -141,6 +141,7 @@ src/SIF/SecCETyping.v
 src/SIF/SecTypes.v
 src/SIF/SecNLusTyping.v
 src/SIF/SecNLusTypingCorrectness.v
+src/SIF/NLustreCausality.v
 src/SIF/SecNLusNonInterference.v
 src/SIF/SecSTCTyping.v
 src/SIF/SecStcTypingCorrectness.v

@@ -14,6 +14,20 @@ The target file is:
 The intended result is the NLustre source-side noninterference theorem needed
 before any later cross-phase reasoning about translation to STC.
 
+## Vocabulary Alignment
+
+To keep the Coq development aligned with the papers and with the existing SIF
+files, we standardize the following translation.
+
+- paper `s` = Coq `dlt : ident -> Lat.t`
+- paper `ρ` = Coq `sig.(s_constraints)`
+- paper “`ρ` is satisfied by `s`” = Coq
+  `listSatisfiable dlt sig.(s_constraints)`
+- paper `Γ` = generated node-local typing environment from `NameInterface`
+
+This avoids introducing a second parallel notation for the same concepts in
+`SecNLusNonInterference.v`.
+
 ## Main Design Decision
 
 The proof should be carried out directly on indexed histories, not by reducing
@@ -165,6 +179,130 @@ This should be used to recover the exact local security environment of a node
 and to avoid ambiguity about which security variable corresponds to which raw
 identifier.
 
+## Interesting Proof Points For The Thesis Text
+
+These are worth explaining explicitly in the thesis, because they are the main
+places where the mechanized indexed-semantics proof is less syntactic than the
+paper presentation may suggest.
+
+### 1. History-level noninterference must be reduced to instant-level semantics
+
+The semantic low-equivalence hypothesis is stated over indexed histories:
+
+- `history_low_eq X H H'`
+
+But the reusable semantic irrelevance lemmas from `CEProperties` are all
+instant-level:
+
+- `sem_caexp_instant_switch_env`
+- `sem_aexp_instant_switch_env`
+
+So the proof has to explain the bridge clearly:
+
+- fix an instant `n`;
+- specialize `history_low_eq` to the snapshots `H n` and `H' n`;
+- apply the instant-level switch lemma at that `n`;
+- lift the resulting equality back to the stream level by extensionality or
+  semantic determinism.
+
+This is one of the main differences between the clean paper statement and the
+actual Coq proof shape.
+
+### 2. The switch lemmas consume disjunctive free-variable premises
+
+The instant switch lemmas do not take the source-level predicates
+`Is_free_in_caexp` or `Is_free_in_aexp` directly. Instead they require
+pointwise agreement for premises of the form:
+
+- `Is_free_in_clock x ck \/ Is_free_in_cexp x ce`
+- `Is_free_in_clock x ck \/ Is_free_in_exp x e`
+
+So the Coq proof has to unpack:
+
+- `Is_free_in_caexp`
+- `Is_free_in_aexp`
+
+into the appropriate disjunct manually. This is a small but important proof
+engineering point: the semantic lemma is reusable exactly because it is stated
+at the lower expression/clock layer, but that means the NLustre proof must
+reconstruct the right branch of the disjunction each time.
+
+### 3. The semantic switch lemmas return equivalences, not direct equalities
+
+`sem_caexp_instant_switch_env` and `sem_aexp_instant_switch_env` conclude an
+`iff`, not an equality of streams. So the proof structure is:
+
+- transport the old semantic judgment to the new history using one direction of
+  the `iff`;
+- derive two semantic judgments for the same expression under the same history;
+- use semantic determinism (`sem_caexp_det` / `sem_aexp_det`) to conclude that
+  the resulting streams are equal.
+
+This is worth explaining in the thesis because it shows why determinism is not
+just a background property; it is the final step that turns semantic
+transport into observable equality.
+
+### 4. The simple-security argument is split into typing and semantic halves
+
+For the simple equation cases (`EqDef` and `EqFby`), the proof does not jump
+directly from “the output is low” to “the two runs agree on the RHS”.
+Instead it factors through two separate steps:
+
+- a typing-side simple-security lemma:
+  `simple_security`, specialized as `simple_security_caexp` and
+  `simple_security_aexp`;
+- a semantic switch step on the RHS under low-equivalent histories.
+
+This split is useful to explain in the thesis because it makes clear that:
+
+- the symbolic type system is used only to prove that dependencies are low;
+- the indexed semantics is then used to prove that low dependencies force equal
+  observations.
+
+That separation matches the conceptual proof structure better than a single
+monolithic lemma.
+
+### 5. Security-level equality is not semantic determinacy
+
+The current raw node theorem on `vars_defined n.(n_eqs)` cannot be justified
+from signature satisfiability and `wc_node` alone.
+
+A minimal problematic shape is an instantaneous cycle such as:
+
+- `o = y`
+- `y = o`
+
+The generated constraints do force the two symbolic levels to coincide:
+
+- from the first equation, `oty ⊑ yty`;
+- from the second equation, `yty ⊑ oty`;
+- so under antisymmetry, `dlt oty = dlt yty`.
+
+But this is only a typing fact. It says that `o` and `y` live at the same
+security level; it does **not** say that their values are uniquely determined
+by the inputs.
+
+Within a single run, the equations force:
+
+- `H(o) = H(y)`.
+
+But noninterference needs a cross-run conclusion:
+
+- from equal low inputs in `H` and `H'`, conclude `H(o) = H'(o)` for low
+  outputs.
+
+The instantaneous cycle does not provide that cross-run link. Two runs may
+both satisfy the equations while choosing different streams, as long as the
+variables in the cycle remain equal **within** each run.
+
+It is also important that the built-in NLustre invariant `n_ingt0` is not
+enough to rule this out. A node may have a non-empty input interface and still
+contain an unused instantaneous cycle among defined variables.
+
+So the missing ingredient for the node theorem is not “the node has inputs”;
+it is a causality / acyclicity property ensuring that low defined values are
+determined by already-fixed dependencies.
+
 ## Recommended Statement Shape
 
 The paper defines a projected history `H|X⊑t`. In the indexed development, the
@@ -242,27 +380,92 @@ That aligns better with the actual codebase and with later translation work.
 
 ## Core Theorem Shape
 
-The main theorem should be a direct indexed analogue of the paper theorem:
+The first internal theorem should be stated on the variables already tracked by
+the existing typing/generation lemmas:
 
-- if a node is secure with respect to a ground instantiation `s`,
-- and two indexed histories both satisfy the node equations,
-- and they agree on low inputs,
-- then they agree on all low visible variables of the node.
+- `vars_defined n.(n_eqs)`
 
-The visible variables should be:
+rather than immediately on a custom “visible-variable” notion.
 
-- input variables;
-- output variables;
-- local variables;
+This is the better fit because:
 
-not arbitrary generated helper identifiers.
+- `generate_eqns_constraints_shape` already characterises the generated raw
+  constraints against `vars_defined n.(n_eqs)`;
+- `NoDup_var_defined_n_eqs` already gives the uniqueness property needed to
+  reason per defined variable;
+- `n.(n_defd)` later provides the bridge to
+  `map fst (n.(n_vars) ++ n.(n_out))`.
 
-The helper security identifiers belong in the typing proof, not in the semantic
-statement.
+So the proof flow should be:
+
+1. prove a proof-internal theorem on `vars_defined n.(n_eqs)` under a raw
+   completed valuation that already satisfies the unsimplified node
+   constraints;
+2. derive a corollary on `map fst (n.(n_vars) ++ n.(n_out))` using `n_defd`;
+3. derive the final output-only corollary on `map fst n.(n_out)`, where the
+   valuation is pushed back to the stored simplified signature scope.
+
+The generated helper security identifiers belong in the typing proof, not in
+the semantic statement.
+
+### Why the Internal Theorem Uses a Raw Valuation
+
+The current node signature stores `SymTypes.simplify raw locals`, not the raw
+constraints `raw` themselves.
+
+That means:
+
+- satisfiability of the stored signature constrains outputs and interface
+  symbols directly;
+- eliminated locals are only constrained after replaying `simplify_complete`;
+- a theorem over `vars_defined n.(n_eqs)` cannot use the final paper-facing
+  valuation blindly, because that variable set includes locals.
+
+So the right split is:
+
+- one replay lemma from stored signature satisfiability to a completed raw
+  valuation agreeing on `signature_scope sig`;
+- one proof-internal noninterference theorem on `vars_defined` under that raw
+  valuation;
+- one later corollary that returns to the stored signature valuation on
+  outputs, where agreement on `signature_scope sig` is sufficient.
+
+### Typing Prerequisite Discharge
+
+The local theorem should still take `wc_node P n` at the point where it uses
+the existing typing/correctness lemmas, because:
+
+- `generate_node_sig_scoped` requires `wc_node P n`;
+- `generate_node_sig_scoped_env_scoped` requires `wc_node P n`;
+- `generate_node_sig_good_from_local_env` requires `wc_node P n`.
+
+However, this should be regarded as a dischargeable local prerequisite rather
+than a final theorem burden. The intended source is the global clocking
+invariant of the program. This is already the pattern documented in
+`SecNLusTyping.v`, where the all-signatures proof notes explicitly say that
+`wc_global` supplies the current node's `wc_node` fact.
 
 ## Proof Architecture
 
-### Phase 1: low-dependency lemmas for symbolic types
+### Phase 1: replay stored signature constraints to raw equation constraints
+
+Before the semantic cases, prove the source-side replay lemma:
+
+- from `signature_satisfied dlt sig`
+- plus the generated-node side conditions from
+  `generated_node_simplify_ready_from_local_env`
+
+recover a completed valuation `dlt_raw` such that:
+
+- `agree_on (signature_scope sig) dlt dlt_raw`
+- `listSatisfiable dlt_raw raw`
+
+for the raw constraints returned by `generate_eqns_constraints`.
+
+This is the bridge from the stored generated signature to the per-equation
+typing facts that the semantic proof actually consumes.
+
+### Phase 2: low-dependency lemmas for symbolic types
 
 Add a small local library proving facts of the form:
 
@@ -277,7 +480,7 @@ This is the direct indexed replacement for the paper’s informal step:
 
 - “otherwise we would contradict `s(α) ⊑ t`”.
 
-### Phase 2: semantic irrelevance lemmas for indexed environments
+### Phase 3: semantic irrelevance lemmas for indexed environments
 
 Package the `CEProperties` lemmas into node-proof-friendly wrappers:
 
@@ -289,7 +492,7 @@ These wrappers should take low-equivalence assumptions over a list or set of
 variables, not raw `forall x, Is_free_in_* x e -> ...` premises, so later proofs
 stay readable.
 
-### Phase 3: simple equation cases
+### Phase 4: simple equation cases
 
 Prove one local theorem per non-call equation form.
 
@@ -322,7 +525,7 @@ The proof should again split into:
 No special coinductive reasoning is needed because `Indexed.fby` is already an
 extensional stream definition.
 
-### Phase 4: ordinary node-call case
+### Phase 5: ordinary node-call case
 
 This is the first genuinely recursive case.
 
@@ -347,7 +550,7 @@ The semantic argument should show:
 - therefore the corresponding low callee outputs agree;
 - therefore the caller-side assigned variables agree.
 
-### Phase 5: reset node-call case
+### Phase 6: reset node-call case
 
 This should be treated as an extension of the ordinary call case, not as a
 separate theorem family.
@@ -367,6 +570,15 @@ main additional semantic work is to show that:
 This is exactly where the direct indexed route is cleaner than the coinductive
 one: the semantics is already formulated instant-by-instant around masks and
 reset counts.
+
+### Phase 7: assemble the main theorem and corollaries
+
+After the equation-local lemmas are in place:
+
+1. prove the node theorem on `vars_defined n.(n_eqs)`;
+2. transport it across `n.(n_defd)` to node locals plus outputs;
+3. package the output-only corollary that later translation-facing theorems are
+   most likely to consume.
 
 ## Induction Principle
 
@@ -574,6 +786,77 @@ The first successful checkpoint should be:
 
 If that compiles cleanly, the direct indexed route is validated and the call
 cases can be built on top of it.
+
+## Current Proof Status
+
+The first indexed milestone is now in place in
+`src/SIF/SecNLusNonInterference.v`.
+
+Completed and compiling under the direct local `coqc` check:
+
+- low-observation definitions for generated node-local environments:
+  `low_var`, `env_low_eq`, `history_low_eq`, and the projection wrappers;
+- vocabulary alignment helpers for the paper notation:
+  `ground_instantiation`, `signature_constraints`, `signature_satisfied`;
+- paper-style recursive `node_security`;
+- replay from simplified stored node signatures back to raw generated
+  constraints:
+  `signature_satisfied_replays_raw`;
+- simple-security lemmas:
+  `simple_security`, `simple_security_caexp`, `simple_security_aexp`;
+- free-variable bound lemmas for the generated symbolic types, including
+  `assign_cexp_type_free_bound`;
+- indexed semantic transport lemmas for the simple equation cases:
+  `sem_caexp_switch_history_low` and `sem_aexp_switch_history_low`;
+- indexed equation-local noninterference for the non-call cases:
+  `eqdef_noninterference` and `eqfby_noninterference`.
+
+This is the first concrete confirmation that the indexed route works with the
+current SIF infrastructure: the proof now successfully combines generated
+typing constraints, history-level low-equivalence, pointwise CE switching, and
+semantic determinism for the simple NLustre equation cases.
+
+## Checkpoint
+
+Current checkpoint after the causality refactor:
+
+- the NLustre causality formalization has been pulled out into
+  `src/SIF/NLustreCausality.v`;
+- that new file now contains:
+  `nl_depends_on_eq`, `nl_depends_on`, `nl_graph_of_eqs`,
+  `nl_graph_of_node`, `nl_node_causal`, `nl_global_causal`,
+  `nl_global_causal_find`, `nl_TopoOrder_inv`, and the first
+  `nl_causal_ind` / `nl_node_causal_ind` induction layer;
+- `src/SIF/SecNLusNonInterference.v` has been rewired to import the new
+  causality functor and thread it as `NLCaus` in the interface instead of
+  keeping the causality definitions locally;
+- `vfiles` and `_CoqProject` have been updated to include
+  `src/SIF/NLustreCausality.v`.
+
+Important status note:
+
+- this refactor was intentionally checkpointed before revalidation;
+- `make clean` completed, but the subsequent full `make` was stopped on
+  purpose;
+- there is therefore no post-refactor compile verdict yet for the extracted
+  causality file plus the rewired `SecNLusNonInterference.v`.
+
+## Immediate Next Step
+
+The remaining work is the node theorem, not more local infrastructure.
+
+Concretely:
+
+- re-run direct `coqc` on `src/SIF/NLustreCausality.v` and
+  `src/SIF/SecNLusNonInterference.v`, and fix any fallout from the extraction
+  before resuming theorem work;
+- finish `node_noninterference_vars_defined_raw`;
+- make the “input low-equivalence percolates to defined low variables” argument
+  precise at node level;
+- add the `EqApp` and reset-call noninterference lemmas using the recursive
+  `node_security` hypothesis and instantiated callee valuations;
+- derive the output-facing corollaries from the internal `vars_defined`
+  theorem.
 
 ## Relation To The Thesis
 
