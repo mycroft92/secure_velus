@@ -9,7 +9,12 @@
 - [x] Record the current indexed NLustre noninterference proof status and next theorem-level steps in `src/SIF/docs/Non-interference-proof.md`.
 - [x] Document why `n_ingt0` and equal security levels do not suffice for the node theorem without a causality/acyclicity assumption.
 - [x] Extract the NLustre causality formalization into `src/SIF/NLustreCausality.v` and register it in `vfiles` and `_CoqProject`.
-- [ ] Re-run direct `coqc` on `src/SIF/NLustreCausality.v` and the rewired `src/SIF/SecNLusNonInterference.v`, then fix any refactor fallout.
+- [x] Add the initial STC noninterference scaffold in `src/SIF/StcCausality.v`, `src/SIF/SecStcNonInterference.v`, and `src/SIF/docs/STC-noninterference-proof.md`.
+- [x] Record the weaker STC plan: use NLustre noninterference plus semantic/signature preservation to derive translated-behavior STC noninterference in `SecNLusStcTranslation.v`, rather than proving an intrinsic STC theorem first.
+- [x] Re-run direct `coqc` on `src/SIF/NLustreCausality.v` and fix the causality-refactor fallout there.
+- [ ] Re-run direct `coqc` on the rewired `src/SIF/SecNLusNonInterference.v`, then fix any remaining refactor fallout.
 - [ ] Finish `node_noninterference_vars_defined_raw` using the imported NLustre causality induction.
 - [ ] Add the `EqApp` and reset-call noninterference lemmas and connect them to `node_security`.
 - [ ] Derive the output-facing corollaries from the internal `vars_defined` theorem.
+- [ ] After the NLustre theorem is finished, add the weaker translated-behavior STC noninterference corollary in `src/SIF/SecNLusStcTranslation.v`.
+- [ ] Re-run direct `coqc` on the STC scaffold files once the parallel build window is clear, but keep intrinsic STC theorem work deferred unless the weaker corollary proves insufficient.

@@ -167,14 +167,17 @@ Module Type NLUSTRECAUSALITY
       induction xs' as [|x xs IH]; auto.
       apply incl_cons' in Hincl as [Hin Htail].
       assert (Forall P_var xs) as Hxs by (inversion Hpre; auto).
-      constructor; auto.
-      apply in_app_or in Hin as [Hin|Hin].
-      - eapply Forall_forall; eauto.
-      - eapply nl_TopoOrder_inv in Hpre; eauto.
-        destruct Hpre as (eq & Heqin & Hvar & Hdeps).
-        eapply EqCase; eauto.
-        intros y Hy.
-        eapply Forall_forall; eauto.
+      constructor.
+      - apply in_app_or in Hin as [Hin_in|Hin_def].
+        + eapply Forall_forall.
+          * exact Inputs.
+          * exact Hin_in.
+        + eapply nl_TopoOrder_inv in Hpre; eauto.
+          destruct Hpre as (eq & Heqin & Hvar & Hdeps).
+          eapply EqCase; eauto.
+          intros y Hy.
+          eapply Forall_forall; eauto.
+      - exact Hxs.
       Qed.
 
     (** Node-facing corollary of the causal induction.
