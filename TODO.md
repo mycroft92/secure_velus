@@ -28,11 +28,14 @@
 - [x] Repair the reset-flow typing chain end-to-end: make NLustre and STC simple equations implicitly depend on the node reset level, then re-prove the affected scopedness and `SecNLusStcTranslation.v` preservation lemmas so the source/target bridge still matches.
 - [x] Extract the stable low-observation and generated node-security support layers from `src/SIF/SecNLusNonInterference.v` into `src/SIF/SecNLusNonInterferenceSupport.v` so the main NI file no longer rechecks those helper proofs.
 - [x] Extract the stable generated noninterference helper layer (through `node_outputs_raw_spec`) from `src/SIF/SecNLusNonInterference.v` into `src/SIF/SecNLusNonInterferenceHelpers.v` so the main NI file keeps only the active theorem stack.
+- [x] Move the full `node_noninterference_vars_defined_step` stack into `src/SIF/SecNLusNonInterferenceHelpers.v` and revalidate that helper file with direct `coqc` before resuming the output-layer proof.
 - [x] Suppress `src/SIF/StcCausality.v` and `src/SIF/SecStcNonInterference.v` from `_CoqProject` and `vfiles` for now, while keeping the NLustre-to-STC bridge files on the build path.
 - [x] Replace the temporary admitted theorem `generated_signature_constraints_mention_reset_scoped_env` in `src/SIF/SecNLusTypingCorrectness.v` with the planned raw-to-simplified reset-membership proof. Direct `coqc` validation was intentionally deferred in that edit turn.
 - [ ] Rebuild the NLustre theorem interfaces around a separate reset-control prefix premise (`reset_control_low_eq_upto`) instead of pretending reset is an ordinary source input in `history_low_eq`.
+- [ ] Add the analogous call-clock prefix premise `clock_eq_upto` to the internal raw output theorem layer, while keeping `node_noninterference_vars_defined_step` one-clock.
 - [ ] Re-introduce the internal step theorem only after the public theorem shape is fixed, and make sure it stays proof-internal.
 - [ ] Prove `node_noninterference_outputs_raw` by recursion on paired `node_security`, using whatever internal step lemma is actually needed.
+- [ ] Prove the call-clock low lemma needed by the `EqApp` branches: low call output should force the defining call clock low, just as the reset branch already forces low reset control.
 - [ ] Add the `EqApp` and reset-call noninterference lemmas and connect them to `node_security`.
 - [ ] Re-prove the output-facing corollaries from the rebuilt internal theorem stack.
 - [ ] After the NLustre noninterference proof settles, move the global-signature lookup inversion / correspondence lemma into `src/SIF/SecNLusTyping.v` so the relation between `generate_all_signatures_scoped_env` and node-local generation is packaged upstream.

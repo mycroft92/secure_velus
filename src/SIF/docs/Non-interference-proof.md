@@ -976,6 +976,50 @@ Concretely:
   theorem’s paired call hypotheses;
 - derive the public output theorem from `node_noninterference_outputs_raw`.
 
+## Current Checkpoint
+
+The helper split is now stable:
+
+- `SecNLusNonInterferenceSupport.v` contains the low-observation and generated
+  node-security support layers;
+- `SecNLusNonInterferenceHelpers.v` contains the stable proof layer through
+  `node_noninterference_vars_defined_step`;
+- `SecNLusNonInterference.v` is reduced to the output-facing theorem layer.
+
+At this checkpoint, `node_noninterference_outputs_raw` is intentionally left
+admitted so the file boundary stays stable while the clock-sensitive theorem
+shape is redesigned.
+
+## Tomorrow's Route
+
+The current evidence suggests that the raw output theorem should remain
+two-clock, while the step theorem should stay one-clock.
+
+So the next route is:
+
+- keep `node_noninterference_vars_defined_step` unchanged;
+- keep `node_outputs_raw_spec` with two clock streams `bk` and `bk'`;
+- add an explicit prefix premise
+  `clock_eq_upto bk bk' k := forall j, j <= k -> bk j = bk' j`;
+- prove the callee-clock instances from the same low-output hypotheses used in
+  the `EqApp` branches.
+
+This is analogous to the reset route:
+
+- resets need `reset_control_low_eq_upto`;
+- call clocks should need `clock_eq_upto`.
+
+The expected missing lemmas are:
+
+- `clock_eq_upto_refl`;
+- a semantic transport lemma from `sem_clock` plus environment equality;
+- a typing/correctness lemma of the form
+  `call_output_low_implies_call_clock_low`.
+
+The public theorem `node_noninterference_outputs` should then use the
+reflexive clock case, while `node_noninterference_outputs_raw` carries the
+more general internal premise.
+
 ## Relation To The Thesis
 
 This proof plan keeps the development as close as possible to the papers while

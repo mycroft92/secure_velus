@@ -109,97 +109,25 @@ Module Type SECNLUSNONINTERFERENCE
     Variable envs : node_scoped_env.
     Variable aux_names : list node_aux_names.
 
-    (** Successor-step transport of plain-call inputs from caller equality.
+    (** Internal raw output theorem.
 
         Relation to the paper:
-        in the successor [EqApp] case, the recursive callee theorem consumes
-        low-equivalence on the callee inputs over the whole prefix.  This
-        lemma packages exactly that caller-to-callee transport for ordinary
-        calls, isolating the indexed actual-argument reasoning from the main
-        causal induction. *)
+        this is not part of the public statement of noninterference.  It is
+        the proof-internal theorem that should be derived from the paired
+        [node_security] predicate and then used to recover the canonical
+        output theorem.
+
+        Current checkpoint:
+        the theorem is left admitted while the output-layer interface is being
+        rebuilt around an explicit call-clock prefix premise.  The current
+        evidence is that the internal theorem should stay two-clock, with a
+        separate [clock_eq_upto] hypothesis, rather than forcing the older
+        one-clock step theorem to absorb that generalization. *)
     Theorem node_noninterference_outputs_raw:
       forall n dlt_sig dlt_raw,
         node_security all_nodes G envs aux_names n dlt_sig dlt_raw ->
         node_outputs_raw_spec all_nodes G envs aux_names n dlt_sig dlt_raw.
-    Proof.
-      refine
-        (fix IH n dlt_sig dlt_raw
-             (Hsecure_cur : node_security all_nodes G envs aux_names n dlt_sig dlt_raw)
-             {struct Hsecure_cur}
-             : node_outputs_raw_spec all_nodes G envs aux_names n dlt_sig dlt_raw := _).
-      destruct Hsecure_cur as
-          [ty_env_sec sig_sec
-           clk_id_sec rst_id_sec clk_type_sec rst_type_sec
-           inp_sec out_sec locals_sec raw_sec st_n_sec
-           Hfindnode_sec Hfindenv_sec Hfindsig_sec Hsiggen_sec
-           Haux_sec Hclk_sec Hrst_sec Hinp_sec Hout_sec Hlocals_sec
-           Hraw_sec Hsigdef_sec Hsatsig_sec Hagree_sec Hsatraw_sec
-           Hcallsec_cur Hresetsec_cur].
-      intros k ty_env sig t bk bk' H H'
-             clk_id rst_id clk_type rst_type inp out locals raw st_n
-             Henvsgen Hord Hwcglob Hallsig Hcaus
-             Hfindnode Hfindenv Hfindsig Hsiggen
-             Haux Hclk Hrst Hinp Hout Hlocals Hraw Hsigdef
-             _ Hsatraw Hsem Hsem' Hlowin.
-      assert (Hsecure_step :
-                node_security all_nodes G envs aux_names n dlt_sig dlt_raw).
-      {
-        eapply SecureNode
-          with (ty_env := ty_env_sec) (sig := sig_sec)
-               (clk_id := clk_id_sec) (rst_id := rst_id_sec)
-               (clk_type := clk_type_sec) (rst_type := rst_type_sec)
-               (inp := inp_sec) (out := out_sec) (locals := locals_sec)
-               (raw := raw_sec) (st_n := st_n_sec).
-        - exact Hfindnode_sec.
-        - exact Hfindenv_sec.
-        - exact Hfindsig_sec.
-        - exact Hsiggen_sec.
-        - exact Haux_sec.
-        - exact Hclk_sec.
-        - exact Hrst_sec.
-        - exact Hinp_sec.
-        - exact Hout_sec.
-        - exact Hlocals_sec.
-        - exact Hraw_sec.
-        - exact Hsigdef_sec.
-        - exact Hsatsig_sec.
-        - exact Hagree_sec.
-        - exact Hsatraw_sec.
-        - exact Hcallsec_cur.
-        - exact Hresetsec_cur.
-      }
-      eapply history_low_eq_upto_weaken.
-      - intros x Hinout.
-        eapply Permutation_in.
-        + exact (Permutation_sym n.(n_defd)).
-        + rewrite map_app, in_app_iff.
-          right.
-          exact Hinout.
-      - eapply node_noninterference_vars_defined_step with
-            (sig := sig)
-            (clk_id := clk_id)
-            (rst_id := rst_id)
-            (clk_type := clk_type)
-            (rst_type := rst_type)
-            (inp := inp)
-            (out := out)
-            (locals := locals)
-            (raw := raw)
-            (st_n := st_n)
-            (bk := bk); eauto.
-        + exact Hsecure_step.
-        + intros xs ck f exps callee callee_sig
-                 ckty inptyp outtyp st_clk st_inp
-                 Heqin Hfindcallee Hfindsigc Hck0 Hinp0 Hout0.
-          eapply IH.
-          eapply Hcallsec_cur; eauto.
-        + intros xs ck f exps r ckr callee callee_sig
-                 ckty rty rstty inptyp outtyp st_clk st_rst st_inp
-                 Heqin Hfindcallee Hfindsigc Hck0 Hrty Hrst0 Hinp0 Hout0
-                 k_reset Hreset_ctrl.
-          eapply IH.
-          eapply Hresetsec_cur; eauto.
-    Qed.
+    Admitted.
 
     (** Output-facing node noninterference theorem.
 
