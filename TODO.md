@@ -1,0 +1,34 @@
+# TODO
+
+- [x] Save a detailed indexed-semantics proof plan for NLustre noninterference in `src/SIF/docs/Non-interference-proof.md`.
+- [x] Add the indexed low-observation and `(⊑ t)` projection definitions to `src/SIF/SecNLusNonInterference.v`.
+- [x] Standardize NLustre noninterference vocabulary: paper `s` = Coq `dlt`, paper `ρ` = `sig.(s_constraints)`.
+- [x] Refine the NLustre noninterference theorem shape and proof phases in `src/SIF/docs/Non-interference-proof.md`.
+- [x] Document the main proof-engineering explanation points for indexed NLustre noninterference in `src/SIF/docs/Non-interference-proof.md`.
+- [x] Prove the indexed simple-case helper layer in `src/SIF/SecNLusNonInterference.v`: simple-security specializations, history-switch lemmas, and `EqDef`/`EqFby` noninterference.
+- [x] Record the current indexed NLustre noninterference proof status and next theorem-level steps in `src/SIF/docs/Non-interference-proof.md`.
+- [x] Document why `n_ingt0` and equal security levels do not suffice for the node theorem without a causality/acyclicity assumption.
+- [x] Extract the NLustre causality formalization into `src/SIF/NLustreCausality.v` and register it in `vfiles` and `_CoqProject`.
+- [x] Add the initial STC noninterference scaffold in `src/SIF/StcCausality.v`, `src/SIF/SecStcNonInterference.v`, and `src/SIF/docs/STC-noninterference-proof.md`.
+- [x] Record the weaker STC plan: use NLustre noninterference plus semantic/signature preservation to derive translated-behavior STC noninterference in `SecNLusStcTranslation.v`, rather than proving an intrinsic STC theorem first.
+- [x] Re-run direct `coqc` on `src/SIF/NLustreCausality.v` and fix the causality-refactor fallout there.
+- [x] Tighten the internal NLustre `vars_defined` theorem to range over the exact generated source program (`all_nodes`, `envs`, `aux_names`, `G`) instead of an arbitrary ambient `G`.
+- [x] Document the switch from the abandoned single-valuation route to the paired `node_security` route carrying both `dlt_sig` and `dlt_raw`.
+- [x] Reshape the public NLustre noninterference layer to use global signature lookup (`find_signature`) rather than restating node-local generation in the final theorem and `node_security`.
+- [x] Re-run direct `coqc` on the rewired `src/SIF/SecNLusNonInterference.v`, then fix the immediate refactor fallout around the raw theorem helpers and binder alignment.
+- [x] Add the causality-to-`vars_defined` helper layer in `src/SIF/SecNLusNonInterference.v` (`nl_node_causal_ind_defined` and the input-pointwise bridge) so the raw theorem can be organized around one pointwise variable property.
+- [x] Add the internal theorem stack `node_outputs_raw_spec` and `node_noninterference_vars_defined_step` for the NLustre output proof route.
+- [x] Clean up the NLustre noninterference stack so the active route is `node_noninterference_vars_defined_step` -> `node_noninterference_outputs_raw` -> `node_noninterference_outputs`, and delete the older `node_noninterference_vars_defined_raw` path.
+- [x] Refactor the delayed NLustre step proof around an outer induction on the instant, and add the delayed `EqFby` helper layer (`fby_eq_delay_prefix`, `sem_aexp_prefix_eq`, `sem_aexp_same_presence_from_clock`, `eqfby_noninterference_delayed_pointwise`).
+- [x] Reset the theorem layer around the public NLustre noninterference theorem and keep it stated directly on paired `node_security` for now.
+- [x] Strengthen paired `node_security` so it also stores the current node's raw generation witnesses and raw satisfiability under `dlt_raw`.
+- [x] Repair `src/SIF/SecNLusTyping.v` so `EqDef` and `EqFby` constraints also depend on the node reset level, matching the reset-aware NLustre noninterference route.
+- [ ] Repair the reset-flow typing chain end-to-end: make NLustre and STC simple equations implicitly depend on the node reset level, then re-prove the affected scopedness and `SecNLusStcTranslation.v` preservation lemmas so the source/target bridge still matches.
+- [ ] Rebuild the NLustre theorem interfaces around a separate reset-control prefix premise (`reset_control_low_eq_upto`) instead of pretending reset is an ordinary source input in `history_low_eq`.
+- [ ] Re-introduce the internal step theorem only after the public theorem shape is fixed, and make sure it stays proof-internal.
+- [ ] Prove `node_noninterference_outputs_raw` by recursion on paired `node_security`, using whatever internal step lemma is actually needed.
+- [ ] Add the `EqApp` and reset-call noninterference lemmas and connect them to `node_security`.
+- [ ] Re-prove the output-facing corollaries from the rebuilt internal theorem stack.
+- [ ] After the NLustre noninterference proof settles, move the global-signature lookup inversion / correspondence lemma into `src/SIF/SecNLusTyping.v` so the relation between `generate_all_signatures_scoped_env` and node-local generation is packaged upstream.
+- [ ] After the NLustre theorem is finished, add the weaker translated-behavior STC noninterference corollary in `src/SIF/SecNLusStcTranslation.v`.
+- [ ] Re-run direct `coqc` on the STC scaffold files once the parallel build window is clear, but keep intrinsic STC theorem work deferred unless the weaker corollary proves insufficient.

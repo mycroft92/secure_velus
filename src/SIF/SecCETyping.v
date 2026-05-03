@@ -137,11 +137,6 @@ Module Type SECCETYPING
 
 
 
-    Theorem assign_exp_correct:
-      forall e st, wst_exp e st <-> assign_exp_type e = Some st.
-    Proof.
-      Admitted.
-    (* Similar theorems needed for other syntactic levels*)
   End SecExpTypingCE.
 
 

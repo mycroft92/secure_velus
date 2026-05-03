@@ -3121,6 +3121,30 @@ Module Type SECNLUSSTCTRANSLATION
       destruct (Hcons f nsig Hfindsig) as (ssig & Hfindstc & Hhead).
       exists ssig. split; assumption.
     Qed.
+
+    (** Future semantic corollary for the weaker STC result.
+
+        This file is the intended home of the target-side noninterference
+        result that is actually needed by the thesis:
+
+        - not an intrinsic theorem for arbitrary STC runs;
+        - but a translated-behavior corollary for STC loops produced from
+          secure NLustre nodes.
+
+        The proof should be assembled only after the source-side NLustre
+        noninterference theorem is finished.  At that point, the intended
+        ingredients are:
+
+        - the source indexed NLustre noninterference theorem;
+        - [NLMemSemantics.sem_msem_node] / [NLMemSemantics.msem_sem_node] to
+          move between indexed NLustre semantics and memory semantics;
+        - [NLustreToStc.Correctness.correctness_loop] to obtain STC loops for
+          the translated system with the same input/output streams; and
+        - [generated_program_signatures_preserved_global] to align the source
+          and target security signatures on shared interface variables.
+
+        This is why the STC side does not currently need a separate full
+        [SecStcNonInterference] proof development on the critical path. *)
   End NODESYSPRES.
 
 

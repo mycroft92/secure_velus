@@ -67,18 +67,25 @@ Module Type SECNLUSTYPING
     Variable env: Env.t ident.
     Variable base_ty: ident.
     Variable rst_ty : ident.
+    (** Conservative reset-aware source typing.
+
+        Relative to the paper's reset-aware noninterference route, the local
+        NLustre equations are treated as implicitly controlled by the node
+        reset level.  Calls already thread reset into the callee signature;
+        this strengthens the simple source equations so the later proof does
+        not have to recover reset dependence semantically. *)
     Definition generate_eqn_constraint (e: equation): Sec (list constraint) :=
       match e with
       | EqDef x ck cexp  =>
           do ckty  <- option_to_sec (assign_clk_type  env base_ty ck);
           do expty <- option_to_sec (assign_cexp_type env cexp);
           do xty   <- find_env x env;
-          ret [(ckty ⊔ expty, [xty])]
+          ret [((([rst_ty] ⊔ ckty) ⊔ expty), [xty])]
       | EqFby x  ck _ exp       =>
           do ckty  <- option_to_sec (assign_clk_type  env base_ty ck);
           do expty <- option_to_sec (assign_exp_type  env exp);
           do xty   <- find_env x env;
-          ret [(ckty ⊔ expty, [xty])]
+          ret [((([rst_ty] ⊔ ckty) ⊔ expty), [xty])]
       | EqApp [] _ _ _ _ => ret []
       | EqApp xs ck f exps None =>
          (match find_signature f G with
@@ -480,29 +487,32 @@ Module Type SECNLUSTYPING
       destruct (Env.find x env) as [xty'|] eqn:Hfind'; try discriminate.
       inversion Hfind; subst.
       inversion Hwc as [x' ck' ce' Hx Hce| |]; subst.
+      assert (Hsc_rst : st_scoped scope [rst_ty]).
+      { apply st_scoped_singleton. exact Hrst. }
+      assert (Hsc_ck : st_scoped scope ckty).
+      { eapply assign_clk_type_scoped with (base := base_ty) (ck := ck).
+          - exact Hbase.
+          - intros z Hz.
+            assert (Hwc_ck : wc_clock vars ck) by (eapply wc_clock_cexp; eauto).
+            pose proof (wc_clock_free_in_vars vars z ck Hwc_ck Hz) as Hmem.
+            destruct (Hvars z) as (ty & Henv' & Hscope); [exact Hmem|].
+            exists ty; split; assumption.
+          - exact Hck'. }
+      assert (Hsc_ce : st_scoped scope expty).
+      { eapply assign_cexp_type_scoped with (ce := ce).
+        - intros z Hz.
+          destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_cexp_free_in_vars.
+        - exact Hexp'. }
+      assert (Hsc_lhs : st_scoped scope ((([rst_ty] ⊔ ckty) ⊔ expty))).
+      { apply st_scoped_merge.
+        - apply st_scoped_merge; assumption.
+        - exact Hsc_ce. }
       constructor.
       + intros y Hin.
         unfold constraint_scope in Hin. simpl in Hin.
         rewrite in_app_iff in Hin.
         destruct Hin as [Hin|Hin].
-        * apply in_merge_inv in Hin.
-          destruct Hin as [Hin|Hin].
-            -- assert (Hsc_ck : st_scoped scope ckty).
-            { eapply assign_clk_type_scoped with (base := base_ty) (ck := ck).
-                - exact Hbase.
-                - intros z Hz.
-                  assert (Hwc_ck : wc_clock vars ck) by (eapply wc_clock_cexp; eauto).
-                  pose proof (wc_clock_free_in_vars vars z ck Hwc_ck Hz) as Hmem.
-                  destruct (Hvars z) as (ty & Henv' & Hscope); [exact Hmem|].
-                  exists ty; split; assumption.
-                - exact Hck'. }
-            exact (Hsc_ck _ Hin).
-          -- assert (Hsc_ce : st_scoped scope expty).
-            { eapply assign_cexp_type_scoped with (ce := ce).
-              - intros z Hz.
-                destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_cexp_free_in_vars.
-              - exact Hexp'. }
-            exact (Hsc_ce _ Hin).
+        * exact (Hsc_lhs _ Hin).
         * simpl in Hin. destruct Hin as [Heq|[]]. subst y.
           eapply SC.find_env_in_scope with (A := clock) (ann := ck) (st := st') (st' := st'); eauto.
           unfold find_env. rewrite Hfind'. reflexivity.
@@ -599,29 +609,32 @@ Module Type SECNLUSTYPING
       destruct (Env.find x env) as [xty'|] eqn:Hfind'; try discriminate.
       inversion Hfind; subst.
       inversion Hwc as [| |x' ck' v exp' Hx Hexpwc]; subst.
+      assert (Hsc_rst : st_scoped scope [rst_ty]).
+      { apply st_scoped_singleton. exact Hrst. }
+      assert (Hsc_ck : st_scoped scope ckty).
+      { eapply assign_clk_type_scoped with (base := base_ty) (ck := ck).
+          - exact Hbase.
+          - intros z Hz.
+            assert (Hwc_ck : wc_clock vars ck) by (eapply wc_clock_exp; eauto).
+            pose proof (wc_clock_free_in_vars vars z ck Hwc_ck Hz) as Hmem.
+            destruct (Hvars z) as (ty & Henv' & Hscope); [exact Hmem|].
+            exists ty; split; assumption.
+          - exact Hck'. }
+      assert (Hsc_exp : st_scoped scope expty).
+      { eapply assign_exp_type_scoped with (e := exp).
+        - intros z Hz.
+          destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_exp_free_in_vars.
+        - exact Hexp'. }
+      assert (Hsc_lhs : st_scoped scope ((([rst_ty] ⊔ ckty) ⊔ expty))).
+      { apply st_scoped_merge.
+        - apply st_scoped_merge; assumption.
+        - exact Hsc_exp. }
       constructor.
       + intros y Hin.
         unfold constraint_scope in Hin. simpl in Hin.
         rewrite in_app_iff in Hin.
         destruct Hin as [Hin|Hin].
-        * apply in_merge_inv in Hin.
-          destruct Hin as [Hin|Hin].
-            -- assert (Hsc_ck : st_scoped scope ckty).
-            { eapply assign_clk_type_scoped with (base := base_ty) (ck := ck).
-                - exact Hbase.
-                - intros z Hz.
-                  assert (Hwc_ck : wc_clock vars ck) by (eapply wc_clock_exp; eauto).
-                  pose proof (wc_clock_free_in_vars vars z ck Hwc_ck Hz) as Hmem.
-                  destruct (Hvars z) as (ty & Henv' & Hscope); [exact Hmem|].
-                  exists ty; split; assumption.
-                - exact Hck'. }
-            exact (Hsc_ck _ Hin).
-          -- assert (Hsc_exp : st_scoped scope expty).
-            { eapply assign_exp_type_scoped with (e := exp).
-              - intros z Hz.
-                destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_exp_free_in_vars.
-              - exact Hexp'. }
-            exact (Hsc_exp _ Hin).
+        * exact (Hsc_lhs _ Hin).
         * simpl in Hin. destruct Hin as [Heq|[]]. subst y.
           eapply SC.find_env_in_scope with (A := clock) (ann := ck) (st := st') (st' := st'); eauto.
           unfold find_env. rewrite Hfind'. reflexivity.

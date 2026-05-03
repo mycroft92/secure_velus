@@ -13,6 +13,7 @@ This repository contains thesis work built on top of the Velus compiler toolchai
 - Focus on the `SIF` directory. That is where the thesis-specific implementation lives.
 - Avoid reading from `Compcert` unless it is strictly necessary.
 - Avoid reading `Lustre`, `Obc`, `ObcToClight`, `StcToObc`, and `Transcription` folders for now. They are not relevant to the current thesis task.
+- Avoid reading any folder that starts with `ignore`.
 - In general, each phase is mostly self-contained in its similarly named directory, except at phase boundaries.
 
 ## Modification Policy
@@ -67,6 +68,6 @@ Relevant files:
 State and prove noninterference of the security type system across translation of `NLustre` with respect to Indexed Semantics only.
 
 The route goes as: (You can correct it as you see fit from the papers)
-- Defining `⊑ t` projected streams for the history first
+- Defining `⊑ t` projected streams for the history H of indexed semantics first
 - Defining the notion of non-interference.
 - Using the Indexed semantics along with scopedness results (`SecNLusTypingCorrectness.v` and `NameInterface.v`) of each NLustre signature to prove the non-interface of NLustre's Indexed Semantics.
