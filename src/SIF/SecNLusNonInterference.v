@@ -2855,13 +2855,13 @@ Module Type SECNLUSNONINTERFERENCE
     Theorem node_noninterference_outputs_raw:
       forall n dlt_sig dlt_raw,
         node_security all_nodes G envs aux_names n dlt_sig dlt_raw ->
-        node_outputs_raw_spec n dlt_sig dlt_raw.
+        node_outputs_raw_spec all_nodes G envs aux_names n dlt_sig dlt_raw.
     Proof.
       refine
         (fix IH n dlt_sig dlt_raw
              (Hsecure_cur : node_security all_nodes G envs aux_names n dlt_sig dlt_raw)
              {struct Hsecure_cur}
-             : node_outputs_raw_spec n dlt_sig dlt_raw := _).
+             : node_outputs_raw_spec all_nodes G envs aux_names n dlt_sig dlt_raw := _).
       destruct Hsecure_cur as
           [ty_env_sec sig_sec
            clk_id_sec rst_id_sec clk_type_sec rst_type_sec
