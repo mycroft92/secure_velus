@@ -651,12 +651,12 @@ Module Type SECSTCTYPING
           do ckty  <- option_to_sec (assign_clk_type  env base_ty ck);
           do expty <- option_to_sec (assign_cexp_type env cexp);
           do xty   <- find_env x env;
-          ret [(ckty ⊔ expty, [xty])]
+          ret [((([rst_ty] ⊔ ckty) ⊔ expty), [xty])]
       | TcNext x ck exp =>
           do ckty  <- option_to_sec (assign_clk_type  env base_ty ck);
           do expty <- option_to_sec (assign_exp_type  env exp);
           do xty   <- find_env x env;
-          ret [(ckty ⊔ expty, [xty])]
+          ret [((([rst_ty] ⊔ ckty) ⊔ expty), [xty])]
       | TcCall _ [] _ _ _ _ => ret []
       | TcCall _ xs ck false f exps =>
           match find_signature f G with

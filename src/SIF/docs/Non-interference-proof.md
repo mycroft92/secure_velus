@@ -179,6 +179,33 @@ This should be used to recover the exact local security environment of a node
 and to avoid ambiguity about which security variable corresponds to which raw
 identifier.
 
+## Current Theorem Shape
+
+The theorem layer should now be organized in two levels:
+
+- the **paper-facing public level**, which talks only about the canonical
+  signature valuation; and
+- the **internal proof level**, which may still carry a replayed raw
+  valuation.
+
+Concretely:
+
+- the recursive predicate is
+  `node_security n dlt_sig dlt_raw`;
+- that predicate now also stores the current node's raw generation witnesses
+  and `listSatisfiable dlt_raw raw`, so recursive call proofs do not need to
+  replay raw satisfiability from signatures a second time;
+- the final NLustre noninterference theorem is currently stated directly on
+  that paired predicate;
+- `node_outputs_raw_spec` may stay in the file, but only as an internal proof
+  target and never as an assumption of the final theorem statement;
+- the bridge back to `generate_node_sig_scoped_env` belongs in one lookup
+  inversion lemma, currently local to `SecNLusNonInterference.v`, and should
+  later be moved upstream into `SecNLusTyping`/`SecNLusTypingCorrectness`.
+
+This keeps the theorem stream flat for now while still leaving room for a
+stronger internal route where the `EqApp` proof needs raw replay information.
+
 ## Interesting Proof Points For The Thesis Text
 
 These are worth explaining explicitly in the thesis, because they are the main
@@ -302,6 +329,33 @@ contain an unused instantaneous cycle among defined variables.
 So the missing ingredient for the node theorem is not “the node has inputs”;
 it is a causality / acyclicity property ensuring that low defined values are
 determined by already-fixed dependencies.
+
+### 6. The internal theorem should range over the exact generated source program
+
+The proof-internal `vars_defined` theorem should not be stated over an
+arbitrary source signature environment `G`.
+
+Instead, it should be tied to the actual generated source program data:
+
+- `generate_node_scoped_env all_nodes = OK (envs, aux_names)`
+- `wc_global all_nodes`
+- `generate_all_signatures_scoped_env all_nodes envs aux_names = OK G`
+
+This is the right shape for the recursive call case.
+
+Why:
+
+- `EqApp` does not just need a local typing fact for the current node; it must
+  connect back to the exact source signature stored for the callee.
+- The global relation between `all_nodes`, `envs`, `aux_names`, and `G`
+  provides that connection cleanly.
+- `wc_global all_nodes` also supplies the `wc_node` facts needed for the
+  current node and for recursive callees through the existing typing
+  correctness lemmas.
+
+So the internal theorem should be read as a theorem about one node *inside the
+exact generated NLustre program*, not about one node against an arbitrary
+ambient `G`.
 
 ## Recommended Statement Shape
 
@@ -429,6 +483,47 @@ So the right split is:
   valuation;
 - one later corollary that returns to the stored signature valuation on
   outputs, where agreement on `signature_scope sig` is sufficient.
+
+### Why Paired `node_security` Is Now Necessary
+
+The earlier single-valuation route turned out to be too weak for the `EqApp`
+case once the internal theorem kept track of `vars_defined n.(n_eqs)`,
+including caller locals.
+
+There are still two different valuations in play:
+
+- the **canonical signature valuation** `dlt_sig`, which is the paper's `s`
+  and drives stored signatures plus call-site instantiation;
+- the **replayed raw valuation** `dlt_raw`, which satisfies the unsimplified
+  raw constraints of the current node.
+
+The replay lemma only provides:
+
+- `agree_on (signature_scope sig) dlt_sig dlt_raw`;
+- `listSatisfiable dlt_raw raw`.
+
+That agreement is enough for outputs in the current node signature scope, but
+it is not enough for caller locals produced by a call equation:
+
+- a call instantiation uses the caller-side output typing `outtyp`;
+- if the call defines a caller local, then the corresponding symbolic
+  identifier lies in `outtyp`;
+- that identifier need not lie in `signature_scope sig`.
+
+So the callee theorem needed in the caller proof must be available under both:
+
+- the canonical instantiated valuation from `dlt_sig`; and
+- the replayed instantiated valuation from `dlt_raw`.
+
+That is why the active route now bakes both valuations directly into
+`node_security` itself.  The predicate records:
+
+- canonical signature satisfiability on `dlt_sig`;
+- scope agreement between `dlt_sig` and `dlt_raw`;
+- recursive callee security under the pair of instantiated valuations.
+
+This removes the exact mismatch that blocked the older `EqApp` proof while
+still keeping the final observable theorem canonical on `dlt_sig`.
 
 ### Typing Prerequisite Discharge
 
@@ -798,7 +893,7 @@ Completed and compiling under the direct local `coqc` check:
   `low_var`, `env_low_eq`, `history_low_eq`, and the projection wrappers;
 - vocabulary alignment helpers for the paper notation:
   `ground_instantiation`, `signature_constraints`, `signature_satisfied`;
-- paper-style recursive `node_security`;
+- paired recursive `node_security` carrying both `dlt_sig` and `dlt_raw`;
 - replay from simplified stored node signatures back to raw generated
   constraints:
   `signature_satisfied_replays_raw`;
@@ -835,11 +930,10 @@ Current checkpoint after the causality refactor:
 
 Important status note:
 
-- this refactor was intentionally checkpointed before revalidation;
-- `make clean` completed, but the subsequent full `make` was stopped on
-  purpose;
-- there is therefore no post-refactor compile verdict yet for the extracted
-  causality file plus the rewired `SecNLusNonInterference.v`.
+- after the refactor checkpoint, direct `coqc` now succeeds again for both
+  `src/SIF/NLustreCausality.v` and `src/SIF/SecNLusNonInterference.v`;
+- the remaining gap is no longer interface fallout, but the admitted internal
+  step theorem `node_noninterference_vars_defined_step`.
 
 ## Immediate Next Step
 
@@ -847,16 +941,12 @@ The remaining work is the node theorem, not more local infrastructure.
 
 Concretely:
 
-- re-run direct `coqc` on `src/SIF/NLustreCausality.v` and
-  `src/SIF/SecNLusNonInterference.v`, and fix any fallout from the extraction
-  before resuming theorem work;
-- finish `node_noninterference_vars_defined_raw`;
-- make the “input low-equivalence percolates to defined low variables” argument
-  precise at node level;
-- add the `EqApp` and reset-call noninterference lemmas using the recursive
-  `node_security` hypothesis and instantiated callee valuations;
-- derive the output-facing corollaries from the internal `vars_defined`
-  theorem.
+- rebuild `node_noninterference_vars_defined_step` under paired
+  `node_security`;
+- then prove `node_noninterference_outputs_raw`;
+- add the `EqApp` and reset-call noninterference lemmas using the step
+  theorem’s paired call hypotheses;
+- derive the public output theorem from `node_noninterference_outputs_raw`.
 
 ## Relation To The Thesis
 
@@ -872,3 +962,151 @@ So the right next step is not to translate the old coinductive argument, but to
 restate the paper’s noninterference theorem directly in the indexed setting and
 prove it using the generated signature infrastructure that the thesis has
 already built.
+
+## Active Theorem Stack
+
+The theorem stack is now reset around the public noninterference theorem
+first:
+
+1. `node_noninterference_outputs`
+2. `node_noninterference_outputs_raw`
+3. any internal step theorem needed to prove the raw theorem
+
+This is intentional.  The final theorem shape should stay stable, and the
+proof-specific helper stack can then be rebuilt underneath it.
+
+## Internal Proof Layer
+
+The paired predicate `node_security n dlt_sig dlt_raw` remains the recursive
+semantic invariant used by the proof.  The intended roles are:
+
+- `dlt_sig` handles signature satisfiability and public low-observation;
+- `dlt_raw` handles replayed raw constraints and caller locals;
+- `node_outputs_raw_spec` is allowed as an internal proof target, but it
+  should never appear in the final theorem statement as an assumption.
+
+Any reintroduced step theorem should now be justified only as a proof device
+under `node_noninterference_outputs_raw`, not as part of the public theorem
+layer.
+
+## Delayed Case Update
+
+The `EqFby` branch is now organized around an outer induction on the instant
+`k`, not around a timeless pointwise property.
+
+That change was necessary because the delayed equation has two distinct proof
+shapes:
+
+- the current instant only depends on the current clock classification of the
+  feeding annotated expression;
+- the payload of the delayed value depends on the earlier prefix of the
+  feeding stream.
+
+The current file now makes that split explicit with four helper lemmas:
+
+- `fby_eq_delay_prefix`
+  shows that `fby` at time `k` only needs:
+  1. equality of the feeding stream before `k`, and
+  2. equality of current absence/presence at `k`;
+- `sem_aexp_prefix_eq`
+  reconstructs equality of the feeding annotated-expression stream on every
+  earlier instant from low-equality of its free variables on that prefix;
+- `sem_aexp_same_presence_from_clock`
+  shows that equality of the current clock dependencies is enough to force the
+  current annotated-expression stream to be absent in one run iff it is absent
+  in the other;
+- `eqfby_noninterference_delayed_pointwise`
+  packages those two ingredients into the fixed-time noninterference step used
+  in the theorem.
+
+This also forced a matching change in the main theorem proof shape:
+
+- `node_noninterference_vars_defined_step` is now driven by a well-founded
+  induction on the instant `k`;
+- inside that time induction, one uses `nl_node_causal_ind_defined` only for
+  the current instant;
+- the `EqFby` branch consumes earlier-instants equality through the outer
+  induction hypothesis, while the current clock equality still comes from the
+  causality induction.
+
+This is the right split conceptually:
+
+- causality handles current same-instant dependencies;
+- time induction handles delayed dependencies.
+
+## Current Status
+
+The `EqDef` and delayed `EqFby` helper layers remain valid and should be
+reused.  The current refactor point is narrower:
+
+- the public theorem layer has been reset to the paper-facing shape;
+- the final theorem is back to using `node_security` directly, without
+  introducing an additional public wrapper;
+- `node_noninterference_outputs_raw` is now reduced to one local remaining
+  obligation: prove low-equivalence on `vars_defined n.(n_eqs)` under
+  `dlt_raw`, then weaken that result to outputs;
+- the next proof work is therefore to rebuild only the internal helper route
+  actually needed for that `vars_defined` claim.
+
+## Reset Design Decisions
+
+Two reset-specific design decisions are now fixed and should stay explicit in
+the thesis text.
+
+### Typing-Level Reset Dependence
+
+We accepted the conservative typing change that every simple NLustre equation
+is implicitly at least as high as the node reset level:
+
+- `EqDef` now generates a lhs of the form `([rst_ty] ⊔ ckty ⊔ cety)`;
+- `EqFby` now generates a lhs of the form `([rst_ty] ⊔ ckty ⊔ ety)`.
+
+The motivation is proof-theoretic, not cosmetic:
+
+- the reset-aware noninterference proof already treats calls as depending on
+  reset control;
+- without threading `rst_ty` into the simple local constraints, the proof was
+  forced to recover a global reset-dependence fact semantically in ad hoc
+  places;
+- by storing that dependency directly in the typing, low outputs now imply
+  low node-reset level uniformly across all equation forms.
+
+This is stronger than the least restrictive possible system, but it is still
+security-neutral: it says that reset is an implicit control dependency of the
+node, not that semantics itself depends on security.
+
+### Reset Is A Control Input, Not A Plain Source Variable
+
+A second design decision follows from the indexed semantics shape.
+
+We should **not** model reset simply by extending the observable input set
+from
+
+- `map fst n.(n_in)`
+
+to
+
+- `map fst n.(n_in) ++ [rst_id]`.
+
+That would blur two different notions:
+
+- ordinary source inputs are compared by `history_low_eq`;
+- reset alignment in indexed semantics is really carried by
+  `bools_of`, `count`, and `mask`.
+
+So the right theorem-side interface is:
+
+- ordinary low-input equality remains a `history_low_eq` / `history_low_eq_upto`
+  premise on `map fst n.(n_in)`;
+- reset is handled by a **separate control-stream premise**, stating that when
+  the relevant reset source is low, the induced reset counters agree on the
+  observed prefix.
+
+The file now contains a neutral helper definition for this intended premise:
+
+- `reset_control_low_eq_upto`
+
+but the main theorem stack has **not** yet been rewritten around it.  That is
+deliberate: the design is recorded first, and the theorem interfaces should be
+updated only in one coherent pass rather than half-threaded through one reset
+branch at a time.

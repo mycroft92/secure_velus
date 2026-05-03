@@ -146,5 +146,5 @@ src/SIF/SecNLusNonInterference.v
 src/SIF/StcCausality.v
 src/SIF/SecSTCTyping.v
 src/SIF/SecStcTypingCorrectness.v
-src/SIF/SecStcNonInterference.v
 src/SIF/SecNLusStcTranslation.v
+src/SIF/SecStcNonInterference.v
