@@ -887,6 +887,34 @@ cases can be built on top of it.
 The first indexed milestone is now in place in
 `src/SIF/SecNLusNonInterference.v`.
 
+## Compile-Pressure Refactor
+
+To reduce rechecking pressure while the indexed proof script remains unstable,
+the stable support prefix of `SecNLusNonInterference.v` was extracted into
+`src/SIF/SecNLusNonInterferenceSupport.v`.
+
+What moved in this first pass:
+- the low-observation layer (`ground_instantiation`, `low_var`,
+  `history_low_eq[_upto]`, projection lemmas, simple-security helpers);
+- the generated node-security layer up through the paired `node_security`
+  predicate.
+
+What moved in the second pass:
+- the stable `GENERATED_NODE_NONINTERFERENCE` helper block through
+  `node_outputs_raw_spec`, including the `EqApp` transport lemmas and the
+  generated-constraint inversion lemmas such as
+  `generate_eqapp_constraint_inv` and `generate_eqreset_constraint_inv`.
+
+What intentionally stayed in `SecNLusNonInterference.v`:
+- the active theorem stack
+  `node_noninterference_vars_defined_step`,
+  `node_noninterference_outputs_raw`,
+  `node_noninterference_outputs`.
+
+This split is intentionally conservative: it removes roughly the first half of
+the file from the main proof recheck without forcing the theorem stack to be
+rewritten around newly explicit section parameters.
+
 Completed and compiling under the direct local `coqc` check:
 
 - low-observation definitions for generated node-local environments:

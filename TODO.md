@@ -25,7 +25,11 @@
 - [x] Repair `src/SIF/SecNLusTyping.v` so `EqDef` and `EqFby` constraints also depend on the node reset level, matching the reset-aware NLustre noninterference route.
 - [x] Add the reset-call output typing lemmas `call_output_low_implies_reset_low` to both `src/SIF/SecNLusTypingCorrectness.v` and `src/SIF/SecStcTypingCorrectness.v`, and thread the required lattice/signature-proof functor imports through those correctness layers.
 - [x] Rewire `src/SIF/SecNLusStcTranslation.v` to the updated source/target correctness functor signatures and restore direct `coqc` there.
-- [ ] Repair the reset-flow typing chain end-to-end: make NLustre and STC simple equations implicitly depend on the node reset level, then re-prove the affected scopedness and `SecNLusStcTranslation.v` preservation lemmas so the source/target bridge still matches.
+- [x] Repair the reset-flow typing chain end-to-end: make NLustre and STC simple equations implicitly depend on the node reset level, then re-prove the affected scopedness and `SecNLusStcTranslation.v` preservation lemmas so the source/target bridge still matches.
+- [x] Extract the stable low-observation and generated node-security support layers from `src/SIF/SecNLusNonInterference.v` into `src/SIF/SecNLusNonInterferenceSupport.v` so the main NI file no longer rechecks those helper proofs.
+- [x] Extract the stable generated noninterference helper layer (through `node_outputs_raw_spec`) from `src/SIF/SecNLusNonInterference.v` into `src/SIF/SecNLusNonInterferenceHelpers.v` so the main NI file keeps only the active theorem stack.
+- [x] Suppress `src/SIF/StcCausality.v` and `src/SIF/SecStcNonInterference.v` from `_CoqProject` and `vfiles` for now, while keeping the NLustre-to-STC bridge files on the build path.
+- [x] Replace the temporary admitted theorem `generated_signature_constraints_mention_reset_scoped_env` in `src/SIF/SecNLusTypingCorrectness.v` with the planned raw-to-simplified reset-membership proof. Direct `coqc` validation was intentionally deferred in that edit turn.
 - [ ] Rebuild the NLustre theorem interfaces around a separate reset-control prefix premise (`reset_control_low_eq_upto`) instead of pretending reset is an ordinary source input in `history_low_eq`.
 - [ ] Re-introduce the internal step theorem only after the public theorem shape is fixed, and make sure it stays proof-internal.
 - [ ] Prove `node_noninterference_outputs_raw` by recursion on paired `node_security`, using whatever internal step lemma is actually needed.
