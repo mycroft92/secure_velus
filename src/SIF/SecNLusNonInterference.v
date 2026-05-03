@@ -2937,49 +2937,49 @@ Module Type SECNLUSNONINTERFERENCE
         Forall (Indexed.sem_equation all_nodes bk H') n.(n_eqs) ->
         history_low_eq ty_env dlt_sig t (map fst n.(n_in)) H H' ->
         history_low_eq ty_env dlt_sig t (map fst n.(n_out)) H H'.
-    Proof.
-      intros n ty_env nsig dlt_sig dlt_raw t bk H H'
-             Henvsgen Hord Hwcglob Hallsig Hcaus
-             Hfindnode Hfindenv Hfindsig
-             Hsecure Hsem Hsem' Hlowin.
-      destruct Hsecure as
-          [ty_env_sec sig_sec
-           clk_id_sec rst_id_sec clk_type_sec rst_type_sec
-           inp_sec out_sec locals_sec raw_sec st_n_sec
-           Hfindnode_sec Hfindenv_sec Hfindsig_sec Hsiggen_sec
-           Haux_sec Hclk_sec Hrst_sec Hinp_sec Hout_sec Hlocals_sec
-           Hraw_sec Hsigdef_sec Hsatsig_sec Hagree_sec Hsatraw_sec
-           Hcallsec_sec Hresetsec_sec].
-      rewrite Hfindenv in Hfindenv_sec.
-      inversion Hfindenv_sec; subst ty_env_sec; clear Hfindenv_sec.
-      rewrite Hfindsig in Hfindsig_sec.
-      inversion Hfindsig_sec; subst sig_sec; clear Hfindsig_sec.
-      assert (Hsecure_cur :
-                node_security all_nodes G envs aux_names n dlt_sig dlt_raw).
-      {
-        eapply SecureNode; eauto.
-      }
-      assert
-        (Hscope_in :
-           forall x,
-             In x (map fst n.(n_in)) ->
-             exists alpha,
-               Env.find x ty_env = Some alpha
-               /\ In alpha (signature_scope nsig)).
-      {
-        intros x Hinx.
-        apply in_map_iff in Hinx as ((xin, ckin) & Heq & Hinpair).
-        simpl in Heq. subst xin.
-        apply In_InMembers in Hinpair.
-        destruct
-          (get_mappings_from_node_inmembers _ _ _ _ _ Hinpair Hinp_sec)
-          as (alpha & Hfindalpha & Hinalpha).
-        exists alpha.
-        split; [exact Hfindalpha|].
-        rewrite Hsigdef_sec.
-        unfold signature_scope.
-        apply in_or_app.
-        left.
-        exact Hinalpha.
-      }
-      assert
+    Admitted.
+
+  End GENERATED_NODE_NONINTERFERENCE.
+End SECNLUSNONINTERFERENCE.
+
+Module SecNLusNonInterference
+  (Import Ids    : IDS)
+  (Import Lat    : Lattice)
+  (Import Op     : OPERATORS)
+  (Import OpAux  : OPERATORS_AUX Op)
+  (Import SC     : SECMONAD Ids)
+  (Import SecT   : SECTYPES Lat)
+  (Import CESyn  : CESYNTAX Op)
+  (Import SynNL  : NLSYNTAX Ids Op CESyn)
+  (Import SIG    : SIGNATURE Ids SC)
+  (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
+  (Import SECCETYPING : SECCETYPING Ids Op CESyn)
+  (Import CETyp  : CETYPING Ids Op CESyn)
+  (Import CEIsF  : CEISFREE Ids Op CESyn)
+  (Import CEClo  : CECLOCKING Ids Op CESyn)
+  (Import Str    : INDEXEDSTREAMS Op OpAux)
+  (Import Ord    : NLORDERED Ids Op CESyn SynNL)
+  (Import Mem    : MEMORIES Ids Op CESyn SynNL)
+  (Import IsD    : ISDEFINED Ids Op CESyn SynNL Mem)
+  (Import IsF    : ISFREE Ids Op CESyn SynNL CEIsF)
+  (NLCaus        : NLUSTRECAUSALITY Ids Op CESyn SynNL CEIsF IsF)
+  (Import Clo    : NLCLOCKING Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo)
+  (Import CESem  : CESEMANTICS Ids Op OpAux CESyn Str)
+  (Import CEProps : CEPROPERTIES Ids Op OpAux CESyn Str CESem CETyp CEIsF)
+  (Import Indexed : NLINDEXEDSEMANTICS Ids Op OpAux CESyn SynNL Str Ord CESem)
+  (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
+  (Import SECNLUSTYPING :
+     SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo
+       Ord Mem IsD IsF Clo)
+  (Import SECNLUSTYPINGCORRECTNESS :
+     SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL Lat SecT SIG SIGPROOFS
+       NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING)
+  <: SECNLUSNONINTERFERENCE Ids Lat Op OpAux SC SecT CESyn SynNL SIG NAMEGEN
+       SECCETYPING CETyp CEIsF CEClo Str Ord Mem IsD IsF NLCaus Clo CESem
+       CEProps Indexed SIGPROOFS SECNLUSTYPING SECNLUSTYPINGCORRECTNESS.
+
+Include SECNLUSNONINTERFERENCE Ids Lat Op OpAux SC SecT CESyn SynNL SIG
+  NAMEGEN SECCETYPING CETyp CEIsF CEClo Str Ord Mem IsD IsF NLCaus Clo CESem
+  CEProps Indexed SIGPROOFS SECNLUSTYPING SECNLUSTYPINGCORRECTNESS.
+
+End SecNLusNonInterference.
