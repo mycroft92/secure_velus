@@ -762,8 +762,12 @@ Module Type SECSTCTYPING
           intros z Hz.
           assert (Hinm : InMembers z vars) by (eapply wc_caexp_free_in_vars; eauto).
           exact (Hvars z Hinm). }
-        assert (Hlhsscope : st_scoped scope (ckty ⊔ expty)).
-        { eapply st_scoped_merge; eauto. }
+        assert (Hrscope : st_scoped scope [rst_ty]).
+        { apply st_scoped_singleton. exact Hrst. }
+        assert (Hlhsscope : st_scoped scope (([rst_ty] ⊔ ckty) ⊔ expty)).
+        { apply st_scoped_merge.
+          - apply st_scoped_merge; eauto.
+          - exact Hexpscope. }
         constructor.
         + intros y Hin.
           unfold constraint_scope in Hin. simpl in Hin.
@@ -801,8 +805,12 @@ Module Type SECSTCTYPING
           intros z Hz.
           assert (Hinm : InMembers z vars) by (eapply wc_aexp_free_in_vars; eauto).
           exact (Hvars z Hinm). }
-        assert (Hlhsscope : st_scoped scope (ckty ⊔ expty)).
-        { eapply st_scoped_merge; eauto. }
+        assert (Hrscope : st_scoped scope [rst_ty]).
+        { apply st_scoped_singleton. exact Hrst. }
+        assert (Hlhsscope : st_scoped scope (([rst_ty] ⊔ ckty) ⊔ expty)).
+        { apply st_scoped_merge.
+          - apply st_scoped_merge; eauto.
+          - exact Hexpscope. }
         constructor.
         + intros y Hin.
           unfold constraint_scope in Hin. simpl in Hin.
