@@ -6011,33 +6011,110 @@ Module Type SECNLUSNONINTERFERENCE
                            history_low_eq_upto ty_env_c dlt_raw_c t
                              (map fst callee.(n_in)) Hc Hc' m).
                  {
-                   eapply
-                     (eqapp_inputs_low_eq_upto
-                        ty_env ty_env_c callee callee_sig_cur inp_c
-                        inptyp0 outtyp0 dlt_raw [rst_type] ckty0 t
-                        bk H H' Hc Hc' exps ls ls' m); eauto.
-                   intros z Hz j Hj.
-                   assert (Hlowz : low_var ty_env dlt_raw t z).
+                   intros j Hj y Hiny Hlowy.
+                   pose proof
+                     (get_mappings_from_node_eq _ _ _ _ Hinp_c)
+                     as Hinp_c_eq.
+                   destruct (SecT.In_nth_error_ex _ _ _ Hiny) as [ii Hnthy].
+                   destruct
+                     (get_mappings_nth_error_inv
+                        (map fst callee.(n_in)) ty_env_c inp_c ii y Hinp_c_eq Hnthy)
+                     as (ity & Hnthity & Hfindy).
+                   assert (Hii_exps : ii < List.length exps).
                    {
-                     eapply exp_type_low; eauto.
+                     pose proof (Forall2_length _ _ _ Hforinp0) as Hlen_exps.
+                     unfold callee_sig_cur in Hlen_in_c.
+                     simpl in Hlen_in_c.
+                     rewrite Hlen_exps.
+                     rewrite <- Hlen_in_c.
+                     apply nth_error_Some.
+                     rewrite Hnthity.
+                     discriminate.
+                   }
+                   destruct (nth_error exps ii) as [e|] eqn:Hnthe.
+                   2:{
+                     apply nth_error_None in Hnthe.
+                     lia.
                    }
                    destruct
-                     (free_exp_in_inputs_or_defined
-                        P n (xh :: xt) ck callee.(n_name) exps None z
-                        Hwcnode Heqin Hz)
-                     as [Hin_z|Hdef_z].
-                   - eapply Hlowin; eauto.
-                   - destruct (Nat.eq_dec j m) as [Heqj|Hneqj].
-                     + subst j.
-                       assert (Hdep_xz :
-                                 NLCaus.nl_depends_on_eq
-                                   (EqApp (xh :: xt) ck callee.(n_name) exps None) x z).
-                       {
-                         split; [exact Hxdef|].
-                         eapply nth_error_free_in_aexps; eauto.
-                       }
-                       exact (Hdeps z Hdep_xz Hlowz).
-                     + eapply Hprev; eauto. lia.
+                     (SecT.Forall2_nth_error_inv
+                        _ _
+                        (fun e0 ty => SECCETYPING.assign_exp_type ty_env e0 = Some ty)
+                        exps inptyp0 ii e
+                        Hforinp0 Hnthe)
+                     as (ety & Hnthety & Heqexp).
+                   assert (Hety_low : SecT.hm_ext dlt_raw ety ⊑ t).
+                   {
+                     destruct Hlowy as (alpha & Hfindalpha & Halpha_low).
+                     rewrite Hfindy in Hfindalpha.
+                     inversion Hfindalpha; subst alpha; clear Hfindalpha.
+                     destruct
+                       (SecT.Forall2_nth_error_inv
+                          _ _
+                          (fun x0 ty =>
+                             SIGPROOFS.inst_valuation dlt_raw callee_sig_cur inptyp0 ckty0
+                               [rst_type] outtyp0 x0 = SecT.hm_ext dlt_raw ty)
+                          (s_in callee_sig_cur) inptyp0 ii ity
+                          Hinst_in_eq Hnthity)
+                       as (ety' & Hnthety' & Hinsteq).
+                     unfold callee_sig_cur in Hnthity.
+                     simpl in Hnthity.
+                     change (nth_error inptyp0 ii = Some ety) in Hnthety.
+                     change (nth_error inptyp0 ii = Some ety') in Hnthety'.
+                     rewrite Hnthety in Hnthety'.
+                     inversion Hnthety'; subst ety'; clear Hnthety'.
+                     rewrite <- Hinsteq.
+                     exact Halpha_low.
+                   }
+                   assert (Hfree_eq :
+                             forall z,
+                               Is_free_in_exp z e ->
+                               Env.find z (H j) = Env.find z (H' j)).
+                   {
+                     intros z Hz.
+                     assert (Hlowz : low_var ty_env dlt_raw t z).
+                     {
+                       refine
+                         (exp_type_low
+                            ty_env dlt_raw t e ety z _ _ _).
+                       - exact Heqexp.
+                       - exact Hety_low.
+                       - exact Hz.
+                     }
+                     assert (Hzs : Exists (Is_free_in_exp z) exps).
+                     {
+                       eapply Exists_exists.
+                       exists e.
+                       split; [eapply nth_error_In; exact Hnthe|exact Hz].
+                     }
+                     destruct
+                       (free_exp_in_inputs_or_defined
+                          P n (xh :: xt) ck callee.(n_name) exps None z
+                          Hwcnode Heqin Hzs)
+                       as [Hin_z|Hdef_z].
+                     - eapply Hlowin; eauto.
+                     - destruct (Nat.eq_dec j m) as [Heqj|Hneqj].
+                       + subst j.
+                         assert (Hdep_xz :
+                                   NLCaus.nl_depends_on_eq
+                                     (EqApp (xh :: xt) ck callee.(n_name) exps None) x z).
+                         {
+                           split; [exact Hxdef|].
+                           eapply nth_error_free_in_aexps; eauto.
+                         }
+                         exact (Hdeps z Hdep_xz Hlowz).
+                       + eapply Hprev; eauto. lia.
+                   }
+                   eapply
+                     (eqapp_input_var_low_eq_pointwise
+                        ty_env ty_env_c callee callee_sig_cur
+                        inptyp0 outtyp0 dlt_raw [rst_type] ckty0 t
+                        bk H H' Hc Hc' exps ls ls' j ii y ity e ety); eauto.
+                 }
+                 assert (Hcallee_secure :
+                           node_security all_nodes G envs aux_names callee dlt_sig_c dlt_raw_c).
+                 {
+                   eapply SecureNode; eauto.
                  }
                  pose proof
                    (Hcallout
@@ -6061,19 +6138,13 @@ Module Type SECNLUSNONINTERFERENCE
                  specialize
                    (Hcallee_out_raw
                       m ty_env_c callee_sig_cur t
-                      bk_c bk_c' Hc Hc'
+                      (clock_of ls) (clock_of ls') Hc Hc'
                       clk_id_c rst_id_c clk_type_c rst_type_c
                       inp_c out_c locals_c raw_c st_n_c
                       Henvsgen Hord Hwcglob Hallsig Hcaus
                       Hfindcallee Hfindenv_c Hfindsigc Hsiggen_c
                       Haux_c Hclk_c Hrst_c Hinp_c Hout_c Hlocals_c
-                      Hraw_c Hsigdef_cur
-                      (SecureNode all_nodes G envs aux_names callee dlt_sig_c dlt_raw_c
-                         ty_env_c callee_sig_cur clk_id_c rst_id_c clk_type_c rst_type_c
-                         inp_c out_c locals_c raw_c st_n_c
-                         Hfindcallee Hfindenv_c Hfindsigc Hsiggen_c
-                         Haux_c Hclk_c Hrst_c Hinp_c Hout_c Hlocals_c Hraw_c
-                         Hsigdef_cur Hsatsig_c Hagree_c Hsatraw_c Hcallsec_c Hresetsec_c)
+                      Hraw_c Hsigdef_cur Hcallee_secure
                       Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hlowin_c).
                  pose proof
                    (get_mappings_from_node_eq _ _ _ _ Hout_c)
@@ -6472,7 +6543,10 @@ Module Type SECNLUSNONINTERFERENCE
                  assert (Hcount_eq :
                            forall j, j <= m -> count rs j = count rs' j).
                  {
-                   eapply Hreset_ctrlm; eauto using Hsem_var_r, Hsem_var_r', Hbools_r, Hbools_r'.
+                   intros j Hj.
+                   eapply Hreset_ctrlm
+                     with (ys := rys) (ys' := rys') (rs := rs) (rs' := rs');
+                     eauto.
                  }
                  assert (Hlowin_c :
                            history_low_eq_upto ty_env_c dlt_raw_c t
@@ -6489,7 +6563,12 @@ Module Type SECNLUSNONINTERFERENCE
                    - intros z Hz j Hj.
                      assert (Hlowz : low_var ty_env dlt_raw t z).
                      {
-                       eapply exp_type_low; eauto.
+                       refine
+                         (exp_type_low
+                            ty_env dlt_raw t e ety z _ _ _).
+                       - exact Heqexp.
+                       - exact Hety_low.
+                       - exact Hz.
                      }
                      destruct
                        (free_exp_in_inputs_or_defined
@@ -6509,6 +6588,11 @@ Module Type SECNLUSNONINTERFERENCE
                          }
                          exact (Hdeps z Hdep_xz Hlowz).
                        * eapply Hprev; eauto. lia.
+                 }
+                 assert (Hcallee_secure :
+                           node_security all_nodes G envs aux_names callee dlt_sig_c dlt_raw_c).
+                 {
+                   eapply SecureNode; eauto.
                  }
                  pose proof
                    (Hresetout
@@ -6540,13 +6624,7 @@ Module Type SECNLUSNONINTERFERENCE
                       Henvsgen Hord Hwcglob Hallsig Hcaus
                       Hfindcallee Hfindenv_c Hfindsigc Hsiggen_c
                       Haux_c Hclk_c Hrst_c Hinp_c Hout_c Hlocals_c
-                      Hraw_c Hsigdef_cur
-                      (SecureNode all_nodes G envs aux_names callee dlt_sig_c dlt_raw_c
-                         ty_env_c callee_sig_cur clk_id_c rst_id_c clk_type_c rst_type_c
-                         inp_c out_c locals_c raw_c st_n_c
-                         Hfindcallee Hfindenv_c Hfindsigc Hsiggen_c
-                         Haux_c Hclk_c Hrst_c Hinp_c Hout_c Hlocals_c Hraw_c
-                         Hsigdef_cur Hsatsig_c Hagree_c Hsatraw_c Hcallsec_c Hresetsec_c)
+                      Hraw_c Hsigdef_cur Hcallee_secure
                       Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hlowin_c).
                  pose proof
                    (get_mappings_from_node_eq _ _ _ _ Hout_c)
@@ -6650,7 +6728,19 @@ Module Type SECNLUSNONINTERFERENCE
               -- intros y Hclock.
                  assert (Hlowy : low_var ty_env dlt_raw t y).
                  {
-                   eapply simple_security_aexp; eauto using freeAexp2.
+                   refine
+                     (simple_security_aexp
+                        ty_env dlt_raw t
+                        clk_type rst_type
+                        x0 ck e
+                        xty0 ckty0 ety0 y
+                        _ _ _ _ _ _).
+                   - exact Hfindx0.
+                   - exact Hck0.
+                   - exact He0.
+                   - exact Hsat1.
+                   - exact Hlowx.
+                   - exact (freeAexp2 _ _ _ Hclock).
                  }
                  assert (Hdep_xy : NLCaus.nl_depends_on_eq (EqFby x0 ck c0 e) x0 y).
                  { split; [reflexivity|exact Hclock]. }
@@ -6658,7 +6748,19 @@ Module Type SECNLUSNONINTERFERENCE
               -- intros y Hfree j Hjlt.
                  assert (Hlowy : low_var ty_env dlt_raw t y).
                  {
-                   eapply simple_security_aexp; eauto.
+                   refine
+                     (simple_security_aexp
+                        ty_env dlt_raw t
+                        clk_type rst_type
+                        x0 ck e
+                        xty0 ckty0 ety0 y
+                        _ _ _ _ _ _).
+                   - exact Hfindx0.
+                   - exact Hck0.
+                   - exact He0.
+                   - exact Hsat1.
+                   - exact Hlowx.
+                   - exact Hfree.
                  }
                  eapply free_aexp_low_eq_prefix_from_inputs_or_defined
                    with (P := P) (n := n) (x := x0) (ck := ck) (c0 := c0) (e := e)

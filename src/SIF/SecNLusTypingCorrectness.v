@@ -41,7 +41,10 @@ Module Type SECNLUSTYPINGCORRECTNESS
   (Import SC    : SECMONAD Ids)
   (Import CESyn : CESYNTAX Op)
   (Import SynNL : NLSYNTAX Ids Op CESyn)
+  (Import Lat   : Lattice)
+  (Import SecT  : SECTYPES Lat)
   (Import SIG   : SIGNATURE Ids SC)
+  (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
@@ -371,10 +374,12 @@ Module Type SECNLUSTYPINGCORRECTNESS
     revert cns.
     induction ds as [|d ds IH]; intros cs rhs Hin; simpl in *.
     - exact Hin.
-    - destruct (findST cs d) as [st|] eqn:Hfind.
-      + specialize (IH (subAll cs d st) rhs Hin).
+    - destruct (SymTypes.findST cs d) as [st|] eqn:Hfind.
+      + simpl in Hin.
+        specialize (IH (SymTypes.subAll cs d st) rhs Hin).
         eapply subAll_rhs_in_local. exact IH.
-      + eapply (IH cs rhs). exact Hin.
+      + simpl in Hin.
+        eapply (IH cs rhs). exact Hin.
   Qed.
 
   Lemma simplify_preserves_other_rhs:
@@ -387,12 +392,14 @@ Module Type SECNLUSTYPINGCORRECTNESS
     revert cns.
     induction ds as [|d ds IH]; intros cs d0 Hneq Hin; simpl.
     - exact Hin.
-    - destruct (findST cs d) as [st|] eqn:Hfind.
-      + eapply (IH (subAll cs d st) d0).
+    - destruct (SymTypes.findST cs d) as [st|] eqn:Hfind.
+      + simpl.
+        eapply (IH (SymTypes.subAll cs d st) d0).
         * intros d' Hin'. apply Hneq. now right.
         * eapply subAll_preserves_other_rhs_local; eauto.
           apply Hneq. now left.
-      + eapply (IH cs d0); eauto.
+      + simpl.
+        eapply (IH cs d0); eauto.
         intros d' Hin'. apply Hneq. now right.
   Qed.
 
@@ -465,7 +472,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
     revert cns.
     induction ds as [|d ds IH]; intros cns Hnd; simpl.
     - exact Hnd.
-    - destruct (findST cns d) as [st|] eqn:Hfind.
+    - destruct (SymTypes.findST cns d) as [st|] eqn:Hfind.
       + apply IH. eapply subAll_nodup_local. exact Hnd.
       + apply IH. exact Hnd.
   Qed.
@@ -479,7 +486,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
     revert cns.
     induction ds as [|d ds IH]; intros cns Hlen; simpl.
     - exact Hlen.
-    - destruct (findST cns d) as [st|] eqn:Hfind.
+    - destruct (SymTypes.findST cns d) as [st|] eqn:Hfind.
       + apply IH. eapply subAll_singleton_rhs_local. exact Hlen.
       + apply IH. exact Hlen.
   Qed.
@@ -882,7 +889,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
             s_constraints := SymTypes.simplify raw locals |}
          env rec aux_names st st'
          clk_type rst_type inp out locals raw st_n
-         Hlocal Hsig Hclk0 Hrst0 Hinp0 Hout0 Hlocals0 Hraw eq_refl)
+         Hlocal Hsig Hclk0 Hrst0 Hinp0 Hout0 Hlocals0 Hraw Logic.eq_refl)
       as Hready.
     destruct Hready as [Hwfraw Hlocalsdisj].
     assert (Hexshape :
@@ -961,9 +968,20 @@ Module Type SECNLUSTYPINGCORRECTNESS
              { eapply findST_of_rhs_in. exact Hin. }
              destruct Hfindrhs as (stc & Hfindrhs).
              apply find_correct in Hfindrhs.
-             unfold signature_scoped, constraints_scoped in Hsigscoped.
-             rewrite Forall_forall in Hsigscoped.
-             specialize (Hsigscoped _ Hfindrhs).
+             change
+               (Forall
+                  (constraint_scoped
+                     (signature_scope
+                        {| s_name := n.(n_name);
+                           s_in := inp;
+                           s_out := out;
+                           s_reset := rst_type;
+                           s_clk := clk_type;
+                           s_constraints := SymTypes.simplify raw locals |}))
+                  (SymTypes.simplify raw locals))
+               in Hsigscoped.
+             apply Forall_forall with (x := (stc, ty :: nil)) in Hsigscoped.
+             2:{ exact Hfindrhs. }
              assert (Hinscope : In ty (signature_scope
                                {| s_name := n.(n_name);
                                   s_in := inp;
@@ -999,6 +1017,135 @@ Module Type SECNLUSTYPINGCORRECTNESS
              subst d.
              exact (Hlocalsdisj ty Hd Hinsigscope).
           -- exact Hinraw.
+  Qed.
+
+  (** Low call outputs force the instantiated reset argument low.
+
+      Relation to the paper:
+      reset-aware call instantiation substitutes the caller-provided reset
+      type into the callee signature.  Once the stored callee signature is
+      known to mention its reset field in every output-defining constraint,
+      any low caller-visible output slot of the instantiated call forces the
+      instantiated reset argument low as well.  This is the typing-side fact
+      later used by the indexed noninterference proof to align reset-control
+      prefixes in reset calls. *)
+  Lemma call_output_low_implies_reset_low:
+    forall sig inptyp ckty rstty outtyp cns st st'
+           dlt t i y v,
+      signature_good sig ->
+      (forall y lhs,
+          findST sig.(s_constraints) y = Some lhs ->
+          In sig.(s_reset) lhs) ->
+      call_subst_fresh sig inptyp ckty rstty outtyp ->
+      NoDup (signature_scope sig) ->
+      List.length sig.(s_in) = List.length inptyp ->
+      List.length sig.(s_out) = List.length outtyp ->
+      generate_constraints sig inptyp ckty rstty outtyp st = OK (cns, st') ->
+      listSatisfiable dlt cns ->
+      nth_error sig.(s_out) i = Some y ->
+      nth_error outtyp i = Some v ->
+      dlt v ⊑ t ->
+      hm_ext dlt rstty ⊑ t.
+  Proof.
+    intros sig inptyp ckty rstty outtyp cns st st'
+           dlt t i y v
+           Hgood Hresetlhs Hfresh Hndscope HlenIn HlenOut Hgen Hsat
+           Hnthy Hnthv Hlowv.
+    assert (Hinfresh : Forall2 (fun x ty => ~ In x ty) sig.(s_in) inptyp).
+    { eapply call_subst_fresh_inputs_notin_pairs; eauto. }
+    assert (Hclkfresh_notin : ~ In sig.(s_clk) ckty).
+    {
+      destruct Hfresh as [_ [Hclkfresh [_ _]]].
+      unfold type_fresh in Hclkfresh.
+      rewrite Forall_forall in Hclkfresh.
+      intro Hin.
+      eapply Hclkfresh.
+      - exact Hin.
+      - unfold signature_scope.
+        repeat rewrite in_app_iff.
+        simpl. auto.
+    }
+    assert (Hrstfresh_notin : ~ In sig.(s_reset) rstty).
+    {
+      destruct Hfresh as [_ [_ [Hrstfresh _]]].
+      unfold type_fresh in Hrstfresh.
+      rewrite Forall_forall in Hrstfresh.
+      intro Hin.
+      eapply Hrstfresh.
+      - exact Hin.
+      - unfold signature_scope.
+        repeat rewrite in_app_iff.
+        simpl. auto.
+    }
+    pose proof
+      (generate_constraints_complete_good
+         sig inptyp ckty rstty outtyp cns st st'
+         Hgood Hgen dlt Hsat Hinfresh Hclkfresh_notin Hrstfresh_notin)
+      as Hsat_sig.
+    pose proof
+      (inst_valuation_outputs_eq
+         dlt sig inptyp ckty rstty outtyp
+         Hfresh Hndscope HlenOut)
+      as Hout_eq.
+    destruct
+      (Forall2_nth_error_inv
+         _ _
+         (fun x v0 =>
+            inst_valuation dlt sig inptyp ckty rstty outtyp v0 =
+            inst_valuation dlt sig inptyp ckty rstty outtyp x)
+         sig.(s_out) outtyp i y
+         Hout_eq Hnthy)
+      as (v' & Hnthv' & Hinst_out).
+    rewrite Hnthv in Hnthv'. inversion Hnthv'. subst v'. clear Hnthv'.
+    destruct Hgood as [Hwf Hperm].
+    assert (Hinrhs : In [y] (map snd sig.(s_constraints))).
+    {
+      eapply Permutation_in; [exact (Permutation_sym Hperm)|].
+      apply in_map_iff.
+      exists y.
+      split; [reflexivity|].
+      eapply nth_error_In_local; eauto.
+    }
+    destruct (findST_of_rhs_in sig.(s_constraints) y Hinrhs)
+      as (lhs & Hfindlhs).
+    assert (Hresetin : In sig.(s_reset) lhs).
+    { eapply Hresetlhs; eauto. }
+    assert (Hlowv_inst :
+              inst_valuation dlt sig inptyp ckty rstty outtyp v ⊑ t).
+    {
+      destruct Hfresh as [_ [_ [_ Houtfresh]]].
+      rewrite (inst_valuation_outside_sig_scope
+                 dlt sig inptyp ckty rstty outtyp v).
+      - exact Hlowv.
+      - unfold outputs_fresh in Houtfresh.
+        rewrite Forall_forall in Houtfresh.
+        eapply Houtfresh.
+        eapply nth_error_In_local; eauto.
+    }
+    assert (Hlowy :
+              inst_valuation dlt sig inptyp ckty rstty outtyp y ⊑ t).
+    {
+      rewrite <- Hinst_out.
+      exact Hlowv_inst.
+    }
+    unfold listSatisfiable in Hsat_sig.
+    rewrite Forall_forall in Hsat_sig.
+    specialize (Hsat_sig _ (find_correct _ _ _ Hfindlhs)).
+    unfold constraintSatisfiable, satisfiable in Hsat_sig.
+    simpl in Hsat_sig.
+    rewrite <- (inst_valuation_reset_eq
+                  dlt sig inptyp ckty rstty outtyp
+                  Hfresh Hndscope).
+    apply order_trans with
+        (y := hm_ext (inst_valuation dlt sig inptyp ckty rstty outtyp) lhs).
+    - apply hm_ext_list_in1.
+      exact Hresetin.
+    - apply order_trans with
+        (y := join (inst_valuation dlt sig inptyp ckty rstty outtyp y) bottom).
+      + exact Hsat_sig.
+      + apply join_least_upper_bound.
+        * exact Hlowy.
+        * apply bottom_is_bottom.
   Qed.
 
   (** Generated source signature interfaces are duplicate free.
@@ -1324,7 +1471,10 @@ Module SecNLusTypingCorrectness
   (Import SC    : SECMONAD Ids)
   (Import CESyn : CESYNTAX Op)
   (Import SynNL : NLSYNTAX Ids Op CESyn)
+  (Import Lat   : Lattice)
+  (Import SecT  : SECTYPES Lat)
   (Import SIG   : SIGNATURE Ids SC)
+  (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
@@ -1335,8 +1485,8 @@ Module SecNLusTypingCorrectness
   (Import IsF   : ISFREE Ids Op CESyn SynNL CEIsF)
   (Import Clo   : NLCLOCKING Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo)
   (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo)
-  <: SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING.
+  <: SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL Lat SecT SIG SIGPROOFS NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING.
 
-Include SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING.
+Include SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL Lat SecT SIG SIGPROOFS NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING.
 
 End SecNLusTypingCorrectness.
