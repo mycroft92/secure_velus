@@ -1971,6 +1971,134 @@ Module Type SECNLUSNONINTERFERENCE
         lia.
     Qed.
 
+    (** Classify free actual-argument variables as inputs or defined variables.
+
+        Relation to the paper:
+        the successor [EqApp] proof needs prefix equality for the free
+        variables of actual arguments.  This is the call-side analogue of
+        [free_aexp_in_inputs_or_defined]: every free actual-argument variable
+        comes either from the node inputs or from one of the variables already
+        defined by the node equations. *)
+    Lemma free_exp_in_inputs_or_defined:
+      forall P n xs ck f exps r y,
+        Clo.wc_node P n ->
+        In (EqApp xs ck f exps r) n.(n_eqs) ->
+        Exists (Is_free_in_exp y) exps ->
+        In y (map fst n.(n_in)) \/ In y (vars_defined n.(n_eqs)).
+    Proof.
+      intros P n xs ck f exps r y
+             (Hwc_in & Hwc_io & Hwc_all & Hwc_eqs)
+             Heqin Hfree.
+      eapply Forall_forall in Hwc_eqs; [|exact Heqin].
+      inversion Hwc_eqs; subst.
+      match goal with
+      | Hins : Forall2 _ _ exps |- _ => rename Hins into Hwcins
+      end.
+      apply Exists_exists in Hfree as (e & Hine & Hfree_e).
+      destruct (SecT.In_nth_error_ex _ _ _ Hine) as [i Hnthe].
+      assert (Hi_in : i < List.length n0.(n_in)).
+      {
+        pose proof (Forall2_length _ _ _ Hwcins) as Hlen.
+        assert (Hi_exp : i < List.length exps).
+        {
+          apply nth_error_Some.
+          rewrite Hnthe.
+          discriminate.
+        }
+        rewrite Hlen.
+        exact Hi_exp.
+      }
+      destruct (nth_error n0.(n_in) i) as [in_pair|] eqn:Hnthin.
+      2:{
+        apply nth_error_None in Hnthin.
+        lia.
+      }
+      destruct
+        (SecT.Forall2_nth_error_inv
+           _ _
+           (fun '(x, (_, xck)) le =>
+              SameVar (sub x) le
+              /\ exists lck, wc_exp (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) le lck
+                       /\ instck ck sub xck = Some lck)
+           n0.(n_in) exps i in_pair
+           Hwcins Hnthin)
+        as (e' & Hnthe' & Hwc_pair).
+      rewrite Hnthe in Hnthe'.
+      inversion Hnthe'; subst e'; clear Hnthe'.
+      destruct in_pair as [xin [xty xck]].
+      cbn in Hwc_pair.
+      destruct Hwc_pair as [_ (lck & Hwc_e & _)].
+      assert (Hy_mem : InMembers y (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
+      { eapply Is_free_in_wc_exp; eauto. }
+      rewrite InMembers_idck in Hy_mem.
+      rewrite InMembers_app in Hy_mem.
+      destruct Hy_mem as [Hin|Hrest].
+      - left.
+        apply InMembers_In in Hin as (? & Hin).
+        now apply in_map with (f := fst) in Hin.
+      - right.
+        rewrite InMembers_app in Hrest.
+        destruct Hrest as [Hvars|Hout].
+        + apply InMembers_In in Hvars as (? & Hvars).
+          apply in_map with (f := fst) in Hvars.
+          assert (Hin_vo : In y (map fst (n.(n_vars) ++ n.(n_out)))).
+          { rewrite map_app. apply in_or_app. now left. }
+          eapply Permutation_in; [apply Permutation_sym, n.(n_defd)|exact Hin_vo].
+        + apply InMembers_In in Hout as (? & Hout).
+          apply in_map with (f := fst) in Hout.
+          assert (Hin_vo : In y (map fst (n.(n_vars) ++ n.(n_out)))).
+          { rewrite map_app. apply in_or_app. now right. }
+          eapply Permutation_in; [apply Permutation_sym, n.(n_defd)|exact Hin_vo].
+    Qed.
+
+    (** Classify the reset source of a resettable call as input or defined variable.
+
+        Relation to the paper:
+        the reset-control prefix proof for [EqApp ... (Some ...)] needs to
+        transport equality of the reset source stream from either the input
+        hypothesis or the already-established previous-prefix equality on
+        defined variables. *)
+    Lemma reset_var_in_inputs_or_defined:
+      forall P n xs ck f exps r ckr,
+        Clo.wc_node P n ->
+        In (EqApp xs ck f exps (Some (r, ckr))) n.(n_eqs) ->
+        In r (map fst n.(n_in)) \/ In r (vars_defined n.(n_eqs)).
+    Proof.
+      intros P n xs ck f exps r ckr
+             (Hwc_in & Hwc_io & Hwc_all & Hwc_eqs)
+             Heqin.
+      eapply Forall_forall in Hwc_eqs; [|exact Heqin].
+      inversion Hwc_eqs; subst.
+      match goal with
+      | Hrst : forall yck, _ = Some yck -> In yck _ |- _ => rename Hrst into Hwcrst
+      end.
+      assert (Hinr : In (r, ckr) (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
+      {
+        eapply Hwcrst.
+        reflexivity.
+      }
+      apply In_InMembers in Hinr.
+      rewrite InMembers_idck in Hinr.
+      rewrite InMembers_app in Hinr.
+      destruct Hinr as [Hin|Hrest].
+      - left.
+        apply InMembers_In in Hin as (? & Hin).
+        now apply in_map with (f := fst) in Hin.
+      - right.
+        rewrite InMembers_app in Hrest.
+        destruct Hrest as [Hvars|Hout].
+        + apply InMembers_In in Hvars as (? & Hvars).
+          apply in_map with (f := fst) in Hvars.
+          assert (Hin_vo : In r (map fst (n.(n_vars) ++ n.(n_out)))).
+          { rewrite map_app. apply in_or_app. now left. }
+          eapply Permutation_in; [apply Permutation_sym, n.(n_defd)|exact Hin_vo].
+        + apply InMembers_In in Hout as (? & Hout).
+          apply in_map with (f := fst) in Hout.
+          assert (Hin_vo : In r (map fst (n.(n_vars) ++ n.(n_out)))).
+          { rewrite map_app. apply in_or_app. now right. }
+          eapply Permutation_in; [apply Permutation_sym, n.(n_defd)|exact Hin_vo].
+    Qed.
+
     (** Prefix equality of one semantic source stream from low-equivalent histories.
 
         Relation to the paper:
@@ -4438,19 +4566,6 @@ Module Type SECNLUSNONINTERFERENCE
                Henvsgen Hord Hwcglob Hallsig Hcaus Hfindnode Hfindenv
                Hfindsig Hsiggen Haux Hclk Hrst Hinp Hout Hlocals Hraw
                Hsigdef Hsecure Hcallout Hresetout Hsatraw Hsem Hsem' Hlowin.
-      pose proof (Ordered_nodes_nodup_names _ Hord) as Hndnames.
-      destruct Hsecure as
-          [ty_env_sec sig_sec
-           clk_id_sec rst_id_sec clk_type_sec rst_type_sec
-           inp_sec out_sec locals_sec raw_sec st_n_sec
-           Hfindnode_sec Hfindenv_sec Hfindsig_sec Hsiggen_sec
-           Haux_sec Hclk_sec Hrst_sec Hinp_sec Hout_sec Hlocals_sec
-           Hraw_sec Hsigdef_sec Hsatsig_sec Hagree_sec Hsatraw_sec
-           Hcallsec_cur Hresetsec_cur].
-      rewrite Hfindenv in Hfindenv_sec. inversion Hfindenv_sec; subst ty_env_sec.
-      rewrite Hfindsig in Hfindsig_sec. inversion Hfindsig_sec; subst sig_sec.
-      rewrite <- H1 in Hcallsec_cur, Hresetsec_cur, Hsatsig_sec, Hagree_sec.
-      rewrite Hsigdef in Hcallsec_cur, Hresetsec_cur, Hcallout, Hresetout.
       - assert
           (Hpts :
              Forall
@@ -4459,6 +4574,23 @@ Module Type SECNLUSNONINTERFERENCE
                   forall j, j <= 0 -> Env.find x (H j) = Env.find x (H' j))
                (vars_defined n.(n_eqs))).
         {
+          pose proof (Ordered_nodes_nodup_names _ Hord) as Hndnames.
+          destruct Hsecure as
+              [ty_env_sec sig_sec
+               clk_id_sec rst_id_sec clk_type_sec rst_type_sec
+               inp_sec out_sec locals_sec raw_sec st_n_sec
+               Hfindnode_sec Hfindenv_sec Hfindsig_sec Hsiggen_sec
+               Haux_sec Hclk_sec Hrst_sec Hinp_sec Hout_sec Hlocals_sec
+               Hraw_sec Hsigdef_sec Hsatsig_sec Hagree_sec Hsatraw_sec
+               Hcallsec_cur Hresetsec_cur].
+          rewrite Hfindenv in Hfindenv_sec.
+          inversion Hfindenv_sec; subst ty_env_sec; clear Hfindenv_sec.
+          rewrite Hfindsig in Hfindsig_sec.
+          inversion Hfindsig_sec; subst sig_sec; clear Hfindsig_sec.
+          rewrite <- H1 in Hcallsec_cur, Hresetsec_cur, Hsatsig_sec, Hagree_sec.
+          rewrite Hsigdef in Hcallsec_cur, Hresetsec_cur, Hcallout, Hresetout.
+          pose proof Hcallsec_cur as Hcallsec_node.
+          pose proof Hresetsec_cur as Hresetsec_node.
           eapply nl_node_causal_ind_defined.
           + intros eq x Heqin Hxdef Hdeps Hlowx j Hj.
             assert (Hj0 : j = 0) by lia.
@@ -4582,7 +4714,7 @@ Module Type SECNLUSNONINTERFERENCE
                    exact Hinp0.
                  }
                  pose proof
-                   (Hcallsec_cur
+                  (Hcallsec_node
                       (xh :: xt) ck f exps callee nsig_c
                       ckty0 inptyp0 outtyp0 SC.init_state SC.init_state
                       Heqin Hfindcallee Hfindsigc Hck0_init Hinp0_init Hout0)
@@ -5035,7 +5167,7 @@ Module Type SECNLUSNONINTERFERENCE
                    exact Hinp0.
                  }
                  pose proof
-                   (Hresetsec_cur
+                  (Hresetsec_node
                       (xh :: xt) ck f exps r ckr callee nsig_c
                       ckty0 rty0 rstty0 inptyp0 outtyp0
                       SC.init_state SC.init_state SC.init_state
@@ -5557,6 +5689,23 @@ Module Type SECNLUSNONINTERFERENCE
             + apply Nat.le_succ_diag_r.
             + exact Hlowin.
         }
+        pose proof (Ordered_nodes_nodup_names _ Hord) as Hndnames.
+        destruct Hsecure as
+            [ty_env_sec sig_sec
+             clk_id_sec rst_id_sec clk_type_sec rst_type_sec
+             inp_sec out_sec locals_sec raw_sec st_n_sec
+             Hfindnode_sec Hfindenv_sec Hfindsig_sec Hsiggen_sec
+             Haux_sec Hclk_sec Hrst_sec Hinp_sec Hout_sec Hlocals_sec
+             Hraw_sec Hsigdef_sec Hsatsig_sec Hagree_sec Hsatraw_sec
+             Hcallsec_cur Hresetsec_cur].
+        rewrite Hfindenv in Hfindenv_sec.
+        inversion Hfindenv_sec; subst ty_env_sec; clear Hfindenv_sec.
+        rewrite Hfindsig in Hfindsig_sec.
+        inversion Hfindsig_sec; subst sig_sec; clear Hfindsig_sec.
+        rewrite <- H1 in Hcallsec_cur, Hresetsec_cur, Hsatsig_sec, Hagree_sec.
+        rewrite Hsigdef in Hcallsec_cur, Hresetsec_cur, Hcallout, Hresetout.
+        pose proof Hcallsec_cur as Hcallsec_node.
+        pose proof Hresetsec_cur as Hresetsec_node.
         assert
           (Hpts_cur :
              Forall
@@ -5685,7 +5834,7 @@ Module Type SECNLUSNONINTERFERENCE
                    exact Hinp0.
                  }
                  pose proof
-                   (Hcallsec_cur
+                   (Hcallsec_node
                       (xh :: xt) ck f exps callee nsig_c
                       ckty0 inptyp0 outtyp0 SC.init_state SC.init_state
                       Heqin Hfindcallee Hfindsigc Hck0_init Hinp0_init Hout0)
@@ -5872,14 +6021,23 @@ Module Type SECNLUSNONINTERFERENCE
                    {
                      eapply exp_type_low; eauto.
                    }
-                   assert (Hdep_xz :
-                             NLCaus.nl_depends_on_eq
-                               (EqApp (xh :: xt) ck callee.(n_name) exps None) x z).
-                   {
-                     split; [exact Hxdef|].
-                     eapply nth_error_free_in_aexps; eauto.
-                   }
-                   exact (Hdeps z Hdep_xz Hlowz j Hj).
+                   destruct
+                     (free_exp_in_inputs_or_defined
+                        P n (xh :: xt) ck callee.(n_name) exps None z
+                        Hwcnode Heqin Hz)
+                     as [Hin_z|Hdef_z].
+                   - eapply Hlowin; eauto.
+                   - destruct (Nat.eq_dec j m) as [Heqj|Hneqj].
+                     + subst j.
+                       assert (Hdep_xz :
+                                 NLCaus.nl_depends_on_eq
+                                   (EqApp (xh :: xt) ck callee.(n_name) exps None) x z).
+                       {
+                         split; [exact Hxdef|].
+                         eapply nth_error_free_in_aexps; eauto.
+                       }
+                       exact (Hdeps z Hdep_xz Hlowz).
+                     + eapply Hprev; eauto. lia.
                  }
                  pose proof
                    (Hcallout
@@ -6071,7 +6229,7 @@ Module Type SECNLUSNONINTERFERENCE
                    exact Hinp0.
                  }
                  pose proof
-                   (Hresetsec_cur
+                   (Hresetsec_node
                       (xh :: xt) ck f exps r ckr callee nsig_c
                       ckty0 rty0 rstty0 inptyp0 outtyp0
                       SC.init_state SC.init_state SC.init_state
@@ -6293,14 +6451,23 @@ Module Type SECNLUSNONINTERFERENCE
                  {
                    eapply reset_control_low_eq_upto_of_sem_var_eq.
                    intros Hlowr j Hj.
-                   assert (Hdep_xr :
-                             NLCaus.nl_depends_on_eq
-                               (EqApp (xh :: xt) ck callee.(n_name) exps (Some (r, ckr))) x r).
-                   {
-                     split; [exact Hxdef|].
-                     right. left. reflexivity.
-                   }
-                   exact (Hdeps r Hdep_xr Hlowr j Hj).
+                   destruct
+                     (reset_var_in_inputs_or_defined
+                        P n (xh :: xt) ck callee.(n_name) exps r ckr
+                        Hwcnode Heqin)
+                     as [Hin_r|Hdef_r].
+                   - eapply Hlowin; eauto.
+                   - destruct (Nat.eq_dec j m) as [Heqj|Hneqj].
+                     + subst j.
+                       assert (Hdep_xr :
+                                 NLCaus.nl_depends_on_eq
+                                   (EqApp (xh :: xt) ck callee.(n_name) exps (Some (r, ckr))) x r).
+                       {
+                         split; [exact Hxdef|].
+                         right. left. reflexivity.
+                       }
+                       exact (Hdeps r Hdep_xr Hlowr).
+                     + eapply Hprev; eauto. lia.
                  }
                  assert (Hcount_eq :
                            forall j, j <= m -> count rs j = count rs' j).
@@ -6324,15 +6491,24 @@ Module Type SECNLUSNONINTERFERENCE
                      {
                        eapply exp_type_low; eauto.
                      }
-                     assert (Hdep_xz :
-                               NLCaus.nl_depends_on_eq
-                                 (EqApp (xh :: xt) ck callee.(n_name) exps (Some (r, ckr))) x z).
-                     {
-                       split; [exact Hxdef|].
-                       left.
-                       eapply nth_error_free_in_aexps; eauto.
-                     }
-                     exact (Hdeps z Hdep_xz Hlowz j Hj).
+                     destruct
+                       (free_exp_in_inputs_or_defined
+                          P n (xh :: xt) ck callee.(n_name) exps (Some (r, ckr)) z
+                          Hwcnode Heqin Hz)
+                       as [Hin_z|Hdef_z].
+                     + eapply Hlowin; eauto.
+                     + destruct (Nat.eq_dec j m) as [Heqj|Hneqj].
+                       * subst j.
+                         assert (Hdep_xz :
+                                   NLCaus.nl_depends_on_eq
+                                     (EqApp (xh :: xt) ck callee.(n_name) exps (Some (r, ckr))) x z).
+                         {
+                           split; [exact Hxdef|].
+                           left.
+                           eapply nth_error_free_in_aexps; eauto.
+                         }
+                         exact (Hdeps z Hdep_xz Hlowz).
+                       * eapply Hprev; eauto. lia.
                  }
                  pose proof
                    (Hresetout
