@@ -67,6 +67,7 @@ Module Type SECNLUSTYPING
     Variable env: Env.t ident.
     Variable base_ty: ident.
     Variable rst_ty : ident.
+
     (** Conservative reset-aware source typing.
 
         Relative to the paper's reset-aware noninterference route, the local
