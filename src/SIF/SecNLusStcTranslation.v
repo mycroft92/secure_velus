@@ -2103,8 +2103,8 @@ Module Type SECNLUSSTCTRANSLATION
                (inp := inp) (out := out) (locals := locals)
                (reset_env := reset_env) (rids := rids)
                (nconst := nconst) (sconst := sconst)
-               (st_reset := st_reset) (st_n := st_n) (st_s := st_s).
-        - reflexivity.
+               (st_reset := st_reset) (st_n := st_n) (st_s := st_s); eauto.
+        (* - reflexivity.
         - exact Hcons.
         - exact Hscopefresh.
         - exact Hglobsec.
@@ -2122,7 +2122,7 @@ Module Type SECNLUSSTCTRANSLATION
         - exact Hnd.
         - exact Hfresh.
         - exact Hnconst.
-        - exact Hsconst.
+        - exact Hsconst. *)
       }
       rewrite Hnsigdef, Hssigdef.
       unfold signatures_preserved.
