@@ -83,8 +83,8 @@ Definition build_node_constraint_dump
           with
           | Some inp_ids, Some out_ids, Some local_ids, Some sig =>
               OK {| dump_name := n.(n_name);
-                    dump_clk := clk_id;
-                    dump_rst := rst_id;
+                    dump_clk := sig.(SIG.s_clk);
+                    dump_rst := sig.(SIG.s_reset);
                     dump_inputs := zip_idents (map fst n.(n_in)) inp_ids;
                     dump_outputs := zip_idents (map fst n.(n_out)) out_ids;
                     dump_locals := zip_idents (map fst n.(n_vars)) local_ids;

@@ -87,6 +87,8 @@ lus6-gcc.wcet: $(EXAMPLES:.lus=.lus6-gcc.wcet)
 
 realclean: clean
 	@rm -f $(EXAMPLES:.lus=.exe)
+	@rm -f $(EXAMPLES:.lus=.n.sif)
+	@rm -f $(EXAMPLES:.lus=.s.sif)
 	@rm -f $(EXAMPLES:.lus=.hept.exe) $(EXAMPLES:.lus=.hept-gcc.exe)
 	@rm -f $(EXAMPLES:.lus=.hept-gcci.exe)
 	@rm -f $(EXAMPLES:.lus=.lus6.exe) $(EXAMPLES:.lus=.lus6-gcc.exe)

@@ -126,8 +126,8 @@ Definition build_system_constraint_dump
               | Error e => Error e
               | OK reset_ids =>
                   OK {| stc_dump_name := s.(s_name);
-                        stc_dump_clk := clk_id;
-                        stc_dump_rst := rst_id;
+                        stc_dump_clk := sig.(SIG.s_clk);
+                        stc_dump_rst := sig.(SIG.s_reset);
                         stc_dump_inputs := zip_idents (map fst s.(s_in)) inp_ids;
                         stc_dump_outputs := zip_idents (map fst s.(s_out)) out_ids;
                         stc_dump_locals := zip_idents (map fst s.(s_vars)) local_ids;
