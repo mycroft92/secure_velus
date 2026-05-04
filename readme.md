@@ -37,6 +37,9 @@ program examples/count.s.
 
 The compiler also accepts the options
 
+* -dsif
+  Output the normalized NLustre's security type constraints code into <file>.sif
+
 * -dnlustre
   Output the normalized NLustre code into <file>.n.lus
 

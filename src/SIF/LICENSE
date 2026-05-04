@@ -1,1 +1,61 @@
-Yet to fill this
+SIF directory licensing notice
+==============================
+
+This directory contains Security-types related work developed on top of the Vélus
+compiler code base.
+
+1. Relationship with the repository top-level LICENSE
+-----------------------------------------------------
+
+The repository top-level [LICENSE](../../LICENSE) continues to govern all
+upstream Vélus material and any derivative work of that material. Nothing in
+this file removes, weakens, or replaces any right, limitation, disclaimer, or
+obligation stated in the repository top-level LICENSE.
+
+In particular, if a file in this directory is in whole or in part a derivative
+work of Vélus material, then distribution of that derivative work remains
+subject to the same terms and conditions as the repository top-level LICENSE.
+
+2. Additional permission for original SIF-specific contributions
+----------------------------------------------------------------
+
+To the extent that any contribution in this directory is both:
+
+- an original, independently copyrightable contribution made for the
+  Security-types related work in `src/SIF`, and
+- not material whose licensing is already controlled by the repository
+  top-level LICENSE,
+
+that original contribution is additionally made available under the following
+MIT license grant:
+
+Copyright (c) R.Madhukar Yerraguntla and Sanjiva Prasad,
+Indian Institute of Technology, Delhi, for the original SIF-specific
+contributions in this directory.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+This additional permission applies only to the original SIF-specific
+contributions described above. It does not grant any right in upstream Vélus
+material or in any portion whose licensing is controlled by the repository
+top-level LICENSE.
+
+3. No warranty for SIF-specific contributions
+---------------------------------------------
+
+THE ORIGINAL SIF-SPECIFIC CONTRIBUTIONS DESCRIBED IN SECTION 2 ARE PROVIDED
+"AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE
+AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS OF
+THOSE CONTRIBUTIONS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THOSE CONTRIBUTIONS OR THE USE OR OTHER DEALINGS IN THOSE
+CONTRIBUTIONS.
