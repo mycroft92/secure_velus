@@ -53,3 +53,4 @@
 - [x] Add the analogous STC security-constraint dump export and printer path under `-dsif`, so the target-side translated constraints can be dumped alongside the NLustre source constraints.
 - [x] Extend both NLustre and STC SIF dumps to print the unsimplified raw generated constraints alongside the simplified stored signature constraints.
 - [x] Add a `src/SIF/LICENSE` notice clarifying that upstream and derivative Vélus material remains governed by the repository top-level license, while separately licensable original SIF contributions are additionally offered under an MIT-style grant with no contributor warranty.
+- [x] Refresh stale comments across `src/SIF/*.v` so module headers and theorem notes describe the finalized NLustre/STC development rather than intermediate proof-planning states.
