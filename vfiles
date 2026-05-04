@@ -147,4 +147,5 @@ src/SIF/SecNLusNonInterferenceHelpers.v
 src/SIF/SecSTCTyping.v
 src/SIF/SecStcTypingCorrectness.v
 src/SIF/SecNLusStcTranslation.v
+src/SIF/SecNLusNonInterferenceClockedStep.v
 src/SIF/SecNLusNonInterference.v
