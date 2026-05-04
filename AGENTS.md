@@ -17,14 +17,16 @@ This repository contains thesis work built on top of the Velus compiler toolchai
 - In general, each phase is mostly self-contained in its similarly named directory, except at phase boundaries.
 - For the translated STC noninterference task, it is explicitly allowed to read
   `src/SIF/SecSTCTyping.v`, `src/SIF/SecStcTypingCorrectness.v`,
-  `src/SIF/SecNLusStcTranslation.v`, `src/SIF/docs/STC-noninterference-proof.md`,
+  `src/SIF/SecNLusStcTranslation.v`, `src/SIF/SecStcNonInterference.v`,
+  `src/SIF/docs/STC-noninterference-proof.md`,
   `src/SIF/docs/SecNLusStcTranslation.md`, and the phase-boundary files
   `src/NLustreToStc/Translation.v`, `src/NLustreToStc/Correctness.v`,
   `src/Stc/StcSemantics.v`, and `src/Stc/StcClockingSemantics.v` when needed to
   state or prove the weaker preservation-based STC theorem.
 - Do not prioritize an intrinsic STC noninterference proof for now. Prefer the
-  translation-based route first, and only reopen `src/SIF/SecStcNonInterference.v`
-  or `src/SIF/StcCausality.v` if that weaker route turns out to be insufficient.
+  translation-based route first. Do not recreate a standalone `StcCausality.v`
+  layer unless the bridge route fails and the user explicitly asks for that
+  stronger target-side development.
 
 ## Modification Policy
 

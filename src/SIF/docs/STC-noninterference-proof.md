@@ -2,79 +2,99 @@
 
 ## Goal
 
-Record the target-side theorem strategy needed after the source theorem is
+Record the target-side theorem strategy after the source NLustre theorem is
 finished.
 
-The current files are:
+The active files are now:
 
-- `src/SIF/StcCausality.v`
 - `src/SIF/SecStcNonInterference.v`
 - `src/SIF/SecNLusStcTranslation.v`
+- `src/SIF/SecNLusNonInterference.v`
 
-The important design update is:
+The important design decision is now fixed:
 
 - we do not currently need a standalone intrinsic STC noninterference proof;
-- the required target-side theorem is the weaker translated-behavior result.
+- the required STC-side result is the weaker translated-behavior theorem;
+- the substantive semantic theorem should live in `SecStcNonInterference.v`;
+- `SecNLusStcTranslation.v` stays the syntactic/preservation library
+  underneath that bridge route.
 
-## Main Design Choices
+## Bridge Route
 
-- The STC side still reuses the source-generated naming layer from
-  `NameInterface`.
-  The local security environment is looked up by translated system name.
-- The actual theorem should eventually live in `SecNLusStcTranslation.v`, not
-  as a separate self-contained STC proof development.
-- The STC causality interface should reuse the existing target scheduling
-  predicate `StcWellDefined.Is_well_sch` rather than introducing a second
-  graph formalization immediately, but this is auxiliary unless a stronger
-  native STC theorem later becomes necessary.
-
-## Weaker STC Result
-
-The intended theorem is:
+The intended result is:
 
 - take two secure NLustre source runs;
-- use source-side NLustre noninterference to get low-equivalent low outputs;
-- transport each run to a translated STC loop;
-- conclude that the translated STC behaviors are also low-equivalent on the
-  observable outputs.
+- use source-side NLustre noninterference to obtain low-equivalent observable
+  outputs;
+- transport both runs through the NLustre-to-STC semantic preservation chain;
+- conclude that the resulting translated STC behaviors are also
+  low-equivalent on the shared observable interface.
 
-So the STC theorem is existential and preservation-based:
+So the STC theorem is intentionally weaker than a native target theorem:
 
-- it talks about STC behaviors produced by translation;
+- it only speaks about STC behaviors that arise from translation;
 - it does not quantify over arbitrary STC semantic runs.
 
-## Why This Is Enough
+## Why This Is The Right Route
 
-The repository already contains the key transport ingredients:
+The repository already contains the transport ingredients this corollary needs:
 
-- `NLMemSemantics.sem_msem_node` / `msem_sem_node`
-- `NLustreToStc.Correctness.correctness_loop`
-- `SecNLusStcTranslation.generated_program_signatures_preserved_global`
+- `SecNLusNonInterference.v` for the source indexed theorem;
+- `NLMemSemantics.sem_msem_node` / `msem_sem_node` to move between indexed and
+  memory-style NLustre semantics;
+- `NLustreToStc.Correctness.correctness_loop` for translation preservation of
+  loops/behaviors;
+- `SecNLusStcTranslation.generated_program_signatures_preserved_global` for
+  source/target signature alignment on shared interface variables.
 
-That makes the weaker theorem substantially cheaper than a fully native STC
-proof.
+That is enough to justify a translated-behavior STC theorem without reopening a
+separate intrinsic target proof architecture.
 
-## What The Scaffolding Files Still Do
+## Current File Roles
 
 - `SecStcNonInterference.v`
-  Keeps the low-observation vocabulary available on the STC side in case the
-  final corollary wants an explicit target-side projection relation.
-- `StcCausality.v`
-  Keeps a target-local scheduling/causality interface available if a stronger
-  theorem later becomes necessary.
+  Home of the STC translated-behavior semantic theorem stack. It should stay
+  bridge-oriented and should not grow into a second intrinsic target proof
+  development.
+- `SecNLusStcTranslation.v`
+  Syntactic/preservation library consumed by `SecStcNonInterference.v`.
 
-## Files Added
+## Deferred Work
 
-- `src/SIF/StcCausality.v`
-  Thin target-side causality/scheduling interface built on top of
-  `Is_well_sch`, currently auxiliary.
-- `src/SIF/SecStcNonInterference.v`
-  STC-side observation scaffold, not the main theorem file.
+What is intentionally not on the critical path:
+
+- a separate STC causality development;
+- a full intrinsic STC noninterference theorem over arbitrary STC runs.
+
+Those should only be revived if the preservation-based route turns out to be
+too weak for the thesis statement.
+
+## Current Status
+
+The bridge route is now implemented in `SecStcNonInterference.v`.
+
+The active semantic packaging is:
+
+- `translated_system_behavior`
+  states that an observed STC behavior is backed by an NLustre memory-semantics
+  run plus the translated `initial_state`/`loop` witness.
+- `system_security`
+  is the target-facing analogue of `node_security`; it hides the source node
+  witness but keeps the translated-system equality, source/target signature
+  lookup facts, signature-head consistency, and the source `node_security`
+  invariant.
+- `translated_system_noninterference_outputs`
+  is the weaker STC theorem actually justified by the development: it proves
+  low-equivalent translated outputs for two translated STC behaviors under
+  low-equivalent translated inputs and a shared base-clock hypothesis
+  `eq_str (clock_of xss) (clock_of xss')`.
 
 ## Immediate Next Steps
 
-1. Finish the main NLustre noninterference theorem first.
-2. After that, add the translated-behavior STC corollary in
-   `SecNLusStcTranslation.v`.
-3. Only revisit a native STC proof if the weaker result later turns out to be
-   insufficient.
+1. Revalidate the full repository build once the STC bridge checkpoint is ready
+   to commit.
+2. Keep any later STC strengthening downstream of this bridge theorem, rather
+   than rebuilding an intrinsic target proof stack first.
+3. Continue the remaining thesis tasks, in particular the OCaml `-sif`
+   constraint-dump path and any upstream packaging of the signature
+   correspondence lemmas.

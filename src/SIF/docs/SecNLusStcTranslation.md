@@ -2,8 +2,8 @@
 
 ## Role
 
-`SecNLusStcTranslation.v` is the cross-phase comparison layer between the
-NLustre and STC security typings.  It states and proves the weakened
+`SecNLusStcTranslation.v` is the cross-phase syntactic comparison layer between
+the NLustre and STC security typings. It states and proves the weakened
 preservation theorem used by the thesis development.
 
 ## Main Lattice-Mapping Notions
@@ -72,6 +72,14 @@ The important theorem chain is now:
 6. `generate_all_signatures_consistent`
 7. `generated_program_signatures_preserved_global`
 
+The semantic consumer of this chain is now the weaker translated-behavior STC
+noninterference corollary in `SecStcNonInterference.v`. That corollary uses:
+
+- `SecNLusNonInterference.v` for the source indexed theorem;
+- the existing NLustre indexed/memory semantic bridge;
+- `NLustreToStc.Correctness.correctness_loop`; and
+- `generated_program_signatures_preserved_global`.
+
 `Signature_call_preserves` is proved internally in this file from:
 
 - `signature_good` and call-instantiation lemmas from `SIFSignature.v`
@@ -80,15 +88,15 @@ The important theorem chain is now:
 
 ## Proof Boundary
 
-This file now owns only cross-phase results.  Source-local and target-local
-correctness facts live in:
+This file now owns only syntactic/cross-phase results. Source-local and
+target-local correctness facts live in:
 
 - `SecNLusTypingCorrectness.v`
 - `SecStcTypingCorrectness.v`
 
-The public theorem stack is now free of the old call-side assumptions.  The
-remaining work around this file is structural cleanup and documentation, not
-another lattice-mapping bridge.
+The public theorem stack is now free of the old call-side assumptions. This
+file remains a preservation library for `SecStcNonInterference.v`, not a second
+noninterference stack in its own right.
 
 ## Relation to the Paper
 

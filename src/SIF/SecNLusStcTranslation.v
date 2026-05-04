@@ -3103,10 +3103,11 @@ Module Type SECNLUSSTCTRANSLATION
       exists ssig. split; assumption.
     Qed.
 
-    (** Future semantic corollary for the weaker STC result.
+    (** Bridge ingredients for the weaker STC result.
 
-        This file is the intended home of the target-side noninterference
-        result that is actually needed by the thesis:
+        This file provides the syntactic/cross-phase preservation facts
+        consumed by the STC-side semantic noninterference corollary proved in
+        [SecStcNonInterference.v]:
 
         - not an intrinsic theorem for arbitrary STC runs;
         - but a translated-behavior corollary for STC loops produced from
@@ -3124,8 +3125,9 @@ Module Type SECNLUSSTCTRANSLATION
         - [generated_program_signatures_preserved_global] to align the source
           and target security signatures on shared interface variables.
 
-        This is why the STC side does not currently need a separate full
-        [SecStcNonInterference] proof development on the critical path. *)
+        This is why this file stays a preservation library, while the actual
+        translated-behavior noninterference theorem should now live in
+        [SecStcNonInterference.v]. *)
   End NODESYSPRES.
 
 
