@@ -1,15 +1,11 @@
-(* Mainline copy layer for the NLustre noninterference step theorem.
+(* Clock-aware step theorems for NLustre indexed noninterference.
 
-   This file exists to decouple ongoing proof-architecture work on the
-   top-level step theorem from the already-stabilized helper file.
-
-   Relation to the paper:
-   the paper's node-level noninterference argument is built around one
-   equation-step theorem.  The original helper file now contains a stable
-   one-clock version of that theorem.  This file is the designated place to
-   evolve the next version of that step theorem, in particular the
-   two-clock/current-node generalization needed by the raw output theorem,
-   without forcing every edit through the older helper stack. *)
+   The papers' node-level noninterference argument is organized around one
+   equation-step theorem.  This file contains the finalized clock-aware version
+   used by the reset-sensitive development: the current node may run under two
+   base clocks that agree on the observed prefix, while recursive calls still
+   reuse the one-node helper infrastructure from
+   [SecNLusNonInterferenceHelpers]. *)
 
 From Coq Require Import List Sorting.Permutation Lia Wf_nat PArith.BinPos Arith.PeanoNat.
 Import List.ListNotations.

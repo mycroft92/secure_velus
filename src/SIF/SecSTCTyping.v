@@ -6,9 +6,9 @@
    - package the visible result into STC signatures through
      [generate_sys_signature_scoped_env]/[generate_all_sys_signatures_scoped_env].
 
-   The later translation proof uses these generation theorems together with
-   [SecStcTypingCorrectness] to recover the target-local scopedness and reset
-   namespace facts needed by the final signature-preservation theorem. *)
+   These generated signatures are refined by [SecStcTypingCorrectness] and are
+   then consumed by [SecNLusStcTranslation] to prove source/target signature
+   preservation across the NLustre-to-STC translation. *)
 
 From Velus Require Import Common.
 From Velus Require Import SecLattice.
@@ -64,7 +64,7 @@ Module Type SECSTCTYPING
 
   (* STC signatures hide ordinary locals together with the translated memory
      cells ([s_lasts]) and the STC-only reset-instance auxiliaries.  We remove
-     duplicates defensively so the later [simplify_scoped] theorem can be
+     duplicates defensively so [simplify_scoped] can be
      applied without having to restate a separate disjointness proof for the
      reset namespace.
 
@@ -149,7 +149,7 @@ Module Type SECSTCTYPING
           [generate_trconstr_constraint_*] lemmas;
         - list-level lemmas lift this to translated systems;
         - [generate_sys_signature_scoped] packages the target-side signature
-          scopedness used later by [SecNLusStcTranslation].
+          scopedness used by [SecNLusStcTranslation].
 
         This is the STC counterpart of the NLustre typing file: it isolates the
         target-side structural facts needed before the translation proof can
@@ -1401,7 +1401,7 @@ Module Type SECSTCTYPING
                 s_constraints := constraints|}
       end.
 
-    (** Node-scoped migration entry point for STC systems.
+    (** Node-scoped signature generation entry point for STC systems.
 
         The outer naming layer stores one local security environment per
         system name. This helper recovers the current system's local env and

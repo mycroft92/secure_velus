@@ -1,3 +1,10 @@
+(* Non-canonical symbolic types for the older Lustre-side normalization
+   experiments.
+
+   This file is auxiliary to the finalized [SymTypes] representation.  It
+   keeps an explicit syntax of symbolic joins and qualifiers together with its
+   canonicalization function, which is useful when comparing the older Lustre
+   experiments with the final simple-list representation. *)
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.
 (*From Coq Require Import Logic.Classical_Prop.*)
@@ -7,11 +14,6 @@ From Coq Require Import Lia.
 Import ListNotations.
 From Coq Require Import Recdef.
 From Velus Require Import SIF.SymTypes.
-(*These are types ued for Lustre typing, they are converted to simple types eventually.*)
-(*canonical type specification and correctness to be proved*)
-(* We will do this later*)
-
-
 
 Inductive nonCanonST : Type :=
 | Bot  : nonCanonST
@@ -21,9 +23,7 @@ Inductive nonCanonST : Type :=
 with uConstraint: Type :=
 | CNil : uConstraint
 | Cns  : (nonCanonST * nonCanonST) -> uConstraint -> uConstraint.
-
-
-  (*for now this is just a plain append*)
+  (* Concatenate the explicit qualifier constraints accumulated on each side. *)
 Fixpoint gatherCns (c1 c2:uConstraint): uConstraint:=
   match c1 with
     | CNil => c2
@@ -60,7 +60,7 @@ Fixpoint canon (x:nonCanonST): (ST*(list constraint)) :=
   | Qual i ρ =>
       let (st, ρ') := canon i in
       let ρ'' := unfurl ρ in
-      (st, ρ''++ρ') (* I need to change this to ordering append but this works for now*)
+      (st, ρ''++ρ')
   end
 with unfurl (ρ: uConstraint): list constraint :=
   match ρ with
@@ -69,7 +69,7 @@ with unfurl (ρ: uConstraint): list constraint :=
       let (α_1', ρ_1) := canon α_1 in
       let (α_2', ρ_2) := canon α_2 in
       let ρ'' := unfurl ρ' in
-      (α_1',α_2') :: ρ_1 ++ ρ_2 ++ ρ'' (* I need to change this to ordering append but this works for now*)
+      (α_1',α_2') :: ρ_1 ++ ρ_2 ++ ρ''
   end.
 
 
@@ -82,5 +82,4 @@ Proof.
     - destruct (canon α_1). destruct (canon α_2). apply sortedNoDup_merge; auto.
     - destruct (canon α). auto.
 Qed.
-
 

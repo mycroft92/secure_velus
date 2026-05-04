@@ -128,7 +128,7 @@ Section Type_Substitutions.
       A generated signature is allowed to keep its constraints in any order,
       but every stored constraint must still be well formed and target exactly
       the signature outputs up to permutation.  The call-instantiation layer
-      later turns this into the concrete per-call shape fact consumed by the
+      turns this into the concrete per-call shape fact consumed by the
       NLustre and STC typing developments.  Relative to the paper, this is the
       signature-level invariant that replaces the older external
       [call_constraints_shape] premise. *)
@@ -162,11 +162,11 @@ Section Type_Substitutions.
     - eapply Hglob; eauto.
   Qed.
 
-  (** Legacy call-shape interface.
+  (** Compatibility-level call-shape interface.
 
-      This predicate is being phased out in favour of the more structural
-      [signature_good] / [secglobal_good] invariants above.  It is kept only
-      while the downstream typing and translation modules are migrated. *)
+      This predicate records the call-facing consequence of
+      [signature_good]/[secglobal_good]: successful call instantiation
+      produces one well-formed singleton-targeted block per caller output. *)
   Definition call_constraints_shape (G: secglobal) : Prop :=
     forall f sig inptyp ckty rstty outtyp cns st st',
       find_signature f G = Some sig ->
@@ -183,7 +183,7 @@ Section Type_Substitutions.
   Definition signature_scoped (sig: signature) : Prop :=
     constraints_scoped (signature_scope sig) sig.(s_constraints).
 
-  (* Some later call-preservation arguments need the stronger fact that every
+  (* Call-preservation and replay arguments use the stronger fact that every
      visible signature identifier lies in the ordinary [sec] namespace.  This
      is a generic property of signatures, while the generated-source/target
      proofs that establish it live in the corresponding correctness modules. *)
@@ -230,8 +230,8 @@ Section Type_Substitutions.
   Qed.
 
   (* Signature-interface agreement and call-instantiation freshness live at the
-     signature layer.  They are reused by the later NLustre/STC bridge, but do
-     not depend on any translation-specific theorem shape. *)
+     signature layer.  They are reused by the NLustre/STC bridge, but do not
+     depend on any translation-specific theorem shape. *)
   Definition signature_fields_agree (n1 n2: signature) : Prop :=
     n1.(s_in) = n2.(s_in)
     /\ n1.(s_out) = n2.(s_out)

@@ -103,8 +103,8 @@ Module Type SECNLUSSTCTRANSLATION
         only the weak preservation relation built on top of that shared notion. *)
 
     (** Signature-interface freshness and call-instantiation side conditions
-        now live in [SIFSignature].  We keep the local shorthand [sig_scope]
-        only to avoid rewriting the later translation proofs. *)
+        live in [SIFSignature].  We keep the local shorthand [sig_scope] to
+        keep the preservation statements readable. *)
     Local Notation sig_scope := signature_scope.
     Definition signatures_preserved (n1 n2: signature) : Prop :=
       signature_fields_agree n1 n2
@@ -171,7 +171,7 @@ Module Type SECNLUSSTCTRANSLATION
 
         These helpers isolate the only source-defined variables that create
         private STC auxiliaries during translation: the leading output of a
-        resettable [EqApp].  They are used later to relate source equation-list
+        resettable [EqApp].  They are used to relate source equation-list
         structure to the reset-instance environment generated on the STC side. *)
     Definition reset_call_var (e: equation) : option ident :=
       match e with
@@ -282,8 +282,8 @@ Module Type SECNLUSSTCTRANSLATION
         A resettable NLustre call introduces exactly one STC-only auxiliary
         identifier, obtained by looking up the call's leading output in the
         reset-instance environment built for the translated system.  The list
-        version mirrors [reset_call_vars] and will later be used to track the
-        private variables threaded through the scoped concatenation proof. *)
+        version mirrors [reset_call_vars] and is used to track the private
+        variables threaded through the scoped concatenation proof. *)
     Definition eqn_reset_extras (rst_env: Env.t ident) (eq: equation)
       : option (list ident) :=
       match reset_call_var eq with
@@ -461,7 +461,7 @@ Module Type SECNLUSSTCTRANSLATION
 
     (** Bridging translated reset keys to the concrete mapped extras.
 
-        The scoped concatenation proof later needs exactly this fact: whenever
+        The scoped concatenation proof needs exactly this fact: whenever
         the STC constraints generated from [translate_eqns eqs] consult the
         reset-instance environment on some source identifier [x], the returned
         security variable belongs to the private-extra list reconstructed by
@@ -1615,7 +1615,7 @@ Module Type SECNLUSSTCTRANSLATION
         - scoped target signatures in [G2].
 
         This theorem is the generated bridge from node-level scoped
-        preservation to the later global corollaries. *)
+        preservation to the global corollaries. *)
     Theorem generated_node_preserv_scoped:
       forall P all_nodes (n : node) (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
@@ -2572,7 +2572,7 @@ Module Type SECNLUSSTCTRANSLATION
 
     (** Abstract per-generated-node bridge.
 
-        This packages the one-step compatibility obligation needed by the later
+        This packages the one-step compatibility obligation needed by the
         list-of-signatures induction: if a node and its translated system are
         generated from already consistent accumulators, then the fresh source
         and target signatures are themselves [Signature_head_consistent]. *)
@@ -2630,7 +2630,7 @@ Module Type SECNLUSSTCTRANSLATION
 
         The abstract step theorem above only needs generated-signature
         preservation plus the internal call-instantiation bridges proved above.
-        The final public theorem stack below no longer assumes either
+        The exported theorem family below does not assume either
         [signatures_preserved_calls] or [signatures_preserved_reset_calls]. *)
     Definition generated_signatures_preserved
       (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=

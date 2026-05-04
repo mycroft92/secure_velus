@@ -4,10 +4,10 @@
     computations from [NameInterface] and [SecNLusTyping] into one concrete
     function that can be extracted and called from the OCaml driver.
 
-    Relative to the paper, this is a tooling-only reflection of the NLustre
-    source typing phase: it exposes the per-node symbolic constraints and the
-    generated source-name to security-name mappings that the later proofs reason
-    about abstractly. *)
+    Relative to the paper, this is an executable reflection of the NLustre
+    source typing phase: it exposes the per-node symbolic constraints, their
+    unsimplified raw form, and the generated source-name to security-name
+    mappings that the proof development reasons about abstractly. *)
 From Velus Require Import Common.
 From Velus Require Import ObcToClight.Interface.
 From Velus Require Import Instantiator.

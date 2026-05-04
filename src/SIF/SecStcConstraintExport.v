@@ -5,11 +5,11 @@
     STC typing computations into a concrete extracted function that can be
     called from the OCaml driver.
 
-    Relative to the paper, this is tooling-only reflection of the STC target
+    Relative to the paper, this is an executable reflection of the STC target
     typing phase. It exposes the translated per-system symbolic constraints,
     the shared source-name to security-name mappings, and the extra
     STC-specific reset-instance security variables that appear only after
-    translation. *)
+    translation, both before and after signature simplification. *)
 From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import ObcToClight.Interface.

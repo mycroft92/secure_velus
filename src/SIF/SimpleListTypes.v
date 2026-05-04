@@ -1,8 +1,9 @@
-(**
-* This file implements the merging, sorting of simple list types (after canonicalization)
-* I shifted back to old model of sorting with lessthan operation since there were more results readily available.
-*
-*)
+(** Simple-list symbolic types and their normalization utilities.
+
+    This file provides the list-based symbolic-type representation used by the
+    older Lustre-side experiments.  It keeps the merge/sort machinery explicit
+    so the canonicalized representation can be compared with the finalized
+    [SymTypes] interface. *)
 
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.

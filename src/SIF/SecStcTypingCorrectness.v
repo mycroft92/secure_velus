@@ -1,7 +1,7 @@
 (* Target-local correctness facts for generated STC signatures.
 
-   This file packages the STC facts that are needed later by the final
-   translation proof but do not themselves compare NLustre and STC:
+   This file packages the STC facts used by the final translation proof, but
+   which do not themselves compare NLustre and STC:
    - reset-environment injectivity and namespace separation,
    - generated target-signature scopedness,
    - target-side visible-name range facts in the shared [sec] namespace.
@@ -65,7 +65,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       These lemmas are purely STC-side: they describe how the translated reset
       environment is built, why its generated type variables stay in the
       `sec_reset` namespace, and why that environment preserves injectivity and
-      lookup facts.  They are used later by the translation proof, but do not
+      lookup facts.  They are used by the translation proof, but do not
       themselves relate NLustre and STC. *)
 
   (** We reuse the same environment-viewing convention as the shared naming
@@ -254,7 +254,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       NLustre noninterference proof.  Once the stored callee signature is
       known to mention its reset field in every output-defining constraint,
       any low caller-visible output slot of one instantiated call forces the
-      instantiated reset argument low as well.  The translation bridge later
+      instantiated reset argument low as well.  The translation bridge
       uses the same typing fact on the STC side. *)
   Lemma call_output_low_implies_reset_low:
     forall sig inptyp ckty rstty outtyp cns st st'
@@ -669,7 +669,7 @@ Module Type SECSTCTYPINGCORRECTNESS
 
   (** Target-only structural fact for reset-key extraction.
 
-      The helper [trconstrs_reset_keys] is later combined with NLustre reset
+      The helper [trconstrs_reset_keys] is combined with NLustre reset
       bookkeeping, but this append decomposition is purely STC-side and belongs
       with the other reset-environment support lemmas. *)
   Lemma trconstrs_reset_keys_app:

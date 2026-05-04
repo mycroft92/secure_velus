@@ -3,7 +3,8 @@
     The generators in this file build one common environment of security
     identifiers for node inputs, outputs, locals, and the extra clock/reset
     auxiliaries. Both NLustre and STC typing reuse that environment so the
-    translation theorem can talk about a single naming discipline. *)
+    translation theorem and the semantic noninterference results can talk
+    about a single naming discipline. *)
 From Velus Require Import Common.
 From Velus Require Import SecLattice.
 From Velus Require Import Environment.
@@ -27,9 +28,8 @@ Record node_aux_names := mkNames {
 }.
 
 (** Outer env keyed by unique node names; inner env keyed by raw names local
-    to that node.  This is the migration target for the shared naming
-    interface, allowing inter-node variable-name reuse without changing the
-    local typing code. *)
+    to that node.  This node-scoped layout allows inter-node variable-name
+    reuse while keeping the local typing statements unchanged. *)
 Definition local_sec_env : Type := Env.t ident.
 Definition node_scoped_env : Type := Env.t local_sec_env.
 
@@ -71,7 +71,8 @@ Section Env_helpers.
   (** The lemmas below are the reusable interface between the shared
       name-generation environment and the phase-specific typing proofs.
 
-      They let later developments move back and forth between:
+      They let the typing, translation, and noninterference proofs move back
+      and forth between:
       - source identifiers in node/system interfaces;
       - their generated security identifiers in the shared environment;
       - list-level results returned by [get_mappings] / [get_mappings_from_node].
@@ -482,7 +483,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
 
   (** One-node specialization of [generate_node_env'_app_inv].
 
-      This form matches the later generated-call proof directly: the global
+      This form matches the generated-caller scope arguments directly: the global
       naming run is split into a prefix environment, the current node's fresh
       naming step, and the remaining suffix. *)
   Lemma generate_node_env'_split_node:
@@ -506,7 +507,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
 
   (** Freshness of previously allocated bindings under one insertion step.
 
-      This is the basic monotonicity fact needed later when we show that the
+      This is the basic monotonicity fact used to show that the
       current caller node contributes genuinely new keys with respect to the
       prefix environment built from earlier nodes. *)
   Lemma fresh_insert_preserves_find:
@@ -692,7 +693,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
 
 
   (** Keys inserted by one successful list allocation are fresh with respect to
-      the initial environment.  This is the naming-layer fact later reused to
+      the initial environment.  This is the naming-layer fact reused to
       separate the current caller scope from the already-generated callee
       signatures in the global accumulator proof. *)
   Lemma fresh_map_list_keys_fresh_from_initial:
@@ -761,7 +762,8 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       same security identifier, then the source identifiers were already equal.
 
       This section proves that fact directly from the fresh-name generator used
-      by [generate_node_env].  The later typing/translation theorems can then
+      by [generate_node_env].  The typing, translation, and noninterference
+      theorems can then
       consume injectivity as a derived naming-layer result rather than leaving
       it as an unexplained ambient assumption. *)
 
@@ -932,7 +934,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   (** Values produced by [fresh_map_list] are either inherited from the
       initial env or are genuine fresh [sec] gensyms allocated from the
       current state onward.  Starting from the empty env this becomes the
-      lower-bound fact later used to separate the current node's caller scope
+      lower-bound fact used to separate the current node's caller scope
       from signatures accumulated for earlier nodes. *)
   Lemma fresh_map_list_find_old_or_ge_start:
     forall ks env st env' st' x ty,

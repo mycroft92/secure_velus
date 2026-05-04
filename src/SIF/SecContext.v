@@ -4,12 +4,12 @@
    - it defines the state/error monad used by the generators,
    - it packages reusable lookup lemmas such as [find_env_consistent],
    - and it keeps [mmap]/[option_to_sec] extensionality out of the typing and
-     translation files.
+     semantic bridge files.
 
    In the final theorem flow, both the NLustre and STC typing developments use
    these lemmas to turn shared environment lookups into scoped typing facts,
-   and the cross-phase translation proof reuses the same lookup consistency
-   results instead of duplicating environment plumbing. *)
+   while the cross-phase translation and noninterference proofs reuse the same
+   lookup consistency results instead of duplicating environment plumbing. *)
 From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import SIF.SymTypes.

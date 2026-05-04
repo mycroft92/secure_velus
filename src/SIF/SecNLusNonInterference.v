@@ -1,18 +1,15 @@
-(* Indexed-semantics observation layer for NLustre noninterference.
+(* Final indexed-semantics noninterference theorem for NLustre.
 
-   This file starts the thesis-specific noninterference development on the
-   source language side.  The first step is to formalise the paper's
-   [(⊑ t)-projected Stream] notion directly over the indexed semantics used by
-   Vélus:
+   This file packages the completed source-language noninterference result.
+   The underlying observation layer is the paper's [(⊑ t)] projection, realized
+   here through generated local security environments, ground instantiations of
+   symbolic types, and the relational history predicates developed in
+   [SecNLusNonInterferenceSupport].
 
-   - raw program variables are observed through a generated local security env;
-   - a ground instantiation assigns lattice classes to generated security ids;
-   - projection keeps exactly those raw variables whose security class is at
-     most the observation level [t].
-
-   The later semantic theorems should be stated against the relational form
-   [history_low_eq], while the concrete projector [project_history_le_t] keeps a
-   paper-facing version of the same notion. *)
+   Relative to the papers, this file is the source-level theorem layer:
+   [node_noninterference_outputs_raw] is the proof-internal replay theorem, and
+   [node_noninterference_outputs] is the public indexed-semantics output
+   noninterference statement. *)
 
 From Coq Require Import List Sorting.Permutation Lia Wf_nat PArith.BinPos Arith.PeanoNat.
 Import List.ListNotations.
@@ -113,16 +110,10 @@ Module Type SECNLUSNONINTERFERENCE
 
         Relation to the paper:
         this is not part of the public statement of noninterference.  It is
-        the proof-internal theorem that should be derived from the paired
+        the proof-internal theorem derived from the paired
         [node_security] predicate and then used to recover the canonical
-        output theorem.
-
-        Current checkpoint:
-        the theorem is left admitted while the output-layer interface is being
-        rebuilt around an explicit call-clock prefix premise.  The current
-        evidence is that the internal theorem should stay two-clock, with a
-        separate [clock_eq_upto] hypothesis, rather than forcing the older
-        one-clock step theorem to absorb that generalization. *)
+        output theorem.  The explicit two-clock statement matches the reset-
+        aware recursive-call structure of the paper's indexed proof. *)
     Theorem node_noninterference_outputs_raw:
       forall n dlt_sig dlt_raw,
         node_security all_nodes G envs aux_names n dlt_sig dlt_raw ->
@@ -217,10 +208,9 @@ Module Type SECNLUSNONINTERFERENCE
 
         Relation to the paper:
         this is the indexed-semantics analogue of the paper's NLustre
-        noninterference theorem.  For now it is stated directly on the paired
-        [node_security] predicate, so the replay witness [dlt_raw] remains
-        explicit in the theorem statement while the proof architecture is
-        still being settled. *)
+        noninterference theorem.  It is stated on the paired
+        [node_security] predicate so the replay witness [dlt_raw] remains
+        available for the raw-constraint replay argument. *)
     Theorem node_noninterference_outputs:
       forall n ty_env nsig dlt_sig dlt_raw t bk H H',
         NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->

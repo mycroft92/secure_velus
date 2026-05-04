@@ -1,4 +1,8 @@
-(* This is going to be the lustre typing details*)
+(* Lustre-side symbolic typing experiments.
+
+   This file records an older Lustre-level typing layer.  It is not part of
+   the final NLustre/STC theorem chain, but it remains as a reference point
+   for the earlier single-phase formulation of symbolic security typing. *)
 From Velus Require Import Common.
 From Velus Require Import Ident.
 From Velus Require Import Operators.
@@ -6,13 +10,9 @@ From Velus Require Import Clocks.
 From Velus Require Import Lustre.
 From Velus Require Import CoindStreams IndexedStreams.
 From Velus Require Import Environment.
-(* Imports from VELUS*)
-
-
 From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF.SIFSignature.
-(* Fixpoint and wt_exp definitions*)
 Module Type SEC_LUSTRE_TYPING
     (Import Ids   : IDS)
     (Import Op    : OPERATORS)

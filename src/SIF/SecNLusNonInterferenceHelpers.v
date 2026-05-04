@@ -1,18 +1,10 @@
-(* Indexed-semantics observation layer for NLustre noninterference.
+(* Node-local helper lemmas for NLustre indexed noninterference.
 
-   This file starts the thesis-specific noninterference development on the
-   source language side.  The first step is to formalise the paper's
-   [(⊑ t)-projected Stream] notion directly over the indexed semantics used by
-   Vélus:
-
-   - raw program variables are observed through a generated local security env;
-   - a ground instantiation assigns lattice classes to generated security ids;
-   - projection keeps exactly those raw variables whose security class is at
-     most the observation level [t].
-
-   The later semantic theorems should be stated against the relational form
-   [history_low_eq], while the concrete projector [project_history_le_t] keeps a
-   paper-facing version of the same notion. *)
+   This file supplies the replay and step-support lemmas that sit between the
+   observation layer in [SecNLusNonInterferenceSupport] and the final step
+   theorems in [SecNLusNonInterferenceClockedStep].  Relative to the papers,
+   these are the local semantic bridges used inside the proof of the node-level
+   indexed noninterference theorem. *)
 
 From Coq Require Import List Sorting.Permutation Lia Wf_nat PArith.BinPos Arith.PeanoNat.
 Import List.ListNotations.
@@ -274,7 +266,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
           [SecT.agree_on (signature_scope sig) dlt dlt_raw] and
           [SecT.listSatisfiable dlt_raw raw].
 
-        So this lemma is precisely what lets the later proof move from the
+        So this lemma is precisely what lets the proof move from the
         stored simplified signature back to the unsimplified per-equation
         constraints without losing agreement on the externally visible
         interface. *)
@@ -485,7 +477,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         typing stores all raw constraints in one concatenated list.  This
         lemma is the bookkeeping step that recovers the exact sublist produced
         by one equation. *)
-        (*Move this to SecNLusTyping.v later after proofs are done*)
     Lemma generate_eqns_constraints_member:
       forall ty_env clk_type rst_type eqs raw st st' eq,
         In eq eqs ->
@@ -1375,7 +1366,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         belongs to the current node interface of defined variables.  The
         recursive call proof uses this helper to reclassify one chosen caller
         output type as coming from the current node outputs or locals, which
-        is exactly the scope later shown fresh from the callee signature. *)
+        is exactly the scope shown fresh from the callee signature. *)
     Lemma defined_var_type_in_out_or_locals:
       forall n ty_env out locals x ty,
         Env.find x ty_env = Some ty ->
@@ -1585,7 +1576,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         the node-scoped naming pass only uses the global state when it
         allocates fresh security identifiers inside one node-local
         environment.  Inserting that finished local env into the outer
-        node-indexed table is pure bookkeeping.  The later cross-node
+        node-indexed table is pure bookkeeping.  The cross-node
         separation proof relies on this to compare the numeric ranges of two
         generated node scopes precisely. *)
     Lemma fresh_insert_node_env_state:

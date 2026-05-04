@@ -8,9 +8,9 @@
    - package them into source signatures through
      [generate_node_sig_scoped_env]/[generate_all_signatures_scoped_env].
 
-   The final lookup theorem does not use this file directly.  Instead,
-   [SecNLusTypingCorrectness] strengthens these generation theorems with the
-   source-local facts needed by [SecNLusStcTranslation]. *)
+   These generated signatures are refined by [SecNLusTypingCorrectness] and
+   then used both by [SecNLusStcTranslation] and by the raw-constraint replay
+   lemmas in the indexed noninterference proof. *)
 
 From Velus Require Import Common.
 From Velus Require Import SecLattice.
@@ -73,8 +73,8 @@ Module Type SECNLUSTYPING
         Relative to the paper's reset-aware noninterference route, the local
         NLustre equations are treated as implicitly controlled by the node
         reset level.  Calls already thread reset into the callee signature;
-        this strengthens the simple source equations so the later proof does
-        not have to recover reset dependence semantically. *)
+        this strengthens the simple source equations so the semantic proofs do
+        not have to recover reset dependence separately. *)
     Definition generate_eqn_constraint (e: equation): Sec (list constraint) :=
       match e with
       | EqDef x ck cexp  =>
@@ -121,7 +121,7 @@ Module Type SECNLUSTYPING
 
   (** Structural well-formedness of raw NLustre constraints.
 
-      This is the source-side fact needed later by
+      This is the source-side fact consumed by
       [SecTypes.simplify_complete].  The theorem is stated in two layers:
 
       - a shape theorem for one equation, saying that its generated
@@ -137,8 +137,8 @@ Module Type SECNLUSTYPING
       Proof-flow note:
       - [generate_eqn_constraint_shape] handles one equation;
       - [generate_eqns_constraints_shape] lifts it to an equation list;
-      - the node-level theorems package the raw NLustre side used later by
-        [SecNLusStcTranslation].
+      - the node-level theorems package the raw NLustre side used by
+        [SecNLusStcTranslation] and by the noninterference replay lemmas.
 
       Relative to the paper, this section is the source-side structural
       support for the preservation theorem: it shows that raw generated
@@ -163,7 +163,7 @@ Module Type SECNLUSTYPING
 
   (** Scopedness of the expression/clock type assigners.
 
-      These lemmas are the local “frontend” side of the later signature
+      These lemmas are the local “frontend” side of the signature
       scopedness theorem: whenever all free source variables are mapped inside
       a chosen symbolic scope, the symbolic type computed by [assign_*_type]
       also stays inside that scope. *)
@@ -942,8 +942,8 @@ Module Type SECNLUSTYPING
 
     (** Node-level raw well-formedness.
 
-        This is the NLustre well-formedness fact used later by the translation
-        proof.  The crucial source-side premise is not an ad hoc SIF property:
+        This is the NLustre well-formedness fact used by the translation and
+        replay proofs.  The crucial source-side premise is not an ad hoc SIF property:
         it is the standard NLustre invariant [NoDup_var_defined_n_eqs], which
         follows from the node record field [n_defd].  In other words, once the
         call-instantiation layer is known to preserve the shape of callee
@@ -960,8 +960,10 @@ Module Type SECNLUSTYPING
       apply NoDup_var_defined_n_eqs.
     Qed.
 
-    (* Legacy self-contained signature generation, kept for comparison with the
-       newer environment-driven formulation below. *)
+    (* Standalone signature generation over one flat environment.
+       The node-scoped interface below is the form used by the final theorem
+       stack, but this direct generator remains useful as a reference
+       specification. *)
     Definition generate_node_signature (n: node): res signature :=
       match  (do (env_in,  inp)  <- insert_vars (List.map fst (n.(n_in))) (Env.empty _);
               do (env_out, out)  <- insert_vars (List.map fst n.(n_out)) env_in;
@@ -1003,7 +1005,7 @@ Module Type SECNLUSTYPING
                 s_constraints := constraints|}
       end.
 
-      (** Node-scoped migration entry point.
+      (** Node-scoped signature generation entry point.
 
           The shared naming layer now supports one outer environment keyed by
           node name, with one local security environment per node.  This helper
@@ -1036,7 +1038,7 @@ Module Type SECNLUSTYPING
              scope, yielding exactly [signature_scoped].
 
           This theorem is the node-typing counterpart of the bridge theorem
-          later used by the translation-preservation file. *)
+          used by the translation-preservation file. *)
       Theorem generate_node_sig_scoped:
         forall P n env aux_names sig,
           secglobal_scoped G ->
@@ -1197,7 +1199,7 @@ Module Type SECNLUSTYPING
         The node theorem [generate_node_sig_scoped] is the paper-facing local
         result: one generated NLustre signature only mentions its visible
         interface when its source node is well clocked.  The theorem below is
-        the list-level lifting used later by the translation-preservation
+        the list-level lifting used by the translation-preservation
         development.
 
         Proof flow:

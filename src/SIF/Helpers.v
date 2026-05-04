@@ -1,3 +1,8 @@
+(* Generic list/positivity helper lemmas for the SIF development.
+
+   These facts are independent of any particular source or target language.
+   The symbolic-type utilities in [SymTypes], [SimpleListTypes], and the older
+   Lustre-side experiments reuse them as small proof components. *)
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.
 From Coq Require Import Lia.

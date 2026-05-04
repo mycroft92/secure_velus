@@ -1,3 +1,9 @@
+(* Canonical symbolic security types and constraints.
+
+   This file provides the finalized simple-list representation used throughout
+   the SIF development.  It contains the core datatypes together with the
+   list-normalization utilities that keep symbolic types and constraints in the
+   canonical form consumed by the typing and proof layers. *)
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.
 (*From Coq Require Import Logic.Classical_Prop.*)
@@ -6,10 +12,6 @@ From Velus Require Import SIF.Helpers.
 From Coq Require Import Lia.
 Import ListNotations.
 From Coq Require Import Recdef.
-(* Require Import Coq.Program.Equality. *)
-(*Decoupling the symbolic types from the lattice in this module*)
-(*This is finalized version of symbolic simple types for NLustre and beyond.
- It also implements sorting algorithms for simple types and constraints.*)
 Definition ST := list ident.
 Definition constraint := (ST*ST)%type.
 

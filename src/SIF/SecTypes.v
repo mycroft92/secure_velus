@@ -1,15 +1,17 @@
 (* Generic symbolic-type and lattice-mapping metatheory.
 
-   This file is the common lattice-mapping substrate beneath the signature layer and
-   the NLustre/STC translation proof.  It owns:
+   This file is the common semantic substrate beneath the signature layer, the
+   NLustre/STC translation theorem, and the indexed noninterference proofs.  It
+   owns:
    - scopedness notions for symbolic constraints,
    - agreement of lattice mappings on a chosen scope,
    - weak preservation [preserves_on],
-   - and the generic update lemmas used later by call instantiation.
+   - and the generic update lemmas reused by call instantiation and replay.
 
-   The final lookup theorem in [SecNLusStcTranslation] depends on this file
-   through [preserves_on_concat_scoped], [listSatisfiable_ext], and the update
-   agreement lemmas reused by [SIFSignature]. *)
+   The cross-phase preservation results in [SecNLusStcTranslation] and the
+   signature reasoning in [SIFSignature] both depend on this file through
+   [preserves_on_concat_scoped], [listSatisfiable_ext], and the valuation
+   agreement lemmas. *)
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.
 (*From Coq Require Import Logic.Classical_Prop.*)
@@ -1113,11 +1115,10 @@ Module Type SECTYPES(Import Lat: Lattice).
         * eapply IH with (cns' := subAll cns d v); eauto.
   Qed.
 
-  (*Substitutes a given ident d by searching in the list of constraints: cns for (v,[d])*)
-
-
-  (*We currently don't have wellformedness baked into simplify but subST and subALL enforce them*)
-  (*We might need a seperate result that the constraints generated from NL are always wellformed*)
+  (* [simplify] operates by replaying substitutions found in the constraint
+     list itself.  Its correctness and completeness theorems therefore take
+     explicit [wf_constraints] premises rather than baking well-formedness
+     into the function definition. *)
   Inductive simplifyRel  : list constraint -> list ident ->  list constraint -> Prop :=
   | baseCase  : forall cns,
     simplifyRel cns [] cns
@@ -1258,7 +1259,7 @@ Module Type SECTYPES(Import Lat: Lattice).
 
       These lemmas belong next to [findST], [subST], [subAll], and [simplify]:
       they are independent of any particular source or target language and are
-      later reused both by the signature-instantiation layer and by the
+      reused both by the signature-instantiation layer and by the
       NLustre/STC translation proof. *)
 
   Definition constraint_scope (c: constraint) : list ident :=
@@ -1274,8 +1275,8 @@ Module Type SECTYPES(Import Lat: Lattice).
     forall x, In x st -> In x scope.
 
   (* Agreement of two lattice mappings on a chosen scope.  This is the generic
-     relation underlying the later translation-preservation theorems,
-     so it belongs with the symbolic-type metatheory rather than any specific
+     relation underlying the translation-preservation and replay theorems, so
+     it belongs with the symbolic-type metatheory rather than any specific
      source/target phase bridge. *)
   Definition agree_on (xs: list ident) (dlt1 dlt2: ident -> Lat.t) : Prop :=
     forall x, In x xs -> dlt1 x = dlt2 x.

@@ -1,4 +1,8 @@
-(*Adapted from David Picharde's work*)
+(* Lattice interface and basic lemmas for symbolic security reasoning.
+
+   This file adapts the lattice presentation used throughout the SIF
+   development.  It is the abstract order-theoretic layer shared by symbolic
+   types, signatures, and the semantic noninterference proofs. *)
 
 Require Export List.
 Require Inclusion.
@@ -8,13 +12,14 @@ Require Inverse_Image.
 Module Type Lattice.
 
   Parameter t : Set.
-  (*Probably I can replace these with the Eq typeclass, will be much simpler*)
+  (* Equality is carried explicitly so the rest of the development can stay
+     parametric over the concrete lattice implementation. *)
   Parameter eq : t -> t -> Prop.
   Parameter eqb : t -> t -> bool.
   Parameter eq_refl : forall x : t, eq x x.
   Parameter eqb_refl : forall x y, eqb x y = true <-> eq x y.
   Parameter eq_no_red: forall x y, eq x y <-> x = y.
-  (*This is needed for proof in cexp.*)
+  (* This symmetry axiom is used when reasoning about clocked expressions. *)
   Parameter eq_sym : forall x y : t, eq x y -> eq y x.
   Parameter eq_trans : forall x y z : t, eq x y -> eq y z -> eq x z.
   Parameter eq_dec : forall x y : t, {eq x y}+{~ eq x y}.

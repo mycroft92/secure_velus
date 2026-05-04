@@ -1,7 +1,8 @@
 (* Source-local correctness facts for generated NLustre signatures.
 
-   This file owns the NLustre facts that are needed later by the
-   cross-phase translation proof but do not themselves mention STC:
+   This file owns the NLustre facts used by the cross-phase translation proof
+   and the raw-constraint replay lemmas, but which do not themselves mention
+   STC:
    - naming/range/injectivity consequences of [NameInterface],
    - generated source-signature structural goodness,
    - duplicate-freedom of the visible source interface scope,
@@ -112,7 +113,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
 
   (** Source caller-scope freshness for one generated node environment.
 
-      This packages the exact freshness condition used later in the
+      This packages the exact freshness condition used in the
       translation-preservation head step: once the current node's visible
       source scope has been recovered from the shared naming environment, every
       signature already present in the source accumulator must stay disjoint
@@ -583,7 +584,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
 
   (** Public inversion view for generated source signatures.
 
-      This is the source-local generator shape used by later preservation
+      This is the source-local generator shape used by the preservation
       proofs.  It is just the reusable exported form of
       [generate_node_sig_inv_local]. *)
   Corollary generate_node_sig_inv:
@@ -612,7 +613,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
       Any identifier that appears in the visible scope of a generated source
       signature comes from a concrete key of the generating node: either one
       of its inputs/outputs or one of the node-specific clock/reset keys
-      stored in [aux_names].  This is the source-local ingredient later used
+      stored in [aux_names].  This is the source-local ingredient used
       by translation to derive generated call freshness from the naming
       discipline. *)
   Lemma generated_node_sig_scope_key:
@@ -790,7 +791,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
 
   (** Generated source signatures are structurally good.
 
-      Beyond scopedness, later call-preservation arguments need the stronger
+      Beyond scopedness, call-preservation arguments need the stronger
       fact that a generated NLustre signature keeps exactly one visible
       defining constraint per output after simplifying away locals.  This is
       the source-side structural invariant behind the final call bridge. *)
@@ -1026,7 +1027,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
       known to mention its reset field in every output-defining constraint,
       any low caller-visible output slot of the instantiated call forces the
       instantiated reset argument low as well.  This is the typing-side fact
-      later used by the indexed noninterference proof to align reset-control
+      used by the indexed noninterference proof to align reset-control
       prefixes in reset calls. *)
   Lemma call_output_low_implies_reset_low:
     forall sig inptyp ckty rstty outtyp cns st st'
@@ -1417,7 +1418,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
       recovered; once that env is projected out of the outer node-indexed
       table, the underlying NLustre typing proof is the same as for the older
       flat shared env.  This wrapper is the source-side correctness bridge used
-      later by the translation preservation proof. *)
+      by the translation preservation proof. *)
   Theorem generate_node_sig_scoped_env_scoped:
     forall all_nodes G P n envs aux_names sig,
       generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
@@ -1442,7 +1443,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
   Qed.
 
   (** Structural side conditions for replaying [simplify_complete] on generated
-      NLustre signatures.  This packages exactly the two source-side facts later
+      NLustre signatures.  This packages exactly the two source-side facts
       needed by the translation proof: raw well-formedness and disjointness of
       eliminated locals from the visible signature scope. *)
   Definition generated_node_simplify_ready
@@ -2124,7 +2125,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
       once a callee signature stores its reset field in every visible
       constraint lhs, the call instantiation pipeline must preserve that fact
       syntactically when substituting actual inputs/clock/reset and caller
-      outputs.  The reset-aware NLustre call proof later applies this with the
+      outputs.  The reset-aware NLustre call proof applies this with the
       caller's current reset type as the instantiated reset argument. *)
   Lemma generate_constraints_mentions_reset:
     forall sig inp clk rst out cns st st' ty,

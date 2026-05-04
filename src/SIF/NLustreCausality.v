@@ -63,7 +63,7 @@ Module Type NLUSTRECAUSALITY
 
       Relation to the paper:
       this is the acyclic dependency-graph view of the source node that the
-      later indexed noninterference theorem assumes.  It is the minimal
+      indexed noninterference theorem assumes.  It is the minimal
       semantic-side restriction needed to turn local dependency preservation
       into a node-level induction. *)
   Definition nl_graph_of_eqs {v a}

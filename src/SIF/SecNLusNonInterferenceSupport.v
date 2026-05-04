@@ -1,18 +1,9 @@
-(* Indexed-semantics observation layer for NLustre noninterference.
+(* Observation and replay layer for NLustre indexed noninterference.
 
-   This file starts the thesis-specific noninterference development on the
-   source language side.  The first step is to formalise the paper's
-   [(⊑ t)-projected Stream] notion directly over the indexed semantics used by
-   Vélus:
-
-   - raw program variables are observed through a generated local security env;
-   - a ground instantiation assigns lattice classes to generated security ids;
-   - projection keeps exactly those raw variables whose security class is at
-     most the observation level [t].
-
-   The later semantic theorems should be stated against the relational form
-   [history_low_eq], while the concrete projector [project_history_le_t] keeps a
-   paper-facing version of the same notion. *)
+   This file formalizes the paper's [(⊑ t)] low-observation view directly over
+   Velus's indexed NLustre semantics.  It introduces the relational history
+   notions used by the final theorem stack and proves the semantic switching,
+   masking, and range lemmas required by the raw-constraint replay argument. *)
 
 From Coq Require Import List Sorting.Permutation Lia Wf_nat PArith.BinPos Arith.PeanoNat.
 Import List.ListNotations.
@@ -274,7 +265,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
 
     (** Relational low-equivalence for indexed histories.
 
-        The later noninterference theorem should quantify over this relation,
+        The noninterference theorem quantifies over this relation,
         since the semantic switching lemmas are pointwise over instants. *)
     Definition history_low_eq (X : list ident) (H H' : history) : Prop :=
       forall k,
@@ -400,7 +391,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
     Qed.
 
     (** Pointwise lifting from equality of projected observations back to the
-        relational low-equivalence used in later proofs.
+        relational low-equivalence used throughout the proof stack.
 
         Relation to the paper:
         this shows that the relational and concrete projector views of
@@ -1222,7 +1213,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
     (** The active reset segment exposes the underlying list unchanged.
 
         Relation to the paper:
-        reset calls reason on one masked callee run.  At the currently active
+        reset calls reason on one masked callee run.  At the active
         reset segment, the mask is transparent, so tuple-position arguments
         can be pushed back to the original actual/output list. *)
     Lemma nth_error_mask_count_self:
@@ -2103,7 +2094,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
 
         Relation to the paper:
         reset calls introduce one explicit source variable whose semantic value
-        stream is later converted to a Boolean reset stream. This lemma is the
+        stream is converted to a Boolean reset stream. This lemma is the
         first step in that bridge: if the raw variable is low and the two
         histories agree on it up to a prefix, then the semantic source streams
         selected by [sem_var] are equal on that prefix. *)
@@ -2364,7 +2355,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         Relation to the paper:
         recursive call proofs need to know that the current caller's symbolic
         identifiers live strictly below the naming state reached after
-        generating that caller environment.  Combined later with lower bounds
+        generating that caller environment.  Combined with lower bounds
         for another node, this gives the required cross-node freshness. *)
     Lemma node_scope_upper_bounded_from_local_env:
       forall n st env rec st'

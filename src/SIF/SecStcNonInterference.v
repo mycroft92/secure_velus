@@ -32,10 +32,10 @@ From compcert Require Import common.Errors.
 (** * Semantic STC noninterference through translation
 
     Relation to the paper:
-    this file is the target-side semantic layer of the thesis result.  We do
+    this file is the target-side semantic layer of the final development.  We do
     not reprove a standalone intrinsic STC noninterference theorem for
     arbitrary target runs.  Instead, we package the weaker property actually
-    needed by the thesis:
+    needed by the translation-based result:
 
     - an STC behavior is observable only when it arises from translating an
       NLustre node;
