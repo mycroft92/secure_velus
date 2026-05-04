@@ -2169,6 +2169,196 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         reflexivity.
     Qed.
 
+    (** Classify free call-clock variables as inputs or defined variables.
+
+        Relation to the paper:
+        recursive call noninterference needs agreement on each free variable of
+        the source call clock.  This is the clock-side companion of
+        [free_exp_in_inputs_or_defined]: every such variable comes either from
+        the node inputs or from a variable already defined by the node
+        equations. *)
+    Lemma clock_var_in_inputs_or_defined:
+      forall P n xs ck f exps r y,
+        Clo.wc_node P n ->
+        In (EqApp xs ck f exps r) n.(n_eqs) ->
+        Is_free_in_clock y ck ->
+        In y (map fst n.(n_in)) \/ In y (vars_defined n.(n_eqs)).
+    Proof.
+      intros P n xs ck f exps r y
+             (Hwc_in & Hwc_io & Hwc_all & Hwc_eqs)
+             Heqin Hfree.
+      eapply Forall_forall in Hwc_eqs; [|exact Heqin].
+      assert (Hy_mem : InMembers y (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
+      {
+        eapply SECNLUSTYPING.wc_call_clock_free_in_vars; eauto.
+      }
+      rewrite InMembers_idck in Hy_mem.
+      rewrite InMembers_app in Hy_mem.
+      destruct Hy_mem as [Hin|Hrest].
+      - left.
+        apply InMembers_In in Hin as (? & Hin).
+        now apply in_map with (f := fst) in Hin.
+      - right.
+        rewrite InMembers_app in Hrest.
+        destruct Hrest as [Hvars|Hout].
+        + apply InMembers_In in Hvars as (? & Hvars).
+          apply in_map with (f := fst) in Hvars.
+          assert (Hin_vo : In y (map fst (n.(n_vars) ++ n.(n_out)))).
+          { rewrite map_app. apply in_or_app. now left. }
+          eapply Permutation_in; [apply Permutation_sym, n.(n_defd)|exact Hin_vo].
+        + apply InMembers_In in Hout as (? & Hout).
+          apply in_map with (f := fst) in Hout.
+          assert (Hin_vo : In y (map fst (n.(n_vars) ++ n.(n_out)))).
+          { rewrite map_app. apply in_or_app. now right. }
+          eapply Permutation_in; [apply Permutation_sym, n.(n_defd)|exact Hin_vo].
+    Qed.
+
+    (** Transport free call-clock variables across low-equivalent prefixes.
+
+        Relation to the paper:
+        after classifying a free call-clock variable, the call-clock alignment
+        proof still needs its concrete value equality on the observed prefix.
+        This is the direct prefix-equality bridge from the caller-side low
+        hypotheses. *)
+    Lemma free_clock_low_eq_prefix_from_inputs_or_defined:
+      forall P n ty_env dlt t H H' xs ck f exps r y k,
+        Clo.wc_node P n ->
+        In (EqApp xs ck f exps r) n.(n_eqs) ->
+        Is_free_in_clock y ck ->
+        low_var ty_env dlt t y ->
+        history_low_eq_upto ty_env dlt t (map fst n.(n_in)) H H' (S k) ->
+        history_low_eq_upto ty_env dlt t (vars_defined n.(n_eqs)) H H' k ->
+        forall j, j < S k -> Env.find y (H j) = Env.find y (H' j).
+    Proof.
+      intros P n ty_env dlt t H H' xs ck f exps r y k
+             Hwcnode Heqin Hfree Hlowy Hlowin Hprev j Hj.
+      destruct (clock_var_in_inputs_or_defined P n xs ck f exps r y Hwcnode Heqin Hfree)
+        as [Hin|Hdef].
+      - eapply Hlowin; eauto.
+        lia.
+      - eapply Hprev; eauto.
+        lia.
+    Qed.
+
+    (** Every free call-clock variable contributes its environment type to the
+        assigned symbolic clock type.
+
+        Relation to the paper:
+        typing proves low-ness of the instantiated symbolic call clock.  The NI
+        proof still needs to push that fact back to source clock variables, and
+        this lemma is the bookkeeping step that recovers membership of each
+        free source-clock variable inside the assigned symbolic clock type. *)
+    Lemma assign_clk_type_free_var_in :
+      forall env base ck ckty z ty,
+        SECCETYPING.assign_clk_type env base ck = Some ckty ->
+        Is_free_in_clock z ck ->
+        Env.find z env = Some ty ->
+        In ty ckty.
+    Proof.
+      intros env base ck.
+      induction ck as [|ck IH x b]; intros ckty z ty Hassign Hfree Hfind.
+      - inversion Hfree.
+      - simpl in Hassign.
+        destruct (SECCETYPING.assign_clk_type env base ck) as [ckty'|] eqn:Hck;
+          try discriminate.
+        destruct (Env.find x env) as [xty|] eqn:Hfindx; try discriminate.
+        inversion Hassign; subst ckty; clear Hassign.
+        inversion Hfree; subst.
+        + rewrite Hfindx in Hfind.
+          inversion Hfind; subst ty.
+          eapply in_merge_right.
+          simpl. now left.
+        + eapply in_merge_left.
+          eapply IH; eauto.
+    Qed.
+
+    (** Transport semantic clock equality from free-variable equality.
+
+        Relation to the paper:
+        the recursive call theorem is indexed by the callee base clock.  This
+        lemma turns equality of the ambient base clocks and of every free
+        source clock variable into equality of the derived semantic clocks on
+        the observed prefix. *)
+    Lemma sem_clock_eq_upto_from_env_eq :
+      forall bk bk' H H' ck bs bs' k,
+        sem_clock bk H ck bs ->
+        sem_clock bk' H' ck bs' ->
+        (forall j, j <= k -> bk j = bk' j) ->
+        (forall z, Is_free_in_clock z ck -> forall j, j <= k -> Env.find z (H j) = Env.find z (H' j)) ->
+        forall j, j <= k -> bs j = bs' j.
+    Proof.
+      intros bk bk' H H' ck bs bs' k Hsem Hsem' Hbk Heqenv j Hj.
+      specialize (Hsem j).
+      specialize (Hsem' j).
+      rewrite <- (Hbk j Hj) in Hsem'.
+      assert (Hswitch : sem_clock_instant (bk j) (H j) ck (bs' j)).
+      {
+        pose proof
+          (sem_clock_instant_switch_env (bk j) (H j) (H' j) ck (bs' j))
+          as Hswitch_iff.
+        specialize (Hswitch_iff (fun z Hz => Heqenv z Hz j Hj)).
+        destruct Hswitch_iff as [_ Hback].
+        exact (Hback Hsem').
+      }
+      eapply sem_clock_instant_det; eauto.
+    Qed.
+
+    (** Combine reset-count equality and unmasked call-clock equality into
+        equality of masked call clocks.
+
+        Relation to the paper:
+        resettable recursive calls execute only on the active reset segment.
+        Outside that segment both masked clocks are absent; inside it they
+        agree because the underlying unmasked call clocks already agree on the
+        observed prefix. *)
+    Lemma clock_of_mask_eq_upto :
+      forall ls ls' rs rs' kr kr' k,
+        kr = count rs k ->
+        kr' = count rs' k ->
+        (forall j, j <= k -> count rs j = count rs' j) ->
+        (forall j, j <= k -> clock_of ls j = clock_of ls' j) ->
+        forall j, j <= k ->
+          clock_of (mask kr rs ls) j = clock_of (mask kr' rs' ls') j.
+    Proof.
+      intros ls ls' rs rs' kr kr' k Hkr Hkr' Hcount Hclk j Hj.
+      unfold clock_of.
+      destruct (Nat.eq_dec (count rs j) kr) as [Hactive|Hopaque].
+      - assert (Hactive' : count rs' j = kr').
+        {
+          specialize (Hcount j Hj) as Hcntj.
+          specialize (Hcount k (le_n k)) as Hcntk.
+          rewrite Hkr in Hactive.
+          rewrite Hkr'.
+          rewrite <- Hcntk.
+          rewrite <- Hcntj.
+          exact Hactive.
+        }
+        unfold mask.
+        assert ((kr =? count rs j) = true) as ->.
+        { apply Nat.eqb_eq. symmetry. exact Hactive. }
+        assert ((kr' =? count rs' j) = true) as ->.
+        { apply Nat.eqb_eq. symmetry. exact Hactive'. }
+        exact (Hclk j Hj).
+      - assert (Hopaque' : count rs' j <> kr').
+        {
+          intro Heq.
+          apply Hopaque.
+          specialize (Hcount j Hj) as Hcntj.
+          specialize (Hcount k (le_n k)) as Hcntk.
+          rewrite Hcntj.
+          rewrite Heq.
+          rewrite Hkr'.
+          rewrite <- Hcntk.
+          symmetry.
+          exact Hkr.
+        }
+        rewrite (mask_opaque ls kr rs j Hopaque).
+        rewrite (mask_opaque ls' kr' rs' j Hopaque').
+        rewrite (proj2 (clock_of_instant_false (all_absent (ls 0))) (@all_absent_spec value (ls 0))).
+        rewrite (proj2 (clock_of_instant_false (all_absent (ls' 0))) (@all_absent_spec value (ls' 0))).
+        reflexivity.
+    Qed.
+
     (** Upper bounds for one generated caller scope.
 
         Relation to the paper:

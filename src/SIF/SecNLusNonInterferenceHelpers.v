@@ -154,6 +154,25 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       exact (count_eq_upto rs rs' k Hrs_eq j Hj).
     Qed.
 
+    (** Base-clock equality on a finite prefix.
+
+        Relation to the paper:
+        the public theorem ultimately compares two executions under the same
+        ambient clock, but recursive call proofs run under derived clocks.  We
+        keep that extra proof-internal alignment premise explicit at the helper
+        layer so the older local step theorem can consume it directly. *)
+    Definition clock_eq_upto
+      (bk bk' : cstream) (k : nat) : Prop :=
+      forall j, j <= k -> bk j = bk' j.
+
+    Lemma clock_eq_upto_refl :
+      forall bk k,
+        clock_eq_upto bk bk k.
+    Proof.
+      intros bk k j Hj.
+      reflexivity.
+    Qed.
+
     (** Agreement on a symbolic scope is symmetric.
 
         Relation to the paper:
@@ -2236,6 +2255,48 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         history_low_eq_upto ty_env dlt_raw t (map fst nd.(n_in)) H H' k ->
         history_low_eq_upto ty_env dlt_raw t (map fst nd.(n_out)) H H' k.
 
+    (** Internal raw output specification with explicit clock alignment.
+
+        Relation to the paper:
+        recursive call proofs compare two executions of the callee under two
+        derived clocks.  The semantic content is the same as
+        [node_outputs_raw_spec], but the extra [clock_eq_upto] premise records
+        the call-clock alignment explicitly instead of hiding it in the outer
+        theorem. *)
+    Definition node_outputs_raw_spec_clocked
+      (nd : node) (dlt_sig dlt_raw : ground_instantiation) : Prop :=
+      forall k ty_env sig t bk bk' H H'
+             clk_id rst_id clk_type rst_type inp out locals raw st_n,
+        NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+        Ordered_nodes all_nodes ->
+        Clo.wc_global all_nodes ->
+        SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G ->
+        NLCaus.nl_global_causal all_nodes ->
+        find_node nd.(n_name) all_nodes = Some nd ->
+        find_node_env nd.(n_name) envs = Some ty_env ->
+        SIG.find_signature nd.(n_name) G = Some sig ->
+        SECNLUSTYPING.generate_node_sig_scoped_env G nd envs aux_names = OK sig ->
+        get_node_aux nd.(n_name) aux_names = Some (clk_id, rst_id) ->
+        Env.find clk_id ty_env = Some clk_type ->
+        Env.find rst_id ty_env = Some rst_type ->
+        get_mappings_from_node nd.(n_in) ty_env = Some inp ->
+        get_mappings_from_node nd.(n_out) ty_env = Some out ->
+        get_mappings_from_node nd.(n_vars) ty_env = Some locals ->
+        generate_eqns_constraints G ty_env clk_type rst_type nd.(n_eqs) init_state = OK (raw, st_n) ->
+        sig = {| s_name := nd.(n_name);
+                 s_in := inp;
+                 s_out := out;
+                 s_reset := rst_type;
+                 s_clk := clk_type;
+                 s_constraints := SymTypes.simplify raw locals |} ->
+        node_security all_nodes G envs aux_names nd dlt_sig dlt_raw ->
+        SecT.listSatisfiable dlt_raw raw ->
+        Forall (Indexed.sem_equation all_nodes bk H) nd.(n_eqs) ->
+        Forall (Indexed.sem_equation all_nodes bk' H') nd.(n_eqs) ->
+        clock_eq_upto bk bk' k ->
+        history_low_eq_upto ty_env dlt_raw t (map fst nd.(n_in)) H H' k ->
+        history_low_eq_upto ty_env dlt_raw t (map fst nd.(n_out)) H H' k.
+
     Lemma succ_eqapp_nonreset_inputs_low_eq_upto:
       forall P n ty_env ty_env_c dlt_raw obs
              H H' Hc Hc' bk
@@ -2651,7 +2712,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
               (fun e => SC.option_to_sec (SECCETYPING.assign_exp_type ty_env e))
               exps st_clk = OK (inptyp, st_inp) ->
             get_mappings xs ty_env = Some outtyp ->
-            node_outputs_raw_spec callee
+            node_outputs_raw_spec_clocked callee
               (SIGPROOFS.inst_valuation dlt_sig callee_sig inptyp ckty
                  [sig.(s_reset)] outtyp)
               (SIGPROOFS.inst_valuation dlt_raw callee_sig inptyp ckty
@@ -2674,7 +2735,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
             get_mappings xs ty_env = Some outtyp ->
             forall k_reset,
               reset_control_low_eq_upto ty_env dlt_raw t r H H' k_reset ->
-            node_outputs_raw_spec callee
+            node_outputs_raw_spec_clocked callee
               (SIGPROOFS.inst_valuation dlt_sig callee_sig inptyp ckty
                  ([rty] ⊔ rstty) outtyp)
               (SIGPROOFS.inst_valuation dlt_raw callee_sig inptyp ckty
@@ -3101,6 +3162,127 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                       inptyp0 outtyp0 dlt_raw [rst_type] ckty0 t
                       bk H H' Hc Hc' exps ls ls' 0 ii y ity e ety); eauto.
                }
+               assert (HgoodG : SIG.secglobal_good G).
+               {
+                 eapply SECNLUSTYPINGCORRECTNESS.generate_all_source_signatures_good_scoped_env.
+                 - exact Henvsgen.
+                 - exact Hwcglob.
+                 - exact Hallsig.
+               }
+               assert (Hsiggood_c : SIG.signature_good callee_sig_cur).
+               {
+                 eapply HgoodG.
+                 exact Hfindsigc.
+               }
+               assert
+                 (Hresetlhs_c :
+                    forall y lhs,
+                      findST callee_sig_cur.(s_constraints) y = Some lhs ->
+                      In callee_sig_cur.(s_reset) lhs).
+               {
+                 intros y lhs Hfindlhs.
+                 eapply
+                   (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_reset_scoped_env
+                      all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                 - exact Henvsgen.
+                 - exact Hwcglob.
+                 - exact Hallsig.
+                 - exact Hfindsigc.
+                 - exact Hfindlhs.
+               }
+               assert
+                 (Hclocklhs_c :
+                    forall y lhs,
+                      findST callee_sig_cur.(s_constraints) y = Some lhs ->
+                      In callee_sig_cur.(s_clk) lhs).
+               {
+                 intros y lhs Hfindlhs.
+                 eapply
+                   (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_clock_scoped_env
+                      all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                 - exact Henvsgen.
+                 - exact Hwcglob.
+                 - exact Hallsig.
+                 - exact Hfindsigc.
+                 - exact Hfindlhs.
+               }
+               assert (Hlowxty0 : dlt_raw xty0 ⊑ t).
+               {
+                 destruct Hlowx as (alpha & Hfindalpha & Halpha_low).
+                 rewrite Hfindx0 in Hfindalpha.
+                 inversion Hfindalpha; subst alpha.
+                 exact Halpha_low.
+               }
+               assert (Hi_out : i < length (s_out callee_sig_cur)).
+               {
+                 rewrite Hlen_out_c.
+                 apply nth_error_Some.
+                 rewrite Hnthout.
+                 discriminate.
+               }
+               destruct (nth_error (s_out callee_sig_cur) i) as [yty|] eqn:Hnthyty.
+               2:{
+                 apply nth_error_None in Hnthyty.
+                 lia.
+               }
+               assert (Hsatceq : SecT.listSatisfiable dlt_raw ceq).
+               {
+                 pose proof (listSatisfiable_app_middle dlt_raw pre ceq post)
+                   as Hmid.
+                 specialize (Hmid Hsatraw).
+                 exact Hmid.
+               }
+               assert (Hlow_ck : SecT.hm_ext dlt_raw ckty0 ⊑ t).
+               {
+                 eapply
+                   (SECNLUSTYPINGCORRECTNESS.call_output_low_implies_clock_low
+                      callee_sig_cur inptyp0 ckty0 [rst_type] outtyp0 ceq st_inp0 stceq
+                      dlt_raw t i yty xty0).
+                 - exact Hsiggood_c.
+                 - exact Hclocklhs_c.
+                 - exact Hfresh_call.
+                 - exact Hndscope_c.
+                 - exact Hlen_in_c.
+                 - exact Hlen_out_c.
+                 - exact Hcallc.
+                 - exact Hsatceq.
+                 - exact Hnthyty.
+                 - exact Hnthout.
+                 - exact Hlowxty0.
+               }
+               assert (Hclock_eq0 : clock_eq_upto (clock_of ls) (clock_of ls') 0).
+               {
+                 intros j Hj0.
+                 assert (Hjz : j = 0) by lia.
+                 subst j.
+                 eapply sem_clock_eq_upto_from_env_eq
+                   with (bk := bk) (bk' := bk) (H := H) (H' := H') (ck := ck).
+                 - exact Hsem_clock.
+                 - exact Hsem_clock'.
+                 - intros j0 Hj0'.
+                   reflexivity.
+                 - intros z Hz j1 Hj1.
+                   destruct (Hfree_clock_scope z Hz) as (ty0 & Hfindz & _).
+                   assert (Hlowz : low_var ty_env dlt_raw t z).
+                   {
+                     exists ty0.
+                     split; [exact Hfindz|].
+                     eapply order_trans.
+                     1:{ eapply SecT.hm_ext_list_in1.
+                         eapply assign_clk_type_free_var_in; eauto. }
+                     exact Hlow_ck.
+                   }
+                   assert (Hdep_xz :
+                             NLCaus.nl_depends_on_eq
+                               (EqApp (xh :: xt) ck callee.(n_name) exps None) x z).
+                   {
+                     split; [exact Hxdef|].
+                     apply freeAexps2.
+                     exact Hz.
+                   }
+                   exact (Hdeps z Hdep_xz Hlowz j1 Hj1).
+                 - exact Hj0.
+               }
                pose proof
                  (Hcallout
                     (xh :: xt) ck callee.(n_name) exps callee callee_sig_cur
@@ -3135,7 +3317,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                        Hfindcallee Hfindenv_c Hfindsigc Hsiggen_c
                        Haux_c Hclk_c Hrst_c Hinp_c Hout_c Hlocals_c Hraw_c
                        Hsigdef_cur Hsatsig_c Hagree_c Hsatraw_c Hcallsec_c Hresetsec_c)
-                    Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hlowin_c).
+                    Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hclock_eq0 Hlowin_c).
                pose proof
                  (get_mappings_from_node_eq _ _ _ _ Hout_c)
                  as Hout_c_eq.
@@ -3160,16 +3342,16 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                destruct
                  (get_mappings_nth_error_inv
                     (map fst callee.(n_out)) ty_env_c out_c i yo Hout_c_eq Hnthyo)
-                 as (yty & Hnthyty & Hfindyo).
+                 as (yty_out & Hnthyty_out & Hfindyo).
                assert (Hlowyo : low_var ty_env_c dlt_raw_c t yo).
                {
-                 exists yty.
+                 exists yty_out.
                  split; [exact Hfindyo|].
                  destruct Hlowx as (alpha & Hfindalpha & Halpha_low).
                  rewrite Hfindx0 in Hfindalpha.
                  inversion Hfindalpha; subst alpha; clear Hfindalpha.
-                 unfold callee_sig_cur in Hnthyty.
-                 simpl in Hnthyty.
+                 unfold callee_sig_cur in Hnthyty_out.
+                 simpl in Hnthyty_out.
                  destruct
                    (SecT.Forall2_nth_error_inv
                       _ _
@@ -3178,8 +3360,8 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                            [rst_type] outtyp0 v =
                          SIGPROOFS.inst_valuation dlt_raw callee_sig_cur inptyp0 ckty0
                            [rst_type] outtyp0 x)
-                      (s_out callee_sig_cur) outtyp0 i yty
-                      Hinst_out_eq Hnthyty)
+                      (s_out callee_sig_cur) outtyp0 i yty_out
+                      Hinst_out_eq Hnthyty_out)
                    as (xty' & Hnthxty' & Hinsteq).
                  rewrite Hnthout in Hnthxty'.
                  inversion Hnthxty'; subst xty'; clear Hnthxty'.
@@ -3610,8 +3792,181 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  {
                    split; [exact Hxdef|].
                    right. left. reflexivity.
-                 }
+                   }
                  exact (Hdeps r Hdep_xr Hlowr j0 Hj0).
+               }
+               assert (HgoodG : SIG.secglobal_good G).
+               {
+                 eapply SECNLUSTYPINGCORRECTNESS.generate_all_source_signatures_good_scoped_env.
+                 - exact Henvsgen.
+                 - exact Hwcglob.
+                 - exact Hallsig.
+               }
+               assert (Hsiggood_c : SIG.signature_good callee_sig_cur).
+               {
+                 eapply HgoodG.
+                 exact Hfindsigc.
+               }
+               assert
+                 (Hresetlhs_c :
+                    forall y lhs,
+                      findST callee_sig_cur.(s_constraints) y = Some lhs ->
+                      In callee_sig_cur.(s_reset) lhs).
+               {
+                 intros y lhs Hfindlhs.
+                 eapply
+                   (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_reset_scoped_env
+                      all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                 - exact Henvsgen.
+                 - exact Hwcglob.
+                 - exact Hallsig.
+                 - exact Hfindsigc.
+                 - exact Hfindlhs.
+               }
+               assert
+                 (Hclocklhs_c :
+                    forall y lhs,
+                      findST callee_sig_cur.(s_constraints) y = Some lhs ->
+                      In callee_sig_cur.(s_clk) lhs).
+               {
+                 intros y lhs Hfindlhs.
+                 eapply
+                   (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_clock_scoped_env
+                      all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                 - exact Henvsgen.
+                 - exact Hwcglob.
+                 - exact Hallsig.
+                 - exact Hfindsigc.
+                 - exact Hfindlhs.
+               }
+               assert (Hlowxty0 : dlt_raw xty0 ⊑ t).
+               {
+                 destruct Hlowx as (alpha & Hfindalpha & Halpha_low).
+                 rewrite Hfindx0 in Hfindalpha.
+                 inversion Hfindalpha; subst alpha.
+                 exact Halpha_low.
+               }
+               assert (Hi_out : i < length (s_out callee_sig_cur)).
+               {
+                 rewrite Hlen_out_c.
+                 apply nth_error_Some.
+                 rewrite Hnthout.
+                 discriminate.
+               }
+               destruct (nth_error (s_out callee_sig_cur) i) as [yty|] eqn:Hnthyty.
+               2:{
+                 apply nth_error_None in Hnthyty.
+                 lia.
+               }
+               assert (Hsatceq : SecT.listSatisfiable dlt_raw ceq).
+               {
+                 pose proof (listSatisfiable_app_middle dlt_raw pre ceq post)
+                   as Hmid.
+                 specialize (Hmid Hsatraw).
+                 exact Hmid.
+               }
+               assert (Hlow_rst_join : SecT.hm_ext dlt_raw ([rty0] ⊔ rstty0) ⊑ t).
+               {
+                 eapply
+                   (SECNLUSTYPINGCORRECTNESS.call_output_low_implies_reset_low
+                      callee_sig_cur inptyp0 ckty0 ([rty0] ⊔ rstty0) outtyp0 ceq st_inp0 stceq
+                      dlt_raw t i yty xty0).
+                 - exact Hsiggood_c.
+                 - exact Hresetlhs_c.
+                 - exact Hfresh_call.
+                 - exact Hndscope_c.
+                 - exact Hlen_in_c.
+                 - exact Hlen_out_c.
+                 - exact Hcallc.
+                 - exact Hsatceq.
+                 - exact Hnthyty.
+                 - exact Hnthout.
+                 - exact Hlowxty0.
+               }
+               assert (Hlowr0 : low_var ty_env dlt_raw t r).
+               {
+                 exists rty0.
+                 split; [exact Hr0|].
+                 apply order_trans with (y := SecT.hm_ext dlt_raw [rty0]).
+                 - apply singleton_type_bound.
+                 - apply order_trans with (y := SecT.hm_ext dlt_raw ([rty0] ⊔ rstty0)).
+                   + apply SecT.hm_ext_concat_l.
+                   + exact Hlow_rst_join.
+               }
+               assert (Hlow_ck0 : SecT.hm_ext dlt_raw ckty0 ⊑ t).
+               {
+                 eapply
+                   (SECNLUSTYPINGCORRECTNESS.call_output_low_implies_clock_low
+                      callee_sig_cur inptyp0 ckty0 ([rty0] ⊔ rstty0) outtyp0 ceq st_inp0 stceq
+                      dlt_raw t i yty xty0).
+                 - exact Hsiggood_c.
+                 - exact Hclocklhs_c.
+                 - exact Hfresh_call.
+                 - exact Hndscope_c.
+                 - exact Hlen_in_c.
+                 - exact Hlen_out_c.
+                 - exact Hcallc.
+                 - exact Hsatceq.
+                 - exact Hnthyty.
+                 - exact Hnthout.
+                 - exact Hlowxty0.
+               }
+               assert (Hclock_eq_raw0 : clock_eq_upto (clock_of ls) (clock_of ls') 0).
+               {
+                 intros j Hj0.
+                 assert (Hjz : j = 0) by lia.
+                 subst j.
+                 eapply sem_clock_eq_upto_from_env_eq
+                   with (bk := bk) (bk' := bk) (H := H) (H' := H') (ck := ck).
+                 - exact Hsem_clock.
+                 - exact Hsem_clock'.
+                 - intros j0 Hj0'.
+                   reflexivity.
+                 - intros z Hz j1 Hj1.
+                   destruct (Hfree_clock_scope z Hz) as (ty0 & Hfindz & _).
+                   assert (Hlowz : low_var ty_env dlt_raw t z).
+                   {
+                     exists ty0.
+                     split; [exact Hfindz|].
+                     eapply order_trans.
+                     1:{
+                       eapply SecT.hm_ext_list_in1.
+                       eapply (assign_clk_type_free_var_in ty_env clk_type ck ckty0 z ty0).
+                       - exact Hassign_ck.
+                       - exact Hz.
+                       - exact Hfindz.
+                     }
+                     exact Hlow_ck0.
+                   }
+                   assert (Hdep_xz :
+                             NLCaus.nl_depends_on_eq
+                               (EqApp (xh :: xt) ck callee.(n_name) exps (Some (r, ckr))) x z).
+                   {
+                     split; [exact Hxdef|].
+                     left.
+                     apply freeAexps2.
+                     exact Hz.
+                   }
+                   exact (Hdeps z Hdep_xz Hlowz j1 Hj1).
+                 - exact Hj0.
+               }
+               assert (Hcount_eq0 : forall j, j <= 0 -> count rs j = count rs' j).
+               {
+                 intros j Hj0.
+                 exact
+                   (Hreset_ctrl0 rys rys' rs rs' Hsem_var_r Hsem_var_r' Hbools_r Hbools_r'
+                      Hlowr0 j Hj0).
+               }
+               assert (Hkr_eq : kr = count rs 0).
+               { unfold kr. reflexivity. }
+               assert (Hkr'_eq : kr' = count rs' 0).
+               { unfold kr'. reflexivity. }
+               assert
+                 (Hclock_eq0 :
+                    clock_eq_upto (clock_of (mask kr rs ls)) (clock_of (mask kr' rs' ls')) 0).
+               {
+                 intros j_mask Hj_mask.
+                 eapply clock_of_mask_eq_upto; eauto.
                }
                pose proof
                  (Hresetout
@@ -3651,7 +4006,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                        Hfindcallee Hfindenv_c Hfindsigc Hsiggen_c
                        Haux_c Hclk_c Hrst_c Hinp_c Hout_c Hlocals_c Hraw_c
                        Hsigdef_cur Hsatsig_c Hagree_c Hsatraw_c Hcallsec_c Hresetsec_c)
-                    Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hlowin_c).
+                    Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hclock_eq0 Hlowin_c).
                pose proof
                  (get_mappings_from_node_eq _ _ _ _ Hout_c)
                  as Hout_c_eq.
@@ -3676,16 +4031,16 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                destruct
                  (get_mappings_nth_error_inv
                     (map fst callee.(n_out)) ty_env_c out_c i yo Hout_c_eq Hnthyo)
-                 as (yty & Hnthyty & Hfindyo).
+                 as (yty_out0 & Hnthyty0 & Hfindyo).
                assert (Hlowyo : low_var ty_env_c dlt_raw_c t yo).
                {
-                 exists yty.
+                 exists yty_out0.
                  split; [exact Hfindyo|].
                  destruct Hlowx as (alpha & Hfindalpha & Halpha_low).
                  rewrite Hfindx0 in Hfindalpha.
                  inversion Hfindalpha; subst alpha; clear Hfindalpha.
-                 unfold callee_sig_cur in Hnthyty.
-                 simpl in Hnthyty.
+                 unfold callee_sig_cur in Hnthyty0.
+                 simpl in Hnthyty0.
                  destruct
                    (SecT.Forall2_nth_error_inv
                       _ _
@@ -3694,8 +4049,8 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                            ([rty0] ⊔ rstty0) outtyp0 v =
                          SIGPROOFS.inst_valuation dlt_raw callee_sig_cur inptyp0 ckty0
                            ([rty0] ⊔ rstty0) outtyp0 x0)
-                      (s_out callee_sig_cur) outtyp0 i yty
-                      Hinst_out_eq Hnthyty)
+                      (s_out callee_sig_cur) outtyp0 i yty_out0
+                      Hinst_out_eq Hnthyty0)
                    as (xty' & Hnthxty' & Hinsteq).
                  rewrite Hnthout in Hnthxty'.
                  inversion Hnthxty'; subst xty'; clear Hnthxty'.
@@ -3711,10 +4066,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                    eapply SecT.nth_error_In_local.
                    exact Hnthout.
                }
-               assert (Hkr_eq : kr = count rs 0).
-               { unfold kr. reflexivity. }
-               assert (Hkr'_eq : kr' = count rs' 0).
-               { unfold kr'. reflexivity. }
                eapply
                  (eqapp_reset_output_transport_pointwise
                     ty_env_c dlt_raw_c t
@@ -3806,7 +4157,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
               (fun e => SC.option_to_sec (SECCETYPING.assign_exp_type ty_env e))
               exps st_clk = OK (inptyp, st_inp) ->
             get_mappings xs ty_env = Some outtyp ->
-            node_outputs_raw_spec callee
+            node_outputs_raw_spec_clocked callee
               (SIGPROOFS.inst_valuation dlt_sig callee_sig inptyp ckty
                  [sig.(s_reset)] outtyp)
               (SIGPROOFS.inst_valuation dlt_raw callee_sig inptyp ckty
@@ -3829,7 +4180,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
             get_mappings xs ty_env = Some outtyp ->
             forall k_reset,
               reset_control_low_eq_upto ty_env dlt_raw t r H H' k_reset ->
-            node_outputs_raw_spec callee
+            node_outputs_raw_spec_clocked callee
               (SIGPROOFS.inst_valuation dlt_sig callee_sig inptyp ckty
                  ([rty] ⊔ rstty) outtyp)
               (SIGPROOFS.inst_valuation dlt_raw callee_sig inptyp ckty
@@ -4233,6 +4584,130 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  {
                    eapply SecureNode; eauto.
                  }
+                 assert (HgoodG : SIG.secglobal_good G).
+                 {
+                   eapply SECNLUSTYPINGCORRECTNESS.generate_all_source_signatures_good_scoped_env.
+                   - exact Henvsgen.
+                   - exact Hwcglob.
+                   - exact Hallsig.
+                 }
+                 assert (Hsiggood_c : SIG.signature_good callee_sig_cur).
+                 {
+                   eapply HgoodG.
+                   exact Hfindsigc.
+                 }
+                 assert
+                   (Hclocklhs_c :
+                      forall y lhs,
+                        findST callee_sig_cur.(s_constraints) y = Some lhs ->
+                        In callee_sig_cur.(s_clk) lhs).
+                 {
+                   intros y lhs Hfindlhs.
+                   eapply
+                     (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_clock_scoped_env
+                        all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                   - exact Henvsgen.
+                   - exact Hwcglob.
+                   - exact Hallsig.
+                   - exact Hfindsigc.
+                   - exact Hfindlhs.
+                 }
+                 assert (Hlowxty0 : dlt_raw xty0 ⊑ t).
+                 {
+                   destruct Hlowx as (alpha & Hfindalpha & Halpha_low).
+                   rewrite Hfindx0 in Hfindalpha.
+                   inversion Hfindalpha; subst alpha.
+                   exact Halpha_low.
+                 }
+                 assert (Hi_out : i < length (s_out callee_sig_cur)).
+                 {
+                   rewrite Hlen_out_c.
+                   apply nth_error_Some.
+                   rewrite Hnthout.
+                   discriminate.
+                 }
+                 destruct (nth_error (s_out callee_sig_cur) i) as [yty|] eqn:Hnthyty.
+                 2:{
+                   apply nth_error_None in Hnthyty.
+                   lia.
+                 }
+                 assert (Hsatceq : SecT.listSatisfiable dlt_raw ceq).
+                 {
+                   pose proof (listSatisfiable_app_middle dlt_raw pre ceq post)
+                     as Hmid.
+                   specialize (Hmid Hsatraw).
+                   exact Hmid.
+                 }
+                 assert (Hlow_ck : SecT.hm_ext dlt_raw ckty0 ⊑ t).
+                 {
+                   eapply
+                     (SECNLUSTYPINGCORRECTNESS.call_output_low_implies_clock_low
+                        callee_sig_cur inptyp0 ckty0 [rst_type] outtyp0 ceq st_inp0 stceq
+                        dlt_raw t i yty xty0).
+                   - exact Hsiggood_c.
+                   - exact Hclocklhs_c.
+                   - exact Hfresh_call.
+                   - exact Hndscope_c.
+                   - exact Hlen_in_c.
+                   - exact Hlen_out_c.
+                   - exact Hcallc.
+                   - exact Hsatceq.
+                   - exact Hnthyty.
+                   - exact Hnthout.
+                   - exact Hlowxty0.
+                 }
+                 assert (Hclock_eqm : clock_eq_upto (clock_of ls) (clock_of ls') m).
+                 {
+                   intros j Hj.
+                   eapply sem_clock_eq_upto_from_env_eq
+                     with (bk := bk) (bk' := bk) (H := H) (H' := H') (ck := ck).
+                   - exact Hsem_clock.
+                   - exact Hsem_clock'.
+                   - intros j0 Hj0'.
+                     reflexivity.
+                   - intros z Hz j0 Hj0.
+                     destruct (Hfree_clock_scope z Hz) as (ty0 & Hfindz & _).
+                     assert (Hlowz : low_var ty_env dlt_raw t z).
+                     {
+                       exists ty0.
+                       split; [exact Hfindz|].
+                       eapply order_trans.
+                       1:{
+                         eapply SecT.hm_ext_list_in1.
+                         eapply (assign_clk_type_free_var_in ty_env clk_type ck ckty0 z ty0).
+                         - exact Hassign_ck.
+                         - exact Hz.
+                         - exact Hfindz.
+                       }
+                       exact Hlow_ck.
+                     }
+                     assert (Hdep_xz :
+                               NLCaus.nl_depends_on_eq
+                                 (EqApp (xh :: xt) ck callee.(n_name) exps None) x z).
+                     {
+                       split; [exact Hxdef|].
+                       apply freeAexps2.
+                       exact Hz.
+                     }
+                     destruct (Nat.eq_dec j0 m) as [Heqj0|Hneqj0].
+                     + subst j0.
+                       exact (Hdeps z Hdep_xz Hlowz).
+                     + assert (Hjlt : j0 < S k).
+                       {
+                         unfold m in Hj0, Hneqj0.
+                         destruct (Nat.compare_spec j0 (S k)) as [Heq|Hlt|Hgt].
+                         - exfalso. apply Hneqj0. exact Heq.
+                         - exact Hlt.
+                         - exfalso.
+                           eapply Nat.lt_irrefl.
+                           eapply Nat.lt_le_trans; eauto.
+                       }
+                       eapply
+                         (free_clock_low_eq_prefix_from_inputs_or_defined
+                            P n ty_env dlt_raw t H H' (xh :: xt) ck callee.(n_name) exps None z k);
+                         eauto.
+                   - exact Hj.
+                 }
                  pose proof
                    (Hcallout
                       (xh :: xt) ck callee.(n_name) exps callee callee_sig_cur
@@ -4262,7 +4737,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                       Hfindcallee Hfindenv_c Hfindsigc Hsiggen_c
                       Haux_c Hclk_c Hrst_c Hinp_c Hout_c Hlocals_c
                       Hraw_c Hsigdef_cur Hcallee_secure
-                      Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hlowin_c).
+                      Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hclock_eqm Hlowin_c).
                  pose proof
                    (get_mappings_from_node_eq _ _ _ _ Hout_c)
                    as Hout_c_eq.
@@ -4287,7 +4762,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  destruct
                    (get_mappings_nth_error_inv
                       (map fst callee.(n_out)) ty_env_c out_c i yo Hout_c_eq Hnthyo)
-                   as (yty_out & Hnthyty & Hfindyo).
+                   as (yty_out & Hnthyty_out & Hfindyo).
                  assert (Hlowyo : low_var ty_env_c dlt_raw_c t yo).
                  {
                    exists yty_out.
@@ -4295,8 +4770,8 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                    destruct Hlowx as (alpha & Hfindalpha & Halpha_low).
                    rewrite Hfindx0 in Hfindalpha.
                    inversion Hfindalpha; subst alpha; clear Hfindalpha.
-                   unfold callee_sig_cur in Hnthyty.
-                   simpl in Hnthyty.
+                   unfold callee_sig_cur in Hnthyty_out.
+                   simpl in Hnthyty_out.
                    destruct
                      (SecT.Forall2_nth_error_inv
                         _ _
@@ -4306,7 +4781,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                            SIGPROOFS.inst_valuation dlt_raw callee_sig_cur inptyp0 ckty0
                              [rst_type] outtyp0 x0)
                         (s_out callee_sig_cur) outtyp0 i yty_out
-                        Hinst_out_eq Hnthyty)
+                        Hinst_out_eq Hnthyty_out)
                      as (xty' & Hnthxty' & Hinsteq).
                    rewrite Hnthout in Hnthxty'.
                    inversion Hnthxty'; subst xty'; clear Hnthxty'.
@@ -4695,6 +5170,22 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                         callee_sig_cur inptyp0 ckty0 ([rty0] ⊔ rstty0) outtyp0 ceq st_inp0 stceq
                         dlt_raw t i yty xty0); eauto.
                  }
+                 assert
+                   (Hclocklhs_c :
+                      forall y lhs,
+                        findST callee_sig_cur.(s_constraints) y = Some lhs ->
+                        In callee_sig_cur.(s_clk) lhs).
+                 {
+                   intros y lhs Hfindlhs.
+                   eapply
+                     (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_clock_scoped_env
+                        all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                   - exact Henvsgen.
+                   - exact Hwcglob.
+                   - exact Hallsig.
+                   - exact Hfindsigc.
+                   - exact Hfindlhs.
+                 }
                  assert (Hlowr : low_var ty_env dlt_raw t r).
                  {
                    exists rty0.
@@ -4704,6 +5195,24 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                    - apply order_trans with (y := SecT.hm_ext dlt_raw ([rty0] ⊔ rstty0)).
                      + apply SecT.hm_ext_concat_l.
                      + exact Hlow_rst_join.
+                 }
+                 assert (Hlow_ck : SecT.hm_ext dlt_raw ckty0 ⊑ t).
+                 {
+                   eapply
+                     (SECNLUSTYPINGCORRECTNESS.call_output_low_implies_clock_low
+                        callee_sig_cur inptyp0 ckty0 ([rty0] ⊔ rstty0) outtyp0 ceq st_inp0 stceq
+                        dlt_raw t i yty xty0).
+                   - exact Hsiggood_c.
+                   - exact Hclocklhs_c.
+                   - exact Hfresh_call.
+                   - exact Hndscope_c.
+                   - exact Hlen_in_c.
+                   - exact Hlen_out_c.
+                   - exact Hcallc.
+                   - exact Hsatceq.
+                   - exact Hnthyty.
+                   - exact Hnthout.
+                   - exact Hlowxty0.
                  }
                  assert (Hreset_ctrlm :
                            reset_control_low_eq_upto ty_env dlt_raw t r H H' m).
@@ -4734,6 +5243,71 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                    intros j Hj.
                    exact (Hreset_ctrlm rys rys' rs rs' Hsem_var_r Hsem_var_r'
                             Hbools_r Hbools_r' Hlowr j Hj).
+                 }
+                 assert (Hclock_eq_rawm : clock_eq_upto (clock_of ls) (clock_of ls') m).
+                 {
+                   intros j Hj.
+                   eapply sem_clock_eq_upto_from_env_eq
+                     with (bk := bk) (bk' := bk) (H := H) (H' := H') (ck := ck).
+                   - exact Hsem_clock.
+                   - exact Hsem_clock'.
+                   - intros j0 Hj0'.
+                     reflexivity.
+                   - intros z Hz j0 Hj0.
+                     destruct (Hfree_clock_scope z Hz) as (ty0 & Hfindz & _).
+                     assert (Hlowz : low_var ty_env dlt_raw t z).
+                     {
+                       exists ty0.
+                       split; [exact Hfindz|].
+                       eapply order_trans.
+                       1:{
+                         eapply SecT.hm_ext_list_in1.
+                         eapply (assign_clk_type_free_var_in ty_env clk_type ck ckty0 z ty0).
+                         - exact Hassign_ck.
+                         - exact Hz.
+                         - exact Hfindz.
+                       }
+                       exact Hlow_ck.
+                     }
+                     assert (Hdep_xz :
+                               NLCaus.nl_depends_on_eq
+                                 (EqApp (xh :: xt) ck callee.(n_name) exps (Some (r, ckr))) x z).
+                     {
+                       split; [exact Hxdef|].
+                       left.
+                       apply freeAexps2.
+                       exact Hz.
+                     }
+                     destruct (Nat.eq_dec j0 m) as [Heqj0|Hneqj0].
+                     + subst j0.
+                       exact (Hdeps z Hdep_xz Hlowz).
+                     + assert (Hjlt : j0 < S k).
+                       {
+                         unfold m in Hj0, Hneqj0.
+                         destruct (Nat.compare_spec j0 (S k)) as [Heq|Hlt|Hgt].
+                         - exfalso. apply Hneqj0. exact Heq.
+                         - exact Hlt.
+                         - exfalso.
+                           eapply Nat.lt_irrefl.
+                           eapply Nat.lt_le_trans; eauto.
+                       }
+                       eapply
+                         (free_clock_low_eq_prefix_from_inputs_or_defined
+                            P n ty_env dlt_raw t H H' (xh :: xt) ck callee.(n_name) exps
+                            (Some (r, ckr)) z k);
+                         eauto.
+                   - exact Hj.
+                 }
+                 assert (Hkr_eq : kr = count rs m).
+                 { unfold kr. reflexivity. }
+                 assert (Hkr'_eq : kr' = count rs' m).
+                 { unfold kr'. reflexivity. }
+                 assert
+                   (Hclock_eqm :
+                      clock_eq_upto (clock_of (mask kr rs ls)) (clock_of (mask kr' rs' ls')) m).
+                 {
+                   intros j Hj.
+                   eapply clock_of_mask_eq_upto; eauto.
                  }
                  assert (Hlowin_c :
                            history_low_eq_upto ty_env_c dlt_raw_c t
@@ -4785,7 +5359,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                       Hfindcallee Hfindenv_c Hfindsigc Hsiggen_c
                       Haux_c Hclk_c Hrst_c Hinp_c Hout_c Hlocals_c
                       Hraw_c Hsigdef_cur Hcallee_secure
-                      Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hlowin_c).
+                      Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hclock_eqm Hlowin_c).
                  pose proof
                    (get_mappings_from_node_eq _ _ _ _ Hout_c)
                    as Hout_c_eq.
@@ -4845,10 +5419,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                      eapply SecT.nth_error_In_local.
                      exact Hnthout.
                  }
-                 assert (Hkr_eq : kr = count rs m).
-                 { unfold kr. reflexivity. }
-                 assert (Hkr'_eq : kr' = count rs' m).
-                 { unfold kr'. reflexivity. }
                  eapply
                    (eqapp_reset_output_transport_pointwise
                       ty_env_c dlt_raw_c t

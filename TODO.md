@@ -36,6 +36,9 @@
 - [ ] Re-introduce the internal step theorem only after the public theorem shape is fixed, and make sure it stays proof-internal.
 - [ ] Prove `node_noninterference_outputs_raw` by recursion on paired `node_security`, using whatever internal step lemma is actually needed.
 - [x] Prove the call-clock low lemma needed by the `EqApp` branches: low call output should force the defining call clock low, just as the reset branch already forces low reset control.
+- [x] Add a mainline copy layer in `src/SIF/SecNLusNonInterferenceClockedStep.v` so the top-level step theorem can be generalized without reopening `SecNLusNonInterferenceHelpers.v` on every edit.
+- [x] Validate that `src/SIF/SecNLusNonInterference.v` compiles cleanly against the clocked-step copy layer before proving the copied two-clock step theorem.
+- [ ] Replace the wrapper theorems in `src/SIF/SecNLusNonInterferenceClockedStep.v` with the new two-clock/current-node step theorem, then retarget `src/SIF/SecNLusNonInterference.v` to that proof.
 - [ ] Add the `EqApp` and reset-call noninterference lemmas and connect them to `node_security`.
 - [ ] Re-prove the output-facing corollaries from the rebuilt internal theorem stack.
 - [ ] After the NLustre noninterference proof settles, move the global-signature lookup inversion / correspondence lemma into `src/SIF/SecNLusTyping.v` so the relation between `generate_all_signatures_scoped_env` and node-local generation is packaged upstream.

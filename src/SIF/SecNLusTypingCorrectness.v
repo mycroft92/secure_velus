@@ -2812,6 +2812,544 @@ Module Type SECNLUSTYPINGCORRECTNESS
       as Hreset.
     exact Hreset.
   Qed.
+
+  (** Call-constraint clock propagation.
+
+      Relation to the paper:
+      this is the clock-side companion of
+      [generate_constraints_mentions_reset].  Once a stored callee signature
+      records its clock field in every visible constraint lhs, the call
+      instantiation pipeline must preserve that fact syntactically when
+      substituting actual inputs/clock/reset and caller outputs. *)
+  Lemma generate_constraints_mentions_clock:
+    forall sig inp clk rst out cns st st' ty,
+      NoDup (signature_scope sig) ->
+      constraints_mention sig.(s_clk) sig.(s_constraints) ->
+      type_fresh (signature_scope sig) clk ->
+      In ty clk ->
+      generate_constraints sig inp clk rst out st = OK (cns, st') ->
+      constraints_mention ty cns.
+  Proof.
+    intros sig inp clk rst out cns st st' ty
+           Hndscope Hmention Hclkfresh Htyin Hgen.
+    destruct (SIGPROOFS.sig_scope_nodup_decomp sig Hndscope)
+      as (Hndin & Hndout & Hfreshin & Hfreshout & Hclkneqrst).
+    unfold generate_constraints in Hgen.
+    eapply sec_bind_inv in Hgen as (c1 & st1 & HinpSub & Hgen).
+    eapply sec_bind_inv in Hgen as (c2 & st2 & HclkSub & Hgen).
+    eapply sec_bind_inv in Hgen as (c3 & st3 & HrstSub & Hgen).
+    eapply sec_bind_inv in Hgen as (c4 & st4 & HoutSub & Hreorder).
+    assert (Hmention1 : constraints_mention sig.(s_clk) c1).
+    {
+      eapply subst_constraints_inp_map_mentions_other; eauto.
+      intros x Hin Heq.
+      apply Forall_forall with (x := x) in Hfreshin; auto.
+      simpl in Hfreshin.
+      apply Hfreshin.
+      rewrite Heq.
+      apply in_or_app. right.
+      simpl. now left.
+    }
+    assert (Hclk_notin : ~ In sig.(s_clk) clk).
+    {
+      unfold type_fresh in Hclkfresh.
+      rewrite Forall_forall in Hclkfresh.
+      intro Hin.
+      specialize (Hclkfresh _ Hin).
+      apply Hclkfresh.
+      unfold signature_scope.
+      repeat rewrite in_app_iff.
+      simpl. auto.
+    }
+    assert (Hmention2 : constraints_mention ty c2).
+    {
+      eapply subst_ident_in_constraints_mentions_subst; eauto.
+    }
+    assert (Hty_not_reset : ty <> sig.(s_reset)).
+    {
+      intro Heq.
+      subst ty.
+      unfold type_fresh in Hclkfresh.
+      rewrite Forall_forall in Hclkfresh.
+      specialize (Hclkfresh _ Htyin).
+      apply Hclkfresh.
+      unfold signature_scope.
+      repeat rewrite in_app_iff.
+      simpl. auto.
+    }
+    assert (Hmention3 : constraints_mention ty c3).
+    {
+      eapply subst_ident_in_constraints_mentions_other; eauto.
+    }
+    assert (Hmention4 : constraints_mention ty c4).
+    {
+      eapply subst_constraints_out_map_mentions_other; eauto.
+      intros x Hin Heq.
+      unfold type_fresh in Hclkfresh.
+      rewrite Forall_forall in Hclkfresh.
+      specialize (Hclkfresh _ Htyin).
+      apply Hclkfresh.
+      subst x.
+      unfold signature_scope.
+      repeat rewrite in_app_iff.
+      auto.
+    }
+    eapply reorder_constraints_mentions; eauto.
+  Qed.
+
+  (** Node-local raw clock-mention fact.
+
+      Relation to the paper:
+      this is the source-local clock-side half of the final theorem.  It
+      states that the raw NLustre constraints generated for one node already
+      thread the current node clock through every visible singleton-RHS
+      constraint, including constraints replayed from previously generated
+      callee signatures. *)
+  Lemma generate_node_sig_constraints_mention_clock_from_local_env:
+    forall G P n env rec aux_names st st'
+           clk_type rst_type inp out locals raw st_n,
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      get_node_aux n.(n_name) aux_names = Some (rec.(nclk), rec.(nrst)) ->
+      node_scope_fresh_in_env n env aux_names G ->
+      (forall f sig, SIG.find_signature f G = Some sig -> NoDup (signature_scope sig)) ->
+      (forall f sig lhs y,
+          SIG.find_signature f G = Some sig ->
+          In (lhs, [y]) sig.(s_constraints) ->
+          In sig.(s_clk) lhs) ->
+      wc_node P n ->
+      Env.find rec.(nclk) env = Some clk_type ->
+      Env.find rec.(nrst) env = Some rst_type ->
+      get_mappings_from_node n.(n_in) env = Some inp ->
+      get_mappings_from_node n.(n_out) env = Some out ->
+      get_mappings_from_node n.(n_vars) env = Some locals ->
+      generate_eqns_constraints G env clk_type rst_type n.(n_eqs) init_state = OK (raw, st_n) ->
+      constraints_mention clk_type (SymTypes.simplify raw locals).
+  Proof.
+    intros G P n env rec aux_names st st'
+           clk_type rst_type inp out locals raw st_n
+           Hlocal Haux Hscopefresh Hndacc Hmentionacc
+           Hwc Hclk Hrst Hinp Hout Hlocals Hraw.
+    set (scope := inp ++ out ++ locals ++ clk_type :: rst_type :: nil).
+    assert (Hvars :
+              SECNLUSTYPING.vars_env_scoped env
+                (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) scope).
+    { unfold scope.
+      eapply node_vars_env_scoped_from_mappings; eauto. }
+    assert (Hraw_mentions : constraints_mention clk_type raw).
+    {
+      pose proof (NAMEGEN.generate_local_env_for_node_injective _ _ _ _ _ Hlocal)
+        as Hinj.
+      destruct Hwc as [_ [_ [Hwcenv Hweqs]]].
+      assert (Hndeqs : NoDup (vars_defined n.(n_eqs))).
+      { apply NoDup_var_defined_n_eqs. }
+      assert (Hmentions_eqs :
+                forall eqs st0 raw0 st_n0,
+                  generate_eqns_constraints G env clk_type rst_type eqs st0 = OK (raw0, st_n0) ->
+                  Forall (wc_equation P (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))) eqs ->
+                  NoDup (vars_defined eqs) ->
+                  constraints_mention clk_type raw0).
+      {
+        induction eqs as [|eq eqs IH]; intros st0 raw0 st_n0 Hgen Hweqs0 Hndeqs0 lhs y Hin.
+        - simpl in Hgen. inversion Hgen; subst. contradiction.
+        - simpl in Hgen.
+          eapply sec_bind_inv in Hgen as (c1 & st1 & Hc1 & Hgen).
+          eapply sec_bind_inv in Hgen as (c2 & st2 & Hc2 & Hret).
+          unfold ret in Hret. inversion Hret; subst raw0 st_n0; clear Hret.
+          inversion Hweqs0 as [|eq0 eqs0 Hweq Hweqs']; subst eq0 eqs0.
+          assert (Hndsplit : NoDup (var_defined eq ++ vars_defined eqs)).
+          { exact Hndeqs0. }
+          apply NoDup_app'_iff in Hndsplit as [Hndeq [Hndtail _]].
+          apply in_app_iff in Hin.
+          destruct Hin as [Hin1|Hin2].
+          + destruct eq as [x ck ce|xs ck f exps r|x ck c0 e].
+            * destruct (generate_eqdef_constraint_inv _ _ _ _ _ _ _ _ _ _ Hc1)
+                as (ckty & cety & xty & Hcns & Hckc & _ & _).
+              rewrite Hcns in Hin1. simpl in Hin1.
+              destruct Hin1 as [Heq|[]]. inversion Heq; subst.
+              eapply in_merge_left.
+              change (In clk_type ([rst_type] ⊔ ckty)).
+              eapply in_merge_right.
+              eapply assign_clk_type_contains_base; eauto.
+            * destruct xs as [|x xs].
+              { simpl in Hc1. unfold ret in Hc1. inversion Hc1; subst.
+                simpl in Hin1. contradiction. }
+              destruct r as [[rx rck]|].
+              -- destruct (generate_eqreset_constraint_inv _ _ _ _ _ _ _ _ _ _ _ _ _ _ Hc1)
+                   as (callee_sig & ckty & rty & rstty_call & inptyp & outtyp
+                       & st_clk & st_rst & st_inp
+                       & Hfindsigc & Hckc & Hrty & Hrstc & Hinpc & Houtc & Hcallc).
+                 assert (Hfreshcallee : SIG.scope_fresh scope callee_sig).
+                 {
+                   unfold node_scope_fresh_in_env in Hscopefresh.
+                   eapply Hscopefresh; eauto.
+                 }
+                 assert (Hck_scope : st_scoped scope ckty).
+                 {
+                   unfold SC.option_to_sec in Hckc.
+                   destruct (SECCETYPING.assign_clk_type env clk_type ck) as [ckty'|]
+                     eqn:Hckopt; try discriminate.
+                   unfold SC.ret in Hckc. inversion Hckc; subst ckty st_clk.
+                   refine (SECNLUSTYPING.assign_clk_type_scoped
+                             env clk_type scope ck ckty' _ _ Hckopt).
+                   - 
+                     unfold scope. repeat rewrite in_app_iff. right. right. right.
+                     simpl. now left.
+                   - 
+                     intros z Hz.
+                     assert (Hinz : InMembers z (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))))
+                       by (eapply
+                             (SECNLUSTYPING.wc_call_clock_free_in_vars
+                                P
+                                (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                                (x :: xs) ck f exps (Some (rx, rck)) z);
+                           [exact Hwcenv | exact Hweq | exact Hz]).
+                     destruct (Hvars z Hinz) as (ty & Hfind & Hscopez).
+                     exists ty. split; [exact Hfind|exact Hscopez].
+                 }
+                 assert (Hckfresh_c : type_fresh (signature_scope callee_sig) ckty).
+                 {
+                   eapply SIG.type_fresh_from_scope_fresh; eauto.
+                 }
+                 assert (Hndscope_c : NoDup (signature_scope callee_sig)).
+                 { eapply Hndacc; eauto. }
+                 assert (Hcallee_mentions : constraints_mention callee_sig.(s_clk) callee_sig.(s_constraints)).
+                 {
+                   intros lhs0 y0 Hin0.
+                   eapply Hmentionacc; eauto.
+                 }
+                 assert (Hckin : In clk_type ckty).
+                 {
+                   assert (Hckassign : SECCETYPING.assign_clk_type env clk_type ck = Some ckty).
+                   {
+                     unfold SC.option_to_sec in Hckc.
+                     destruct (SECCETYPING.assign_clk_type env clk_type ck) as [ckty'|] eqn:Hckopt;
+                       try discriminate.
+                     inversion Hckc; subst ckty st_clk. reflexivity.
+                   }
+                   eapply assign_clk_type_contains_base; eauto.
+                 }
+                 eapply (generate_constraints_mentions_clock
+                           callee_sig inptyp ckty ((rty :: nil) ⊔ rstty_call) outtyp
+                           c1 st_inp st1 clk_type); eauto.
+              -- destruct (generate_eqapp_constraint_inv _ _ _ _ _ _ _ _ _ _ _ _ Hc1)
+                   as (callee_sig & ckty & inptyp & outtyp & st_clk & st_inp
+                       & Hfindsigc & Hckc & _ & Houtc & Hcallc).
+                 assert (Hfreshcallee : SIG.scope_fresh scope callee_sig).
+                 {
+                   unfold node_scope_fresh_in_env in Hscopefresh.
+                   eapply Hscopefresh; eauto.
+                 }
+                 assert (Hck_scope : st_scoped scope ckty).
+                 {
+                   unfold SC.option_to_sec in Hckc.
+                   destruct (SECCETYPING.assign_clk_type env clk_type ck) as [ckty'|]
+                     eqn:Hckopt; try discriminate.
+                   unfold SC.ret in Hckc. inversion Hckc; subst ckty st_clk.
+                   refine (SECNLUSTYPING.assign_clk_type_scoped
+                             env clk_type scope ck ckty' _ _ Hckopt).
+                   - 
+                     unfold scope. repeat rewrite in_app_iff. right. right. right.
+                     simpl. now left.
+                   - 
+                     intros z Hz.
+                     assert (Hinz : InMembers z (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))))
+                       by (eapply
+                             (SECNLUSTYPING.wc_call_clock_free_in_vars
+                                P
+                                (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                                (x :: xs) ck f exps None z);
+                           [exact Hwcenv | exact Hweq | exact Hz]).
+                     destruct (Hvars z Hinz) as (ty & Hfind & Hscopez).
+                     exists ty. split; [exact Hfind|exact Hscopez].
+                 }
+                 assert (Hckfresh_c : type_fresh (signature_scope callee_sig) ckty).
+                 {
+                   eapply SIG.type_fresh_from_scope_fresh; eauto.
+                 }
+                 assert (Hndscope_c : NoDup (signature_scope callee_sig)).
+                 { eapply Hndacc; eauto. }
+                 assert (Hcallee_mentions : constraints_mention callee_sig.(s_clk) callee_sig.(s_constraints)).
+                 {
+                   intros lhs0 y0 Hin0.
+                   eapply Hmentionacc; eauto.
+                 }
+                 assert (Hckin : In clk_type ckty).
+                 {
+                   assert (Hckassign : SECCETYPING.assign_clk_type env clk_type ck = Some ckty).
+                   {
+                     unfold SC.option_to_sec in Hckc.
+                     destruct (SECCETYPING.assign_clk_type env clk_type ck) as [ckty'|] eqn:Hckopt;
+                       try discriminate.
+                     inversion Hckc; subst ckty st_clk. reflexivity.
+                   }
+                   eapply assign_clk_type_contains_base; eauto.
+                 }
+                 eapply (generate_constraints_mentions_clock
+                           callee_sig inptyp ckty [rst_type] outtyp
+                           c1 st_inp st1 clk_type); eauto.
+            * destruct (generate_eqfby_constraint_inv _ _ _ _ _ _ _ _ _ _ _ Hc1)
+                as (ckty & ety & xty & Hcns & Hckc & _ & _).
+              rewrite Hcns in Hin1. simpl in Hin1.
+              destruct Hin1 as [Heq|[]]. inversion Heq; subst.
+              eapply in_merge_left.
+              change (In clk_type ([rst_type] ⊔ ckty)).
+              eapply in_merge_right.
+              eapply assign_clk_type_contains_base; eauto.
+          + eapply IH; eauto.
+      }
+      eapply Hmentions_eqs; eauto.
+    }
+    assert (Hclk_not_local :
+              forall x, In x locals -> clk_type <> x).
+    {
+      pose proof (NAMEGEN.generate_local_env_for_node_injective _ _ _ _ _ Hlocal)
+        as Hinj.
+      pose proof (NAMEGEN.generate_local_env_for_node_aux_sec_names _ _ _ _ _ Hlocal)
+        as [Hclkid Hrstid].
+      intros x Hin Heq.
+      destruct (get_mappings_from_node_In _ _ _ _ _ Hlocals Hin)
+        as (xraw & araw & Hxraw & Hfindx).
+      assert (Hxeq : xraw = rec.(nclk)).
+      { eapply Hinj; eauto. }
+      subst xraw.
+      eapply (node_var_not_sec_gensym n rec.(nclk) st).
+      - rewrite map_app. apply in_or_app. right.
+        rewrite map_app. apply in_or_app. left.
+        now apply in_map with (f := fst) in Hxraw.
+      - exact Hclkid.
+    }
+    eapply simplify_mentions_other; eauto.
+  Qed.
+
+  (** Generated source signatures mention clock in every visible constraint.
+
+      Relation to the paper:
+      the clock-sensitive indexed noninterference proof needs a typing-side
+      fact parallel to the reset one: whenever a generated source signature
+      exposes a visible output constraint through [findST], that visible
+      constraint still mentions the node clock field.  This is what lets
+      [call_output_low_implies_clock_low] turn a low caller-visible call
+      output into a low instantiated call clock. *)
+  Theorem generated_signature_constraints_mention_clock_scoped_env':
+    forall prefix nodes acc envs aux_names envs_pref aux_pref st G,
+      NAMEGEN.generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
+        = OK ((envs_pref, aux_pref), st) ->
+      generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
+      Clo.wc_global nodes ->
+      (forall f sig lhs y,
+          SIG.find_signature f acc = Some sig ->
+          In (lhs, [y]) sig.(s_constraints) ->
+          In sig.(s_clk) lhs) ->
+      (forall f sig,
+          SIG.find_signature f acc = Some sig ->
+          NoDup (signature_scope sig)) ->
+      SIG.secglobal_scope_bounded_above acc st ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env' acc nodes envs aux_names = OK G ->
+      forall f sig lhs y,
+        SIG.find_signature f G = Some sig ->
+        In (lhs, [y]) sig.(s_constraints) ->
+        In sig.(s_clk) lhs.
+  Proof.
+    intros prefix nodes.
+    revert prefix.
+    induction nodes as [|n nodes IH];
+      intros prefix acc envs aux_names envs_pref aux_pref st G
+             Hprefgen Henvsgen Hwc Hmentionacc Hndacc Hbound Hgen
+             f sig lhs y Hfindsig Hin.
+    - simpl in Hgen. inversion Hgen; subst G.
+      eapply Hmentionacc; eauto.
+    - inversion Hwc as [|n' ns Hwc_tail Hwc_head]; subst n' ns.
+      simpl in Hgen.
+      destruct (SECNLUSTYPING.generate_node_sig_scoped_env acc n envs aux_names)
+        as [nsig|e_sig] eqn:Hnsig; try discriminate.
+      destruct (SECNLUSTYPING.generate_all_signatures_scoped_env' (nsig :: acc) nodes envs aux_names)
+        as [G'|e_tl] eqn:Htl; simpl in Hgen.
+      2:{ rewrite Hgen in Htl. discriminate. }
+      inversion Hgen; subst; clear Hgen.
+      pose proof Henvsgen as Henvsgen_full.
+      unfold generate_node_scoped_env in Henvsgen_full.
+      destruct
+        (NAMEGEN.generate_node_scoped_env' (prefix ++ n :: nodes) (Env.empty _) nil NAMEGEN.init_state)
+        as [[[envs_full aux_full] st_full]|] eqn:Hrun; try discriminate.
+      inversion Henvsgen_full; subst envs_full aux_full; clear Henvsgen_full.
+      edestruct NAMEGEN.generate_node_scoped_env'_split_node
+        as (envs_pref' & aux_pref' & st_pref & local_env & rec & st_local
+            & envs_cur & st_cur & Hpref & Hlocal & Hins & Htail);
+        eauto.
+      rewrite Hprefgen in Hpref. inversion Hpref; subst envs_pref' aux_pref' st_pref.
+      assert (Hcur : st_cur = st_local).
+      {
+        unfold NAMEGEN.fresh_insert_node_env in Hins.
+        destruct (Env.mem n.(n_name) envs_pref) eqn:Hmem; try discriminate.
+        unfold NAMEGEN.insert_node_env, NAMEGEN.NMret in Hins.
+        inversion Hins. reflexivity.
+      }
+      subst st_cur.
+      assert (Hfindlocal : find_node_env n.(n_name) envs = Some local_env).
+      {
+        eapply NAMEGEN.generate_node_scoped_env'_preserves_find; eauto.
+        eapply NAMEGEN.fresh_insert_node_env_finds_new; eauto.
+      }
+      assert (Hauxlocal : get_node_aux n.(n_name) aux_names = Some (rec.(nclk), rec.(nrst))).
+      {
+        eapply NAMEGEN.generate_node_scoped_env'_preserves_get_node_aux; eauto.
+        - pose proof (NAMEGEN.generate_local_env_for_node_name _ _ _ _ _ Hlocal) as Hrecname.
+          unfold get_node_aux. simpl. rewrite <- Hrecname, ident_eqb_refl. reflexivity.
+        - eapply NAMEGEN.fresh_insert_node_env_finds_new; eauto.
+      }
+      unfold SECNLUSTYPING.generate_node_sig_scoped_env in Hnsig.
+      rewrite Hfindlocal in Hnsig.
+      edestruct generate_node_sig_inv_local
+        as (clk_id & rst_id & clk_type & rst_type & inp & out & locals & raw & st_n
+            & Haux & Hclk & Hrst & Hinp & Hout & Hlocals & Hraw & Hsigdef);
+        eauto.
+      rewrite Hauxlocal in Haux.
+      inversion Haux. subst clk_id rst_id. clear Haux.
+      assert (Hscopefresh_cur :
+                node_scope_fresh_in_env n local_env aux_names acc).
+      {
+        eapply node_scope_fresh_in_env_from_bounds; eauto.
+      }
+      assert (Hnsigmention :
+                constraints_mention clk_type (SymTypes.simplify raw locals)).
+      {
+        eapply generate_node_sig_constraints_mention_clock_from_local_env
+          with (P := nodes) (rec := rec) (st := st) (st' := st_local); eauto.
+      }
+      assert (Hnsigprop :
+                forall lhs0 y0,
+                  In (lhs0, [y0]) nsig.(s_constraints) ->
+                  In nsig.(s_clk) lhs0).
+      {
+        rewrite Hsigdef.
+        exact Hnsigmention.
+      }
+      assert (Hnsignd :
+                NoDup (signature_scope nsig)).
+      {
+        rewrite Hsigdef.
+        eapply generate_node_sig_scope_nodup_from_local_env
+          with (rec := rec) (st := st) (st' := st_local)
+               (clk_type := clk_type) (rst_type := rst_type)
+               (inp := inp) (out := out); eauto.
+      }
+      assert (Hnsigbound : SIG.signature_scope_bounded_above nsig st_local).
+      {
+        intros ty Hin'.
+        eapply (generated_node_sig_scope_upper_bound_from_local_env
+                  acc n local_env aux_names nsig st rec st_local ty); eauto.
+      }
+      assert (Hle : (st <= st_local)%positive).
+      { eapply NAMEGEN.generate_local_env_for_node_state_monotone; eauto. }
+      assert (Hmention' :
+                forall f0 sig0 lhs0 y0,
+                  SIG.find_signature f0 (nsig :: acc) = Some sig0 ->
+                  In (lhs0, [y0]) sig0.(s_constraints) ->
+                  In sig0.(s_clk) lhs0).
+      {
+        intros f0 sig0 lhs0 y0 Hfind0 Hin0.
+        simpl in Hfind0.
+        destruct (ident_eqb nsig.(s_name) f0) eqn:Hname.
+        - inversion Hfind0; subst sig0. eapply Hnsigprop; eauto.
+        - eapply Hmentionacc; eauto.
+      }
+      assert (Hnd' :
+                forall f0 sig0,
+                  SIG.find_signature f0 (nsig :: acc) = Some sig0 ->
+                  NoDup (signature_scope sig0)).
+      {
+        intros f0 sig0 Hfind0.
+        simpl in Hfind0.
+        destruct (ident_eqb nsig.(s_name) f0) eqn:Hname.
+        - inversion Hfind0; subst sig0. exact Hnsignd.
+        - eapply Hndacc; eauto.
+      }
+      assert (Hbound' : SIG.secglobal_scope_bounded_above (nsig :: acc) st_local).
+      {
+        eapply SIG.secglobal_scope_bounded_above_cons; eauto.
+        eapply SIG.secglobal_scope_bounded_above_monotone; eauto.
+      }
+      assert (Hstep :
+                NAMEGEN.generate_node_scoped_env' (n :: nil) envs_pref aux_pref st =
+                OK ((envs_cur, rec :: aux_pref), st_local)).
+      {
+        simpl.
+        unfold NMbind2.
+        rewrite Hlocal.
+        simpl.
+        unfold NMbind.
+        rewrite Hins.
+        simpl.
+        reflexivity.
+      }
+      assert (Hprefgen' :
+                NAMEGEN.generate_node_scoped_env' (prefix ++ n :: nil) (Env.empty _) nil NAMEGEN.init_state =
+                OK ((envs_cur, rec :: aux_pref), st_local)).
+      {
+        eapply NAMEGEN.generate_node_scoped_env'_app; eauto.
+      }
+      assert (Henvsgen' :
+                generate_node_scoped_env ((prefix ++ n :: nil) ++ nodes) = OK (envs, aux_names)).
+      {
+        assert (Heqlist : (prefix ++ n :: nil) ++ nodes = prefix ++ n :: nodes).
+        {
+          clear - prefix n nodes.
+          induction prefix as [|a prefix IHprefix]; simpl.
+          - reflexivity.
+          - now f_equal.
+        }
+        rewrite Heqlist. exact Henvsgen.
+      }
+      assert (HG : G' = G).
+      {
+        rewrite Htl in H0.
+        inversion H0. reflexivity.
+      }
+      subst G.
+      exact (IH (prefix ++ n :: nil) (nsig :: acc) envs aux_names envs_cur
+                (rec :: aux_pref) st_local G'
+                Hprefgen' Henvsgen' Hwc_tail Hmention' Hnd' Hbound' Htl
+                f sig lhs y Hfindsig Hin).
+  Qed.
+
+  Theorem generated_signature_constraints_mention_clock_scoped_env:
+    forall all_nodes envs aux_names G f sig y lhs,
+      generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      Clo.wc_global all_nodes ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G ->
+      SIG.find_signature f G = Some sig ->
+      findST sig.(s_constraints) y = Some lhs ->
+      In sig.(s_clk) lhs.
+  Proof.
+    intros all_nodes envs aux_names G f sig y lhs
+           Henvsgen Hwc Hgen Hfindsig Hfindlhs.
+    unfold SECNLUSTYPING.generate_all_signatures_scoped_env in Hgen.
+    assert (Hpref0 :
+              NAMEGEN.generate_node_scoped_env' [] (Env.empty _) [] NAMEGEN.init_state =
+              OK ((Env.empty _ , []), NAMEGEN.init_state)).
+    { reflexivity. }
+    assert (Hmention0 :
+              forall f0 sig0 lhs0 y0,
+                SIG.find_signature f0 [] = Some sig0 ->
+                In (lhs0, [y0]) sig0.(s_constraints) ->
+                In sig0.(s_clk) lhs0).
+    { intros f0 sig0 lhs0 y0 Hfind0. simpl in Hfind0. discriminate. }
+    assert (Hnd0 :
+              forall f0 sig0,
+                SIG.find_signature f0 [] = Some sig0 ->
+                NoDup (signature_scope sig0)).
+    { intros f0 sig0 Hfind0. simpl in Hfind0. discriminate. }
+    pose proof
+      (generated_signature_constraints_mention_clock_scoped_env'
+         [] all_nodes [] envs aux_names (Env.empty _) [] NAMEGEN.init_state G
+         Hpref0 Henvsgen Hwc
+         Hmention0 Hnd0
+         (SIG.secglobal_scope_bounded_above_nil NAMEGEN.init_state)
+         Hgen
+         f sig lhs y Hfindsig (find_correct _ _ _ Hfindlhs))
+      as Hclock.
+    exact Hclock.
+  Qed.
 End SECNLUSTYPINGCORRECTNESS.
 
 Module SecNLusTypingCorrectness
