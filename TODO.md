@@ -31,16 +31,20 @@
 - [x] Move the full `node_noninterference_vars_defined_step` stack into `src/SIF/SecNLusNonInterferenceHelpers.v` and revalidate that helper file with direct `coqc` before resuming the output-layer proof.
 - [x] Suppress `src/SIF/StcCausality.v` and `src/SIF/SecStcNonInterference.v` from `_CoqProject` and `vfiles` for now, while keeping the NLustre-to-STC bridge files on the build path.
 - [x] Replace the temporary admitted theorem `generated_signature_constraints_mention_reset_scoped_env` in `src/SIF/SecNLusTypingCorrectness.v` with the planned raw-to-simplified reset-membership proof. Direct `coqc` validation was intentionally deferred in that edit turn.
-- [ ] Rebuild the NLustre theorem interfaces around a separate reset-control prefix premise (`reset_control_low_eq_upto`) instead of pretending reset is an ordinary source input in `history_low_eq`.
-- [ ] Add the analogous call-clock prefix premise `clock_eq_upto` to the internal raw output theorem layer, while keeping `node_noninterference_vars_defined_step` one-clock.
-- [ ] Re-introduce the internal step theorem only after the public theorem shape is fixed, and make sure it stays proof-internal.
-- [ ] Prove `node_noninterference_outputs_raw` by recursion on paired `node_security`, using whatever internal step lemma is actually needed.
+- [x] Rebuild the NLustre theorem interfaces around a separate reset-control prefix premise (`reset_control_low_eq_upto`) instead of pretending reset is an ordinary source input in `history_low_eq`.
+- [x] Add the analogous call-clock prefix premise `clock_eq_upto` to the internal raw output theorem layer, while keeping the active step theorem proof-internal.
+- [x] Re-introduce the internal step theorem only after the public theorem shape is fixed, and keep it proof-internal in `src/SIF/SecNLusNonInterferenceClockedStep.v`.
+- [x] Prove `node_noninterference_outputs_raw` by recursion on paired `node_security`, using the rebuilt clocked internal step theorem.
 - [x] Prove the call-clock low lemma needed by the `EqApp` branches: low call output should force the defining call clock low, just as the reset branch already forces low reset control.
 - [x] Add a mainline copy layer in `src/SIF/SecNLusNonInterferenceClockedStep.v` so the top-level step theorem can be generalized without reopening `SecNLusNonInterferenceHelpers.v` on every edit.
 - [x] Validate that `src/SIF/SecNLusNonInterference.v` compiles cleanly against the clocked-step copy layer before proving the copied two-clock step theorem.
 - [x] Replace the wrapper theorems in `src/SIF/SecNLusNonInterferenceClockedStep.v` with the new two-clock/current-node step theorem, then retarget `src/SIF/SecNLusNonInterference.v` to that proof.
 - [x] Add the `EqApp` and reset-call noninterference lemmas and connect them to `node_security`.
 - [x] Re-prove the output-facing corollaries from the rebuilt internal theorem stack.
+- [x] Trim the obsolete one-clock step theorems from `src/SIF/SecNLusNonInterferenceHelpers.v` after the clocked-step layer becomes the only active route, and update the noninterference docs to match that split.
 - [ ] After the NLustre noninterference proof settles, move the global-signature lookup inversion / correspondence lemma into `src/SIF/SecNLusTyping.v` so the relation between `generate_all_signatures_scoped_env` and node-local generation is packaged upstream.
-- [ ] After the NLustre theorem is finished, add the weaker translated-behavior STC noninterference corollary in `src/SIF/SecNLusStcTranslation.v`.
-- [ ] Re-run direct `coqc` on the STC scaffold files once the parallel build window is clear, but keep intrinsic STC theorem work deferred unless the weaker corollary proves insufficient.
+- [ ] State the STC-facing translated-behavior noninterference corollary in `src/SIF/SecNLusStcTranslation.v` by reusing the finished NLustre theorem plus the existing NLustre-to-STC bridge results.
+- [ ] Prefer the weakest clean STC statement that the current semantic preservation lemmas support; do not force an intrinsic STC theorem if the bridge only yields a translated-behavior corollary.
+- [ ] Read and index the exact bridge dependencies for that STC corollary: `src/SIF/SecSTCTyping.v`, `src/SIF/SecStcTypingCorrectness.v`, `src/SIF/SecNLusStcTranslation.v`, `src/NLustreToStc/Translation.v`, `src/NLustreToStc/Correctness.v`, `src/Stc/StcSemantics.v`, and `src/Stc/StcClockingSemantics.v`.
+- [ ] Re-run direct `coqc` on the STC bridge/corollary files once that statement is in place, but keep intrinsic STC theorem work deferred unless the weaker corollary proves insufficient.
+- [ ] Add an OCaml layer that emits the security constraints generated at the NLustre phase for each node, and extend the main OCaml binary with a `-sif` switch that dumps those constraints to a user-specified output file.
