@@ -140,6 +140,7 @@ src/SIF/SecContext.v
 src/SIF/SecCETyping.v
 src/SIF/SecTypes.v
 src/SIF/SecNLusTyping.v
+src/SIF/SecNLusConstraintExport.v
 src/SIF/SecNLusTypingCorrectness.v
 src/SIF/SecSTCTyping.v
 src/SIF/SecStcTypingCorrectness.v

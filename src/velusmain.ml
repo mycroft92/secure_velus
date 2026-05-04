@@ -9,6 +9,7 @@ open Ctypes
 let print_c = ref false
 let write_lustre = ref false
 let write_nlustre = ref false
+let write_sif = ref false
 let write_stc = ref false
 let write_sch = ref false
 let write_obc = ref false
@@ -82,11 +83,31 @@ let parse toks =
   | LustreParser.MenhirLibParser.Inter.Timeout_pr -> assert false
   | LustreParser.MenhirLibParser.Inter.Parsed_pr (ast, _) -> ast
 
+let dump_sif_if ast =
+  match !(Veluslib.sif_destination) with
+  | None -> ()
+  | Some _ ->
+    match LustreElab.elab_declarations ast with
+    | Error errmsg ->
+      Format.eprintf "%a@." Driveraux.print_error errmsg; exit 1
+    | OK g ->
+      match VelusCorrectness.l_to_nl g with
+      | Error errmsg ->
+        Format.eprintf "%a@." Driveraux.print_error errmsg; exit 1
+      | OK nl ->
+        match SecNLusConstraintExport.generate_nlustre_constraint_dump nl with
+        | Error errmsg ->
+          Format.eprintf "%a@." Driveraux.print_error errmsg; exit 1
+        | OK dump ->
+          Veluslib.print_sif_if dump
+
 let compile source_name filename =
   if !write_lustre
   then Veluslib.lustre_destination := Some (filename ^ ".parsed.lus");
   if !write_nlustre
   then Veluslib.nlustre_destination := Some (filename ^ ".n.lus");
+  if !write_sif
+  then Veluslib.sif_destination := Some (filename ^ ".sif");
   if !write_stc
   then Veluslib.stc_destination := Some (filename ^ ".stc");
   if !write_sch
@@ -101,6 +122,7 @@ let compile source_name filename =
   then PrintCminor.destination := Some (filename ^ ".cm");
   let toks = LustreLexer.tokens_stream source_name in
   let ast = parse toks in
+  dump_sif_if ast;
   let main_node = get_main_node ast in
   match Compiler.apply_partial
           (VelusCorrectness.compile ast main_node)
@@ -133,6 +155,8 @@ let speclist = [
                                " Save the parsed Lustre in <source>.parsed.lus";
   "-dnlustre", Arg.Set write_nlustre,
                                    " Save generated N-Lustre in <source>.n.lus";
+  "-dsif", Arg.Set write_sif,
+                                   " Save generated N-Lustre SIF constraints in <source>.sif";
   "-dstc", Arg.Set write_stc, " Save generated Stc in <source>.stc";
   "-dsch", Arg.Set write_sch, " Save re-scheduled Stc in <source>.sch.stc";
   "-dobc", Arg.Set write_obc, " Save generated Obc in <source>.obc";
