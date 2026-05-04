@@ -887,6 +887,34 @@ cases can be built on top of it.
 The first indexed milestone is now in place in
 `src/SIF/SecNLusNonInterference.v`.
 
+## Compile-Pressure Refactor
+
+To reduce rechecking pressure while the indexed proof script remains unstable,
+the stable support prefix of `SecNLusNonInterference.v` was extracted into
+`src/SIF/SecNLusNonInterferenceSupport.v`.
+
+What moved in this first pass:
+- the low-observation layer (`ground_instantiation`, `low_var`,
+  `history_low_eq[_upto]`, projection lemmas, simple-security helpers);
+- the generated node-security layer up through the paired `node_security`
+  predicate.
+
+What moved in the second pass:
+- the stable `GENERATED_NODE_NONINTERFERENCE` helper block through
+  `node_outputs_raw_spec`, including the `EqApp` transport lemmas and the
+  generated-constraint inversion lemmas such as
+  `generate_eqapp_constraint_inv` and `generate_eqreset_constraint_inv`.
+
+What intentionally stayed in `SecNLusNonInterference.v`:
+- the active theorem stack
+  `node_noninterference_vars_defined_step`,
+  `node_noninterference_outputs_raw`,
+  `node_noninterference_outputs`.
+
+This split is intentionally conservative: it removes roughly the first half of
+the file from the main proof recheck without forcing the theorem stack to be
+rewritten around newly explicit section parameters.
+
 Completed and compiling under the direct local `coqc` check:
 
 - low-observation definitions for generated node-local environments:
@@ -947,6 +975,52 @@ Concretely:
 - add the `EqApp` and reset-call noninterference lemmas using the step
   theorem’s paired call hypotheses;
 - derive the public output theorem from `node_noninterference_outputs_raw`.
+
+## Current Checkpoint
+
+The helper split is now stable:
+
+- `SecNLusNonInterferenceSupport.v` contains the low-observation and generated
+  node-security support layers;
+- `SecNLusNonInterferenceHelpers.v` contains the stable proof layer through
+  `node_noninterference_vars_defined_step`;
+- `SecNLusNonInterference.v` is reduced to the output-facing theorem layer.
+
+At this checkpoint, `node_noninterference_outputs_raw` is intentionally left
+admitted so the file boundary stays stable while the clock-sensitive theorem
+shape is redesigned.
+
+## Tomorrow's Route
+
+The current evidence suggests that the raw output theorem should remain
+two-clock, while the step theorem should stay one-clock.
+
+So the next route is:
+
+- keep `node_noninterference_vars_defined_step` unchanged;
+- keep `node_outputs_raw_spec` with two clock streams `bk` and `bk'`;
+- add an explicit prefix premise
+  `clock_eq_upto bk bk' k := forall j, j <= k -> bk j = bk' j`;
+- prove the callee-clock instances from the same low-output hypotheses used in
+  the `EqApp` branches.
+
+This is analogous to the reset route:
+
+- resets need `reset_control_low_eq_upto`;
+- call clocks should need `clock_eq_upto`.
+
+The expected missing lemmas are:
+
+- `clock_eq_upto_refl`;
+- a semantic transport lemma from `sem_clock` plus environment equality;
+- a generated-signature theorem showing visible source constraints still
+  mention `s_clk`, so the new typing lemma
+  `call_output_low_implies_clock_low` can actually be instantiated inside the
+  `EqApp` branches.
+
+The public theorem `node_noninterference_outputs` should then use the
+reflexive clock case, while `node_noninterference_outputs_raw` carries the
+more general internal premise.
 
 ## Relation To The Thesis
 

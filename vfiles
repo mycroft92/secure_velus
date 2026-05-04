@@ -142,9 +142,10 @@ src/SIF/SecTypes.v
 src/SIF/SecNLusTyping.v
 src/SIF/SecNLusTypingCorrectness.v
 src/SIF/NLustreCausality.v
-src/SIF/StcCausality.v
+src/SIF/SecNLusNonInterferenceSupport.v
+src/SIF/SecNLusNonInterferenceHelpers.v
 src/SIF/SecSTCTyping.v
 src/SIF/SecStcTypingCorrectness.v
 src/SIF/SecNLusStcTranslation.v
+src/SIF/SecNLusNonInterferenceClockedStep.v
 src/SIF/SecNLusNonInterference.v
-src/SIF/SecStcNonInterference.v
