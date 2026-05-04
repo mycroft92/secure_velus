@@ -49,4 +49,4 @@
 - [x] Prefer the weakest clean STC statement that the current semantic preservation lemmas support; do not force an intrinsic STC theorem if the bridge only yields a translated-behavior corollary.
 - [x] Read and index the exact bridge dependencies for that STC corollary: `src/SIF/SecSTCTyping.v`, `src/SIF/SecStcTypingCorrectness.v`, `src/SIF/SecNLusStcTranslation.v`, `src/NLustreToStc/Translation.v`, `src/NLustreToStc/Correctness.v`, `src/Stc/StcSemantics.v`, and `src/Stc/StcClockingSemantics.v`.
 - [x] Re-run direct `coqc` on the STC bridge/corollary files once that statement is in place, but keep intrinsic STC theorem work deferred unless the weaker corollary proves insufficient.
-- [ ] Add an OCaml layer that emits the security constraints generated at the NLustre phase for each node, and extend the main OCaml binary with a `-sif` switch that dumps those constraints to a user-specified output file.
+- [x] Add an OCaml layer that emits the security constraints generated at the NLustre phase for each node, and extend the main OCaml binary with a `-sif` switch that dumps those constraints to a user-specified output file.
