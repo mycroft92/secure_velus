@@ -107,6 +107,12 @@ Module Export Ids <: IDS.
     1-6:prove_str_to_pos_neq.
   Qed.
 
+  Lemma  sec_not_in_gensym_prefs :
+    ~In Ids.sec gensym_prefs.
+  Proof.
+    unfold gensym_prefs. repeat rewrite  not_in_cons. repeat split; auto; prove_str_to_pos_neq.
+  Qed.
+
   Lemma self_not_out: self <> out.
   Proof. prove_str_to_pos_neq. Qed.
   Hint Resolve self_not_out.

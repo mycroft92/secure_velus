@@ -174,6 +174,7 @@ Module Type IDS.
   Conjecture reset_not_step: reset <> step.
 
   Parameter atom : ident -> Prop.
+  Parameter sec_not_in_gensym_prefs :  ~In sec gensym_prefs.
 
   Conjecture self_atom : atom self.
   Conjecture out_atom : atom out.

@@ -150,8 +150,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
       [norm1], and [norm2].  The abstract [IDS] interface does not expose that
       separation, so correctness lemmas that reason about generated helper
       names keep it explicit here. *)
-  Hypothesis sec_not_in_gensym_prefs :
-    ~In Ids.sec gensym_prefs.
+  
 
   Lemma node_var_not_sec_gensym:
     forall n x i,
@@ -173,7 +172,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
       apply PSP.of_list_1 in Hinpre.
       apply SetoidList.InA_alt in Hinpre as (pre' & Heq' & Hinpre).
       subst pre'.
-      exact (sec_not_in_gensym_prefs Hinpre).
+      exact (IDS.sec_not_in_gensym_prefs Hinpre).
   Qed.
 
   (** Source-local simplify replay side conditions.
