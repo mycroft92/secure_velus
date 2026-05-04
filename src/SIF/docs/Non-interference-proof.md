@@ -1013,8 +1013,10 @@ The expected missing lemmas are:
 
 - `clock_eq_upto_refl`;
 - a semantic transport lemma from `sem_clock` plus environment equality;
-- a typing/correctness lemma of the form
-  `call_output_low_implies_call_clock_low`.
+- a generated-signature theorem showing visible source constraints still
+  mention `s_clk`, so the new typing lemma
+  `call_output_low_implies_clock_low` can actually be instantiated inside the
+  `EqApp` branches.
 
 The public theorem `node_noninterference_outputs` should then use the
 reflexive clock case, while `node_noninterference_outputs_raw` carries the

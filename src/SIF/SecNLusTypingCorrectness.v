@@ -1148,6 +1148,134 @@ Module Type SECNLUSTYPINGCORRECTNESS
         * apply bottom_is_bottom.
   Qed.
 
+  (** Low call outputs force the instantiated clock argument low.
+
+      Relation to the paper:
+      reset-aware indexed noninterference also has to keep call clocks aligned
+      across the two executions.  Once the stored callee signature is known to
+      mention its clock field in every output-defining constraint, any low
+      caller-visible output slot of the instantiated call forces the
+      instantiated clock argument low as well.  This is the clock-side
+      companion of [call_output_low_implies_reset_low]. *)
+  Lemma call_output_low_implies_clock_low:
+    forall sig inptyp ckty rstty outtyp cns st st'
+           dlt t i y v,
+      signature_good sig ->
+      (forall y lhs,
+          findST sig.(s_constraints) y = Some lhs ->
+          In sig.(s_clk) lhs) ->
+      call_subst_fresh sig inptyp ckty rstty outtyp ->
+      NoDup (signature_scope sig) ->
+      List.length sig.(s_in) = List.length inptyp ->
+      List.length sig.(s_out) = List.length outtyp ->
+      generate_constraints sig inptyp ckty rstty outtyp st = OK (cns, st') ->
+      listSatisfiable dlt cns ->
+      nth_error sig.(s_out) i = Some y ->
+      nth_error outtyp i = Some v ->
+      dlt v ⊑ t ->
+      hm_ext dlt ckty ⊑ t.
+  Proof.
+    intros sig inptyp ckty rstty outtyp cns st st'
+           dlt t i y v
+           Hgood Hclklhs Hfresh Hndscope HlenIn HlenOut Hgen Hsat
+           Hnthy Hnthv Hlowv.
+    assert (Hinfresh : Forall2 (fun x ty => ~ In x ty) sig.(s_in) inptyp).
+    { eapply call_subst_fresh_inputs_notin_pairs; eauto. }
+    assert (Hclkfresh_notin : ~ In sig.(s_clk) ckty).
+    {
+      destruct Hfresh as [_ [Hclkfresh [_ _]]].
+      unfold type_fresh in Hclkfresh.
+      rewrite Forall_forall in Hclkfresh.
+      intro Hin.
+      eapply Hclkfresh.
+      - exact Hin.
+      - unfold signature_scope.
+        repeat rewrite in_app_iff.
+        simpl. auto.
+    }
+    assert (Hrstfresh_notin : ~ In sig.(s_reset) rstty).
+    {
+      destruct Hfresh as [_ [_ [Hrstfresh _]]].
+      unfold type_fresh in Hrstfresh.
+      rewrite Forall_forall in Hrstfresh.
+      intro Hin.
+      eapply Hrstfresh.
+      - exact Hin.
+      - unfold signature_scope.
+        repeat rewrite in_app_iff.
+        simpl. auto.
+    }
+    pose proof
+      (generate_constraints_complete_good
+         sig inptyp ckty rstty outtyp cns st st'
+         Hgood Hgen dlt Hsat Hinfresh Hclkfresh_notin Hrstfresh_notin)
+      as Hsat_sig.
+    pose proof
+      (inst_valuation_outputs_eq
+         dlt sig inptyp ckty rstty outtyp
+         Hfresh Hndscope HlenOut)
+      as Hout_eq.
+    destruct
+      (Forall2_nth_error_inv
+         _ _
+         (fun x v0 =>
+            inst_valuation dlt sig inptyp ckty rstty outtyp v0 =
+            inst_valuation dlt sig inptyp ckty rstty outtyp x)
+         sig.(s_out) outtyp i y
+         Hout_eq Hnthy)
+      as (v' & Hnthv' & Hinst_out).
+    rewrite Hnthv in Hnthv'. inversion Hnthv'. subst v'. clear Hnthv'.
+    destruct Hgood as [Hwf Hperm].
+    assert (Hinrhs : In [y] (map snd sig.(s_constraints))).
+    {
+      eapply Permutation_in; [exact (Permutation_sym Hperm)|].
+      apply in_map_iff.
+      exists y.
+      split; [reflexivity|].
+      eapply nth_error_In_local; eauto.
+    }
+    destruct (findST_of_rhs_in sig.(s_constraints) y Hinrhs)
+      as (lhs & Hfindlhs).
+    assert (Hclkin : In sig.(s_clk) lhs).
+    { eapply Hclklhs; eauto. }
+    assert (Hlowv_inst :
+              inst_valuation dlt sig inptyp ckty rstty outtyp v ⊑ t).
+    {
+      destruct Hfresh as [_ [_ [_ Houtfresh]]].
+      rewrite (inst_valuation_outside_sig_scope
+                 dlt sig inptyp ckty rstty outtyp v).
+      - exact Hlowv.
+      - unfold outputs_fresh in Houtfresh.
+        rewrite Forall_forall in Houtfresh.
+        eapply Houtfresh.
+        eapply nth_error_In_local; eauto.
+    }
+    assert (Hlowy :
+              inst_valuation dlt sig inptyp ckty rstty outtyp y ⊑ t).
+    {
+      rewrite <- Hinst_out.
+      exact Hlowv_inst.
+    }
+    unfold listSatisfiable in Hsat_sig.
+    rewrite Forall_forall in Hsat_sig.
+    specialize (Hsat_sig _ (find_correct _ _ _ Hfindlhs)).
+    unfold constraintSatisfiable, satisfiable in Hsat_sig.
+    simpl in Hsat_sig.
+    rewrite <- (inst_valuation_clk_eq
+                  dlt sig inptyp ckty rstty outtyp
+                  Hfresh Hndscope).
+    apply order_trans with
+        (y := hm_ext (inst_valuation dlt sig inptyp ckty rstty outtyp) lhs).
+    - apply hm_ext_list_in1.
+      exact Hclkin.
+    - apply order_trans with
+        (y := join (inst_valuation dlt sig inptyp ckty rstty outtyp y) bottom).
+      + exact Hsat_sig.
+      + apply join_least_upper_bound.
+        * exact Hlowy.
+        * apply bottom_is_bottom.
+  Qed.
+
   (** Generated source signature interfaces are duplicate free.
 
       The call bridge only updates lattice mappings on the visible
