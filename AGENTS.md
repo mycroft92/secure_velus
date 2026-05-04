@@ -15,6 +15,16 @@ This repository contains thesis work built on top of the Velus compiler toolchai
 - Avoid reading `Lustre`, `Obc`, `ObcToClight`, `StcToObc`, and `Transcription` folders for now. They are not relevant to the current thesis task.
 - Avoid reading any folder that starts with `ignore`.
 - In general, each phase is mostly self-contained in its similarly named directory, except at phase boundaries.
+- For the translated STC noninterference task, it is explicitly allowed to read
+  `src/SIF/SecSTCTyping.v`, `src/SIF/SecStcTypingCorrectness.v`,
+  `src/SIF/SecNLusStcTranslation.v`, `src/SIF/docs/STC-noninterference-proof.md`,
+  `src/SIF/docs/SecNLusStcTranslation.md`, and the phase-boundary files
+  `src/NLustreToStc/Translation.v`, `src/NLustreToStc/Correctness.v`,
+  `src/Stc/StcSemantics.v`, and `src/Stc/StcClockingSemantics.v` when needed to
+  state or prove the weaker preservation-based STC theorem.
+- Do not prioritize an intrinsic STC noninterference proof for now. Prefer the
+  translation-based route first, and only reopen `src/SIF/SecStcNonInterference.v`
+  or `src/SIF/StcCausality.v` if that weaker route turns out to be insufficient.
 
 ## Modification Policy
 
@@ -55,6 +65,11 @@ Implement the paper as closely as possible, but correctness proofs take priority
 
 The immediate goal is to state and prove noninterference of the security type system across translation of `NLustre` with respect to Indexed Semantics only.
 
+Once the NLustre indexed theorem is in place, the next goal is to derive a
+similar STC-facing theorem by reusing `SecNLusStcTranslation.v` and the
+NLustre-to-STC semantic bridge, even if the resulting STC statement is weaker
+than a fully intrinsic STC noninterference theorem.
+
 Relevant files:
 
   - `SecNLusTyping.v`: security type system for `NLustre`
@@ -71,3 +86,12 @@ The route goes as: (You can correct it as you see fit from the papers)
 - Defining `⊑ t` projected streams for the history H of indexed semantics first
 - Defining the notion of non-interference.
 - Using the Indexed semantics along with scopedness results (`SecNLusTypingCorrectness.v` and `NameInterface.v`) of each NLustre signature to prove the non-interface of NLustre's Indexed Semantics.
+
+After that:
+- derive an STC translated-behavior noninterference corollary from the finished
+  NLustre theorem plus the preservation/bridge results in
+  `SecNLusStcTranslation.v`;
+- accept a weaker STC statement if that is what the available semantic bridge
+  supports cleanly;
+- do not spend time reproving an independent intrinsic STC theorem unless the
+  bridge route fails.

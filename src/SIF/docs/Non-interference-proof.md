@@ -905,10 +905,11 @@ What moved in the second pass:
   generated-constraint inversion lemmas such as
   `generate_eqapp_constraint_inv` and `generate_eqreset_constraint_inv`.
 
-What intentionally stayed in `SecNLusNonInterference.v`:
-- the active theorem stack
-  `node_noninterference_vars_defined_step`,
-  `node_noninterference_outputs_raw`,
+What intentionally stayed out of the helper split:
+- the active clocked step theorem layer, now housed in
+  `SecNLusNonInterferenceClockedStep.v`;
+- the output-facing theorem stack in `SecNLusNonInterference.v`,
+  namely `node_noninterference_outputs_raw` and
   `node_noninterference_outputs`.
 
 This split is intentionally conservative: it removes roughly the first half of
@@ -961,7 +962,8 @@ Important status note:
 - after the refactor checkpoint, direct `coqc` now succeeds again for both
   `src/SIF/NLustreCausality.v` and `src/SIF/SecNLusNonInterference.v`;
 - the remaining gap is no longer interface fallout, but the admitted internal
-  step theorem `node_noninterference_vars_defined_step`.
+  clocked step theorem that now lives in
+  `src/SIF/SecNLusNonInterferenceClockedStep.v`.
 
 ## Immediate Next Step
 
@@ -969,8 +971,7 @@ The remaining work is the node theorem, not more local infrastructure.
 
 Concretely:
 
-- rebuild `node_noninterference_vars_defined_step` under paired
-  `node_security`;
+- rebuild the clocked step theorem under paired `node_security`;
 - then prove `node_noninterference_outputs_raw`;
 - add the `EqApp` and reset-call noninterference lemmas using the step
   theorem’s paired call hypotheses;
@@ -982,8 +983,10 @@ The helper split is now stable:
 
 - `SecNLusNonInterferenceSupport.v` contains the low-observation and generated
   node-security support layers;
-- `SecNLusNonInterferenceHelpers.v` contains the stable proof layer through
-  `node_noninterference_vars_defined_step`;
+- `SecNLusNonInterferenceHelpers.v` contains the stable recursive-call and
+  raw-output helper layer below the clocked step theorem;
+- `SecNLusNonInterferenceClockedStep.v` contains the active two-clock step
+  theorem layer;
 - `SecNLusNonInterference.v` is reduced to the output-facing theorem layer.
 
 At this checkpoint, `node_noninterference_outputs_raw` is intentionally left
@@ -993,11 +996,12 @@ shape is redesigned.
 ## Tomorrow's Route
 
 The current evidence suggests that the raw output theorem should remain
-two-clock, while the step theorem should stay one-clock.
+two-clock, and the step theorem should be generalized to the same paired-clock
+shape.
 
 So the next route is:
 
-- keep `node_noninterference_vars_defined_step` unchanged;
+- move the active step theorem into a dedicated clocked layer;
 - keep `node_outputs_raw_spec` with two clock streams `bk` and `bk'`;
 - add an explicit prefix premise
   `clock_eq_upto bk bk' k := forall j, j <= k -> bk j = bk' j`;
@@ -1020,7 +1024,8 @@ The expected missing lemmas are:
 
 The public theorem `node_noninterference_outputs` should then use the
 reflexive clock case, while `node_noninterference_outputs_raw` carries the
-more general internal premise.
+more general internal premise. That is now the shape implemented in
+`SecNLusNonInterferenceClockedStep.v` and `SecNLusNonInterference.v`.
 
 ## Relation To The Thesis
 
@@ -1044,7 +1049,8 @@ first:
 
 1. `node_noninterference_outputs`
 2. `node_noninterference_outputs_raw`
-3. any internal step theorem needed to prove the raw theorem
+3. the internal clocked step theorem in
+   `SecNLusNonInterferenceClockedStep.v`
 
 This is intentional.  The final theorem shape should stay stable, and the
 proof-specific helper stack can then be rebuilt underneath it.
@@ -1059,9 +1065,8 @@ semantic invariant used by the proof.  The intended roles are:
 - `node_outputs_raw_spec` is allowed as an internal proof target, but it
   should never appear in the final theorem statement as an assumption.
 
-Any reintroduced step theorem should now be justified only as a proof device
-under `node_noninterference_outputs_raw`, not as part of the public theorem
-layer.
+The clocked step theorem is justified only as a proof device under
+`node_noninterference_outputs_raw`, not as part of the public theorem layer.
 
 ## Delayed Case Update
 
@@ -1095,8 +1100,8 @@ The current file now makes that split explicit with four helper lemmas:
 
 This also forced a matching change in the main theorem proof shape:
 
-- `node_noninterference_vars_defined_step` is now driven by a well-founded
-  induction on the instant `k`;
+- the active clocked step theorem is now driven by a well-founded induction on
+  the instant `k`;
 - inside that time induction, one uses `nl_node_causal_ind_defined` only for
   the current instant;
 - the `EqFby` branch consumes earlier-instants equality through the outer
