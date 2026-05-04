@@ -84,9 +84,9 @@ let parse toks =
   | LustreParser.MenhirLibParser.Inter.Parsed_pr (ast, _) -> ast
 
 let dump_sif_if ast =
-  match !(Veluslib.sif_destination) with
-  | None -> ()
-  | Some _ ->
+  match !(Veluslib.nsif_destination), !(Veluslib.ssif_destination) with
+  | None, None -> ()
+  | _, _ ->
     match LustreElab.elab_declarations ast with
     | Error errmsg ->
       Format.eprintf "%a@." Driveraux.print_error errmsg; exit 1
@@ -98,8 +98,15 @@ let dump_sif_if ast =
         match SecNLusConstraintExport.generate_nlustre_constraint_dump nl with
         | Error errmsg ->
           Format.eprintf "%a@." Driveraux.print_error errmsg; exit 1
-        | OK dump ->
-          Veluslib.print_sif_if dump
+        | OK nl_dump ->
+          begin
+            Veluslib.print_nlsif_if nl_dump;
+            match SecStcConstraintExport.generate_stc_constraint_dump nl with
+            | Error errmsg ->
+              Format.eprintf "%a@." Driveraux.print_error errmsg; exit 1
+            | OK stc_dump ->
+              Veluslib.print_stcsif_if stc_dump
+          end
 
 let compile source_name filename =
   if !write_lustre
@@ -107,7 +114,9 @@ let compile source_name filename =
   if !write_nlustre
   then Veluslib.nlustre_destination := Some (filename ^ ".n.lus");
   if !write_sif
-  then Veluslib.sif_destination := Some (filename ^ ".sif");
+  then Veluslib.nsif_destination := Some (filename ^ ".n.sif");
+  if !write_sif
+  then Veluslib.ssif_destination := Some (filename ^ ".s.sif");
   if !write_stc
   then Veluslib.stc_destination := Some (filename ^ ".stc");
   if !write_sch
@@ -156,7 +165,7 @@ let speclist = [
   "-dnlustre", Arg.Set write_nlustre,
                                    " Save generated N-Lustre in <source>.n.lus";
   "-dsif", Arg.Set write_sif,
-                                   " Save generated N-Lustre SIF constraints in <source>.sif";
+                                   " Save generated N-Lustre and Stc SIF constraints in <source>.n.sif, <source>.s.sif";
   "-dstc", Arg.Set write_stc, " Save generated Stc in <source>.stc";
   "-dsch", Arg.Set write_sch, " Save re-scheduled Stc in <source>.sch.stc";
   "-dobc", Arg.Set write_obc, " Save generated Obc in <source>.obc";

@@ -4,7 +4,8 @@
 let lustre_destination = ref (None : string option)
 let nlustre_destination = ref (None : string option)
 let stc_destination = ref (None : string option)
-let sif_destination = ref (None : string option)
+let nsif_destination = ref (None : string option)
+let ssif_destination = ref (None : string option)
 let sch_destination = ref (None : string option)
 let obc_destination = ref (None : string option)
 let sync_destination = ref (None : string option)
@@ -61,8 +62,11 @@ let print_stc_if =
 let print_sch_if =
   print_if sch_destination Interfacelib.PrintStc.print_program
 
-let print_sif_if =
-  print_if sif_destination Siflib.print_nlustre_constraint_dump
+let print_nlsif_if =
+  print_if nsif_destination Siflib.print_nlustre_constraint_dump
+
+let print_stcsif_if =
+  print_if ssif_destination Siflib.print_stc_constraint_dump
 
 let print_sync_if prog =
   match !sync_destination with

@@ -57,3 +57,35 @@ let print_nlustre_constraint_dump fmt dumps =
           fprintf fmt "@.";
           pp_node_constraint_dump fmt dump)
         rest
+
+let pp_system_constraint_dump fmt dump =
+  fprintf fmt "system %a@." pp_ident dump.SecStcConstraintExport.stc_dump_name;
+  fprintf fmt "  clock: %a@." pp_ident dump.SecStcConstraintExport.stc_dump_clk;
+  fprintf fmt "  reset: %a@." pp_ident dump.SecStcConstraintExport.stc_dump_rst;
+  pp_mapping_block fmt "inputs" dump.SecStcConstraintExport.stc_dump_inputs;
+  pp_mapping_block fmt "outputs" dump.SecStcConstraintExport.stc_dump_outputs;
+  pp_mapping_block fmt "locals" dump.SecStcConstraintExport.stc_dump_locals;
+  pp_mapping_block fmt "lasts" dump.SecStcConstraintExport.stc_dump_lasts;
+  pp_mapping_block fmt "reset-instances" dump.SecStcConstraintExport.stc_dump_reset_instances;
+  fprintf fmt "  constraints:@.";
+  begin
+    match dump.SecStcConstraintExport.stc_dump_constraints with
+    | [] ->
+        fprintf fmt "    (none)@."
+    | constraints ->
+        List.iter
+          (fun c -> fprintf fmt "%a@." pp_constraint c)
+          constraints
+  end
+
+let print_stc_constraint_dump fmt dumps =
+  match dumps with
+  | [] ->
+      fprintf fmt "(no generated STC security constraints)@."
+  | first :: rest ->
+      pp_system_constraint_dump fmt first;
+      List.iter
+        (fun dump ->
+          fprintf fmt "@.";
+          pp_system_constraint_dump fmt dump)
+        rest
