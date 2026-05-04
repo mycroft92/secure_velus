@@ -172,7 +172,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
       apply PSP.of_list_1 in Hinpre.
       apply SetoidList.InA_alt in Hinpre as (pre' & Heq' & Hinpre).
       subst pre'.
-      exact (IDS.sec_not_in_gensym_prefs Hinpre).
+      exact (Ids.sec_not_in_gensym_prefs Hinpre).
   Qed.
 
   (** Source-local simplify replay side conditions.

@@ -51,6 +51,7 @@ Record node_constraint_dump := mkNodeConstraintDump {
   dump_inputs : list (ident * ident);
   dump_outputs : list (ident * ident);
   dump_locals : list (ident * ident);
+  dump_raw_constraints : list SymTypes.constraint;
   dump_constraints : list SymTypes.constraint
 }.
 
@@ -82,13 +83,19 @@ Definition build_node_constraint_dump
                 SIG.find_signature n.(n_name) G
           with
           | Some inp_ids, Some out_ids, Some local_ids, Some sig =>
-              OK {| dump_name := n.(n_name);
-                    dump_clk := sig.(SIG.s_clk);
-                    dump_rst := sig.(SIG.s_reset);
-                    dump_inputs := zip_idents (map fst n.(n_in)) inp_ids;
-                    dump_outputs := zip_idents (map fst n.(n_out)) out_ids;
-                    dump_locals := zip_idents (map fst n.(n_vars)) local_ids;
-                    dump_constraints := sig.(SIG.s_constraints) |}
+              match SECNLUSTYPING.generate_eqns_constraints
+                      G env sig.(SIG.s_clk) sig.(SIG.s_reset) n.(n_eqs) SC.init_state with
+              | Error e => Error e
+              | OK (raw_constraints, _) =>
+                  OK {| dump_name := n.(n_name);
+                        dump_clk := sig.(SIG.s_clk);
+                        dump_rst := sig.(SIG.s_reset);
+                        dump_inputs := zip_idents (map fst n.(n_in)) inp_ids;
+                        dump_outputs := zip_idents (map fst n.(n_out)) out_ids;
+                        dump_locals := zip_idents (map fst n.(n_vars)) local_ids;
+                        dump_raw_constraints := raw_constraints;
+                        dump_constraints := sig.(SIG.s_constraints) |}
+              end
           | None, _, _, _ =>
               Error (MSG "Missing generated input mappings for node "
                         :: CTX n.(n_name) :: nil)

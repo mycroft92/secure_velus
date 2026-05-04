@@ -57,6 +57,7 @@ Record system_constraint_dump := mkSystemConstraintDump {
   stc_dump_locals : list (ident * ident);
   stc_dump_lasts : list (ident * ident);
   stc_dump_reset_instances : list (ident * ident);
+  stc_dump_raw_constraints : list SymTypes.constraint;
   stc_dump_constraints : list SymTypes.constraint
 }.
 
@@ -122,9 +123,12 @@ Definition build_system_constraint_dump
             Some last_ids,
             Some sig,
             OK ((reset_env, _), _) =>
-              match build_reset_instance_dump s.(s_name) s.(s_tcs) reset_env with
-              | Error e => Error e
-              | OK reset_ids =>
+              match build_reset_instance_dump s.(s_name) s.(s_tcs) reset_env,
+                    SECSTCTYPING.generate_trconstrs_constraints
+                      G env reset_env sig.(SIG.s_clk) sig.(SIG.s_reset)
+                      s.(s_tcs) SC.init_state
+              with
+              | OK reset_ids, OK (raw_constraints, _) =>
                   OK {| stc_dump_name := s.(s_name);
                         stc_dump_clk := sig.(SIG.s_clk);
                         stc_dump_rst := sig.(SIG.s_reset);
@@ -133,7 +137,10 @@ Definition build_system_constraint_dump
                         stc_dump_locals := zip_idents (map fst s.(s_vars)) local_ids;
                         stc_dump_lasts := zip_idents (map fst s.(s_lasts)) last_ids;
                         stc_dump_reset_instances := reset_ids;
+                        stc_dump_raw_constraints := raw_constraints;
                         stc_dump_constraints := sig.(SIG.s_constraints) |}
+              | Error e, _ => Error e
+              | _, Error e => Error e
               end
           | None, _, _, _, _, _ =>
               Error (MSG "Missing generated input mappings for system "

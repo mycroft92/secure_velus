@@ -35,7 +35,17 @@ let pp_node_constraint_dump fmt dump =
   pp_mapping_block fmt "inputs" dump.SecNLusConstraintExport.dump_inputs;
   pp_mapping_block fmt "outputs" dump.SecNLusConstraintExport.dump_outputs;
   pp_mapping_block fmt "locals" dump.SecNLusConstraintExport.dump_locals;
-  fprintf fmt "  constraints:@.";
+  fprintf fmt "  raw constraints:@.";
+  begin
+    match dump.SecNLusConstraintExport.dump_raw_constraints with
+    | [] ->
+        fprintf fmt "    (none)@."
+    | constraints ->
+        List.iter
+          (fun c -> fprintf fmt "%a@." pp_constraint c)
+          constraints
+  end;
+  fprintf fmt "  simplified constraints:@.";
   begin
     match dump.SecNLusConstraintExport.dump_constraints with
     | [] ->
@@ -67,7 +77,17 @@ let pp_system_constraint_dump fmt dump =
   pp_mapping_block fmt "locals" dump.SecStcConstraintExport.stc_dump_locals;
   pp_mapping_block fmt "lasts" dump.SecStcConstraintExport.stc_dump_lasts;
   pp_mapping_block fmt "reset-instances" dump.SecStcConstraintExport.stc_dump_reset_instances;
-  fprintf fmt "  constraints:@.";
+  fprintf fmt "  raw constraints:@.";
+  begin
+    match dump.SecStcConstraintExport.stc_dump_raw_constraints with
+    | [] ->
+        fprintf fmt "    (none)@."
+    | constraints ->
+        List.iter
+          (fun c -> fprintf fmt "%a@." pp_constraint c)
+          constraints
+  end;
+  fprintf fmt "  simplified constraints:@.";
   begin
     match dump.SecStcConstraintExport.stc_dump_constraints with
     | [] ->
