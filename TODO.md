@@ -42,9 +42,11 @@
 - [x] Add the `EqApp` and reset-call noninterference lemmas and connect them to `node_security`.
 - [x] Re-prove the output-facing corollaries from the rebuilt internal theorem stack.
 - [x] Trim the obsolete one-clock step theorems from `src/SIF/SecNLusNonInterferenceHelpers.v` after the clocked-step layer becomes the only active route, and update the noninterference docs to match that split.
+- [x] Drop the old intrinsic STC noninterference scaffold and replace it with a thin bridge-oriented `src/SIF/SecStcNonInterference.v` wrapper; remove `src/SIF/StcCausality.v`.
 - [ ] After the NLustre noninterference proof settles, move the global-signature lookup inversion / correspondence lemma into `src/SIF/SecNLusTyping.v` so the relation between `generate_all_signatures_scoped_env` and node-local generation is packaged upstream.
-- [ ] State the STC-facing translated-behavior noninterference corollary in `src/SIF/SecNLusStcTranslation.v` by reusing the finished NLustre theorem plus the existing NLustre-to-STC bridge results.
-- [ ] Prefer the weakest clean STC statement that the current semantic preservation lemmas support; do not force an intrinsic STC theorem if the bridge only yields a translated-behavior corollary.
-- [ ] Read and index the exact bridge dependencies for that STC corollary: `src/SIF/SecSTCTyping.v`, `src/SIF/SecStcTypingCorrectness.v`, `src/SIF/SecNLusStcTranslation.v`, `src/NLustreToStc/Translation.v`, `src/NLustreToStc/Correctness.v`, `src/Stc/StcSemantics.v`, and `src/Stc/StcClockingSemantics.v`.
-- [ ] Re-run direct `coqc` on the STC bridge/corollary files once that statement is in place, but keep intrinsic STC theorem work deferred unless the weaker corollary proves insufficient.
+- [x] State the STC-facing translated-behavior semantic noninterference corollary in `src/SIF/SecStcNonInterference.v` by reusing the finished NLustre theorem plus the existing syntactic bridge results from `src/SIF/SecNLusStcTranslation.v`.
+- [x] Add the first NLustre-to-STC bridge lemma for the STC corollary: package the source indexed witness into the stream/memory form expected by `NLMemSemantics.sem_msem_node` and `NLustreToStc.Correctness.correctness_loop`.
+- [x] Prefer the weakest clean STC statement that the current semantic preservation lemmas support; do not force an intrinsic STC theorem if the bridge only yields a translated-behavior corollary.
+- [x] Read and index the exact bridge dependencies for that STC corollary: `src/SIF/SecSTCTyping.v`, `src/SIF/SecStcTypingCorrectness.v`, `src/SIF/SecNLusStcTranslation.v`, `src/NLustreToStc/Translation.v`, `src/NLustreToStc/Correctness.v`, `src/Stc/StcSemantics.v`, and `src/Stc/StcClockingSemantics.v`.
+- [x] Re-run direct `coqc` on the STC bridge/corollary files once that statement is in place, but keep intrinsic STC theorem work deferred unless the weaker corollary proves insufficient.
 - [ ] Add an OCaml layer that emits the security constraints generated at the NLustre phase for each node, and extend the main OCaml binary with a `-sif` switch that dumps those constraints to a user-specified output file.

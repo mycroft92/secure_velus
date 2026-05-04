@@ -1,35 +1,3 @@
-(* Target-side observation scaffold for STC.
-
-   This file mirrors only the observation-layer part of the initial NLustre
-   setup, and is intentionally not the main proof path for the thesis.
-
-   Current design decision:
-
-   - we do not currently need an intrinsic STC noninterference theorem over
-     arbitrary STC runs;
-   - the required target-side result is weaker: noninterference for STC
-     behaviors that arise from translating NLustre behaviors;
-   - that weaker result should eventually be stated as a semantic corollary in
-     [SecNLusStcTranslation.v], by combining:
-       + source-side NLustre noninterference,
-       + indexed-to-memory NLustre bridging,
-       + NLustre-to-STC semantic preservation, and
-       + source/target signature preservation.
-
-   This file therefore just isolates the STC-side observation vocabulary that
-   may still be useful for packaging that later corollary.  The first goal is
-   to isolate the pieces that are already clear on the STC side:
-
-   - the shared low-observation layer still uses the source-generated
-     [NameInterface] environment keyed by the translated system name;
-   - the target-side causality/scheduling interface lives in
-     [SIF.StcCausality];
-   - the eventual theorem will need to keep semantic environments [R] separate
-     from STC memories [S/I/S'] and from the generated typing environment.
-
-   The final intrinsic STC semantic theorem is intentionally deferred, because
-   it is not required for the weaker translated-behavior result. *)
-
 From Coq Require Import List.
 Import List.ListNotations.
 
@@ -37,305 +5,429 @@ From Velus Require Import Common.
 From Velus Require Import SecLattice.
 From Velus Require Import Environment.
 From Velus Require Import Operators.
+From Velus Require Import CoindStreams.
 From Velus Require Import IndexedStreams.
-From Velus Require Import CoreExpr.CESyntax.
-From Velus Require Import CoreExpr.CETyping.
-From Velus Require Import CoreExpr.CEIsFree.
-From Velus Require Import CoreExpr.CEProperties.
-From Velus Require Import CoreExpr.CEClocking.
-From Velus Require Import CoreExpr.CESemantics.
-From Velus Require Import NLustre.NLSyntax.
-From Velus Require Import Stc.StcSyntax.
-From Velus Require Import Stc.StcIsLast.
-From Velus Require Import Stc.StcIsVariable.
-From Velus Require Import Stc.StcIsDefined.
-From Velus Require Import Stc.StcIsSystem.
-From Velus Require Import Stc.StcOrdered.
-From Velus Require Import Stc.StcIsFree.
-From Velus Require Import Stc.StcClocking.
-From Velus Require Import Stc.StcSemantics.
-From Velus Require Import Stc.StcClockingSemantics.
-From Velus Require Import Stc.StcWellDefined.
-From Velus Require Import SIF.SymTypes.
+From Velus Require Import CoindToIndexed.
+From Velus Require Import CoreExpr.
+From Velus Require Import NLustre.
+From Velus Require Import Stc.
+From Velus Require Import NLustreToStc.Translation.
+From Velus Require Import NLustreToStc.Correctness.
+From Velus Require Import SIF.NameInterface.
 From Velus Require Import SIF.SecContext.
-From Velus Require Import SIF.SecTypes.
 From Velus Require Import SIF.SecCETyping.
 From Velus Require Import SIF.SIFSignature.
-From Velus Require Import SIF.NameInterface.
+From Velus Require Import SIF.SecTypes.
+From Velus Require Import SIF.SecNLusTyping.
+From Velus Require Import SIF.SecNLusTypingCorrectness.
+From Velus Require Import SIF.NLustreCausality.
+From Velus Require Import SIF.SecNLusNonInterferenceSupport.
+From Velus Require Import SIF.SecNLusNonInterference.
 From Velus Require Import SIF.SecSTCTyping.
 From Velus Require Import SIF.SecStcTypingCorrectness.
-From Velus Require Import SIF.StcCausality.
+From Velus Require Import SIF.SecNLusStcTranslation.
 From Velus Require Import Clocks.
 From compcert Require Import common.Errors.
 
+(** * Semantic STC noninterference through translation
+
+    Relation to the paper:
+    this file is the target-side semantic layer of the thesis result.  We do
+    not reprove a standalone intrinsic STC noninterference theorem for
+    arbitrary target runs.  Instead, we package the weaker property actually
+    needed by the thesis:
+
+    - an STC behavior is observable only when it arises from translating an
+      NLustre node;
+    - source noninterference is proved once on indexed NLustre histories;
+    - this file bridges that source theorem to translated STC behaviors.
+
+    Syntactic/source-target preservation facts remain in
+    [SecNLusStcTranslation.v].  Only semantic bridge results belong here. *)
+
 Module Type SECSTCNONINTERFERENCE
-  (Import Ids    : IDS)
-  (Import Lat    : Lattice)
-  (Import Op     : OPERATORS)
-  (Import OpAux  : OPERATORS_AUX Op)
-  (Import SC     : SECMONAD Ids)
-  (Import SecT   : SECTYPES Lat)
-  (Import CESyn  : CESYNTAX Op)
-  (Import SynNL  : NLSYNTAX Ids Op CESyn)
-  (Import SynStc : STCSYNTAX Ids Op CESyn)
-  (Import SIG    : SIGNATURE Ids SC)
-  (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
-  (Import SECCETYPING : SECCETYPING Ids Op CESyn)
-  (Import CETyp  : CETYPING Ids Op CESyn)
-  (Import CEIsF  : CEISFREE Ids Op CESyn)
-  (Import CEClo  : CECLOCKING Ids Op CESyn)
-  (Import Last   : STCISLAST Ids Op CESyn SynStc)
-  (Import Var    : STCISVARIABLE Ids Op CESyn SynStc)
-  (Import Def    : STCISDEFINED Ids Op CESyn SynStc Var Last)
-  (Import Syst   : STCISSYSTEM Ids Op CESyn SynStc)
-  (Import Ord    : STCORDERED Ids Op CESyn SynStc Syst)
-  (Import IsF    : STCISFREE Ids Op CESyn SynStc CEIsF)
-  (Import Clo    : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst Ord CEClo)
-  (Import Str    : INDEXEDSTREAMS Op OpAux)
-  (Import CESem  : CESEMANTICS Ids Op OpAux CESyn Str)
-  (Import CEProps : CEPROPERTIES Ids Op OpAux CESyn Str CESem CETyp CEIsF)
-  (Import Sem    : STCSEMANTICS Ids Op OpAux CESyn SynStc Syst Ord Str CESem)
-  (Import CloSem : STCCLOCKINGSEMANTICS Ids Op OpAux CESyn SynStc Str Last Var Def Syst Ord CESem Sem CEClo Clo)
-  (Import WellDef : STCWELLDEFINED Ids Op CESyn SynStc Syst Ord Var Last Def CEIsF IsF)
-  (StcCaus       : STCCAUSALITY Ids Op CESyn SynStc Syst Ord Var Last Def CEIsF IsF WellDef)
-  (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
+  (Import Ids   : IDS)
+  (Import Lat   : Lattice)
+  (Import Op    : OPERATORS)
+  (Import OpAux : OPERATORS_AUX Op)
+  (Import CStr  : COINDSTREAMS Op OpAux)
+  (Import Str   : INDEXEDSTREAMS Op OpAux)
+  (Import CIStr : COINDTOINDEXED Op OpAux CStr Str)
+  (Import SC    : SECMONAD Ids)
+  (Import SecT  : SECTYPES Lat)
+  (Import CE    : COREEXPR Ids Op OpAux Str)
+  (Import NL    : NLUSTRE Ids Op OpAux CStr Str CIStr CE)
+  (Import Stc   : STC Ids Op OpAux Str CE)
+  (Import Translation : TRANSLATION Ids Op CE.Syn NL.Syn Stc.Syn NL.Mem)
+  (Correctness  : CORRECTNESS Ids Op OpAux CStr Str CIStr CE NL Stc Translation)
+  (Import SIG          : SIGNATURE Ids SC)
+  (Import SIGPROOFS    : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
+  (Import NAMEGEN      : NAMEGEN Ids Op CE.Syn NL.Syn)
+  (Import SECCETYPING  : SECCETYPING Ids Op CE.Syn)
+  (NLCaus              : NLUSTRECAUSALITY Ids Op CE.Syn NL.Syn CE.IsF NL.IsF)
+  (Import SECNLUSTYPING :
+     SECNLUSTYPING Ids Op SC CE.Syn NL.Syn SIG NAMEGEN SECCETYPING
+       CE.IsF CE.Clo NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo)
+  (Import SECNLUSTYPINGCORRECTNESS :
+     SECNLUSTYPINGCORRECTNESS Ids Op SC CE.Syn NL.Syn Lat SecT SIG SIGPROOFS
+       NAMEGEN SECCETYPING CE.IsF CE.Clo NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo
+       SECNLUSTYPING)
+  (NLusSupport :
+     SECNLUSNONINTERFERENCESUPPORT Ids Lat Op OpAux SC SecT CE.Syn NL.Syn SIG
+       NAMEGEN SECCETYPING CE.Typ CE.IsF CE.Clo Str NL.Ord NL.Mem NL.IsD
+       NL.IsF NLCaus NL.Clo CE.Sem CE.Props NL.Sem SIGPROOFS SECNLUSTYPING
+       SECNLUSTYPINGCORRECTNESS)
+  (NLusNI :
+     SECNLUSNONINTERFERENCE Ids Lat Op OpAux SC SecT CE.Syn NL.Syn SIG NAMEGEN
+       SECCETYPING CE.Typ CE.IsF CE.Clo Str NL.Ord NL.Mem NL.IsD NL.IsF
+       NLCaus NL.Clo CE.Sem CE.Props NL.Sem SIGPROOFS SECNLUSTYPING
+       SECNLUSTYPINGCORRECTNESS)
   (Import SECSTCTYPING :
-     SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo)
+     SECSTCTYPING Ids Op SC CE.Syn Stc.Syn SIG SECCETYPING CE.IsF CE.Clo
+       Stc.Last Stc.Var Stc.Def Stc.Syst Stc.Ord Stc.Free Stc.Clo)
   (Import SECSTCTYPINGCORRECTNESS :
-     SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc SIG NAMEGEN SECCETYPING
-       CEIsF CEClo Last Var Def Syst Ord IsF Clo SECSTCTYPING).
+     SECSTCTYPINGCORRECTNESS Ids Op SC CE.Syn NL.Syn Stc.Syn Lat SecT SIG
+       SIGPROOFS NAMEGEN SECCETYPING CE.IsF CE.Clo Stc.Last Stc.Var Stc.Def
+       Stc.Syst Stc.Ord Stc.Free Stc.Clo SECSTCTYPING)
+  (NLusStcBridge :
+     SECNLUSSTCTRANSLATION Ids Lat Op SC SecT CE.Syn NL.Syn Stc.Syn NL.Mem
+       Translation SIG SIGPROOFS NAMEGEN SECCETYPING CE.IsF CE.Clo NL.Ord
+       NL.IsD NL.IsF NL.Clo SECNLUSTYPING SECNLUSTYPINGCORRECTNESS Stc.Last
+       Stc.Var Stc.Def Stc.Syst Stc.Ord Stc.Free Stc.Clo SECSTCTYPING
+       SECSTCTYPINGCORRECTNESS).
 
-  (** Vocabulary alignment with the papers and the existing SIF files.
+  Definition ground_instantiation : Type := NLusSupport.ground_instantiation.
 
-      As on the NLustre side:
-      - paper [s] = Coq [dlt];
-      - paper [ρ] = Coq [sig.(s_constraints)];
-      - "ρ is satisfied by s" = [signature_satisfied dlt sig].
+  (** Stream-level low observation on tuple streams.
 
-      The STC development reuses the same convention so the later translation
-      theorem can compare source and target security arguments without a second
-      notation layer. *)
-  Definition ground_instantiation : Type := ident -> Lat.t.
+      Relation to the paper:
+      the source theorem concludes low-equivalence on histories, but translated
+      STC behaviors are observed as streams of input/output tuples.  This
+      predicate is the finite-product view of [history_low_eq] specialised to
+      one tuple position at a time. *)
+  Definition tuple_stream_low_eq
+    (ty_env : local_sec_env) (dlt : ground_instantiation) (t : Lat.t)
+    (xs : list ident) (xss xss' : stream (list value)) : Prop :=
+    forall k i x v v',
+      nth_error xs i = Some x ->
+      NLusSupport.low_var ty_env dlt t x ->
+      nth_error (xss k) i = Some v ->
+      nth_error (xss' k) i = Some v' ->
+      v = v'.
 
-  Definition signature_constraints (sig : signature) : list constraint :=
-    sig.(s_constraints).
+  (** Target-side translated behavior witness.
 
-  Definition signature_satisfied
-    (dlt : ground_instantiation) (sig : signature) : Prop :=
-    SecT.listSatisfiable dlt (signature_constraints sig).
+      Relation to the paper:
+      the STC theorem should not quantify over arbitrary target runs.  This
+      predicate packages exactly the intended hypothesis: the current STC
+      behavior is one produced by translating an NLustre run. *)
+  Definition translated_system_behavior
+    (all_nodes : NL.Syn.global) (sys : Stc.Syn.system)
+    (xss yss : stream (list value)) : Prop :=
+    exists M,
+      NL.MemSem.msem_node all_nodes (Stc.Syn.s_name sys) xss M yss /\
+      Stc.Sem.initial_state (Translation.translate all_nodes) (Stc.Syn.s_name sys) (M 0) /\
+      Stc.Sem.loop (Translation.translate all_nodes) (Stc.Syn.s_name sys) xss yss (M 0) 0.
 
-  (** The target-side naming discipline still comes from the source-generated
-      [NameInterface] table.  STC systems reuse the local security environment
-      keyed by their translated system name; they do not generate a second
-      target-only typing environment. *)
-  Section GENERATED_LOW_OBSERVATION.
-    Variable src_nodes : SynNL.global.
-    Variable envs : node_scoped_env.
-    Variable aux_names : list node_aux_names.
-    Variable sys : system.
-    Variable ty_env : local_sec_env.
-    Variable dlt : ground_instantiation.
-    Variable t : Lat.t.
+  (** STC-side security packaging.
 
-    Hypothesis Henvsgen :
-      NAMEGEN.generate_node_scoped_env src_nodes = OK (envs, aux_names).
-    Hypothesis Hfindenv :
-      find_node_env sys.(s_name) envs = Some ty_env.
+      Relation to the paper:
+      this is the target-facing analogue of [node_security].  It hides the
+      source node witness and keeps only the facts needed by the semantic STC
+      theorem:
 
-    (** One raw STC variable is observable at level [t] when the generated
-        security identifier attached to it by the source naming layer is below
-        [t] under the chosen ground instantiation.
+      - the current system is a translated NLustre node;
+      - the source and target signatures agree on their shared interface; and
+      - the source node satisfies the paired noninterference invariant. *)
+  Definition system_security
+    (all_nodes : NL.Syn.global) (Gsrc Gstc : secglobal)
+    (envs : node_scoped_env) (aux_names : list node_aux_names)
+    (sys : Stc.Syn.system)
+    (dlt_sig dlt_raw : ground_instantiation) : Prop :=
+    exists n nsig ssig,
+      sys = Translation.translate_node n /\
+      find_node n.(n_name) all_nodes = Some n /\
+      SIG.find_signature n.(n_name) Gsrc = Some nsig /\
+      SIG.find_signature (Stc.Syn.s_name sys) Gstc = Some ssig /\
+      NLusStcBridge.Signature_head_consistent nsig ssig /\
+      NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw.
 
-        Relation to the paper:
-        this is the target-side counterpart of membership in [X⊑t], with the
-        important caveat that [Γ] is still generated on the source side and
-        then looked up by translated system name. *)
-    Definition low_var (x : ident) : Prop :=
-      exists α, Env.find x ty_env = Some α /\ dlt α ⊑ t.
+  (** Turn tuple-stream low-equivalence into history low-equivalence.
 
-    Definition low_var_dec (x : ident) : {low_var x} + {~ low_var x}.
-    Proof.
-      unfold low_var.
-      destruct (Env.find x ty_env) as [α|] eqn:Hfind.
-      - destruct (Lat.order_dec (dlt α) t) as [Hle|Hnle].
-        + left. now exists α.
-        + right. intros (α' & Hfind' & Hle').
-          inv Hfind'. contradiction.
-      - right. intros (α & Hfind' & _).
-        discriminate Hfind'.
-    Defined.
+      Relation to the paper:
+      the source theorem consumes [history_low_eq] on the generated local
+      histories.  STC-facing statements use tuple streams instead, so this is
+      the semantic bridge from tuple observation back to source history
+      observation. *)
+  Lemma history_low_eq_of_tuple_stream_low_eq:
+    forall ty_env dlt t xs H H' xss xss',
+      CE.Sem.sem_vars H xs xss ->
+      CE.Sem.sem_vars H' xs xss' ->
+      tuple_stream_low_eq ty_env dlt t xs xss xss' ->
+      NLusSupport.history_low_eq ty_env dlt t xs H H'.
+  Proof.
+    intros ty_env dlt t xs H H' xss xss' Hvars Hvars' Hlow k x Hin Hlowx.
+    destruct (SecT.In_nth_error_ex _ _ _ Hin) as [i Hnthx].
+    specialize (Hvars k).
+    specialize (Hvars' k).
+    destruct (nth_error (xss k) i) as [v|] eqn:Hnthv.
+    - destruct (nth_error (xss' k) i) as [v'|] eqn:Hnthv'.
+      + eapply NLusSupport.sem_vars_instant_nth_error in Hvars; eauto.
+        eapply NLusSupport.sem_vars_instant_nth_error in Hvars'; eauto.
+        unfold sem_var_instant in Hvars, Hvars'.
+        rewrite Hvars, Hvars'.
+        f_equal.
+        eapply Hlow; eauto.
+      + assert (Hi : i < length xs).
+        {
+          apply nth_error_Some.
+          rewrite Hnthx.
+          discriminate.
+        }
+        assert (Hi' : i < length (xss' k)).
+        {
+          rewrite <- (Forall2_length _ _ _ Hvars').
+          exact Hi.
+        }
+        pose proof (nth_error_nth' (xss' k) i absent Hi') as Hsome.
+        rewrite Hnthv' in Hsome.
+        discriminate.
+    - assert (Hi : i < length xs).
+      {
+        apply nth_error_Some.
+        rewrite Hnthx.
+        discriminate.
+      }
+      assert (Hi' : i < length (xss k)).
+      {
+        rewrite <- (Forall2_length _ _ _ Hvars).
+        exact Hi.
+      }
+      pose proof (nth_error_nth' (xss k) i absent Hi') as Hsome.
+      rewrite Hnthv in Hsome.
+      discriminate.
+  Qed.
 
-    Definition low_var_b (x : ident) : bool :=
-      if low_var_dec x then true else false.
+  (** Recover tuple-stream low-equivalence from history low-equivalence.
 
-    (** Boolean reflection of low observability.
+      Relation to the paper:
+      this is the output-facing direction of the same bridge.  The source
+      theorem concludes on histories, while the STC theorem should conclude on
+      translated input/output tuple streams. *)
+  Lemma tuple_stream_low_eq_of_history_low_eq:
+    forall ty_env dlt t xs H H' xss xss',
+      CE.Sem.sem_vars H xs xss ->
+      CE.Sem.sem_vars H' xs xss' ->
+      NLusSupport.history_low_eq ty_env dlt t xs H H' ->
+      tuple_stream_low_eq ty_env dlt t xs xss xss'.
+  Proof.
+    intros ty_env dlt t xs H H' xss xss' Hvars Hvars' Hlow k i x v v'
+           Hnthx Hlowx Hnthv Hnthv'.
+    specialize (Hvars k).
+    specialize (Hvars' k).
+    eapply NLusSupport.sem_vars_instant_nth_error in Hvars; eauto.
+    eapply NLusSupport.sem_vars_instant_nth_error in Hvars'; eauto.
+    unfold sem_var_instant in Hvars, Hvars'.
+    specialize (Hlow k).
+    specialize (Hlow x (nth_error_In _ _ Hnthx) Hlowx).
+    rewrite Hvars in Hlow.
+    rewrite Hvars' in Hlow.
+    now inversion Hlow.
+  Qed.
 
-        Relation to the paper:
-        this is the decidable target-side form of the judgment [x ∈ X⊑t]. *)
-    Lemma low_var_b_spec:
-      forall x,
-        low_var_b x = true <-> low_var x.
-    Proof.
-      intros x.
-      unfold low_var_b.
-      destruct (low_var_dec x); split; intro H; auto; discriminate.
-    Qed.
+  (** Build the translated-behavior witness from source memory semantics.
 
-    (** Finite-list representative of the paper's low-observation set.
+      Relation to the paper:
+      this is the first semantic bridge step.  It packages the existing
+      translation correctness theorem [correctness_loop] into the target-side
+      predicate used by the STC noninterference statement. *)
+  Lemma translated_system_behavior_from_msem:
+    forall (all_nodes : NL.Syn.global) (sys : Stc.Syn.system) xss M yss,
+      NL.Ord.Ordered_nodes all_nodes ->
+      NL.Clo.wc_global all_nodes ->
+      NL.MemSem.msem_node all_nodes (Stc.Syn.s_name sys) xss M yss ->
+      translated_system_behavior all_nodes sys xss yss.
+  Proof.
+    intros all_nodes sys xss M yss Hord Hwc Hmsem.
+    unfold translated_system_behavior.
+    pose proof
+      (Correctness.correctness_loop all_nodes (Stc.Syn.s_name sys) xss M yss Hord Hwc Hmsem)
+      as (Hinit & Hloop).
+    exists M.
+    repeat split; assumption.
+  Qed.
 
-        Relation to the paper:
-        STC observations are still filtered through [X⊑t]; the only difference
-        is that the later semantic theorem will talk about system transitions
-        rather than pure node histories. *)
-    Definition vars_le_t (X : list ident) : list ident :=
-      filter low_var_b X.
+  (** Upgrade a source security witness to a target-system one.
 
-    (** Membership characterization for the finite low-observation set.
+      Relation to the paper:
+      this is the semantic consumer of the syntactic signature-preservation
+      theorem.  The source node remains the real security witness, but the STC
+      theorem should talk about translated systems instead. *)
+  Lemma system_security_from_node_security:
+    forall all_nodes Gsrc Gstc envs aux_names n dlt_sig dlt_raw,
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Clo.wc_global all_nodes ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK Gsrc ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env (Translation.translate all_nodes) envs aux_names = OK Gstc ->
+      find_node n.(n_name) all_nodes = Some n ->
+      NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw ->
+      system_security all_nodes Gsrc Gstc envs aux_names (Translation.translate_node n) dlt_sig dlt_raw.
+  Proof.
+    intros all_nodes Gsrc Gstc envs aux_names n dlt_sig dlt_raw
+           Henvsgen Hwc Hallsrc Hallstc Hfindnode Hsec.
+    destruct Hsec as
+      [ty_env nsig
+       clk_id rst_id clk_type rst_type inp out locals raw st_n
+       Hfindnode_sec Hfindenv_sec Hfindsig Hsiggen
+       Haux Hclk Hrst Hinp Hout Hlocals Hraw
+       Hsigdef Hsatsig Hagree Hsatraw Hcallsec Hresetsec].
+    destruct
+      (NLusStcBridge.generated_program_signatures_preserved_global
+         all_nodes Gsrc Gstc envs aux_names
+         Henvsgen Hwc Hallsrc Hallstc
+         n.(n_name) nsig Hfindsig)
+      as (ssig & Hfindstc & Hhead).
+    unfold system_security.
+    exists n, nsig, ssig.
+    split; [reflexivity|].
+    split; [exact Hfindnode|].
+    split; [exact Hfindsig|].
+    split; [simpl; exact Hfindstc|].
+    split; [exact Hhead|].
+    econstructor; eauto.
+  Qed.
 
-        Relation to the paper:
-        this is the list-based reformulation of [x ∈ X⊑t]. *)
-    Lemma vars_le_t_spec:
-      forall X x,
-        In x (vars_le_t X) <-> In x X /\ low_var x.
-    Proof.
-      intros X x.
-      unfold vars_le_t.
-      rewrite filter_In.
-      rewrite low_var_b_spec.
-      tauto.
-    Qed.
+  (** STC noninterference for translated behaviors.
 
-    Definition project_env_on (xs : list ident) (R : env) : env :=
-      fold_right
-        (fun x acc =>
-           match Env.find x R with
-           | Some v => Env.add x v acc
-           | None => acc
-           end)
-        (Env.empty _)
-        xs.
-
-    (** Paper-style low projection on one STC semantic snapshot.
-
-        Relation to the paper:
-        this is the target-side environment analogue of [H|X⊑t], specialised
-        to a single instant environment [R]. *)
-    Definition project_env_le_t (X : list ident) (R : env) : env :=
-      project_env_on (vars_le_t X) R.
-
-    (** Relational low-equivalence on one STC semantic environment.
-
-        Relation to the paper:
-        the later STC theorem should use this relational view rather than the
-        concrete projection, exactly as on the NLustre side. *)
-    Definition env_low_eq (X : list ident) (R R' : env) : Prop :=
-      forall x,
-        In x X ->
-        low_var x ->
-        Env.find x R = Env.find x R'.
-  End GENERATED_LOW_OBSERVATION.
-
-  Section SYSTEM_THEOREM_SHAPE.
-    Variable sys : system.
-
-    (** Basic STC variable sets for the future theorem statements.
-
-        The target proof will need both the broad internal set tracked by the
-        typing generator and the narrower user-visible set. *)
-    Definition system_inputs : list ident :=
-      map fst sys.(s_in).
-
-    Definition system_outputs : list ident :=
-      map fst sys.(s_out).
-
-    Definition system_lasts : list ident :=
-      map fst sys.(s_lasts).
-
-    Definition system_defined : list ident :=
-      Def.defined sys.(s_tcs).
-
-    (** Candidate public visible set for the first STC theorem packaging.
-
-        Relation to the paper:
-        STC makes memory cells explicit as [s_lasts], so the target-side
-        visible set must decide whether the theorem first exposes only outputs
-        or outputs together with the current values of lasts. *)
-    Definition system_visible : list ident :=
-      system_outputs ++ system_lasts.
-  End SYSTEM_THEOREM_SHAPE.
-
-  (** Proof-architecture note.
-
-      This file is currently limited to observation vocabulary and theorem
-      shape bookkeeping.
-
-      Why no intrinsic STC theorem here for now:
-
-      - the weaker theorem actually needed by the thesis is a translated-
-        behavior corollary, not a property of arbitrary STC runs;
-      - [NLustreToStc.Correctness.correctness_loop] already transports source
-        runs to STC loops;
-      - [SecNLusStcTranslation.generated_program_signatures_preserved_global]
-        already aligns the relevant source/target signatures;
-      - so the main semantic work should stay source-side until the NLustre
-        noninterference theorem is finished.
-
-      If a stronger target-native theorem later becomes necessary, the most
-      likely internal statement is still over [system_defined], because:
-
-      - [SECSTCTYPING.generate_trconstrs_constraints_targets] reasons over
-        [Def.defined sys.(s_tcs)];
-      - [SECSTCTYPING.system_var_defined_in_tcs] and
-        [SECSTCTYPING.system_last_defined_in_tcs] already connect visible
-        outputs/lasts back into that internal set;
-      - [TcNext] splits current observation from next-state update, so the
-        semantic proof would need one careful current-step theorem before
-        packaging a cleaner visible corollary. *)
+      Relation to the paper:
+      this is the weaker target-side theorem justified by the current
+      development.  It speaks only about behaviors of STC systems that arise
+      from translating secure NLustre nodes.  The statement is purely STC-
+      facing: the source semantics is hidden behind [system_security] and
+      [translated_system_behavior]. *)
+  Theorem translated_system_noninterference_outputs:
+    forall all_nodes Gsrc Gstc envs aux_names sys ty_env
+           dlt_sig dlt_raw t xss xss' yss yss',
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
+      NL.Clo.wc_global all_nodes ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK Gsrc ->
+      NLCaus.nl_global_causal all_nodes ->
+      find_node_env (Stc.Syn.s_name sys) envs = Some ty_env ->
+      system_security all_nodes Gsrc Gstc envs aux_names sys dlt_sig dlt_raw ->
+      translated_system_behavior all_nodes sys xss yss ->
+      translated_system_behavior all_nodes sys xss' yss' ->
+      eq_str (clock_of xss) (clock_of xss') ->
+      tuple_stream_low_eq ty_env dlt_sig t (List.map fst (Stc.Syn.s_in sys)) xss xss' ->
+      tuple_stream_low_eq ty_env dlt_sig t (List.map fst (Stc.Syn.s_out sys)) yss yss'.
+  Proof.
+    intros all_nodes Gsrc Gstc envs aux_names sys ty_env
+           dlt_sig dlt_raw t xss xss' yss yss'
+           Henvsgen Hord Hwc Hallsrc Hcaus Hfindenv
+           Hsyssec Hbeh Hbeh' Hclock_eq Hlowin.
+    destruct Hsyssec as
+      (n & nsig & ssig
+       & Hsys & Hfindnode & Hfindsig & Hfindsig_stc & Hhead & Hnodesec).
+    subst sys.
+    simpl in Hfindenv, Hlowin |- *.
+    destruct Hbeh as (M & Hmsem & Hinit & Hloop).
+    destruct Hbeh' as (M' & Hmsem' & Hinit' & Hloop').
+    pose proof Hmsem as Hsemnode.
+    pose proof Hmsem' as Hsemnode'.
+    eapply NL.MemSem.msem_sem_node in Hsemnode.
+    eapply NL.MemSem.msem_sem_node in Hsemnode'.
+    destruct (NLusSupport.sem_node_inv all_nodes n.(n_name) xss yss Hsemnode)
+      as (bk & Hsrc & nd & Hbk & Hfindnd & Hsem_in & Hsem_out & Hclocked & Heqs).
+    destruct (NLusSupport.sem_node_inv all_nodes n.(n_name) xss' yss' Hsemnode')
+      as (bk' & Hsrc' & nd' & Hbk' & Hfindnd' & Hsem_in' & Hsem_out' & Hclocked' & Heqs').
+    assert (Hnd_eq : nd = n) by congruence.
+    assert (Hnd_eq' : nd' = n) by congruence.
+    subst nd nd'.
+    subst bk bk'.
+    assert (Heqs'_clock :
+              Forall (NL.Sem.sem_equation all_nodes (clock_of xss) Hsrc') n.(n_eqs)).
+    {
+      rewrite Forall_forall in *.
+      intros eq Heqin.
+      specialize (Heqs' eq Heqin).
+      eapply NL.Sem.sem_equation_eq_str; eauto.
+      intros k. symmetry. apply Hclock_eq.
+    }
+    assert (Hlow_hist :
+              NLusSupport.history_low_eq ty_env dlt_sig t (List.map fst n.(n_in)) Hsrc Hsrc').
+    {
+      eapply history_low_eq_of_tuple_stream_low_eq; eauto.
+    }
+    pose proof
+      (NLusNI.node_noninterference_outputs
+         all_nodes Gsrc envs aux_names
+         n ty_env nsig dlt_sig dlt_raw t (clock_of xss) Hsrc Hsrc'
+         Henvsgen Hord Hwc Hallsrc Hcaus
+         Hfindnode Hfindenv Hfindsig Hnodesec
+         Heqs Heqs'_clock Hlow_hist)
+      as Hlow_out.
+    eapply tuple_stream_low_eq_of_history_low_eq; eauto.
+  Qed.
 End SECSTCNONINTERFERENCE.
 
 Module SecStcNonInterference
-  (Ids    : IDS)
-  (Lat    : Lattice)
-  (Op     : OPERATORS)
-  (OpAux  : OPERATORS_AUX Op)
-  (SC     : SECMONAD Ids)
-  (SecT   : SECTYPES Lat)
-  (CESyn  : CESYNTAX Op)
-  (SynNL  : NLSYNTAX Ids Op CESyn)
-  (SynStc : STCSYNTAX Ids Op CESyn)
-  (SIG    : SIGNATURE Ids SC)
-  (NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
-  (SECCETYPING : SECCETYPING Ids Op CESyn)
-  (CETyp  : CETYPING Ids Op CESyn)
-  (CEIsF  : CEISFREE Ids Op CESyn)
-  (CEClo  : CECLOCKING Ids Op CESyn)
-  (Last   : STCISLAST Ids Op CESyn SynStc)
-  (Var    : STCISVARIABLE Ids Op CESyn SynStc)
-  (Def    : STCISDEFINED Ids Op CESyn SynStc Var Last)
-  (Syst   : STCISSYSTEM Ids Op CESyn SynStc)
-  (Ord    : STCORDERED Ids Op CESyn SynStc Syst)
-  (IsF    : STCISFREE Ids Op CESyn SynStc CEIsF)
-  (Clo    : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst Ord CEClo)
-  (Str    : INDEXEDSTREAMS Op OpAux)
-  (CESem  : CESEMANTICS Ids Op OpAux CESyn Str)
-  (CEProps : CEPROPERTIES Ids Op OpAux CESyn Str CESem CETyp CEIsF)
-  (Sem    : STCSEMANTICS Ids Op OpAux CESyn SynStc Syst Ord Str CESem)
-  (CloSem : STCCLOCKINGSEMANTICS Ids Op OpAux CESyn SynStc Str Last Var Def Syst Ord CESem Sem CEClo Clo)
-  (WellDef : STCWELLDEFINED Ids Op CESyn SynStc Syst Ord Var Last Def CEIsF IsF)
-  (StcCaus : STCCAUSALITY Ids Op CESyn SynStc Syst Ord Var Last Def CEIsF IsF WellDef)
-  (SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
+  (Ids   : IDS)
+  (Lat   : Lattice)
+  (Op    : OPERATORS)
+  (OpAux : OPERATORS_AUX Op)
+  (CStr  : COINDSTREAMS Op OpAux)
+  (Str   : INDEXEDSTREAMS Op OpAux)
+  (CIStr : COINDTOINDEXED Op OpAux CStr Str)
+  (SC    : SECMONAD Ids)
+  (SecT  : SECTYPES Lat)
+  (CE    : COREEXPR Ids Op OpAux Str)
+  (NL    : NLUSTRE Ids Op OpAux CStr Str CIStr CE)
+  (Stc   : STC Ids Op OpAux Str CE)
+  (Translation : TRANSLATION Ids Op CE.Syn NL.Syn Stc.Syn NL.Mem)
+  (Correctness : CORRECTNESS Ids Op OpAux CStr Str CIStr CE NL Stc Translation)
+  (SIG          : SIGNATURE Ids SC)
+  (SIGPROOFS    : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
+  (NAMEGEN      : NAMEGEN Ids Op CE.Syn NL.Syn)
+  (SECCETYPING  : SECCETYPING Ids Op CE.Syn)
+  (NLCaus       : NLUSTRECAUSALITY Ids Op CE.Syn NL.Syn CE.IsF NL.IsF)
+  (SECNLUSTYPING :
+     SECNLUSTYPING Ids Op SC CE.Syn NL.Syn SIG NAMEGEN SECCETYPING
+       CE.IsF CE.Clo NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo)
+  (SECNLUSTYPINGCORRECTNESS :
+     SECNLUSTYPINGCORRECTNESS Ids Op SC CE.Syn NL.Syn Lat SecT SIG SIGPROOFS
+       NAMEGEN SECCETYPING CE.IsF CE.Clo NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo
+       SECNLUSTYPING)
+  (NLusSupport :
+     SECNLUSNONINTERFERENCESUPPORT Ids Lat Op OpAux SC SecT CE.Syn NL.Syn SIG
+       NAMEGEN SECCETYPING CE.Typ CE.IsF CE.Clo Str NL.Ord NL.Mem NL.IsD
+       NL.IsF NLCaus NL.Clo CE.Sem CE.Props NL.Sem SIGPROOFS SECNLUSTYPING
+       SECNLUSTYPINGCORRECTNESS)
+  (NLusNI :
+     SECNLUSNONINTERFERENCE Ids Lat Op OpAux SC SecT CE.Syn NL.Syn SIG NAMEGEN
+       SECCETYPING CE.Typ CE.IsF CE.Clo Str NL.Ord NL.Mem NL.IsD NL.IsF
+       NLCaus NL.Clo CE.Sem CE.Props NL.Sem SIGPROOFS SECNLUSTYPING
+       SECNLUSTYPINGCORRECTNESS)
   (SECSTCTYPING :
-     SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo)
+     SECSTCTYPING Ids Op SC CE.Syn Stc.Syn SIG SECCETYPING CE.IsF CE.Clo
+       Stc.Last Stc.Var Stc.Def Stc.Syst Stc.Ord Stc.Free Stc.Clo)
   (SECSTCTYPINGCORRECTNESS :
-     SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc SIG NAMEGEN SECCETYPING
-       CEIsF CEClo Last Var Def Syst Ord IsF Clo SECSTCTYPING)
+     SECSTCTYPINGCORRECTNESS Ids Op SC CE.Syn NL.Syn Stc.Syn Lat SecT SIG
+       SIGPROOFS NAMEGEN SECCETYPING CE.IsF CE.Clo Stc.Last Stc.Var Stc.Def
+       Stc.Syst Stc.Ord Stc.Free Stc.Clo SECSTCTYPING)
+  (NLusStcBridge :
+     SECNLUSSTCTRANSLATION Ids Lat Op SC SecT CE.Syn NL.Syn Stc.Syn NL.Mem
+       Translation SIG SIGPROOFS NAMEGEN SECCETYPING CE.IsF CE.Clo NL.Ord
+       NL.IsD NL.IsF NL.Clo SECNLUSTYPING SECNLUSTYPINGCORRECTNESS Stc.Last
+       Stc.Var Stc.Def Stc.Syst Stc.Ord Stc.Free Stc.Clo SECSTCTYPING
+       SECSTCTYPINGCORRECTNESS)
   <: SECSTCNONINTERFERENCE
-       Ids Lat Op OpAux SC SecT CESyn SynNL SynStc SIG NAMEGEN SECCETYPING
-       CETyp CEIsF CEClo Last Var Def Syst Ord IsF Clo Str CESem CEProps Sem
-       CloSem WellDef StcCaus SIGPROOFS SECSTCTYPING SECSTCTYPINGCORRECTNESS.
+       Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc Translation
+       Correctness SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus SECNLUSTYPING
+       SECNLUSTYPINGCORRECTNESS NLusSupport NLusNI SECSTCTYPING
+       SECSTCTYPINGCORRECTNESS NLusStcBridge.
   Include SECSTCNONINTERFERENCE
-            Ids Lat Op OpAux SC SecT CESyn SynNL SynStc SIG NAMEGEN
-            SECCETYPING CETyp CEIsF CEClo Last Var Def Syst Ord IsF Clo Str
-            CESem CEProps Sem CloSem WellDef StcCaus SIGPROOFS SECSTCTYPING
-            SECSTCTYPINGCORRECTNESS.
+            Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc Translation
+            Correctness SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
+            SECNLUSTYPING SECNLUSTYPINGCORRECTNESS NLusSupport NLusNI
+            SECSTCTYPING SECSTCTYPINGCORRECTNESS NLusStcBridge.
 End SecStcNonInterference.
