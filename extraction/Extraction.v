@@ -4,6 +4,7 @@ From Coq Require Import ZArith.BinInt.
 From Coq Require ZArith.BinIntDef.
 
 From Velus Require Import VelusCorrectness.
+From Velus Require Import SIF.SecNLusConstraintExport.
 From Velus Require Import ObcToClight.Generation.
 From Velus Require Import Lustre.LustreElab.
 From Velus Require Import Lustre.Parser.LustreParser.
@@ -171,7 +172,9 @@ Separate Extraction
 	 FMapPositive.PositiveMap.find
          Compiler.transf_clight_program Cabs
          AST.signature_main
-         VelusCorrectness.compile elab_declarations translation_unit_file
+         VelusCorrectness.compile VelusCorrectness.l_to_nl
+         SecNLusConstraintExport.generate_nlustre_constraint_dump
+         elab_declarations translation_unit_file
          Initializers.transl_init
          Ctyping.eselection
          Ctyping.typecheck_program Ctyping.epostincr Ctyping.epostdecr Ctyping.epreincr Ctyping.epredecr
