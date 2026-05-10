@@ -85,6 +85,20 @@ Once that pivot is in place, prove caller/callee separation from:
 Only if that still proves insufficient should the `IDS`/`Ident` namespace
 setup itself be strengthened further.
 
+## Final Statement Shape
+
+- `signatures_preserved nsig ssig` is now the signature-level preservation
+  premise: matching interface fields plus `preserves_on` over the source
+  signature scope.
+- `Signature_call_preserves nsig ssig` is the local bridge rebuilt internally
+  by the translation proof. Freshness is no longer a separate global theorem;
+  it appears as per-call hypotheses inside the ordinary-call and reset-call
+  clauses.
+- `generated_program_signatures_preserved_global` is the public end state:
+  every source generated signature lookup has a matching target lookup with
+  `Signature_head_consistent`, with no extra call-side theorem assumptions in
+  the statement.
+
 ## End State
 
 The final theorem stack now mentions neither:

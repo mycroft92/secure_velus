@@ -37,3 +37,21 @@ and the global consistency induction:
 
 This keeps target-local environment reasoning out of the cross-phase
 translation file.
+
+## Theorem Statements
+
+- `generate_reset_env_range`: every successful lookup in a generated reset
+  environment returns a `sec_reset` identifier
+  `Ids.gensym Ids.sec_reset n`.
+- `generate_reset_env_injective`: a reset environment produced by
+  `generate_reset_env` is injective, so equal generated reset-instance names
+  come from the same source reset key.
+- `generate_sys_signature_scoped_env_scoped`: if the target accumulator is
+  already scoped, the translated system is well clocked, the current local
+  environment is found in `envs`, and that local environment is injective,
+  then a successful `generate_sys_signature_scoped_env` result is
+  `signature_scoped`.
+- `generated_sys_signature_scope_sec`: if
+  `generate_node_env all_nodes = OK (env, aux_names)` and
+  `generate_sys_signature G s env aux_names = OK sig`, then every visible
+  identifier in `signature_scope sig` lies in the shared `sec` namespace.

@@ -86,6 +86,33 @@ noninterference corollary in `SecStcNonInterference.v`. That corollary uses:
 - source-side generated-signature facts from `SecNLusTypingCorrectness.v`
 - target-side reset/scopedness facts from `SecStcTypingCorrectness.v`
 
+## Theorem Statements
+
+- `signatures_preserved (n1, n2)` means the source and target signatures agree
+  on their interface fields and the target constraint list preserves source
+  satisfiability on `signature_scope n1`.
+- `Signature_call_preserves (n1, n2)` packages two call-side obligations:
+  ordinary calls preserve satisfiability on the shared caller scope, and reset
+  calls preserve satisfiability after allowing STC to prepend one fresh
+  reset-instance constraint outside that scope.
+- `eqn_preserv`: if the source and target signature globals are
+  `Signature_consistent`, the local equation and translated block are well
+  clocked, the shared variable environment is scoped, reset-instance names are
+  fresh from the shared scope, and both constraint generators succeed, then the
+  generated STC constraint block `preserves_on scope` the NLustre one.
+- `node_preserv_scoped`: the node-level theorem instantiates
+  `eqns_preserv_scoped` with
+  `scope = inp ++ out ++ locals ++ [clk_type; rst_type]` and the concrete
+  reset-instance extras generated for the translated STC system.
+- `generate_all_signatures_consistent_scoped'`: the accumulator induction over
+  node-scoped environments returns three facts at once for the generated
+  globals: `Signature_consistent G1 G2`, `secglobal_scoped G2`, and
+  `secglobal_scope_sec G2`.
+- `generated_program_signatures_preserved_global`: the public corollary is
+  lookup based. For every source signature `nsig` found in the generated
+  NLustre global `G1`, there exists a target signature `ssig` found in the
+  generated STC global `G2` such that `Signature_head_consistent nsig ssig`.
+
 ## Proof Boundary
 
 This file now owns only syntactic/cross-phase results. Source-local and

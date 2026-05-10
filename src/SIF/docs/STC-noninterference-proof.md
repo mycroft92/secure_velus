@@ -89,6 +89,25 @@ The active semantic packaging is:
   low-equivalent translated inputs and a shared base-clock hypothesis
   `eq_str (clock_of xss) (clock_of xss')`.
 
+## Theorem Statements
+
+- `translated_system_behavior all_nodes sys xss yss` means there exists a
+  source memory run `M` such that NLustre memory semantics produces `yss` from
+  `xss`, and the translated STC system starts from `M 0` and satisfies the STC
+  `initial_state` and `loop` predicates.
+- `system_security all_nodes Gsrc Gstc envs aux_names sys dlt_sig dlt_raw`
+  means `sys` is `translate_node n` for some source node `n`, the generated
+  source and target signatures for `n` are both found, those signatures are
+  `Signature_head_consistent`, and the source witness
+  `node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw` holds.
+- `translated_system_noninterference_outputs`: if the node-scoped environments
+  and source signatures are generated successfully, the source NLustre program
+  is ordered, well clocked, and causal, the translated system's local
+  environment is found, `system_security ... sys dlt_sig dlt_raw` holds, both
+  observed STC behaviors come from translated NLustre runs, their base clocks
+  agree, and their translated inputs are low-equivalent, then their translated
+  outputs are low-equivalent as well.
+
 ## Immediate Next Steps
 
 1. Revalidate the full repository build once the STC bridge checkpoint is ready

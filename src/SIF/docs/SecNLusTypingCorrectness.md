@@ -44,3 +44,21 @@ generated NLustre/STC signature pair.
 
 The translation file therefore only needs to combine these source-side facts
 with target-side correctness and the cross-phase preservation lemmas.
+
+## Theorem Statements
+
+- `node_scope_fresh_in_env_from_bounds`: if
+  `generate_local_env_for_node n st = OK ((env, rec), st')` and the source
+  accumulator `G` is bounded above by `st`, then the current caller scope
+  recovered from `env` is fresh with respect to every signature already stored
+  in `G`.
+- `generate_node_sig_good_from_local_env`: under the local generation witness,
+  the expected clock/reset/interface lookups, source scopedness, and raw
+  constraint generation, the simplified generated NLustre signature for `n`
+  satisfies `signature_good`.
+- `generate_node_sig_scope_nodup_from_local_env`: the same local generation and
+  interface lookups imply `NoDup (signature_scope sig)` for the generated
+  source signature.
+- `generate_node_sig_scoped_env_scoped`: if the node-scoped environment for the
+  whole program has been generated and `n` is well-clocked, then a successful
+  `generate_node_sig_scoped_env` result is `signature_scoped`.
