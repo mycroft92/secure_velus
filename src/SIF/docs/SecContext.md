@@ -31,6 +31,20 @@ environment plumbing out of the NLustre, STC, and translation proofs.
   - `option_to_sec_consistent`
   - `mmap_consistent`
 
+## Theorem Statements
+
+- `find_env_consistent`: two successful runs of `find_env x env` always return
+  the same mapped security identifier.
+- `find_env_in_scope`: if every source variable in `vars` maps into `scope`,
+  then a successful `find_env x env` for any `(x, ann)` in `vars` returns a
+  security identifier that is also in `scope`.
+- `mmap_find_env_scoped`: if every element of `xs` maps into `scope`, then a
+  successful `mmap (fun x => find_env x env) xs` returns only identifiers in
+  `scope`.
+- `mmap_consistent`: if two monadic functions are pointwise consistent on
+  results, then mapping them over the same list produces the same output list
+  whenever both traversals succeed.
+
 ## Relation To The Final Theorem
 
 These lemmas sit below every later proof layer:
@@ -41,4 +55,3 @@ These lemmas sit below every later proof layer:
   signature facts.
 - `SecNLusStcTranslation.v` relies on the shared lookup-consistency facts so
   it does not have to duplicate environment plumbing in the cross-phase proof.
-

@@ -126,6 +126,20 @@ The honest end state was:
 - strengthen the *internal* call bridge with the generated-signature
   structural invariant it really uses.
 
+## Current Statement Shape
+
+- `signatures_preserved nsig ssig` now means
+  `signature_fields_agree nsig ssig` together with
+  `preserves_on (signature_scope nsig) nsig.(s_constraints) ssig.(s_constraints)`.
+- `Signature_call_preserves nsig ssig` is the actual call-side bridge used by
+  the translation proof. It has one clause for ordinary calls and one for reset
+  calls; both clauses quantify over local `call_subst_scoped` and
+  `call_subst_fresh` hypotheses, and the reset clause allows STC to prepend one
+  fresh reset-instance constraint outside the shared scope.
+- `Signature_head_consistent nsig ssig` packages the full local compatibility
+  relation needed by the public theorem: same node/system name, matching
+  interface fields, and `Signature_call_preserves nsig ssig`.
+
 ## Recommended Elimination Strategy
 
 The clean plan is to avoid proving these assumptions in an unrealistically

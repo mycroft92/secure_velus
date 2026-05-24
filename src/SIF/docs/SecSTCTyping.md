@@ -73,3 +73,20 @@ interface:
 These lemmas say that a translated STC block is scoped if the reset
 environment is only known on the reset keys that block actually reads.  This
 is the target-side scopedness interface used in the translation proof.
+
+## Theorem Statements
+
+- `generate_trconstr_constraint_scoped_on_keys`: if the current translated
+  constraint `tr` is well clocked, the visible source variables map into
+  `scope`, the base/reset types are in `scope`, and every lookup on
+  `trconstr_reset_keys tr` returns a type in `scope`, then a successful
+  `generate_trconstr_constraint tr` produces `constraints_scoped scope cns`.
+- `generate_trconstrs_constraints_scoped_on_keys`: the list-level version
+  lifts the same statement from one translated STC constraint to an entire
+  translated block using `trconstrs_reset_keys`.
+- `generate_sys_signature_scoped`: if `secglobal_scoped G`, `env_injective env`,
+  and `wc_system P s`, then any successful generated STC signature satisfies
+  `signature_scoped`.
+- `generate_all_sys_signatures_scoped`: if `wc_program systems` and the shared
+  environment is injective, then successful generation of all STC signatures
+  yields a `secglobal_scoped` result.

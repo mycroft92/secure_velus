@@ -187,6 +187,20 @@ source/target signature globals through `find_signature` and returns
 `Signature_head_consistent` directly, instead of rerunning per-node signature
 generation.
 
+## Statement Snapshot
+
+- `eqn_preserv`: one translated STC block preserves satisfiability of the
+  corresponding NLustre equation on the shared scope, while allowing STC-only
+  reset-instance auxiliaries outside that scope.
+- `node_preserv_scoped`: the node-level theorem lifts that preservation result
+  to one aligned NLustre node and translated STC system using the concrete
+  generated interface variables, locals, clock type, reset type, and reset
+  extras.
+- `generated_program_signatures_preserved_global`: if the shared node-scoped
+  environments and both generated signature globals are built successfully and
+  the source program is well clocked, then every source signature lookup has a
+  matching target lookup with `Signature_head_consistent`.
+
 ## Call-Side Status
 
 The final theorem stack no longer mentions either of the old call-side bridge

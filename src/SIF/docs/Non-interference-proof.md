@@ -206,6 +206,25 @@ Concretely:
 This keeps the theorem stream flat for now while still leaving room for a
 stronger internal route where the `EqApp` proof needs raw replay information.
 
+## Statement Snapshot
+
+- `node_security all_nodes G envs aux_names n dlt_sig dlt_raw` is the paired
+  source security predicate. It packages the generated node-signature lookup
+  and local-environment lookup for `n`, satisfiability of the simplified
+  signature under `dlt_sig`, satisfiability of the raw constraints under
+  `dlt_raw`, agreement between the two valuations on the visible scope, and the
+  recursive call/reset security obligations needed by the indexed proof.
+- `node_noninterference_outputs_raw`: if
+  `node_security all_nodes G envs aux_names n dlt_sig dlt_raw`, then the
+  internal raw-output theorem `node_outputs_raw_spec_clocked ...` holds for
+  `n`.
+- `node_noninterference_outputs`: if the node-scoped environments and source
+  signatures are generated successfully, the global NLustre program is ordered,
+  well clocked, and causal, the current node and its local environment/signature
+  are found, `node_security ... n dlt_sig dlt_raw` holds, and two indexed runs
+  of `n` are low-equivalent on inputs, then those two runs are also
+  low-equivalent on outputs.
+
 ## Interesting Proof Points For The Thesis Text
 
 These are worth explaining explicitly in the thesis, because they are the main

@@ -48,6 +48,24 @@ input/local/output name legal again.
   - `generate_local_env_for_node_injective`
   - `generate_node_env_injective`
 
+## Theorem Statements
+
+- `get_mappings_in`: if `In x xs` and `get_mappings xs env = Some tys`, then
+  there exists some `ty` such that `Env.find x env = Some ty` and `In ty tys`.
+- `generate_node_scoped_env'_split_node`: a successful run over
+  `prefix ++ n :: suffix` decomposes into four concrete steps:
+  generate the prefix environments, generate `n`'s local environment, insert
+  that local environment at `n.(n_name)`, and then continue on the suffix.
+- `generate_local_env_for_node_sec_range`: every value stored in a successful
+  node-local environment is a generated security identifier
+  `Ids.gensym Ids.sec nsec`.
+- `generate_node_scoped_env'_bounded`: if the incoming node-scoped environment
+  is bounded above by the current fresh counter, then the generated
+  node-scoped environment is bounded above by the final counter as well.
+- `generate_node_env_injective`: if
+  `generate_node_env all_nodes = OK (env, aux_names)`, then `env` is
+  injective, so equal generated security identifiers imply equal source keys.
+
 ## Relation To The Final Theorem
 
 The final lookup-based signature preservation theorem depends on this file in
@@ -62,4 +80,3 @@ two ways:
 
 Without this file, the translation proof would have to assume those naming
 separation facts externally.
-

@@ -72,3 +72,19 @@ scoped before they are compared against STC.
 The call case no longer depends on an external `call_constraints_shape`
 premise.  It consumes the signature-layer call-instantiation facts provided by
 `SIFSignature.v`.
+
+## Theorem Statements
+
+- `generate_node_sig_scoped`: if `secglobal_scoped G`, `env_injective env`,
+  and `wc_node P n`, then any successful
+  `generate_node_sig n env aux_names = OK sig` satisfies `signature_scoped sig`.
+- `generate_all_signatures_scoped'`: if `wc_global nodes`, the accumulator is
+  already `secglobal_scoped`, the shared environment is injective, and
+  `generate_all_signatures' acc nodes env aux_names = OK G`, then
+  `secglobal_scoped G`.
+- `generate_all_signatures_scoped`: the top-level corollary packages the same
+  result for `generate_all_signatures nodes env aux_names` started from the
+  empty accumulator.
+- `generate_node_sig_scoped_env`: the node-scoped entry point simply projects
+  the current node's local security environment from `envs` and reuses
+  `generate_node_sig` on that recovered local environment.

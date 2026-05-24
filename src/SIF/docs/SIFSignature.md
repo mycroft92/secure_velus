@@ -49,6 +49,28 @@ typing developments.
   are the lattice-mapping bridge between stored signature constraints and the concrete
   call block returned by `generate_constraints`.
 
+## Theorem Statements
+
+- `signature_good sig` means:
+  `wf_constraints sig.(s_constraints)` and
+  `Permutation (map snd sig.(s_constraints)) (map (fun ty => [ty]) sig.(s_out))`.
+- `generate_constraints_shape`: if `NoDup out` and
+  `generate_constraints sig inp clk rst out st = OK (cns, st')`, then
+  `wf_constraints cns` and
+  `map snd cns = map (fun ty => [ty]) out`.
+- `generate_constraints_scoped`: if `signature_scoped sig`, all actual input,
+  clock, and reset types are scoped to `scope`, all actual outputs lie in
+  `scope`, and call generation succeeds, then `constraints_scoped scope cns`.
+- `generate_constraints_correct_inst`: if `NoDup (signature_scope sig)`,
+  `call_subst_fresh sig inp clk rst out`, and the stored signature constraints
+  are satisfiable under `inst_valuation dlt sig inp clk rst out`, then the
+  generated call constraints are satisfiable under that same instantiated
+  valuation.
+- `generate_constraints_complete_good`: if `signature_good sig` and call
+  generation succeeds, then satisfiability of the generated call block
+  reconstructs satisfiability of the stored signature constraints under the
+  replay valuation built from the concrete inputs, clock, reset, and outputs.
+
 ## Relation To The Final Theorem
 
 This file provides the signature-local half of the final preservation result.
