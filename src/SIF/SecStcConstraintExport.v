@@ -1,15 +1,5 @@
-(** Executable export of generated STC security constraints.
+(** Executable export of generated STC security signatures and constraints. *)
 
-    This is the target-side analogue of [SecNLusConstraintExport.v].
-    It does not introduce new proof obligations; it packages the verified
-    STC typing computations into a concrete extracted function that can be
-    called from the OCaml driver.
-
-    Relative to the paper, this is an executable reflection of the STC target
-    typing phase. It exposes the translated per-system symbolic constraints,
-    the shared source-name to security-name mappings, and the extra
-    STC-specific reset-instance security variables that appear only after
-    translation, both before and after signature simplification. *)
 From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import ObcToClight.Interface.
@@ -185,10 +175,7 @@ Fixpoint build_constraint_dump
 Definition generate_stc_constraint_dump
   (nodes : NL.Syn.global)
   : res stc_constraint_dump :=
-  (* As in the NLustre export, we replay generation on the user-facing order
-     instead of the internal reverse construction order. We also translate
-     that ordered source list to STC so the shared naming environment and the
-     target program stay aligned system-by-system. *)
+
   let ordered_nodes := rev nodes in
   let systems := Instantiator.NL2Stc.translate ordered_nodes in
   match NAMEGEN.generate_node_scoped_env ordered_nodes with

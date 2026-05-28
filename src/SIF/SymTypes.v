@@ -1,12 +1,8 @@
-(* Canonical symbolic security types and constraints.
+(** Canonical symbolic types and constraint operations. *)
 
-   This file provides the finalized simple-list representation used throughout
-   the SIF development.  It contains the core datatypes together with the
-   list-normalization utilities that keep symbolic types and constraints in the
-   canonical form consumed by the typing and proof layers. *)
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.
-(*From Coq Require Import Logic.Classical_Prop.*)
+
 From Velus Require Import Common.
 From Velus Require Import SIF.Helpers.
 From Coq Require Import Lia.
@@ -14,12 +10,6 @@ Import ListNotations.
 From Coq Require Import Recdef.
 Definition ST := list ident.
 Definition constraint := (ST*ST)%type.
-
-(* Definition wf_constraint (c: constraint): Prop :=
-  match c with
-  | (s1,s2) => (List.length s2 = 1) /\ sortedNoDup s1
-  end.
- *)
 
 Fixpoint my_set_mem (a: ident) (st: ST) : bool :=
     match st with
@@ -37,12 +27,10 @@ Proof.
     - simpl.  destruct (ident_eqb a a0) eqn:E.
         * auto.
         * apply (ident_eqb_neq) in E. simpl in H.
-          destruct H as [H1|H2]. elim (E H1). (*a0 = a*)
+          destruct H as [H1|H2]. elim (E H1).
           now apply IHst.
 Qed.
 
-
-(*Cool trick on decreasing arguments*)
 Fixpoint merge (c1: ST) : ST -> ST :=
   fix merge' c2 :=
     match c1,c2 with
@@ -105,7 +93,6 @@ Section SplitFacts.
 
 End SplitFacts.
 
-
 Module MergeFacts.
     Lemma merge_nil: forall ls, merge ls [] = ls.
     Proof.
@@ -126,7 +113,6 @@ Module MergeFacts.
     Proof.
       induction ls; auto.
     Qed.
-
 
     Lemma intersect_correct: forall x y z, intersect x y = z -> forall a, In a z -> In a x.
     Proof.
@@ -152,18 +138,18 @@ Module MergeFacts.
         * now rewrite intersect_nil2, intersect_nil.
         * simpl. destruct (Pos.compare a_0 b_0) eqn:Eab; destruct (Pos.compare b_0 a_0) eqn:Eba.
           + apply Pos.compare_eq_iff in Eab. subst. rewrite IHx. auto.
-          (*impossible cases*)
+
           + apply Pos.compare_eq_iff in Eab. subst. apply Pos.lt_irrefl in Eba. elim Eba.
           + apply Pos.compare_eq_iff in Eab. subst. rewrite Pos.compare_gt_iff in Eba. apply Pos.lt_irrefl in Eba. elim Eba.
           + apply Pos.compare_eq_iff in Eba. subst. apply Pos.lt_irrefl in Eab. elim Eab.
           + rewrite Pos.compare_lt_iff in Eab. rewrite Pos.compare_lt_iff in Eba. elim (lt_gt_false a_0 b_0 Eab Eba).
-          (*normal cases*)
+
           + rewrite IHx. auto.
-          (*impossible*)
+
           + apply Pos.compare_eq_iff in Eba. subst. rewrite Pos.compare_gt_iff in Eab. apply Pos.lt_irrefl in Eab. elim Eab.
 
           + rewrite <- IHy. auto.
-          (*impossible*)
+
           + rewrite Pos.compare_gt_iff in Eba. rewrite Pos.compare_gt_iff in Eab. elim (lt_gt_false b_0 a_0 Eab Eba).
     Qed.
 
@@ -193,7 +179,6 @@ Module MergeFacts.
             ++ rewrite  Pos.compare_gt_iff in Eab. rewrite Pos.compare_gt_iff in Eba.  elim (lt_gt_false b a Eab Eba).
     Qed.
 
-
     Lemma sortedNoDup_hard: forall l a b, (sortedNoDup (a::l) -> b < a -> sortedNoDup (b:: a:: l))%positive.
     Proof.
       induction l; intros; auto.
@@ -208,7 +193,6 @@ Module MergeFacts.
 
     Qed.
 
-    (* The proofs are horrible, need to tidy them up*)
     Ltac pos_handler :=
       match goal with
       | [H:  (?x < ?y)%positive,
@@ -241,7 +225,6 @@ Module MergeFacts.
       destruct (Pos.compare a a) eqn:E; pos_handler. auto.
     Qed.
 
-
     Lemma sorted_merge1: (forall x x1 l1 x2 l2,
         x < x1 -> x < x2 -> sortedNoDup (merge (x1::l1) (x2::l2)) ->
         sortedNoDup (x :: merge (x1::l1) (x2::l2)) )%positive.
@@ -249,8 +232,6 @@ Module MergeFacts.
       intros. simpl in *.
       destruct (Pos.compare x1 x2) eqn: E; repeat pos_handler; auto.
     Qed.
-
-
 
     Lemma sortedNoDup_merge: forall l1, sortedNoDup l1 -> forall l2, sortedNoDup l2 -> sortedNoDup (merge l1 l2).
     Proof.
@@ -317,18 +298,6 @@ Module MergeFacts.
     Lemma merge_comm2: forall a ls1 ls2, merge (a::ls1) ls2 = merge [a] (merge ls1 ls2).
     Proof.
     Admitted.
-
-
-
-    (* Lemma StrongConfluence: forall α_1 α_2, EqNL α_1 α_2 -> canon α_1 = canon α_2.
-    Proof.
-      induction 1; auto.
-      - simpl. destruct (canon α) eqn:E1. destruct (canon β) eqn:E2. destruct (canon θ) eqn:E3.
-        now rewrite merge_assoc, app_assoc.
-      (*set the append correctly*)
-      - simpl. destruct (canon α) eqn:E1. rewrite merge_refl. *)
-
-
 
 End MergeFacts.
 
@@ -400,8 +369,6 @@ Proof.
       * right. apply IH. exact Hin.
 Qed.
 
-
-(*needs a precondition that c1 and c2 are sorted*)
 Fixpoint stEq (c1 c2: ST)  : Prop :=
   let c1 := sortST c1 in
   let c2 := sortST c2 in
@@ -420,22 +387,12 @@ Fixpoint stEq (c1 c2: ST)  : Prop :=
     | _ :: cns'        => findST cns' d
     end.
 
-  (* Fixpoint findST cns d: option ST :=
-    match cns with
-    | []  => None
-    | (st,d')::cns'  => if ident_eqb d' d then Some st else findST cns' d
-    (* | _ :: cns'        => findST cns' d *)
-    end. *)
-
 Lemma find_correct : forall cs d v,
   findST cs d = Some v -> List.In (v,[d]) cs.
 Proof.
   induction cs as [| (st',d') cs' IHcs]; intros d_0 v H; simpl in H.
   - inversion H.
-  (* - destruct (ident_eqb d' d_0) eqn:E.
-    * apply ident_eqb_eq in E. inversion H.  simpl. subst. auto.
-    * simpl. right. now apply IHcs. *)
-  (* ^Case when the constraint rhs is ident, not list. *)
+
   - destruct d'  as [|d_1 d''] eqn:E' in H.
     * apply IHcs in H. simpl. right. auto.
     * destruct d''.
@@ -445,15 +402,11 @@ Proof.
       + apply IHcs in H. simpl. right. auto.
 Qed.
 
-(*Substitute an ident d in st wtih st'*)
 Definition subST st d st' : ST :=
   match st_mem  d st with
   | false => st
   | true  => if st_mem d st' then (st_remove d st) ⊔ (st_remove d st') else (st_remove d st) ⊔ st'
   end.
-
-
-  (* Need to figure out a final constraint representation*)
 
 Fixpoint subAll cns d st' : list constraint :=
   match cns with
@@ -473,9 +426,8 @@ Fixpoint simplify (cns: list constraint) (ds: list ident) : list constraint :=
              end
   end.
 
-(*To yet prove the NoDuplication but first..*)
 Section ConstraintOrdering.
-(*do we assume the lists are sorted?*)
+
   Definition ident_list_compare (l1 l2: list ident): comparison :=
     let l1' := sortST l1 in
     let l2' := sortST l2 in
@@ -506,7 +458,6 @@ Section ConstraintOrdering.
         end
     end) l1 l2.
 
-  (*Constraint compare*)
   Definition constraint_compare (c1 c2: constraint) : comparison :=
     let (c1x, c1y) := (sortST (fst c1), snd c1) in
     let (c2x, c2y) := (sortST (fst c2), snd c2) in
@@ -528,28 +479,5 @@ Section ConstraintOrdering.
                       end
     end.
 
-  (*what's needed for sort?*)
-  (* if l1 and l2 are sorted then l merged l2 is sorted for constraints*)
-
 End ConstraintOrdering.
 
-(*Substituting ident: d with st' in a list of constraints cns  *)
-(*substitution also removes duplicate constraints with the     *)
-(*ident that is being removed(case 2), we only sub valid cns:3 *)
-(* Fixpoint subAll cns d st' : list constraint :=
-  match cns with
-  | [] => []
-  | (st, d')::cns' => if ident_eqb d' d then
-                        subAll cns' d st'
-                      else ((subST st d st'),d'):: (subAll cns' d st')
-  (* | _ :: cns'   => subAll cns' d st' *)
-  end.
-
-Fixpoint simplify (cns: list constraint) (ds: list ident) : list constraint :=
-  match ds with
-  | []    => cns
-  | d::ds' => match findST cns d with
-             | None    => simplify cns ds'
-             | Some st => simplify (subAll cns d st) ds'
-             end
-  end. *)

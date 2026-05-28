@@ -1,16 +1,4 @@
-(* Source-side symbolic security typing for NLustre.
-
-   This file turns NLustre equations and nodes into symbolic constraints using
-   the shared naming information from [NameInterface].  Its local theorem flow
-   is:
-   - generate raw constraints for equations and equation lists,
-   - prove those constraints well formed and scoped,
-   - package them into source signatures through
-     [generate_node_sig_scoped_env]/[generate_all_signatures_scoped_env].
-
-   These generated signatures are refined by [SecNLusTypingCorrectness] and
-   then used both by [SecNLusStcTranslation] and by the raw-constraint replay
-   lemmas in the indexed noninterference proof. *)
+(** Symbolic security typing and scoped signature generation for NLustre. *)
 
 From Velus Require Import Common.
 From Velus Require Import SecLattice.
@@ -33,10 +21,9 @@ From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF.NameInterface.
 From Velus Require Import Clocks.
 
-From Coq Require Import String. (*Required for Errors *)
+From Coq Require Import String.
 From Coq Require Import Lia.
 From compcert Require Import common.Errors.
-
 
 Import List.ListNotations.
 
@@ -57,24 +44,14 @@ Module Type SECNLUSTYPING
   (Import IsF   : ISFREE Ids Op CESyn SynNL CEIsF)
   (Import Clo   : NLCLOCKING Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo).
 
-
   Import SECMONADNotations.
 
-
-  (** NLustre equation typing in the shared naming environment. *)
   Section SECEQNTYPING.
     Variable G: secglobal.
     Variable env: Env.t ident.
     Variable base_ty: ident.
     Variable rst_ty : ident.
 
-    (** Conservative reset-aware source typing.
-
-        Relative to the paper's reset-aware noninterference route, the local
-        NLustre equations are treated as implicitly controlled by the node
-        reset level.  Calls already thread reset into the callee signature;
-        this strengthens the simple source equations so the semantic proofs do
-        not have to recover reset dependence separately. *)
     Definition generate_eqn_constraint (e: equation): Sec (list constraint) :=
       match e with
       | EqDef x ck cexp  =>
@@ -119,31 +96,6 @@ Module Type SECNLUSTYPING
         ret (c++cs)
     end.
 
-  (** Structural well-formedness of raw NLustre constraints.
-
-      This is the source-side fact consumed by
-      [SecTypes.simplify_complete].  The theorem is stated in two layers:
-
-      - a shape theorem for one equation, saying that its generated
-        constraints are indexed exactly by the mapped variables it defines;
-      - a list theorem that lifts the result to a whole equation list using
-        [NoDup (vars_defined eqs)] from the NLustre syntax layer.
-
-      The [EqApp] case is isolated behind a call-instantiation hypothesis.
-      That separation is intentional: the NLustre argument itself only needs
-      the standard “variables are defined at most once” property, while the
-      call case depends on separate metatheory for [generate_constraints].
-
-      Proof-flow note:
-      - [generate_eqn_constraint_shape] handles one equation;
-      - [generate_eqns_constraints_shape] lifts it to an equation list;
-      - the node-level theorems package the raw NLustre side used by
-        [SecNLusStcTranslation] and by the noninterference replay lemmas.
-
-      Relative to the paper, this section is the source-side structural
-      support for the preservation theorem: it shows that raw generated
-      constraints are well formed and scoped before simplification. *)
-
   Definition env_injective : Prop :=
     forall x y tx ty,
       Env.find x env = Some tx ->
@@ -151,22 +103,10 @@ Module Type SECNLUSTYPING
       tx = ty ->
       x = y.
 
-  (* [vars_env_scoped vars scope] says that every NLustre variable listed in
-     [vars] is mapped by the shared environment to a security identifier that
-     lies in [scope].  The scopedness proofs below use this to bridge from the
-     source-language clocking environment to the symbolic-type scope used by
-     the generated constraints. *)
   Definition vars_env_scoped {A: Type} (vars: list (ident * A)) (scope: list ident) : Prop :=
     forall x,
       InMembers x vars ->
       exists ty, Env.find x env = Some ty /\ In ty scope.
-
-  (** Scopedness of the expression/clock type assigners.
-
-      These lemmas are the local “frontend” side of the signature
-      scopedness theorem: whenever all free source variables are mapped inside
-      a chosen symbolic scope, the symbolic type computed by [assign_*_type]
-      also stays inside that scope. *)
 
   Lemma wc_clock_free_in_vars:
     forall vars x ck,
@@ -386,17 +326,6 @@ Module Type SECNLUSTYPING
     eapply wc_clock_free_in_vars; eauto.
   Qed.
 
-  (** Call-site scope transport.
-
-      [EqApp] is the only NLustre case where the generated constraints come
-      from an already stored callee signature rather than directly from the
-      current equation.  The two lemmas below extract exactly the caller-side
-      information needed by [generate_constraints_scoped]:
-
-      - actual input expressions are scoped because their free variables live
-        in the current node clocking environment;
-      - actual output variables are scoped because the instantiated call-output
-        relation points back into that same environment. *)
   Lemma wc_call_args_scoped:
     forall vars scope sub ck (ins : list (ident * (type * clock))) (es : list exp),
       vars_env_scoped vars scope ->
@@ -642,6 +571,7 @@ Module Type SECNLUSTYPING
       + constructor.
   Qed.
 
+  (** This shows that raw constraints generated from a node's equations stay inside the chosen security scope.  Signature generation uses it before local variables are eliminated. *)
   Theorem generate_eqns_constraints_scoped:
     forall P vars scope eqs cns st st',
       secglobal_scoped G ->
@@ -934,21 +864,11 @@ Module Type SECNLUSTYPING
     edestruct generate_eqns_constraints_shape as (? & ? & ? & Hwf); eauto.
   Qed.
 
-
   End SECEQNTYPING.
 
   Section SECNODETYPING.
     Variable G: secglobal.
 
-    (** Node-level raw well-formedness.
-
-        This is the NLustre well-formedness fact used by the translation and
-        replay proofs.  The crucial source-side premise is not an ad hoc SIF property:
-        it is the standard NLustre invariant [NoDup_var_defined_n_eqs], which
-        follows from the node record field [n_defd].  In other words, once the
-        call-instantiation layer is known to preserve the shape of callee
-        constraints, the enclosing node contributes exactly the expected
-        “every variable is defined once” argument from the paper. *)
     Corollary generate_node_eqns_constraints_wf:
       forall n env base_ty rst_ty raw st st',
         env_injective env ->
@@ -960,10 +880,6 @@ Module Type SECNLUSTYPING
       apply NoDup_var_defined_n_eqs.
     Qed.
 
-    (* Standalone signature generation over one flat environment.
-       The node-scoped interface below is the form used by the final theorem
-       stack, but this direct generator remains useful as a reference
-       specification. *)
     Definition generate_node_signature (n: node): res signature :=
       match  (do (env_in,  inp)  <- insert_vars (List.map fst (n.(n_in))) (Env.empty _);
               do (env_out, out)  <- insert_vars (List.map fst n.(n_out)) env_in;
@@ -982,9 +898,6 @@ Module Type SECNLUSTYPING
                 s_constraints := constraints|}
       end.
 
-      (* Environment-driven signature generation used by the translation
-         preservation development. The shared [env] and [aux_names] fix the
-         interface/local security identifiers ahead of time. *)
       Definition generate_node_sig (n: node) (env: Env.t ident) (aux_names: list node_aux_names) : res signature :=
       match  (do (clk_id, rst_id) <- option_to_sec (get_node_aux (n.(n_name)) aux_names);
               do clk_type <- option_to_sec (Env.find clk_id env);
@@ -1005,14 +918,6 @@ Module Type SECNLUSTYPING
                 s_constraints := constraints|}
       end.
 
-      (** Node-scoped signature generation entry point.
-
-          The shared naming layer now supports one outer environment keyed by
-          node name, with one local security environment per node.  This helper
-          projects the current node's local env and then reuses the existing
-          raw-node generator unchanged.  The local typing rules still operate
-          over raw node identifiers; only the outer lookup discipline changes.
-       *)
       Definition generate_node_sig_scoped_env
         (n: node) (envs: node_scoped_env) (aux_names: list node_aux_names)
         : res signature :=
@@ -1023,22 +928,7 @@ Module Type SECNLUSTYPING
             generate_node_sig n env aux_names
         end.
 
-
-      (** Signature scopedness for generated NLustre nodes.
-
-          The proof follows the implementation pipeline directly:
-
-          1. [generate_eqns_constraints_scoped] gives raw scopedness of the
-             equation-generated constraints, using source [wc_node] plus the
-             scopedness invariant on already-generated callee signatures.
-          2. [generate_eqns_constraints_shape] supplies the “locals are defined
-             by singleton RHS constraints” side-condition required by
-             [simplify_scoped].
-          3. [simplify_scoped] removes the local variables from the visible
-             scope, yielding exactly [signature_scoped].
-
-          This theorem is the node-typing counterpart of the bridge theorem
-          used by the translation-preservation file. *)
+      (** This lifts equation-level scopedness to one generated NLustre signature.  Later proofs use it whenever a fresh source signature is added to the global accumulator. *)
       Theorem generate_node_sig_scoped:
         forall P n env aux_names sig,
           secglobal_scoped G ->
@@ -1194,25 +1084,6 @@ Module Type SECNLUSTYPING
       : res (list signature) :=
       generate_all_signatures_scoped_env' [] node_list envs aux_names.
 
-    (** Global scopedness for generated NLustre signatures.
-
-        The node theorem [generate_node_sig_scoped] is the paper-facing local
-        result: one generated NLustre signature only mentions its visible
-        interface when its source node is well clocked.  The theorem below is
-        the list-level lifting used by the translation-preservation
-        development.
-
-        Proof flow:
-        1. [wc_global] supplies the standard [wc_node] fact for the current
-           head node.
-        2. [generate_node_sig_scoped] gives scopedness of the freshly generated
-           head signature from that local clocking fact.
-        3. [secglobal_scoped_cons] extends the accumulator invariant.
-        4. Induction lifts the result to the full generated signature list.
-
-        This is the NLustre-side modular analogue of the paper's reasoning that
-        already-typed callees provide well-scoped assumptions for the next node
-        in the list. *)
     Theorem generate_all_signatures_scoped':
         forall nodes acc env aux_names G,
         wc_global nodes ->
@@ -1238,6 +1109,7 @@ Module Type SECNLUSTYPING
           eapply generate_node_sig_scoped; eauto.
       Qed.
 
+    (** This is the main global scopedness theorem for generated NLustre signatures.  From a well-clocked global and an injective shared naming environment, it proves that every generated signature only mentions identifiers from its visible interface and local scope.  The source-side correctness, translation, and noninterference files all reuse this global invariant. *)
     Corollary generate_all_signatures_scoped:
       forall nodes env aux_names G,
         wc_global nodes ->
@@ -1284,6 +1156,5 @@ Module SecNLusTyping
   <: SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo.
 
 Include SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo.
-
 
 End SecNLusTyping.

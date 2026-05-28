@@ -1,25 +1,19 @@
-(* Lattice interface and basic lemmas for symbolic security reasoning.
-
-   This file adapts the lattice presentation used throughout the SIF
-   development.  It is the abstract order-theoretic layer shared by symbolic
-   types, signatures, and the semantic noninterference proofs. *)
+(** Abstract lattice structure and derived lemmas for symbolic security reasoning. *)
 
 Require Export List.
 Require Inclusion.
 Require Inverse_Image.
 
-
 Module Type Lattice.
 
   Parameter t : Set.
-  (* Equality is carried explicitly so the rest of the development can stay
-     parametric over the concrete lattice implementation. *)
+
   Parameter eq : t -> t -> Prop.
   Parameter eqb : t -> t -> bool.
   Parameter eq_refl : forall x : t, eq x x.
   Parameter eqb_refl : forall x y, eqb x y = true <-> eq x y.
   Parameter eq_no_red: forall x y, eq x y <-> x = y.
-  (* This symmetry axiom is used when reasoning about clocked expressions. *)
+
   Parameter eq_sym : forall x y : t, eq x y -> eq y x.
   Parameter eq_trans : forall x y z : t, eq x y -> eq y z -> eq x z.
   Parameter eq_dec : forall x y : t, {eq x y}+{~ eq x y}.
@@ -53,7 +47,6 @@ Module Type Lattice.
                join_bound1 join_bound2 join_least_upper_bound
                meet_bound1 meet_bound2 meet_greatest_lower_bound
                bottom_is_bottom top_is_top.
-
 
     Lemma join_upper_bound_l : forall x y z, order (join x y) z -> order x z.
     Proof.
@@ -123,12 +116,6 @@ Module Type Lattice.
       apply order_trans with (join y z); auto.
       apply order_trans with (join y z); auto.
     Qed.
-
-    (** Equality-form lattice laws.
-
-        Most developments reason in the abstract [eq] relation, but some proof
-        scripts are cleaner when rewritten with Leibniz equality.  These
-        wrappers belong at the lattice layer rather than in downstream proofs. *)
 
     Lemma join_idem_eq : forall x : t, join x x = x.
     Proof.
@@ -267,6 +254,5 @@ Module Type Lattice.
 
     Hint Resolve join_bottom1 join_bottom2 join_list_greater join_bottom_eq1 join_bottom_eq2
       join_list_least_greater.
-
 
 End Lattice.

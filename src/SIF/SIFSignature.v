@@ -1,17 +1,5 @@
-(** Security signatures and their call-time instantiation.
+(** Security signatures, call instantiation, and global signature invariants. *)
 
-    This is the signature-local bridge between raw generated node/system
-    summaries and the modular call reasoning used in the final translation
-    theorem.
-
-    The proof flow here is:
-    - generated signatures satisfy the structural invariant [signature_good];
-    - [generate_constraints] instantiates one stored signature inside a caller;
-    - [inst_valuation] and the surrounding lattice-mapping replay lemmas relate that concrete
-      call block back to the stored signature constraints;
-    - [SecNLusStcTranslation] then uses those results to prove
-      [Signature_call_preserves] internally, without a separate public
-      call-side assumption. *)
 From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import SIF.Helpers.
@@ -20,7 +8,7 @@ From Velus Require Import SIF.SecTypes.
 From Velus Require Export SIF.SecLattice.
 From Velus Require Import SIF.SecContext.
 From Coq   Require Import List Sorting.Permutation.
-From Coq Require Import String. (* for errors *)
+From Coq Require Import String.
 From compcert Require Import common.Errors.
 Import List.ListNotations.
 
@@ -39,11 +27,8 @@ Record signature := mkSig {
 }.
 Definition secglobal := list signature.
 
-
-(* Lookup by node/system name inside a security-signature environment. *)
 Definition find_signature (f : ident) : secglobal -> option signature :=
     List.find (fun n=> ident_eqb n.(s_name) f).
-
 
 Section Type_Substitutions.
 
@@ -102,14 +87,6 @@ Section Type_Substitutions.
     | _, _ => error (msg "Malformed replace map")
     end.
 
-  (* Instantiate a signature by substituting the caller's input/clock/reset
-     security types and output identifiers into the stored constraints. *)
-  (** The caller-facing reshaping at the end is the key interface contract used
-      by the typing developments.  Stored signature constraints may be kept in
-      any internal order, but a successful call instantiation rebuilds the
-      concrete constraint list in the caller's output order.  This lets the
-      NLustre/STC typing proofs consume the same per-call shape fact without
-      carrying a separate [call_constraints_shape] assumption. *)
   Definition generate_constraints (sig: signature)
     (inp: list ST)
     (clk: ST)
@@ -123,15 +100,6 @@ Section Type_Substitutions.
             do st <- option_to_sec (findST out_subst_constraints x);
             ret (st, [x])) out.
 
-  (** Stored-signature target shape.
-
-      A generated signature is allowed to keep its constraints in any order,
-      but every stored constraint must still be well formed and target exactly
-      the signature outputs up to permutation.  The call-instantiation layer
-      turns this into the concrete per-call shape fact consumed by the
-      NLustre and STC typing developments.  Relative to the paper, this is the
-      signature-level invariant that replaces the older external
-      [call_constraints_shape] premise. *)
   Definition signature_good (sig: signature) : Prop :=
     wf_constraints sig.(s_constraints)
     /\ Permutation (map snd sig.(s_constraints))
@@ -162,11 +130,6 @@ Section Type_Substitutions.
     - eapply Hglob; eauto.
   Qed.
 
-  (** Compatibility-level call-shape interface.
-
-      This predicate records the call-facing consequence of
-      [signature_good]/[secglobal_good]: successful call instantiation
-      produces one well-formed singleton-targeted block per caller output. *)
   Definition call_constraints_shape (G: secglobal) : Prop :=
     forall f sig inptyp ckty rstty outtyp cns st st',
       find_signature f G = Some sig ->
@@ -175,18 +138,12 @@ Section Type_Substitutions.
       wf_constraints cns
       /\ map snd cns = map (fun ty => [ty]) outtyp.
 
-  (* Generic scope notions for symbolic types/constraints live in [SecTypes].
-     This file only adds the signature-specific wrapper. *)
   Definition signature_scope (sig: signature) : list ident :=
     sig.(s_in) ++ sig.(s_out) ++ [sig.(s_clk); sig.(s_reset)].
 
   Definition signature_scoped (sig: signature) : Prop :=
     constraints_scoped (signature_scope sig) sig.(s_constraints).
 
-  (* Call-preservation and replay arguments use the stronger fact that every
-     visible signature identifier lies in the ordinary [sec] namespace.  This
-     is a generic property of signatures, while the generated-source/target
-     proofs that establish it live in the corresponding correctness modules. *)
   Definition signature_scope_sec (sig: signature) : Prop :=
     forall ty, In ty (signature_scope sig) -> exists n, ty = Ids.gensym Ids.sec n.
 
@@ -229,9 +186,6 @@ Section Type_Substitutions.
     - eapply Hglob; eauto.
   Qed.
 
-  (* Signature-interface agreement and call-instantiation freshness live at the
-     signature layer.  They are reused by the NLustre/STC bridge, but do not
-     depend on any translation-specific theorem shape. *)
   Definition signature_fields_agree (n1 n2: signature) : Prop :=
     n1.(s_in) = n2.(s_in)
     /\ n1.(s_out) = n2.(s_out)
@@ -510,9 +464,6 @@ Section Type_Substitutions.
     - eapply outputs_fresh_from_scope_fresh; eauto.
   Qed.
 
-  (* Every stored signature in the global environment only mentions its own
-     visible interface variables. This is the reusable global invariant
-     consumed by the NLustre and STC typing developments. *)
   Definition secglobal_scoped (G: secglobal) : Prop :=
     forall f sig,
       find_signature f G = Some sig ->
@@ -658,6 +609,7 @@ Section Type_Substitutions.
         * constructor; [simpl; reflexivity|exact Hfortail].
   Qed.
 
+  (** This fixes the shape of instantiated call constraints.  Source and target call proofs use it to reason about one visible constraint block per caller output. *)
   Theorem generate_constraints_shape:
     forall sig inp clk rst out cns st st',
       NoDup out ->
@@ -901,6 +853,7 @@ Section Type_Substitutions.
       eapply IH with (vs := vs) (cs := cs1) (st := st1) in Htl; eauto.
   Qed.
 
+  (** This shows that instantiated call constraints stay inside the caller-visible scope.  Both signature generators reuse it when they build call constraints from stored signatures. *)
   Theorem generate_constraints_scoped:
     forall sig scope inp clk rst out cns st st',
       signature_scoped sig ->
@@ -1107,7 +1060,6 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       let H1 := fresh "Hmat" in
       destruct x eqn:H1; monadInv
     end.
-
 
   Lemma subst_ident_in_constraints_correct:
     forall (cs: list constraint) (x: ident) (v: ST) cs' st st', subst_ident_in_constraints cs x v st = OK (cs' , st') ->
@@ -2498,6 +2450,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
         eapply subst_ident_constraints_correct_out; eauto.
   Qed.
 
+  (** This is the main correctness theorem for signature instantiation.  It shows that substituting caller inputs, clock, reset, and outputs into a stored signature produces constraints whose satisfiability matches the intended caller-side interpretation.  The translation bridge and the noninterference proofs use this theorem instead of unfolding instantiation by hand. *)
   Theorem generate_constraints_correct_inst:
     forall sig inp clk rst out cns st st' dlt,
       NoDup (sig_scope sig) ->

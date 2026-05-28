@@ -1,10 +1,5 @@
-(** Shared security-name generation for the NLustre/STC translation proofs.
+(** Shared generation of security identifiers and node-scoped naming environments. *)
 
-    The generators in this file build one common environment of security
-    identifiers for node inputs, outputs, locals, and the extra clock/reset
-    auxiliaries. Both NLustre and STC typing reuse that environment so the
-    translation theorem and the semantic noninterference results can talk
-    about a single naming discipline. *)
 From Velus Require Import Common.
 From Velus Require Import SecLattice.
 From Velus Require Import Environment.
@@ -12,12 +7,10 @@ From Velus Require Import Operators.
 From Velus Require Import NLustre.NLSyntax.
 From Velus Require Import CoreExpr.CESyntax.
 
-
-From Coq Require Import String. (*Required for Errors *)
+From Coq Require Import String.
 From Coq Require Import PArith.
 From Coq Require Import Sorting.Permutation.
 From compcert Require Import common.Errors.
-
 
 Open Scope list_scope.
 
@@ -27,9 +20,6 @@ Record node_aux_names := mkNames {
     nrst: ident;
 }.
 
-(** Outer env keyed by unique node names; inner env keyed by raw names local
-    to that node.  This node-scoped layout allows inter-node variable-name
-    reuse while keeping the local typing statements unchanged. *)
 Definition local_sec_env : Type := Env.t ident.
 Definition node_scoped_env : Type := Env.t local_sec_env.
 
@@ -67,19 +57,6 @@ Section Env_helpers.
                    do ts <- get_mappings_from_node xs env;
                    Some (t::ts)
     end.
-
-  (** The lemmas below are the reusable interface between the shared
-      name-generation environment and the phase-specific typing proofs.
-
-      They let the typing, translation, and noninterference proofs move back
-      and forth between:
-      - source identifiers in node/system interfaces;
-      - their generated security identifiers in the shared environment;
-      - list-level results returned by [get_mappings] / [get_mappings_from_node].
-
-      Keeping these facts here avoids repeating the same environment-plumbing
-      proofs inside both the NLustre/STC typing modules and the translation
-      preservation file. *)
 
   Lemma get_mappings_app:
     forall xs ys env txs tys,
@@ -184,13 +161,9 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   (Import CESyn : CESYNTAX      Op)
   (Import SynNL : NLSYNTAX  Ids Op CESyn).
 
-
-
   Section NameMonad.
   Context {A : Type}.
 
-  (* The state only tracks the next fresh index. The shared environment itself
-     is threaded explicitly through the generators below. *)
   Definition name_state : Type := ident.
   Definition Name A := name_state -> res (A * name_state).
   Definition init_state : name_state := xH.
@@ -254,8 +227,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   End NAMEMONADNotations.
   Import NAMEMONADNotations.
 
-  (* Extend the shared security-name environment with one new program-variable
-     to security-variable mapping. *)
   Definition insert_env  (env: Env.t ident) (k v: ident): Name (Env.t ident) :=
     let st:= Env.add k v env in
       NMret st.
@@ -279,7 +250,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     end.
   End mmap.
 
-
   Fixpoint fresh_map_list (ks: list ident) (env: Env.t ident): Name (Env.t ident) :=
     match ks with
     | nil => NMret env
@@ -289,20 +259,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       NMret e'')
     end.
 
-  (** Node-scoped naming representation.
-
-      The original flat shared env maps raw variable identifiers directly to
-      security identifiers. That is too strong for real NLustre programs,
-      because two different nodes may legally reuse the same raw input/local/
-      output name.
-
-      The node-scoped variant keeps:
-      - an outer env keyed by unique node names;
-      - an inner env for each node, keyed by that node's raw identifiers plus
-        its generated clock/reset helper keys.
-
-      This lets the typing layers keep using raw local names inside one node
-      while avoiding any inter-node collisions. *)
   Definition insert_node_env
     (envs: node_scoped_env) (name: ident) (local_env: local_sec_env)
     : Name node_scoped_env :=
@@ -316,11 +272,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     else
       insert_node_env envs name local_env.
 
-  (** Local naming for one node under the node-scoped representation.
-
-      The local env is built from scratch for the current node.  Freshness of
-      the generated security identifiers still comes from the global name-state
-      threaded through the whole program. *)
   Definition generate_local_env_for_node (n: node) : Name (local_sec_env * node_aux_names) :=
     do clk_name <- fresh_ident_gen;
     do rst_name <- fresh_ident_gen;
@@ -428,8 +379,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     repeat split; auto.
   Qed.
 
-  (* Allocate clock/reset auxiliaries first, then fresh security variables for
-     the node interface and locals in one shared environment. *)
   Definition generate_new_names_for_node (n: node) (e: Env.t ident): Name (Env.t ident * node_aux_names):=
     do clk_name <- fresh_ident_gen;
     do rst_name <- fresh_ident_gen;
@@ -445,15 +394,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       NMret (e'', rs)
     end.
 
-  (** Ordered-prefix decomposition for the shared naming pass.
-
-      The final call-preservation argument reasons about one caller node
-      against the signatures accumulated from earlier nodes.  This lemma is
-      the naming-layer counterpart of that paper proof pattern: a successful
-      run of [generate_node_env'] over [ns1 ++ ns2] can always be split into a
-      successful prefix run for [ns1], followed by a successful suffix run for
-      [ns2] started from the intermediate environment and auxiliary-name
-      accumulator. *)
   Lemma generate_node_env'_app_inv:
     forall ns1 ns2 env acc st env' aux st',
       generate_node_env' (ns1 ++ ns2) env acc st = OK ((env', aux), st') ->
@@ -481,11 +421,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       + exact Hsuf.
   Qed.
 
-  (** One-node specialization of [generate_node_env'_app_inv].
-
-      This form matches the generated-caller scope arguments directly: the global
-      naming run is split into a prefix environment, the current node's fresh
-      naming step, and the remaining suffix. *)
   Lemma generate_node_env'_split_node:
     forall prefix n suffix env acc st env' aux st',
       generate_node_env' (prefix ++ n :: suffix) env acc st = OK ((env', aux), st') ->
@@ -505,11 +440,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     repeat split; auto.
   Qed.
 
-  (** Freshness of previously allocated bindings under one insertion step.
-
-      This is the basic monotonicity fact used to show that the
-      current caller node contributes genuinely new keys with respect to the
-      prefix environment built from earlier nodes. *)
   Lemma fresh_insert_preserves_find:
     forall env k st env' st' x ty,
       fresh_insert env k st = OK (env', st') ->
@@ -691,11 +621,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     eapply fresh_insert_node_env_finds_new; eauto.
   Qed.
 
-
-  (** Keys inserted by one successful list allocation are fresh with respect to
-      the initial environment.  This is the naming-layer fact reused to
-      separate the current caller scope from the already-generated callee
-      signatures in the global accumulator proof. *)
   Lemma fresh_map_list_keys_fresh_from_initial:
     forall ks env st env' st' k,
       fresh_map_list ks env st = OK (env', st') ->
@@ -724,12 +649,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
         eapply fresh_insert_preserves_find; eauto.
   Qed.
 
-  (** One-node specialization of [fresh_map_list_keys_fresh_from_initial].
-
-      The generated caller scope only depends on the auxiliary clock/reset keys
-      and on the source interface/local keys inserted for the current node.
-      This lemma records that all of those keys are absent from the prefix
-      environment produced for earlier nodes. *)
   Lemma generate_new_names_for_node_keys_fresh_from_initial:
     forall n env st env' aux st' k,
       generate_new_names_for_node n env st = OK ((env', aux), st') ->
@@ -747,25 +666,11 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     eapply fresh_map_list_keys_fresh_from_initial; eauto.
   Qed.
 
-  (* Generate the shared environment and per-node auxiliary-name table for an
-     entire NLustre global. *)
   Definition generate_node_env (ns: list node) : res (Env.t ident * list node_aux_names) :=
     match generate_node_env' ns (Env.empty _) [] init_state with
     | OK ((e, names), _) => OK (e,names)
     | Error e => Error e
     end.
-
-  (** Environment injectivity for the shared naming discipline.
-
-      The NLustre/STC typing developments only need one abstract property of
-      the generated shared environment: if two source identifiers map to the
-      same security identifier, then the source identifiers were already equal.
-
-      This section proves that fact directly from the fresh-name generator used
-      by [generate_node_env].  The typing, translation, and noninterference
-      theorems can then
-      consume injectivity as a derived naming-layer result rather than leaving
-      it as an unexplained ambient assumption. *)
 
   Definition env_injective (env: Env.t ident) : Prop :=
     forall x y tx ty,
@@ -931,11 +836,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       eapply IH; eauto.
   Qed.
 
-  (** Values produced by [fresh_map_list] are either inherited from the
-      initial env or are genuine fresh [sec] gensyms allocated from the
-      current state onward.  Starting from the empty env this becomes the
-      lower-bound fact used to separate the current node's caller scope
-      from signatures accumulated for earlier nodes. *)
   Lemma fresh_map_list_find_old_or_ge_start:
     forall ks env st env' st' x ty,
       fresh_map_list ks env st = OK (env', st') ->
@@ -1055,12 +955,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     eapply fresh_map_list_state_monotone; eauto.
   Qed.
 
-  (** Concrete helper-key shape for one node-local env generation.
-
-      The first two fresh names allocated by [generate_local_env_for_node] are
-      always the clock/reset helper keys stored in the returned auxiliary
-      record.  Later correctness proofs use this to separate those helper keys
-      from ordinary raw node variables. *)
   Lemma generate_local_env_for_node_aux_sec_names:
     forall n st env aux st',
       generate_local_env_for_node n st = OK ((env, aux), st') ->
@@ -1250,6 +1144,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       eapply IH; eauto.
   Qed.
 
+  (** This packages the main properties of the global naming pass.  Later files use it to recover injective local environments, fresh auxiliary names, and the range bounds on generated security identifiers. *)
   Lemma generate_node_env_props':
     forall ns env acc st env' aux st',
       env_sec_bounded st env ->
@@ -1365,7 +1260,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   Qed.
 
 End NAMEGEN.
-
 
 Module Type  NameGen  (Ids   : IDS)
   (Op    : OPERATORS)

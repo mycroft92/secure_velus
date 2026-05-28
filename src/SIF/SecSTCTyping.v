@@ -1,14 +1,4 @@
-(* Target-side symbolic security typing for STC.
-
-   This file mirrors [SecNLusTyping] on the target side:
-   - translate STC transition constraints into symbolic constraints,
-   - track the STC-only reset-instance environment explicitly,
-   - package the visible result into STC signatures through
-     [generate_sys_signature_scoped_env]/[generate_all_sys_signatures_scoped_env].
-
-   These generated signatures are refined by [SecStcTypingCorrectness] and are
-   then consumed by [SecNLusStcTranslation] to prove source/target signature
-   preservation across the NLustre-to-STC translation. *)
+(** Symbolic security typing and scoped signature generation for translated STC systems. *)
 
 From Velus Require Import Common.
 From Velus Require Import SecLattice.
@@ -33,12 +23,11 @@ From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF.NameInterface.
 From Velus Require Import Clocks.
 
-From Coq Require Import String. (*Required for Errors *)
+From Coq Require Import String.
 From Coq Require Import Lia.
 From Coq Require Import Lists.ListSet.
 From Coq Require Import Sorting.Permutation.
 From compcert Require Import common.Errors.
-
 
 Import List.ListNotations.
 
@@ -61,17 +50,6 @@ Module Type SECSTCTYPING
   (Import Clo   : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst Ord CEClo).
   Import SECMONADNotations.
 
-
-  (* STC signatures hide ordinary locals together with the translated memory
-     cells ([s_lasts]) and the STC-only reset-instance auxiliaries.  We remove
-     duplicates defensively so [simplify_scoped] can be
-     applied without having to restate a separate disjointness proof for the
-     reset namespace.
-
-     Relative to the paper, this is the target-side analogue of eliminating
-     local witnesses before comparing signatures: STC keeps more internal state
-     than NLustre, so the typing layer makes that hidden state explicit here
-     and then removes it at signature generation time. *)
   Definition hidden_sys_vars (locals lasts rids: list ident) : list ident :=
     nodup ident_eq_dec (locals ++ lasts ++ rids).
 
@@ -83,8 +61,7 @@ Module Type SECSTCTYPING
       x = y.
 
   Section RESETHANDLER.
-  (** This section collects STC reset statements and assigns one fresh
-      reset-instance type variable to each translated reset call. *)
+
   Fixpoint collect_reset_stmts' (trl: list trconstr) (acc: list trconstr) : list trconstr :=
     match trl with
     | [] => acc
@@ -97,9 +74,6 @@ Module Type SECSTCTYPING
 
   Definition collect_reset_stmts trl := collect_reset_stmts' trl [].
 
-  (* Reset-instance type variables are STC-specific auxiliaries.
-     Keep them in their own namespace so they never clash with the
-     shared NLustre/STC interface/local type variables. *)
   Definition fresh_reset_ident : Sec ident :=
     fun n =>
       let id := Ids.gensym Ids.sec_reset n in
@@ -113,7 +87,6 @@ Module Type SECSTCTYPING
       do e <- insert_env k v env;
       ret (e, v).
 
-  (* Insert one reset-instance type variable for a translated [TcReset]. *)
   Definition assign_reset_type (tr: trconstr) (env: Env.t ident) : Sec (Env.t ident * ident) :=
     match tr with
     | TcReset x ck f => fresh_reset_insert x env
@@ -135,25 +108,12 @@ Module Type SECSTCTYPING
   Definition generate_reset_env trl : Sec (Env.t ident * list ident) := generate_reset_env' trl (Env.empty _) [].
   End RESETHANDLER.
 
-  (** STC translated-constraint typing in the shared naming environment plus
-      the STC-only reset-instance environment. *)
   Section SECTRCONSTRTYPING.
     Variable G: secglobal.
     Variable env: Env.t ident.
     Variable reset_env: Env.t ident.
     Variable base_ty: ident.
     Variable rst_ty : ident.
-
-    (** Proof-flow note:
-        - one translated transition constraint is handled by the local
-          [generate_trconstr_constraint_*] lemmas;
-        - list-level lemmas lift this to translated systems;
-        - [generate_sys_signature_scoped] packages the target-side signature
-          scopedness used by [SecNLusStcTranslation].
-
-        This is the STC counterpart of the NLustre typing file: it isolates the
-        target-side structural facts needed before the translation proof can
-        compare the two symbolic signatures. *)
 
     Definition vars_env_scoped {A: Type} (vars: list (ident * A)) (scope: list ident) : Prop :=
       forall x,
@@ -697,14 +657,6 @@ Module Type SECSTCTYPING
           ret (c ++ cs)
       end.
 
-    (** Reset keys actually consulted by one translated STC block.
-
-        This is the target-side bookkeeping needed by the translation proof in
-        [SecNLusStcTranslation]: ordinary transition constraints never inspect
-        the reset-instance environment, while resettable call blocks do so only
-        through the distinguished leading output identifier.  The scopedness
-        theorem below therefore needs hypotheses only for these keys, not for
-        the whole reset environment. *)
     Definition trconstr_reset_keys (tr: trconstr) : list ident :=
       match tr with
       | TcReset x _ _ => [x]
@@ -1024,13 +976,6 @@ Module Type SECSTCTYPING
           apply in_or_app. now right.
     Qed.
 
-    (** Coarser scopedness corollary.
-
-        The translation proof eventually uses the more precise
-        [generate_trconstrs_constraints_scoped_on_keys] theorem above.  This
-        wrapper preserves the older interface for the rest of the typing
-        development when a caller already knows that every lookup in the reset
-        environment lands inside the chosen scope. *)
     Theorem generate_trconstr_constraint_scoped:
       forall P vars scope tr cns st st',
         secglobal_scoped G ->
@@ -1052,6 +997,7 @@ Module Type SECSTCTYPING
       eapply Hreset; eauto.
     Qed.
 
+    (** This shows that translated STC constraints stay inside the visible scope plus the reset-instance keys read from the reset environment.  It is the local scopedness fact used to build STC signatures. *)
     Theorem generate_trconstrs_constraints_scoped:
       forall P vars scope trs cns st st',
         secglobal_scoped G ->
@@ -1092,7 +1038,6 @@ Module Type SECSTCTYPING
       let H2 := fresh "Hbind" in
       eapply sec_bind2_inv in H as [? [? [? [H1 H2]]]]
     end; simpl in *.
-
 
   Lemma generate_tr_constraints_inv: forall (es1 es2: list trconstr)  st sconst st2,
   generate_trconstrs_constraints (es1 ++ es2) st = OK (sconst, st2) -> exists sconst1 st1 sconst2,  generate_trconstrs_constraints es1 st = OK (sconst1, st1) /\ generate_trconstrs_constraints es2 st1 = OK (sconst2, st2) /\ sconst = sconst1++sconst2.
@@ -1348,15 +1293,11 @@ Module Type SECSTCTYPING
     contradiction.
   Qed.
 
-
-
   End SECTRCONSTRTYPING.
-
 
   Section SECSYSTYPING.
     Variable G: secglobal.
 
-    (* Legacy self-contained system-signature generation. *)
     Definition generate_system_signature (n: system): res signature :=
       match  (do (env_in,  inp)    <- insert_vars (List.map fst (n.(SynStc.s_in))) (Env.empty _);
               do (env_out, out)    <- insert_vars (List.map fst n.(SynStc.s_out)) env_in;
@@ -1376,9 +1317,6 @@ Module Type SECSTCTYPING
                 s_constraints := constraints|}
       end.
 
-    (* Environment-driven system-signature generation used in the translation
-       preservation proofs. The main STC-specific addition is the separate
-       reset-instance environment threaded through [generate_reset_env]. *)
     Definition generate_sys_signature (n: system) (env: Env.t ident) (aux_names: list node_aux_names) : res signature :=
       match (do (clk_id, rst_id) <- option_to_sec (get_node_aux (n.(SynStc.s_name)) aux_names);
               do clk_type <- option_to_sec (Env.find clk_id env);
@@ -1401,11 +1339,6 @@ Module Type SECSTCTYPING
                 s_constraints := constraints|}
       end.
 
-    (** Node-scoped signature generation entry point for STC systems.
-
-        The outer naming layer stores one local security environment per
-        system name. This helper recovers the current system's local env and
-        then reuses the existing environment-driven STC generator unchanged. *)
     Definition generate_sys_signature_scoped_env
       (n: system) (envs: node_scoped_env) (aux_names: list node_aux_names)
       : res signature :=
@@ -1443,6 +1376,7 @@ Module Type SECSTCTYPING
       exact Hin.
     Qed.
 
+    (** This lifts translated-constraint scopedness to one generated STC signature.  The global target generator reuses it at each translated system. *)
     Theorem generate_sys_signature_scoped:
       forall P s env aux_names sig,
         secglobal_scoped G ->
@@ -1618,22 +1552,6 @@ Module Type SECSTCTYPING
       : res (list signature) :=
       generate_all_sys_signatures_scoped_env' [] sys_list envs aux_names.
 
-    (** Global scopedness for generated STC signatures.
-
-        This is the STC-side analogue of the NLustre theorem in
-        [SecNLusTyping.v]. The proof structure is identical:
-
-        1. [wc_program] gives the local [wc_system] fact for the current head
-           system.
-        2. [generate_sys_signature_scoped] proves that the freshly generated
-           head signature only mentions visible interface variables.
-        3. [secglobal_scoped_cons] extends the accumulator invariant.
-        4. Induction lifts the result to the entire generated STC signature
-           list.
-
-        This keeps the STC signature-scopedness argument self-contained in the
-        STC typing layer instead of rebuilding it ad hoc in the translation
-        development. *)
     Theorem generate_all_sys_signatures_scoped':
       forall systems acc env aux_names G,
         Clo.wc_program systems ->
@@ -1659,6 +1577,7 @@ Module Type SECSTCTYPING
         eapply (IH (sig :: acc) env aux_names G); eauto.
     Qed.
 
+    (** This is the main global scopedness theorem for generated STC signatures.  From a well-clocked translated program and an injective naming environment, it proves that the whole target signature environment remains scoped after processing every system.  The translation-preservation file uses this as its target-side global invariant. *)
     Corollary generate_all_sys_signatures_scoped:
       forall systems env aux_names G,
         Clo.wc_program systems ->
@@ -1671,7 +1590,6 @@ Module Type SECSTCTYPING
       eapply generate_all_sys_signatures_scoped'; eauto.
       apply secglobal_scoped_nil.
     Qed.
-
 
     Fixpoint generate_signatures' (acc: list signature) (sys_list: program): res (list signature) :=
       match sys_list with
@@ -1706,6 +1624,5 @@ Module SecSTCTyping
   <: SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo.
 
 Include SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo.
-
 
 End SecSTCTyping.

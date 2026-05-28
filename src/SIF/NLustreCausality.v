@@ -1,3 +1,5 @@
+(** Causality facts for NLustre nodes, dependency graphs, and variable-order induction. *)
+
 From Coq Require Import List.
 Import List.ListNotations.
 Open Scope list_scope.
@@ -12,24 +14,6 @@ From Velus Require Import CoreExpr.CEIsFree.
 From Velus Require Import NLustre.NLSyntax.
 From Velus Require Import NLustre.IsFree.
 
-(** * NLustre causality
-
-    This file gives the source-side acyclicity notion needed by the indexed
-    NLustre noninterference proof.
-
-    The design follows the existing Lustre-side graph causality development,
-    but is specialised to the flatter NLustre equation syntax:
-
-    - [EqDef] and [EqApp] contribute ordinary instantaneous dependencies;
-    - resettable calls contribute the same dependencies plus reset control;
-    - [EqFby] contributes only current clock dependencies, because the data
-      dependency through [fby] is delayed and must not create a spurious
-      algebraic loop.
-
-    This keeps the predicate independent from security: it is purely a
-    semantic/source-structure condition stating that the current-step
-    dependency graph is acyclic. *)
-
 Module Type NLUSTRECAUSALITY
        (Import Ids   : IDS)
        (Import Op    : OPERATORS)
@@ -38,12 +22,6 @@ Module Type NLUSTRECAUSALITY
        (Import CEIsF : CEISFREE Ids Op CESyn)
        (Import IsF   : ISFREE Ids Op CESyn SynNL CEIsF).
 
-  (** Instantaneous equation dependencies.
-
-      Relation to the paper:
-      this is the NLustre analogue of the dependency relation used to justify
-      a causality induction.  It records only same-instant dependencies that
-      matter for algebraic-loop exclusion. *)
   Definition nl_depends_on_eq (eq : equation) (x y : ident) : Prop :=
     match eq with
     | EqDef z ck ce =>
@@ -59,13 +37,6 @@ Module Type NLUSTRECAUSALITY
   Definition nl_depends_on (eqs : list equation) (x y : ident) : Prop :=
     Exists (fun eq => nl_depends_on_eq eq x y) eqs.
 
-  (** Graph formulation of NLustre causality.
-
-      Relation to the paper:
-      this is the acyclic dependency-graph view of the source node that the
-      indexed noninterference theorem assumes.  It is the minimal
-      semantic-side restriction needed to turn local dependency preservation
-      into a node-level induction. *)
   Definition nl_graph_of_eqs {v a}
     (vars : list (ident * clock)) (eqs : list equation) (g : AcyGraph v a) : Prop :=
     PS.Equal (vertices g) (PSP.of_list (map fst vars))
@@ -80,12 +51,6 @@ Module Type NLUSTRECAUSALITY
   Definition nl_global_causal (G : global) : Prop :=
     Forall nl_node_causal G.
 
-  (** Recovering node-local causality from a global assumption.
-
-      Relation to the paper:
-      the node theorem will be applied recursively through calls, so the
-      global causality assumption must be projected back to the current node
-      and its callees. *)
   Lemma nl_global_causal_find:
     forall G n,
       nl_global_causal G ->
@@ -97,13 +62,6 @@ Module Type NLUSTRECAUSALITY
     eapply find_node_In; eauto.
   Qed.
 
-  (** Topological-order inversion for NLustre equations.
-
-      Relation to the paper:
-      this is the source-side step that turns graph acyclicity into a usable
-      induction principle over defined variables.  It says that if [x] is the
-      current head of a topological order, then every direct instantaneous
-      dependency of the equation defining [x] already lies in the tail. *)
   Lemma nl_TopoOrder_inv {v a} :
     forall (g : AcyGraph v a) eqs x xs,
       (forall x y, nl_depends_on eqs x y -> is_arc g y x) ->
@@ -140,12 +98,6 @@ Module Type NLUSTRECAUSALITY
     Hypothesis Inputs :
       Forall P_var (map fst n.(n_in)).
 
-    (** Variable-level induction over a causal NLustre node.
-
-        Relation to the paper:
-        this is the NLustre version of the usual causality induction: inputs
-        are taken as the base case, and any defined variable can be proved
-        once all variables it depends on instantaneously are already known. *)
     Lemma nl_causal_ind {v a} :
       forall (g : AcyGraph v a),
         nl_graph_of_node n g ->
@@ -180,11 +132,6 @@ Module Type NLUSTRECAUSALITY
       - exact Hxs.
       Qed.
 
-    (** Node-facing corollary of the causal induction.
-
-        Relation to the paper:
-        this packages the induction result into the concrete variable list of
-        an NLustre node interface, locals, and outputs. *)
     Corollary nl_node_causal_ind :
       nl_node_causal n ->
       Forall P_var (map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out))).

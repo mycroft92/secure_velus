@@ -1,22 +1,5 @@
-(*** Translation preservation from NLustre typing constraints to STC typing constraints.
+(** Preservation of security signatures from generated NLustre nodes to translated STC systems. *)
 
-     This file proves a deliberately weak preservation statement.
-
-     - We do not require the NLustre and STC lattice mappings to coincide everywhere.
-     - We only require agreement on a chosen list of shared variables.
-     - STC is allowed to introduce additional auxiliary variables, in particular
-       reset-instance variables created during the STC translation.
-
-     The proof is organised in three layers:
-
-     1. [eqn_preserv]: one NLustre equation versus the STC constraints produced
-        by [translate_eqn].
-     2. [eqns_preserv_scoped]: extension to a list of equations through the
-        scoped concatenation argument.
-     3. [node_preserv_scoped]: instantiation of the list-level theorem for a
-        translated
-        node/system pair, with the scope chosen to be the interface variables,
-        locals, clock type, and reset type. *)
 From Coq Require Import List.
 Import List.ListNotations.
 From Velus Require Import Common.
@@ -55,7 +38,7 @@ From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SecTypes.
 From Velus Require Import Clocks.
 
-From Coq Require Import String. (*Required for Errors *)
+From Coq Require Import String.
 From Coq Require Import Program.Equality.
 From Coq Require Import Permutation.
 From compcert Require Import common.Errors.
@@ -94,29 +77,14 @@ Module Type SECNLUSSTCTRANSLATION
   (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst OrdStc IsFStc CloStc)
   (Import SECSTCTYPINGCORRECTNESS
       : SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecTypes SIG SIGPROOFS NAMEGEN SECCETYPING CEIsF CEClo Last Var Def Syst OrdStc IsFStc CloStc SECSTCTYPING).
-  (** In this section we relate the constraint generator for one NLustre
-      equation with the constraint generator for the STC constraints obtained
-      by translation. *)
+
   Section SECEQNPRES.
 
-    (** Generic lattice-mapping agreement now lives in [SecTypes].  This file keeps
-        only the weak preservation relation built on top of that shared notion. *)
-
-    (** Signature-interface freshness and call-instantiation side conditions
-        live in [SIFSignature].  We keep the local shorthand [sig_scope] to
-        keep the preservation statements readable. *)
     Local Notation sig_scope := signature_scope.
     Definition signatures_preserved (n1 n2: signature) : Prop :=
       signature_fields_agree n1 n2
       /\ preserves_on (sig_scope n1) n1.(s_constraints) n2.(s_constraints).
 
-    (** [Signature_call_preserves n1 n2] packages the two call-specific
-        obligations used by [eqn_preserv]:
-
-        - ordinary calls instantiate the callee signatures with the caller's
-          argument/output types;
-        - resettable calls do the same, while allowing STC to prepend one fresh
-          reset-instance constraint outside the shared scope. *)
     Definition Signature_call_preserves (n1 n2: signature) : Prop :=
       (forall scope inptyp ckty rstty outtyp nconst sconst st_init1 st_init2 st1 st2,
           scope_fresh scope n1 ->
@@ -137,28 +105,11 @@ Module Type SECNLUSSTCTRANSLATION
             generate_constraints n2 inptyp ckty (rst_inst :: nil) outtyp st_init2 = OK (sconst, st2) ->
             preserves_on scope nconst ((reset_lhs, (rst_inst :: nil)) :: sconst)).
 
-    (** [Signature_head_consistent n1 n2] is the local compatibility predicate
-        for one NLustre/STC signature pair. [Signature_consistent] below is just
-        the pointwise lifting of this predicate over global signature lists. *)
     Definition Signature_head_consistent (n1 n2: signature) : Prop :=
       n1.(s_name) = n2.(s_name)
       /\ signature_fields_agree n1 n2
       /\ Signature_call_preserves n1 n2.
 
-    (** [Signature_consistent G1 G2] is the abstract compatibility assumption
-        relating a source global signature environment and a target one.
-
-        For each callee signature found on the NLustre side, it provides:
-
-        - a matching STC signature with the same interface fields;
-        - preservation for ordinary calls;
-        - preservation for resettable calls, where STC is allowed to prepend one
-          extra reset-instance constraint using a fresh identifier outside the
-          chosen shared scope.
-
-        This is the point where the present mechanisation intentionally differs
-        from a literal "same signature" theorem from the paper: the statement
-        explicitly tolerates STC-only auxiliaries. *)
     Definition Signature_consistent (G1 G2: secglobal) : Prop :=
       forall f n1,
         SIG.find_signature f G1 = Some n1 ->
@@ -167,12 +118,6 @@ Module Type SECNLUSSTCTRANSLATION
           /\ Signature_head_consistent n1 n2.
     Hint Unfold Signature_call_preserves Signature_head_consistent Signature_consistent.
 
-    (** Reset-call keys in source equations.
-
-        These helpers isolate the only source-defined variables that create
-        private STC auxiliaries during translation: the leading output of a
-        resettable [EqApp].  They are used to relate source equation-list
-        structure to the reset-instance environment generated on the STC side. *)
     Definition reset_call_var (e: equation) : option ident :=
       match e with
       | EqApp (x :: _) _ _ _ (Some _) => Some x
@@ -277,13 +222,6 @@ Module Type SECNLUSSTCTRANSLATION
           unfold translate_eqns. simpl. now apply in_or_app; right.
     Qed.
 
-    (** Concrete reset-instance extras used by translated equation blocks.
-
-        A resettable NLustre call introduces exactly one STC-only auxiliary
-        identifier, obtained by looking up the call's leading output in the
-        reset-instance environment built for the translated system.  The list
-        version mirrors [reset_call_vars] and is used to track the private
-        variables threaded through the scoped concatenation proof. *)
     Definition eqn_reset_extras (rst_env: Env.t ident) (eq: equation)
       : option (list ident) :=
       match reset_call_var eq with
@@ -459,13 +397,6 @@ Module Type SECNLUSSTCTRANSLATION
           * rewrite Hreset. simpl. exact (IH _ Hin).
     Qed.
 
-    (** Bridging translated reset keys to the concrete mapped extras.
-
-        The scoped concatenation proof needs exactly this fact: whenever
-        the STC constraints generated from [translate_eqns eqs] consult the
-        reset-instance environment on some source identifier [x], the returned
-        security variable belongs to the private-extra list reconstructed by
-        [eqns_reset_extras rst_env eqs]. *)
     Lemma translated_reset_key_in_extras:
       forall rst_env eqs tys x ty,
         eqns_reset_extras rst_env eqs = Some tys ->
@@ -497,14 +428,6 @@ Module Type SECNLUSSTCTRANSLATION
       - eapply Hfresh; eauto.
     Qed.
 
-    (** Local clocking preservation for translated equations and nodes.
-
-        These are the lightweight translation-clocking lemmas needed by the
-        scoped concatenation proof.  They deliberately avoid pulling the full
-        [NL2StcClocking] functor into the SIF proof: all we need here is that a
-        well-clocked NLustre fragment translates to STC constraints and systems
-        that are accepted by the STC clocking judgement under the corresponding
-        translated environments. *)
     Lemma gather_eqs_n_vars_wc_local:
       forall n G,
         Forall (wc_equation G (idck (n_in n ++ n_vars n ++ n_out n))) (n_eqs n) ->
@@ -689,13 +612,6 @@ Module Type SECNLUSSTCTRANSLATION
       eapply translate_node_wc_local; eauto.
     Qed.
 
-    (** Scopedness of translated STC constraints from key lookups.
-
-        This is the direct translation-layer wrapper around
-        [SECSTCTYPING.generate_trconstrs_constraints_scoped_on_keys].  It keeps
-        the NLustre-side hypotheses close by: well-clocked source equations
-        produce well-clocked translated trconstrs under the same local variable
-        environment. *)
     Lemma translated_eqns_constraints_scoped_on_keys:
       forall P (G2 : secglobal) vars scope eqs (env rst_env : Env.t ident)
              (base_ty rst_ty : ident) cns st st',
@@ -720,12 +636,6 @@ Module Type SECNLUSSTCTRANSLATION
                 (translate P) vars scope (translate_eqns eqs) cns st st'); eauto using translate_eqns_wc_local.
     Qed.
 
-    (** Concrete scopedness corollary using [eqns_reset_extras].
-
-        Once the private reset-instance names for an equation list have been
-        reconstructed as [extras], every translated reset lookup lands inside
-        that list.  The generated STC constraints are therefore scoped to the
-        shared scope extended with exactly those extras. *)
     Lemma translated_eqns_constraints_scoped:
       forall P (G2 : secglobal) vars scope eqs (env rst_env : Env.t ident)
              (base_ty rst_ty : ident) extras cns st st',
@@ -762,12 +672,6 @@ Module Type SECNLUSSTCTRANSLATION
       - exact Hgen.
     Qed.
 
-    (** Single-equation scopedness corollary.
-
-        This is the one-step target scopedness fact used in the new scoped
-        equation-list preservation proof: the translated STC block for one
-        NLustre equation only mentions the shared scope plus the equation's own
-        reset-instance extra (if any). *)
     Lemma translated_eqn_constraints_scoped:
       forall P (G2 : secglobal) vars scope e (env rst_env : Env.t ident)
              (base_ty rst_ty : ident) extras cns st st',
@@ -824,8 +728,6 @@ Module Type SECNLUSSTCTRANSLATION
         + simpl. exact Hgen.
     Qed.
 
-    (** Small inversion tactic for the state/error monad used by the typing
-        functions. *)
     Ltac myMonadInv :=
       simpl in *;
       try (unfold error in *);
@@ -846,17 +748,7 @@ Module Type SECNLUSSTCTRANSLATION
         eapply sec_bind2_inv in H as [? [? [? [H1 H2]]]]
       end; simpl in *.
 
-
-    (** Single-equation preservation.
-
-        The interesting cases are calls:
-
-        - an ordinary call is discharged by the ordinary-call component of
-          [Signature_consistent];
-        - a resettable call is discharged by the reset-call component of
-          [Signature_consistent], after aligning the fresh reset-instance name
-          introduced on the STC side and recording that it lies outside the
-          shared scope. *)
+    (** This is the equation-level preservation step.  One NLustre equation and its translated STC constraints agree on the shared visible scope, and the later node and global theorems lift this result. *)
     Theorem eqn_preserv:
       forall scope P vars (G1 G2: secglobal)
              (e: equation) (trs: list trconstr)
@@ -1197,11 +1089,6 @@ Module Type SECNLUSSTCTRANSLATION
       exact (preserves_on_nil scope).
     Qed.
 
-    (** Scoped equation-list preservation.
-
-        In addition to one-step preservation, this theorem tracks the concrete
-        STC-only reset-instance extras produced by the translation and
-        composes head/tail blocks with [preserves_on_concat_scoped]. *)
     Lemma eqns_preserv_scoped:
       forall scope P vars (G1 G2: secglobal) (es: list equation) extras
              (env rst_env: Env.t ident)
@@ -1278,36 +1165,9 @@ Module Type SECNLUSSTCTRANSLATION
 
   End SECEQNPRES.
 
-  (** The node/system part of the development is organised in five layers:
-
-      1. [node_preserv_scoped] is the core theorem. It works for one
-         already-aligned
-         node/system pair and assumes the relevant environment lookups plus the
-         freshness of STC reset-instance variables.
-      2. The freshness and inversion lemmas below are used only to discharge
-         those assumptions when the environments and signatures come from the
-         generators in [NameInterface], [SecNLusTyping], and [SecSTCTyping].
-      3. [generated_node_preserv_scoped] packages that discharge for generated
-         signatures, and [found_system_preserv_scoped_global] is the
-         lookup-based global corollary obtained from [find_system_translate].
-      4. The bridge layer reconstructs per-node
-         [Signature_head_consistent] from two explicit lattice-mapping ingredients:
-         simplification completeness for generated signatures, and call-time
-         preservation derived from [signatures_preserved].
-      5. [Signature_consistent_cons] and the generated-signature induction then
-         lift that local compatibility relation to entire generated signature
-         lists.
-      6. [generated_node_preserv_global] and
-         [generated_program_preserv_global] use that global consistency result
-         to remove the explicit [Signature_consistent] premise from the final
-         node/system theorems. *)
   Section NODESYSPRES.
     Local Notation sig_scope := signature_scope.
 
-    (** The lemmas in this block are only used to discharge the freshness side
-        conditions of the generated-node theorems. They establish that ordinary
-        security variables come from the [sec] namespace, while reset-instance
-        variables come from the disjoint [sec_reset] namespace. *)
     Ltac myNameInv :=
       simpl in *;
       match goal with
@@ -1489,16 +1349,7 @@ Module Type SECNLUSSTCTRANSLATION
         eapply SECSTCTYPINGCORRECTNESS.generate_reset_env_injective; eauto.
     Qed.
 
-    (** Scoped node theorem.
-
-        This theorem packages [eqns_preserv_scoped] at node level, so it keeps
-        the concrete structural side conditions that justify scoped
-        concatenation:
-
-        - local NLustre clocking for the node equations;
-        - scoped target signatures in [G2];
-        - the exact reset-instance extras produced by the translated STC side.
-     *)
+    (** This lifts equation preservation to one generated NLustre/STC signature pair under the shared scoped environment.  The global bridge reuses it once per node. *)
     Theorem node_preserv_scoped:
       forall P (n : node) (s: system) scope
              (G1 G2: secglobal)
@@ -1564,29 +1415,6 @@ Module Type SECNLUSSTCTRANSLATION
       - exact Hstc.
     Qed.
 
-    (** The next two inversion lemmas package the operational content of the
-        generated NLustre/STC signatures. They let the node/system theorem talk
-        directly in terms of the underlying constraint generators, rather than
-        repeatedly unfolding the large monadic definitions. *)
-
-    (** Visible-field provenance for generated STC signatures.
-
-        This is the target-local counterpart of
-        [SECNLUSTYPINGCORRECTNESS.generated_node_sig_scope_key].  Visible identifiers of a generated STC
-        signature come from the shared environment image of the system's
-        inputs/outputs and the per-node clock/reset keys, never from STC-only
-        hidden state. *)
-    (** Namespace corollaries for generated visible signatures.
-
-        Together with the naming-layer fact that every shared-environment value
-        produced by [generate_node_env] lies in the [sec] namespace, the two
-        provenance lemmas above imply that every visible identifier stored in a
-        generated source/target signature also lies in that same namespace. *)
-    (** Target-local namespace fact under one node-local env generation.
-
-        This remains in the translation layer because it is phrased over the
-        translated current node [translate_node n], not an arbitrary STC
-        system. *)
     Lemma generated_sys_signature_scope_sec_from_local_env:
       forall G n env aux_names rec st st' sig,
         generate_local_env_for_node n st = OK ((env, rec), st') ->
@@ -1599,23 +1427,6 @@ Module Type SECNLUSSTCTRANSLATION
       eapply NAMEGEN.generate_local_env_for_node_sec_range in Hfind; eauto.
     Qed.
 
-    (** Target-local namespace fact under one node-local env generation.
-
-        This is the node-scoped counterpart of
-        [generated_sys_signature_scope_sec]: once the current node's local
-        security env has been generated, every visible identifier in the
-        resulting STC signature lies in the [sec] namespace. *)
-    (** Scoped generated-node theorem.
-
-        This is the generated counterpart of [node_preserv_scoped].  It
-        exposes the concrete local prerequisites used by the scoped
-        concatenation proof:
-
-        - local source clocking for [n];
-        - scoped target signatures in [G2].
-
-        This theorem is the generated bridge from node-level scoped
-        preservation to the global corollaries. *)
     Theorem generated_node_preserv_scoped:
       forall P all_nodes (n : node) (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
@@ -1694,13 +1505,6 @@ Module Type SECNLUSSTCTRANSLATION
           eauto.
     Qed.
 
-    (** Node-scoped generated-node theorem.
-
-        This is the same local generated bridge as
-        [generated_node_preserv_scoped], but phrased over the new
-        node-scoped naming layer.  The proof projects the current node's local
-        env from the outer node-indexed table and reuses the raw node theorem
-        on that recovered local env. *)
     Theorem generated_node_preserv_scoped_scoped_env:
       forall P all_nodes (n : node) (G1 G2: secglobal)
              (envs: node_scoped_env) (aux_names: list node_aux_names)
@@ -1833,11 +1637,6 @@ Module Type SECNLUSSTCTRANSLATION
           eauto.
     Qed.
 
-    (** Generated-node corollary under standard source-side well-formedness.
-
-        This packages [generated_node_preserv_scoped] with the standard
-        NLustre ordering/clocking facts needed to recover the local [wc_node]
-        hypothesis. *)
     Corollary generated_node_preserv_scoped_global:
       forall all_nodes (n : node) (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
@@ -1865,10 +1664,6 @@ Module Type SECNLUSSTCTRANSLATION
       eapply generated_node_preserv_scoped with (P := G'); eauto.
     Qed.
 
-    (** Lookup corollary.
-
-        This is the lookup-based version of
-        [generated_node_preserv_scoped_global]. *)
     Corollary found_system_preserv_scoped_global:
       forall all_nodes f n s prog' (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
@@ -1899,12 +1694,6 @@ Module Type SECNLUSSTCTRANSLATION
       eapply generated_node_preserv_scoped_global; eauto.
     Qed.
 
-
-    (** Simplify bridge for generated signatures.
-
-        This theorem combines the generated node preservation result with the
-        source-side simplify completeness theorem and the target-side simplify
-        soundness theorem. *)
     Theorem generated_signatures_preserved_from_simplify_bridge_scoped:
       forall all_nodes P (n : node) (G1 G2: secglobal)
              (env: Env.t ident) (aux_names: list node_aux_names)
@@ -2026,12 +1815,6 @@ Module Type SECNLUSSTCTRANSLATION
           * eapply simplify_simplifyRel. reflexivity.
     Qed.
 
-    (** Local simplify bridge under one node-scoped env generation.
-
-        This is the node-scoped counterpart of
-        [generated_signatures_preserved_from_simplify_bridge_scoped].  It
-        avoids the old flat generated-env prerequisite and instead reasons from
-        the one caller node's locally generated security env. *)
     Theorem generated_signatures_preserved_from_simplify_bridge_local_env:
       forall P G1 G2 n env aux_names rec st st' nsig ssig,
         Signature_consistent G1 G2 ->
@@ -2164,15 +1947,6 @@ Module Type SECNLUSSTCTRANSLATION
           * eapply simplify_simplifyRel. reflexivity.
     Qed.
 
-    (** Scoped-env head-step simplify bridge.
-
-        This is the generated-prefix counterpart of
-        [generated_signatures_preserved_from_simplify_bridge_local_env].  The
-        source accumulator carries only the structural bound that all already
-        generated visible identifiers lie below the current naming state [st].
-        The current caller node is then recovered from the node-scoped env run,
-        and [SECNLUSTYPINGCORRECTNESS.node_scope_fresh_in_env_from_bounds] turns that bound into the
-        exact local call-freshness fact consumed by the bridge. *)
     Theorem generated_signatures_preserved_from_simplify_bridge_scoped_env:
       forall prefix P G1 G2 n envs aux_names
              envs_pref aux_pref st nsig ssig,
@@ -2552,30 +2326,6 @@ Module Type SECNLUSSTCTRANSLATION
              Hgen_nsig Hgen_ssig).
       Qed.
 
-      (** The remaining gap to a fully proved signature-step theorem is not in
-        the global induction; it is in the lattice-mapping bridge from generated raw
-        node/system constraints to the simplified modular signatures used at
-        call sites.
-
-        The two obligations below isolate that gap exactly:
-
-        - [signatures_preserved] must be derivable for generated signatures,
-          typically from [generated_node_preserv_scoped] plus a completeness result
-          for [SymTypes.simplify];
-        - [Signature_call_preserves] must follow from
-          [signatures_preserved], via a lattice-mapping correctness theorem for
-          [generate_constraints] under consistent fresh-name instantiations.
-
-        Once these two bridge lemmas are available, the abstract
-        [generated_signature_step_consistent] hypothesis used by the global
-        theorems is no longer needed. *)
-
-    (** Abstract per-generated-node bridge.
-
-        This packages the one-step compatibility obligation needed by the
-        list-of-signatures induction: if a node and its translated system are
-        generated from already consistent accumulators, then the fresh source
-        and target signatures are themselves [Signature_head_consistent]. *)
     Definition generated_signature_step_consistent
       (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
       forall acc1 acc2 n nsig ssig,
@@ -2626,12 +2376,6 @@ Module Type SECNLUSSTCTRANSLATION
         eapply Hcall; eauto.
     Qed.
 
-    (** Concrete bridge premises.
-
-        The abstract step theorem above only needs generated-signature
-        preservation plus the internal call-instantiation bridges proved above.
-        The exported theorem family below does not assume either
-        [signatures_preserved_calls] or [signatures_preserved_reset_calls]. *)
     Definition generated_signatures_preserved
       (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
       forall G1 G2 n nsig ssig,
@@ -2640,13 +2384,6 @@ Module Type SECNLUSSTCTRANSLATION
         SECSTCTYPING.generate_sys_signature G2 (translate_node n) env aux_names = OK ssig ->
         signatures_preserved nsig ssig.
 
-    (** Global-signature extension.
-
-        Once the new NLustre/STC signatures for one processed node are known to
-        satisfy [Signature_head_consistent], adding them to already-consistent
-        accumulators preserves global [Signature_consistent]. This is the basic
-        step needed for the induction over [generate_all_signatures'] and
-        [generate_all_sys_signatures']. *)
     Lemma Signature_consistent_nil:
       Signature_consistent nil nil.
     Proof.
@@ -2722,11 +2459,6 @@ Module Type SECNLUSSTCTRANSLATION
       apply secglobal_scope_sec_nil.
     Qed.
 
-    (** This is the generated-signature form of [Signature_consistent_cons].
-        The generation equalities make the statement line up with the
-        accumulator step of the global generators: once one generated
-        source/target pair satisfies [Signature_head_consistent], the global
-        invariant extends immediately. *)
     Theorem generated_signature_consistent_step:
       forall G1 G2 n env aux_names nsig ssig,
         Signature_consistent G1 G2 ->
@@ -2738,12 +2470,6 @@ Module Type SECNLUSSTCTRANSLATION
       intros. eapply Signature_consistent_cons; eauto.
     Qed.
 
-    (** Per-step compatibility hypothesis used by the global generators.
-
-        This isolates the one-node bridge from the accumulator induction:
-        if one freshly generated node/system signature pair satisfies
-        [Signature_head_consistent], then the list induction lifts that fact to
-        the whole generated global signature lists. *)
     Theorem generate_all_signatures_consistent'_abstract:
       forall nodes acc1 acc2 env aux_names G1 G2,
         Signature_consistent acc1 acc2 ->
@@ -2785,11 +2511,7 @@ Module Type SECNLUSSTCTRANSLATION
       apply Signature_consistent_nil.
     Qed.
 
-    (** Concrete global-signature theorem.
-
-        This proof performs the accumulator induction directly and uses the
-        scoped simplify bridge for the current head node, together with the
-        current scopedness and call-preservation hypotheses. *)
+    (** This is the main lockstep induction for the translation layer.  It runs the source and target signature generators over the same node-scoped environment, proves that each fresh NLustre/STC signature pair is individually well formed, and extends the accumulator with a [Signature_head_consistent] pair.  The result is a global source/target signature environment with aligned lookups and the target-side scope invariants needed downstream. *)
     Theorem generate_all_signatures_consistent_scoped':
       forall prefix nodes acc1 acc2 envs aux_names
              envs_pref aux_pref st G1 G2,
@@ -3071,14 +2793,7 @@ Module Type SECNLUSSTCTRANSLATION
       exact Hcons.
     Qed.
 
-    (** Lookup-based program signature theorem.
-        This is the public signature-level form of the final result.  It does
-        not rerun per-node signature generation.  Instead, it states directly
-        that any source signature found in the generated global source
-      signature environment has a matching target signature in the generated
-      STC global environment, and that the pair is
-      [Signature_head_consistent].  All raw/local constraint details remain
-      internal to the bridge lemmas above. *)
+    (** This is the public lookup theorem exported by the translation layer.  Once the two global signature environments are generated from the same scoped naming data, every source signature lookup has a matching target signature lookup with the same visible fields and the call-preservation facts needed later.  The STC noninterference file uses exactly this statement to connect source security witnesses to translated systems. *)
     Corollary generated_program_signatures_preserved_global:
       forall all_nodes (G1 G2: secglobal)
              (envs: node_scoped_env) (aux_names: list node_aux_names),
@@ -3103,37 +2818,9 @@ Module Type SECNLUSSTCTRANSLATION
       exists ssig. split; assumption.
     Qed.
 
-    (** Bridge ingredients for the weaker STC result.
-
-        This file provides the syntactic/cross-phase preservation facts
-        consumed by the STC-side semantic noninterference corollary proved in
-        [SecStcNonInterference.v]:
-
-        - not an intrinsic theorem for arbitrary STC runs;
-        - but a translated-behavior corollary for STC loops produced from
-          secure NLustre nodes.
-
-        The proof should be assembled only after the source-side NLustre
-        noninterference theorem is finished.  At that point, the intended
-        ingredients are:
-
-        - the source indexed NLustre noninterference theorem;
-        - [NLMemSemantics.sem_msem_node] / [NLMemSemantics.msem_sem_node] to
-          move between indexed NLustre semantics and memory semantics;
-        - [NLustreToStc.Correctness.correctness_loop] to obtain STC loops for
-          the translated system with the same input/output streams; and
-        - [generated_program_signatures_preserved_global] to align the source
-          and target security signatures on shared interface variables.
-
-        This is why this file stays a preservation library, while the actual
-        translated-behavior noninterference theorem should now live in
-        [SecStcNonInterference.v]. *)
   End NODESYSPRES.
 
-
-
 End SECNLUSSTCTRANSLATION.
-
 
 Module SecNLusStcTranslation
   (Import Ids   : IDS)

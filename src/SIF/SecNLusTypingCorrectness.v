@@ -1,15 +1,5 @@
-(* Source-local correctness facts for generated NLustre signatures.
+(** Correctness facts for generated NLustre signatures and their visible constraints. *)
 
-   This file owns the NLustre facts used by the cross-phase translation proof
-   and the raw-constraint replay lemmas, but which do not themselves mention
-   STC:
-   - naming/range/injectivity consequences of [NameInterface],
-   - generated source-signature structural goodness,
-   - duplicate-freedom of the visible source interface scope,
-   - caller-scope freshness facts for generated source accumulators.
-
-   These theorems are the source-side discharge lemmas for the final
-   [Signature_head_consistent] proof in [SecNLusStcTranslation]. *)
 From Coq Require Import List.
 Import List.ListNotations.
 From Velus Require Import Common.
@@ -111,14 +101,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     - subst. eapply NAMEGEN.generate_local_env_for_node_sec_range; eauto.
   Qed.
 
-  (** Source caller-scope freshness for one generated node environment.
-
-      This packages the exact freshness condition used in the
-      translation-preservation head step: once the current node's visible
-      source scope has been recovered from the shared naming environment, every
-      signature already present in the source accumulator must stay disjoint
-      from that caller scope.  It is source-only and belongs in the NLustre
-      correctness layer rather than the cross-phase translation proof. *)
   Definition node_scope_fresh_in_env
     (n: node) (env: Env.t ident) (aux_names: list node_aux_names) (G: secglobal) : Prop :=
     forall clk_id rst_id clk_type rst_type inp out locals,
@@ -131,27 +113,12 @@ Module Type SECNLUSTYPINGCORRECTNESS
       SIG.secglobal_scope_fresh
         (inp ++ out ++ locals ++ clk_type :: rst_type :: nil) G.
 
-  (** Global wrapper for source caller-scope freshness.
-
-      Later global preservation theorems quantify over the whole NLustre
-      program.  This wrapper turns the local node predicate above into the
-      program-level invariant that every generated caller node is fresh against
-      the current source accumulator. *)
   Definition generated_callers_scope_fresh
     (all_nodes: global) (env: Env.t ident) (aux_names: list node_aux_names)
     (G: secglobal) : Prop :=
     forall n,
       find_node n.(n_name) all_nodes = Some n ->
       node_scope_fresh_in_env n env aux_names G.
-
-  (** IDS-side naming invariant.
-
-      The concrete [Ident] implementation satisfies this because the thesis
-      prefix [sec] is distinct from Velus' existing gensym prefixes [elab],
-      [norm1], and [norm2].  The abstract [IDS] interface does not expose that
-      separation, so correctness lemmas that reason about generated helper
-      names keep it explicit here. *)
-  
 
   Lemma node_var_not_sec_gensym:
     forall n x i,
@@ -176,20 +143,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
       exact (Ids.sec_not_in_gensym_prefs Hinpre).
   Qed.
 
-  (** Source-local simplify replay side conditions.
-
-      This is the node-scoped counterpart of
-      [generated_node_simplify_ready_from_generated_env].  Once one node-local
-      security env has been generated, the raw NLustre constraints produced for
-      that node are:
-
-      - well formed, by the same structural typing argument as before; and
-      - safe to replay through [simplify_complete], because eliminated locals
-        stay outside the visible interface scope.
-
-      The translation proof uses this theorem when it reasons about one
-      generated caller node against previously accumulated callee signatures
-      under the node-scoped naming discipline. *)
   Theorem generated_node_simplify_ready_from_local_env:
     forall G1 n nsig env rec aux_names st st'
            clk_type rst_type inp out locals raw st_n,
@@ -275,16 +228,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
         * exact Hrstid.
   Qed.
 
-  (** Source-local scope reconstruction from shared env mappings.
-
-      This lemma is purely NLustre-side: once the shared environment mappings
-      for inputs, outputs, and locals have been recovered, the standard visible
-      symbolic scope for the node contains the image of every source variable in
-      the clocking environment [idck (n_in ++ n_vars ++ n_out)].
-
-      The translation proof reuses this to feed target-side scopedness
-      generators, but the statement itself only depends on source node
-      structure. *)
   Lemma node_vars_env_scoped_from_mappings:
     forall n env inp out locals clk_type rst_type,
       get_mappings_from_node (n.(n_in)) env = Some inp ->
@@ -582,11 +525,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     repeat split; eauto.
   Qed.
 
-  (** Public inversion view for generated source signatures.
-
-      This is the source-local generator shape used by the preservation
-      proofs.  It is just the reusable exported form of
-      [generate_node_sig_inv_local]. *)
   Corollary generate_node_sig_inv:
     forall G n env aux_names sig,
       SECNLUSTYPING.generate_node_sig G n env aux_names = OK sig ->
@@ -608,14 +546,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     exact generate_node_sig_inv_local.
   Qed.
 
-  (** Visible-field provenance for generated source signatures.
-
-      Any identifier that appears in the visible scope of a generated source
-      signature comes from a concrete key of the generating node: either one
-      of its inputs/outputs or one of the node-specific clock/reset keys
-      stored in [aux_names].  This is the source-local ingredient used
-      by translation to derive generated call freshness from the naming
-      discipline. *)
   Lemma generated_node_sig_scope_key:
     forall G n env aux_names sig ty,
       SECNLUSTYPING.generate_node_sig G n env aux_names = OK sig ->
@@ -665,7 +595,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
         * exact Hrst.
   Qed.
 
-  (** Generated visible source signatures live in the [sec] namespace. *)
   Lemma generated_node_sig_scope_sec:
     forall all_nodes G n env aux_names sig,
       generate_node_env all_nodes = OK (env, aux_names) ->
@@ -678,7 +607,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     eapply NAMEGEN.generate_node_env_sec_range in Hfind; eauto.
   Qed.
 
-  (** Local lower bound for visible source signature identifiers. *)
   Lemma generated_node_sig_scope_lower_bound_from_local_env:
     forall G n env aux_names sig st rec st' ty,
       generate_local_env_for_node n st = OK ((env, rec), st') ->
@@ -692,7 +620,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     eapply NAMEGEN.generate_local_env_for_node_lower_bound in Hfind; eauto.
   Qed.
 
-  (** Local upper bound for visible source signature identifiers. *)
   Lemma generated_node_sig_scope_upper_bound_from_local_env:
     forall G n env aux_names sig st rec st' ty,
       generate_local_env_for_node n st = OK ((env, rec), st') ->
@@ -765,15 +692,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
       eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|exact Hlo].
   Qed.
 
-  (** Source caller-scope freshness from local naming bounds.
-
-      This is the source-side bridge from the node-scoped naming discipline to
-      the freshness invariant consumed by the generated translation step.  The
-      current caller scope is lower-bounded by the start state of local
-      generation, while every already-generated callee signature in the source
-      accumulator is upper-bounded by the earlier accumulator state; the
-      signature-layer bound lemma then turns those two inequalities into
-      disjointness. *)
   Lemma node_scope_fresh_in_env_from_bounds:
     forall n st env aux_names G rec st',
       generate_local_env_for_node n st = OK ((env, rec), st') ->
@@ -789,12 +707,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
     - eapply Hbound; eauto.
   Qed.
 
-  (** Generated source signatures are structurally good.
-
-      Beyond scopedness, call-preservation arguments need the stronger
-      fact that a generated NLustre signature keeps exactly one visible
-      defining constraint per output after simplifying away locals.  This is
-      the source-side structural invariant behind the final call bridge. *)
+  (** This packages the local shape facts needed for one generated source signature.  The translation bridge uses it to reason about replaying and instantiating call constraints. *)
   Theorem generate_node_sig_good_from_local_env:
     forall G1 P n env rec aux_names st st'
            clk_type rst_type inp out locals raw st_n,
@@ -1019,16 +932,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
           -- exact Hinraw.
   Qed.
 
-  (** Low call outputs force the instantiated reset argument low.
-
-      Relation to the paper:
-      reset-aware call instantiation substitutes the caller-provided reset
-      type into the callee signature.  Once the stored callee signature is
-      known to mention its reset field in every output-defining constraint,
-      any low caller-visible output slot of the instantiated call forces the
-      instantiated reset argument low as well.  This is the typing-side fact
-      used by the indexed noninterference proof to align reset-control
-      prefixes in reset calls. *)
   Lemma call_output_low_implies_reset_low:
     forall sig inptyp ckty rstty outtyp cns st st'
            dlt t i y v,
@@ -1148,15 +1051,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
         * apply bottom_is_bottom.
   Qed.
 
-  (** Low call outputs force the instantiated clock argument low.
-
-      Relation to the paper:
-      reset-aware indexed noninterference also has to keep call clocks aligned
-      across the two executions.  Once the stored callee signature is known to
-      mention its clock field in every output-defining constraint, any low
-      caller-visible output slot of the instantiated call forces the
-      instantiated clock argument low as well.  This is the clock-side
-      companion of [call_output_low_implies_reset_low]. *)
   Lemma call_output_low_implies_clock_low:
     forall sig inptyp ckty rstty outtyp cns st st'
            dlt t i y v,
@@ -1276,14 +1170,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
         * apply bottom_is_bottom.
   Qed.
 
-  (** Generated source signature interfaces are duplicate free.
-
-      The call bridge only updates lattice mappings on the visible
-      signature interface.  To show that those updates behave as intended, we
-      need the source-side fact that the generated interface variables are
-      pairwise distinct.  This comes entirely from the NLustre node-interface
-      uniqueness discipline plus injectivity of the node-local naming
-      environment. *)
   Theorem generate_node_sig_scope_nodup_from_local_env:
     forall n env rec st st' clk_type rst_type inp out,
       generate_local_env_for_node n st = OK ((env, rec), st') ->
@@ -1412,13 +1298,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     eapply SECNLUSTYPING.get_mappings_nodup; eauto.
   Qed.
 
-  (** Node-scoped source signature generation.
-
-      The node-scoped naming pivot changes only how the local security env is
-      recovered; once that env is projected out of the outer node-indexed
-      table, the underlying NLustre typing proof is the same as for the older
-      flat shared env.  This wrapper is the source-side correctness bridge used
-      by the translation preservation proof. *)
   Theorem generate_node_sig_scoped_env_scoped:
     forall all_nodes G P n envs aux_names sig,
       generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
@@ -1442,10 +1321,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     eapply NAMEGEN.generate_local_env_for_node_injective; eauto.
   Qed.
 
-  (** Structural side conditions for replaying [simplify_complete] on generated
-      NLustre signatures.  This packages exactly the two source-side facts
-      needed by the translation proof: raw well-formedness and disjointness of
-      eliminated locals from the visible signature scope. *)
   Definition generated_node_simplify_ready
     (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
     forall G1 n nsig
@@ -1592,16 +1467,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
     apply secglobal_scope_sec_nil.
   Qed.
 
-  (** Generated scoped-env source signatures are structurally good.
-
-      Relation to the paper:
-      once the source naming pass has fixed the local environment of each
-      node, every generated source signature should satisfy the structural
-      invariant expected by call instantiation: exactly one visible
-      singleton-RHS constraint per output, with well-formed stored
-      constraints.  This theorem lifts the local head-node result
-      [generate_node_sig_good_from_local_env] through the whole
-      scoped-environment signature generation pass. *)
+  (** This is the main global correctness theorem for generated source signatures.  It threads the scoped environment through the whole NLustre global and proves that every generated signature is structurally good, so its visible constraints have the shape expected by later call and noninterference arguments. *)
   Theorem generate_all_source_signatures_good_scoped_env':
     forall prefix nodes acc envs aux_names G,
       generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
@@ -1762,11 +1628,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     - apply secglobal_good_nil.
   Qed.
 
-  (** Visible generated constraints mention a chosen security identifier.
-
-      This is the syntactic invariant needed by the reset-aware NLustre call
-      proof: every visible singleton-RHS constraint stored in a signature (or
-      intermediate call block) still carries the chosen identifier on its lhs. *)
   Definition constraints_mention (ty: ident) (cns: list constraint) : Prop :=
     forall lhs y,
       In (lhs, [y]) cns ->
@@ -1842,14 +1703,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
       exact Hinx.
   Qed.
 
-  (** Signature-instantiation membership replay.
-
-      The paper's call-instantiation proof tracks how one visible identifier
-      survives the symbolic type substitution used when replaying a stored
-      signature inside a caller.  The implementation now uses
-      [SIG.subst_ident_in_type] rather than the older simplify-specific
-      [subST], so the mention-preservation lemmas below need the matching
-      membership facts. *)
   Lemma subst_ident_in_type_preserves_other_in:
     forall lhs d st x,
       x <> d ->
@@ -2119,14 +1972,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
       + eapply IH; eauto.
   Qed.
 
-  (** Call-constraint reset propagation.
-
-      Relation to the paper:
-      once a callee signature stores its reset field in every visible
-      constraint lhs, the call instantiation pipeline must preserve that fact
-      syntactically when substituting actual inputs/clock/reset and caller
-      outputs.  The reset-aware NLustre call proof applies this with the
-      caller's current reset type as the instantiated reset argument. *)
   Lemma generate_constraints_mentions_reset:
     forall sig inp clk rst out cns st st' ty,
       NoDup (signature_scope sig) ->
@@ -2191,11 +2036,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     eapply reorder_constraints_mentions; eauto.
   Qed.
 
-  (** Local inversion helpers copied from the indexed noninterference support.
-
-      These are source-local monadic shape views of one generated equation
-      block.  They are duplicated here to avoid an import cycle from the
-      noninterference helper layer back into this correctness module. *)
   Lemma generate_eqdef_constraint_inv:
     forall G ty_env base_ty rst_ty x ck ce cns st st',
       SECNLUSTYPING.generate_eqn_constraint G ty_env base_ty rst_ty (EqDef x ck ce) st =
@@ -2361,13 +2201,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
       eapply IH; eauto.
   Qed.
 
-  (** Node-local raw reset-mention fact.
-
-      Relation to the paper:
-      this is the source-local half of the final theorem.  It states that the
-      raw NLustre constraints generated for one node already thread the current
-      node reset through every visible singleton-RHS constraint, including the
-      constraints imported from previously generated callee signatures. *)
   Lemma generate_node_sig_constraints_mention_reset_from_local_env:
     forall G P n env rec aux_names st st'
            clk_type rst_type inp out locals raw st_n,
@@ -2743,37 +2576,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
                 f sig lhs y Hfindsig Hin).
   Qed.
 
-  (** Generated source signatures mention reset in every visible constraint.
-
-      Relation to the paper:
-      the reset-aware noninterference proof for NLustre reset calls needs a
-      purely typing-side fact: whenever a generated source signature exposes a
-      visible output constraint through [findST], that visible constraint still
-      mentions the node reset field.  This is what lets
-      [call_output_low_implies_reset_low] turn a low caller-visible reset-call
-      output into a low instantiated reset argument.
-
-      Planned proof route:
-      1. Prove the node-local version first, starting from
-         [generate_node_sig_good_from_local_env] and the raw equation
-         generation witnesses from [generate_node_sig_inv_local].
-      2. Show directly on the raw NLustre constraints that every output-facing
-         constraint lhs contains the current node reset type:
-         - [EqDef] and [EqFby] now include [rst_type] explicitly;
-         - [EqApp] and reset [EqApp] inherit reset through
-           [generate_constraints].
-      3. Lift that raw fact through [SymTypes.simplify]:
-         local eliminations may remove local identifiers, but they should not
-         eliminate the node reset identifier from a surviving visible
-         constraint.  The existing [simplify_rhs_in] and
-         [simplify_preserves_other_rhs] lemmas are the intended starting point.
-      4. Finally lift the local result through the scoped-environment/global
-         signature generation pass, using the same local-environment splitting
-         pattern as [generate_all_source_signatures_good_scoped_env'].
-
-      The proof below follows that route directly inside the source-local
-      correctness layer so the indexed noninterference development can consume
-      it without depending back on the helper file. *)
   Theorem generated_signature_constraints_mention_reset_scoped_env:
     forall all_nodes envs aux_names G f sig y lhs,
       generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
@@ -2813,14 +2615,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     exact Hreset.
   Qed.
 
-  (** Call-constraint clock propagation.
-
-      Relation to the paper:
-      this is the clock-side companion of
-      [generate_constraints_mentions_reset].  Once a stored callee signature
-      records its clock field in every visible constraint lhs, the call
-      instantiation pipeline must preserve that fact syntactically when
-      substituting actual inputs/clock/reset and caller outputs. *)
   Lemma generate_constraints_mentions_clock:
     forall sig inp clk rst out cns st st' ty,
       NoDup (signature_scope sig) ->
@@ -2897,14 +2691,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     eapply reorder_constraints_mentions; eauto.
   Qed.
 
-  (** Node-local raw clock-mention fact.
-
-      Relation to the paper:
-      this is the source-local clock-side half of the final theorem.  It
-      states that the raw NLustre constraints generated for one node already
-      thread the current node clock through every visible singleton-RHS
-      constraint, including constraints replayed from previously generated
-      callee signatures. *)
   Lemma generate_node_sig_constraints_mention_clock_from_local_env:
     forall G P n env rec aux_names st st'
            clk_type rst_type inp out locals raw st_n,
@@ -2991,10 +2777,10 @@ Module Type SECNLUSTYPINGCORRECTNESS
                    unfold SC.ret in Hckc. inversion Hckc; subst ckty st_clk.
                    refine (SECNLUSTYPING.assign_clk_type_scoped
                              env clk_type scope ck ckty' _ _ Hckopt).
-                   - 
+                   -
                      unfold scope. repeat rewrite in_app_iff. right. right. right.
                      simpl. now left.
-                   - 
+                   -
                      intros z Hz.
                      assert (Hinz : InMembers z (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))))
                        by (eapply
@@ -3047,10 +2833,10 @@ Module Type SECNLUSTYPINGCORRECTNESS
                    unfold SC.ret in Hckc. inversion Hckc; subst ckty st_clk.
                    refine (SECNLUSTYPING.assign_clk_type_scoped
                              env clk_type scope ck ckty' _ _ Hckopt).
-                   - 
+                   -
                      unfold scope. repeat rewrite in_app_iff. right. right. right.
                      simpl. now left.
-                   - 
+                   -
                      intros z Hz.
                      assert (Hinz : InMembers z (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))))
                        by (eapply
@@ -3121,15 +2907,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
     eapply simplify_mentions_other; eauto.
   Qed.
 
-  (** Generated source signatures mention clock in every visible constraint.
-
-      Relation to the paper:
-      the clock-sensitive indexed noninterference proof needs a typing-side
-      fact parallel to the reset one: whenever a generated source signature
-      exposes a visible output constraint through [findST], that visible
-      constraint still mentions the node clock field.  This is what lets
-      [call_output_low_implies_clock_low] turn a low caller-visible call
-      output into a low instantiated call clock. *)
   Theorem generated_signature_constraints_mention_clock_scoped_env':
     forall prefix nodes acc envs aux_names envs_pref aux_pref st G,
       NAMEGEN.generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state

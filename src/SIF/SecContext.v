@@ -1,24 +1,13 @@
-(* Shared monadic/environment plumbing for the SIF development.
+(** Security monad and environment operations used by the SIF generators. *)
 
-   This file is intentionally phase-agnostic:
-   - it defines the state/error monad used by the generators,
-   - it packages reusable lookup lemmas such as [find_env_consistent],
-   - and it keeps [mmap]/[option_to_sec] extensionality out of the typing and
-     semantic bridge files.
-
-   In the final theorem flow, both the NLustre and STC typing developments use
-   these lemmas to turn shared environment lookups into scoped typing facts,
-   while the cross-phase translation and noninterference proofs reuse the same
-   lookup consistency results instead of duplicating environment plumbing. *)
 From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import Environment.
 
-From Coq Require Import String. (*Required for Errors *)
+From Coq Require Import String.
 From compcert Require Import common.Errors.
 From Coq Require Import List.
-
 
 Import List.ListNotations.
 
@@ -26,8 +15,7 @@ Module Type SECMONAD (Import Ids   : IDS).
 
 Section MySecMonad.
   Context {A : Type}.
-  (* The state only tracks the next fresh index. The shared typing context is
-     threaded explicitly through the generators that use this monad. *)
+
   Definition sec_state : Type := ident.
   Definition Sec A := sec_state -> res (A * sec_state).
   Definition init_state : sec_state := xH.
@@ -133,8 +121,6 @@ Proof.
   rewrite Henv in Hfind'. inversion Hfind'. subst. exact Hscope.
 Qed.
 
-
-(* Extend the context with one fresh security variable. *)
 Definition insert_env (k v: ident) (env: Env.t ident): Sec (Env.t ident) :=
   let st:= Env.add k v env in
     ret st.
@@ -188,13 +174,11 @@ Fixpoint insert_vars' (xs: list ident) (acc: list ident) (env: Env.t ident): Sec
         do (env', v) <- fresh_insert x env;
         insert_vars' xs (acc++[v]) env'
     end).
-(** Inserts mappings for xs into env, returns newly generated mappings in order and the env*)
+
 Definition insert_vars xs env := insert_vars' xs [] env.
 Section mmap2.
   Context {A B1 B2 : Type}.
   Variable (f : A -> Sec (B1 * B2)).
-
-
 
   Fixpoint mmap2 (l: list A) {struct l} : Sec (list B1 * list B2) :=
     match l with
@@ -207,7 +191,7 @@ End mmap2.
 
 Section zipper.
   Context  {A1 A2 B: Type}.
-  (* Variable (f: A1 -> A2 -> B). *)
+
   Import List.ListNotations.
   Fixpoint zip (l1: list A1) (l2: list A2) : Sec (list (A1*A2)) :=
     match l1,l2 with
@@ -229,9 +213,6 @@ Section option_to_sec.
     end.
 End option_to_sec.
 
-(* Generic monadic determinism facts used throughout the SIF development.
-   They do not depend on any specific source/target language, only on the
-   state/error structure of the security monad. *)
 Lemma option_to_sec_consistent:
   forall (A: Type) (x: option A) st1 st2 y1 y2 st1' st2',
     @option_to_sec A x st1 = OK (y1, st1') ->
@@ -282,18 +263,14 @@ Qed.
 
 End SECMONAD.
 
-
-
 Module SecMonad (Ids   : IDS) <: SECMONAD Ids.
 Include SECMONAD Ids.
 
 End SecMonad.
 
-
 Module MonadLaws (Ids  : IDS)
   (SC: SECMONAD Ids).
   Import SC.
-
 
   Section laws.
     Variable A B C: Type.
@@ -302,20 +279,17 @@ Module MonadLaws (Ids  : IDS)
       easy.
     Qed.
 
-    (* return a >>= k                  =  k a *)
     Theorem left_unital_law: forall (x: A) (f: A -> Sec B) st, bind (ret x) f st = f x st.
     Proof.
       intros. unfold bind.
       destruct (ret x st) as [(a,st')|] eqn:E; rewrite ret_helper in E; now inversion E.
     Qed.
 
-    (*m        >>= return             =  m*)
     Theorem right_unital_law: forall (m: Sec A) st, bind m ret st = m st.
     Proof.
       intros. unfold bind. now destruct (m st) as [(a & st')|] eqn:E .
     Qed.
 
-    (* m        >>= (\x -> k x >>= h)  =  (m >>= k) >>= h *)
     Theorem composition_law: forall (m: Sec A) (k: A -> Sec B) (h: B -> Sec C) st,
       bind m (fun x => bind (k x) h) st = bind (bind m k) h st.
     Proof.

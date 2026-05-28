@@ -1,13 +1,5 @@
-(** Executable export of generated NLustre security constraints.
+(** Executable export of generated NLustre security signatures and constraints. *)
 
-    This file does not add new proof obligations.  It packages the verified
-    computations from [NameInterface] and [SecNLusTyping] into one concrete
-    function that can be extracted and called from the OCaml driver.
-
-    Relative to the paper, this is an executable reflection of the NLustre
-    source typing phase: it exposes the per-node symbolic constraints, their
-    unsimplified raw form, and the generated source-name to security-name
-    mappings that the proof development reasons about abstractly. *)
 From Velus Require Import Common.
 From Velus Require Import ObcToClight.Interface.
 From Velus Require Import Instantiator.
@@ -134,10 +126,7 @@ Fixpoint build_constraint_dump
 Definition generate_nlustre_constraint_dump
   (nodes : NL.Syn.global)
   : res sif_constraint_dump :=
-  (* The extracted NLustre global is stored in reverse construction order,
-     while signature generation needs callees before callers.  We therefore
-     replay the shared generators on the user-facing node order, matching the
-     existing NLustre printer. *)
+
   let ordered_nodes := rev nodes in
   match NAMEGEN.generate_node_scoped_env ordered_nodes with
   | Error e => Error e
