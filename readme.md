@@ -1,92 +1,144 @@
-# A Formally Verified Compiler for Lustre
+# Secure Velus: SIF Development on Top of the Velus EMSOFT'21 Artifact
 
-These source files contain the implementation, models, and proof of
-correctness of a formally verified Lustre compiler
+This repository is a development on top of Velus's `emsoft21-artifact`
+repository. The upstream Velus compiler, proofs, build system, and supporting
+infrastructure remain in place here; our original work is concentrated in the
+`src/SIF/` directory.
 
-This file contains instructions for (i) using the compiler from (ii) a local 
-opam installation.
+The upstream Velus documentation is still useful:
 
-The `doc/` subdirectory contains a file 
-[index.html](https://velus.inria.fr/emsoft2021/) that links the definitions 
-in the EMSOFT 2021 article to the corresponding parts of the Coq source 
-files.
+- `doc/index.html` links the EMSOFT 2021 article to the corresponding Coq
+  definitions and proofs.
+- `examples/readme.md` describes the example Lustre programs shipped with the
+  artifact.
 
-The `examples/` subdirectory contains a file [readme.md](examples/readme.md) 
-presenting several example programs that can be used to test the compiler.
+## Where Our Work Lives
 
-The `pre` operator used in many Lustre programs is not yet treated.
-An uninitialized delay `pre e` must be replaced by an initialized one `0 fby e`.
+The source related to our work is located in `src/SIF/`.
 
-Compiler error messages are still very brutal. In particular the parser only
-reports syntax errors with a line number and character offset. We will
-implement more helpful messages when we have finalized one or two remaining
-details of the final language.
+The main proof entry points are:
 
-## Using the compiler
+- [`src/SIF/SecNLusStcTranslation.v`](src/SIF/SecNLusStcTranslation.v)
+  Translation-preservation results from generated NLustre security signatures
+  to translated STC signatures. Main public bridge theorem:
+  [`generated_program_signatures_preserved_global`](src/SIF/SecNLusStcTranslation.v#L2797).
+- [`src/SIF/SecNLusNonInterference.v`](src/SIF/SecNLusNonInterference.v)
+  The NLustre indexed-semantics noninterference development. Main theorem:
+  [`node_noninterference_outputs`](src/SIF/SecNLusNonInterference.v#L174).
+- [`src/SIF/SecStcNonInterference.v`](src/SIF/SecStcNonInterference.v)
+  The STC-facing translated-behavior noninterference result. Main theorem:
+  [`translated_system_noninterference_outputs`](src/SIF/SecStcNonInterference.v#L241).
 
-To run the compiler:
+### Major Results Table
 
-    ./velus -h
+| File | Major results | Role |
+| --- | --- | --- |
+| [`src/SIF/SecNLusStcTranslation.v`](src/SIF/SecNLusStcTranslation.v) | [`eqn_preserv`](src/SIF/SecNLusStcTranslation.v#L752), [`generate_all_signatures_consistent_scoped'`](src/SIF/SecNLusStcTranslation.v#L2515), [`generated_program_signatures_preserved_global`](src/SIF/SecNLusStcTranslation.v#L2797) | Equation-level preservation, global source/target signature consistency, and the public lookup bridge used by the STC theorem. |
+| [`src/SIF/SecNLusNonInterference.v`](src/SIF/SecNLusNonInterference.v) | [`node_noninterference_outputs_raw`](src/SIF/SecNLusNonInterference.v#L83), [`node_noninterference_outputs`](src/SIF/SecNLusNonInterference.v#L174) | Raw-output form of the source theorem and the final NLustre noninterference statement on observable outputs. |
+| [`src/SIF/SecStcNonInterference.v`](src/SIF/SecStcNonInterference.v) | [`translated_system_noninterference_outputs`](src/SIF/SecStcNonInterference.v#L241) | Final STC-facing noninterference theorem for translated behaviors. |
 
-In particular, typing
+Related executable constraint-export code is also in `src/SIF/`, especially:
 
-    ./velus examples/count.lus
+- [`src/SIF/SecNLusConstraintExport.v`](src/SIF/SecNLusConstraintExport.v#L126)
+  `generate_nlustre_constraint_dump`
+- [`src/SIF/SecStcConstraintExport.v`](src/SIF/SecStcConstraintExport.v#L175)
+  `generate_stc_constraint_dump`
+- [`src/SIF/siflib.ml`](src/SIF/siflib.ml)
 
-will compile the Lustre program in examples/count.lus into an assembler
-program examples/count.s.
+## Building
 
-The compiler also accepts the options
+Velus has been implemented in Coq 8.9.1. The original artifact also depends on
+Menhir and the bundled CompCert tree.
 
-* -dsif
-  Output the normalized NLustre's security type constraints code into <file>.sif
+To check the proofs and build the compiler:
 
-* -dnlustre
-  Output the normalized NLustre code into <file>.n.lus
+```sh
+./configure [options] target
+make
+```
 
-* -dstc
-  Output the Stc intermediate code into <file>.stc
+The configuration script follows the same general structure as CompCert's,
+with an additional `-compcertdir` option to specify the CompCert directory.
 
-* -dsch
-  Output the scheduled code into <file>.sch.stc
+The original upstream README used the following local `opam` workflow:
 
-* -dobc
-  Output the Obc intermediate code into <file>.obc
+```sh
+cd $VELUS_DIR
+mkdir opam
+opam init --root=opam --compiler=4.07.1
+eval `opam config env --root=$VELUS_DIR/opam`
+opam repo add coq-released https://coq.inria.fr/opam/released
+opam install -j4 coq.8.9.1 menhir.20200624 coq-menhirlib.20200624
+```
 
-* -dclight
-  Output the generated Clight code into <file>.light.c
+## Using the Compiler
 
-* -nofusion
-  Disable the if/then/else fusion optimization.
+To see the compiler options:
 
-* -sync
-  Generate an optional `main_sync` entry point and a <file>.sync.c
-  containing a simulation that prints the outputs at each cycle and requests
-  inputs. In contrast to `main_proved`, this entry point is not formally verified
-  but it is useful for testing the dynamic behaviour of compiled programs.
-  See `examples/Makefile` for examples.
+```sh
+./velus -h
+```
 
-## Local installation
+A standard compilation run looks like:
 
-Vélus has been implemented in Coq.8.9.1. It includes a
-modified version of CompCert and depends on menhir.20200624.
+```sh
+./velus examples/count.lus
+```
 
-To build a self-contained installation for compiling and running
-Vélus, we recommend installing an ad-hoc
-[opam](https://opam.ocaml.org/) directory:
+which produces `examples/count.s`.
 
-    $ cd $VELUS_DIR
-    $ mkdir opam
-    $ opam init --root=opam --compiler=4.07.1
-    $ eval `opam config env --root=$VELUS_DIR/opam`
-    $ opam repo add coq-released https://coq.inria.fr/opam/released
-    $ opam install -j4 coq.8.9.1 menhir.20200624 coq-menhirlib.20200624
+The `pre` operator is not treated directly. An uninitialized delay `pre e`
+must be replaced by an initialized one such as `0 fby e`.
 
-To check the proofs and build Vélus:
+## Generating SIF Constraints
 
-    $ cd $VELUS
-    $ ./configure [options] target
-    $ make
+The constraint-dump path for the SIF development is exposed through the `-dsif`
+option in [`src/velusmain.ml`](src/velusmain.ml#L167). The driver enters the
+dump path at [`dump_sif_if`](src/velusmain.ml#L86), then calls
+[`SecNLusConstraintExport.generate_nlustre_constraint_dump`](src/SIF/SecNLusConstraintExport.v#L126)
+and
+[`SecStcConstraintExport.generate_stc_constraint_dump`](src/SIF/SecStcConstraintExport.v#L175).
 
-The configuration script uses the same options as CompCert's, except one
-additional `-compcertdir` option to specify the CompCert directory.
+Run:
 
+```sh
+./velus -dsif <file>.lus
+```
+
+For example:
+
+```sh
+./velus -dsif examples/count.lus
+```
+
+This generates:
+
+- `<file>.n.sif`
+  The generated NLustre security-signature/constraint dump.
+- `<file>.s.sif`
+  The generated STC security-signature/constraint dump.
+
+These dumps are produced by the SIF export path in:
+
+- [`SecNLusConstraintExport.generate_nlustre_constraint_dump`](src/SIF/SecNLusConstraintExport.v#L126)
+- [`SecStcConstraintExport.generate_stc_constraint_dump`](src/SIF/SecStcConstraintExport.v#L175)
+
+Useful companion options from the Velus driver are:
+
+- `-dnlustre` to dump normalized NLustre
+- `-dstc` to dump the STC intermediate form
+- `-dsch` to dump scheduled STC
+- `-dobc` to dump OBC
+- `-dclight` to dump generated Clight
+
+## Copyright and License
+
+The Velus compiler and the original artifact files remain the work of the
+Velus team, and their copyright and license notices should remain intact.
+
+In this repository, we only claim original contributions under `src/SIF/`
+unless a file explicitly states otherwise.
+
+The top-level [`LICENSE`](LICENSE) file should therefore be read as preserving
+the upstream Velus licensing, not as replacing the Velus team's ownership of
+their code.
