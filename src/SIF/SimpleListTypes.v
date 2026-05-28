@@ -1,24 +1,16 @@
-(** Simple-list symbolic types and their normalization utilities.
-
-    This file provides the list-based symbolic-type representation used by the
-    older Lustre-side experiments.  It keeps the merge/sort machinery explicit
-    so the canonicalized representation can be compared with the finalized
-    [SymTypes] interface. *)
+(** Ordered-list utilities for simple symbolic type representations. *)
 
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.
-(*From Coq Require Import Logic.Classical_Prop.*)
+
 From Velus Require Import Common.
 From Coq Require Import Lia.
 From Velus Require Import SIF.Helpers.
 Import ListNotations.
 From Coq Require Import Recdef.
 
-
-
 Definition ST := list ident.
 Definition constraint := (ST*ident)%type.
-
 
 Fixpoint my_set_mem (a: ident) (st: ST) : bool :=
     match st with
@@ -27,9 +19,9 @@ Fixpoint my_set_mem (a: ident) (st: ST) : bool :=
     end.
 
 Section ListIdentInd.
-    (* Print nat_rect. *)
+
     Variable P : list ident -> Prop.
-    Hypothesis PNill : P []. (* The property to prove is on lists*)
+    Hypothesis PNill : P [].
     Hypothesis PSingl : forall (a: ident), P [a].
     Hypothesis PCons  :
       forall (a1 a2: ident) (l: list ident),
@@ -44,7 +36,6 @@ Section ListIdentInd.
 
 End ListIdentInd.
 
-(*first setup the ordering*)
 Section MergeIdentList.
 
   Fixpoint split  (l:list ident) : ((list ident) * (list ident)) :=
@@ -63,34 +54,30 @@ Section MergeIdentList.
      induction l using list_ind2; intros;  split; try (inversion H; simpl; lia);
      inversion H; destruct (split l) as [l1' l2'];
      inversion H1; simpl; destruct (IHl l1' l2') as [P1 P2]; auto; lia.
-     (* Show Proof. *)
+
   Qed.
 
-  (*This function is the auxiliary merge that merges two sorted lists*)
-  (*Perhaps I can use an intermediate result of correctness on input *)
   Fixpoint merge_type (l1 l2: list ident) {struct l1} : list ident :=
     let fix merge_aux l2 :=
       (match l1, l2 with
       | [], _ => l2
       | _, [] => l1
       | a1::l1', a2::l2' =>
-      (* Changed the order to greater than equals *)
+
         (match Pos.compare a1 a2 with
         | Lt => a2::(merge_aux l2')
         | Eq => a1::(merge_type l1' l2')
         | Gt => a1::(merge_type l1' l2)
         end)
       end) in merge_aux l2.
-(* Need to do final mergesort*)
+
   Lemma merge_lt: forall (x1 x2: ident) r1 r2,
     Pos.compare x1 x2 = Lt ->
       merge_type (x1::r1) (x2::r2) = x2:: merge_type (x1::r1) r2.
   Proof.
     intros. simpl.
     destruct (Pos.compare x1 x2); (try inversion H; auto).
-    (* - inversion H; auto.
-    - auto.
-    - inversion H; auto. *)
+
   Qed.
 
   Lemma merge_eq: forall (x1 x2: ident) r1 r2,
@@ -99,9 +86,7 @@ Section MergeIdentList.
   Proof.
     intros. simpl.
     destruct (Pos.compare x1 x2); (try inversion H; auto).
-    (* - inversion H; auto.
-    - auto.
-    - inversion H; auto. *)
+
   Qed.
 
   Lemma merge_nil_l: forall l, merge_type [] l = l.
@@ -123,7 +108,7 @@ Section MergeIdentList.
     | _   => let (l1, l2) := split l in merge_type (mergesort l1) (mergesort l2)
     end.
   Proof.
-    (*Recursive calls on l1 and l2 terminate *)
+
     -
       intros; simpl in *;
       destruct (split l1) as [l1' l2'] eqn:E; inv teq1; destruct (split_length _ _ _ E);
@@ -134,7 +119,6 @@ Section MergeIdentList.
       simpl; lia.
   Defined.
 
-(* need to properly replace these with ident symbols and prove correctness*)
   Lemma sorted_merge1: (forall x x1 l1 x2 l2,
     x > x1 -> x > x2 -> sortedDecNoDup (merge_type (x1::l1) (x2::l2)) -> sortedDecNoDup (x::merge_type (x1::l1) (x2::l2)))%positive.
   Proof.
@@ -151,7 +135,7 @@ Section MergeIdentList.
      - induction l2.
         + now rewrite merge_nil_r.
         + simpl. destruct (a ?= a0)%positive eqn:E.
-          * (* Needs to say that sortedDecNoDup merge_type (a::l0) l1 -> sortedDecNoDup a::(merge_type l0 l1)*)
+          *
         Admitted.
 
   Lemma mergesort_correct: forall l, sortedDecNoDup (mergesort l).
@@ -162,9 +146,8 @@ Section MergeIdentList.
 
 End MergeIdentList.
 
-(*To yet prove the NoDuplication but first..*)
 Section ConstraintOrdering.
-(*do we assume the lists are sorted?*)
+
   Definition ident_list_compare (l1 l2: list ident): comparison :=
     let l1' := mergesort l1 in
     let l2' := mergesort l2 in
@@ -196,7 +179,6 @@ Section ConstraintOrdering.
     end) l1 l2.
 
 End ConstraintOrdering.
-
 
 Notation   "x ⊔ y"   := (merge_type x y) (at level 40, left associativity).
 Definition st_remove := List.remove ident_eq_dec.

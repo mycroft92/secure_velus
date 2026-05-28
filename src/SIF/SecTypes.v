@@ -1,20 +1,8 @@
-(* Generic symbolic-type and lattice-mapping metatheory.
+(** Symbolic types, constraints, simplification, and preservation metatheory. *)
 
-   This file is the common semantic substrate beneath the signature layer, the
-   NLustre/STC translation theorem, and the indexed noninterference proofs.  It
-   owns:
-   - scopedness notions for symbolic constraints,
-   - agreement of lattice mappings on a chosen scope,
-   - weak preservation [preserves_on],
-   - and the generic update lemmas reused by call instantiation and replay.
-
-   The cross-phase preservation results in [SecNLusStcTranslation] and the
-   signature reasoning in [SIFSignature] both depend on this file through
-   [preserves_on_concat_scoped], [listSatisfiable_ext], and the valuation
-   agreement lemmas. *)
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.
-(*From Coq Require Import Logic.Classical_Prop.*)
+
 From Velus Require Import Common.
 From Coq Require Import Lia.
 From Velus Require Import SymTypes.
@@ -22,9 +10,6 @@ From Velus Require Export SIF.SecLattice.
 Require Import Coq.Program.Equality.
 Import List.ListNotations.
 
-(* Syntactic well-formedness of generated constraints.
-   This notion does not depend on the lattice-mapping interpretation, so it is exposed at
-   the file level for the typing/signature developments. *)
 Definition wf_constraints (cs: list SymTypes.constraint) : Prop :=
   NoDup (map snd cs) /\ Forall (fun '(_, x) => length x = 1) cs.
 
@@ -381,7 +366,7 @@ Module Type SECTYPES(Import Lat: Lattice).
                               | Gt => y:: (merge c1 ys)
                               end
       end.
-      (*Cool trick on decreasing arguments*)
+
       Fixpoint merge (c1:ST)  : ST -> ST :=
           fix merge' c2 :=
             match c1,c2 with
@@ -435,8 +420,6 @@ Module Type SECTYPES(Import Lat: Lattice).
         induction ls; auto.
       Qed.
 
-
-
       Lemma lt_gt_false: forall a b, (a < b)%positive -> (b < a)%positive -> False.
       Proof.
         assert (RelationClasses.Asymmetric Pos.lt). { apply RelationClasses.StrictOrder_Asymmetric. apply Pos.lt_strorder. }
@@ -467,18 +450,18 @@ Module Type SECTYPES(Import Lat: Lattice).
           * now rewrite intersect_nil2, intersect_nil.
           * simpl. destruct (Pos.compare a_0 b_0) eqn:Eab; destruct (Pos.compare b_0 a_0) eqn:Eba.
             + apply Pos.compare_eq_iff in Eab. subst. rewrite IHx. auto.
-            (*impossible cases*)
+
             + apply Pos.compare_eq_iff in Eab. subst. apply Pos.lt_irrefl in Eba. elim Eba.
             + apply Pos.compare_eq_iff in Eab. subst. rewrite Pos.compare_gt_iff in Eba. apply Pos.lt_irrefl in Eba. elim Eba.
             + apply Pos.compare_eq_iff in Eba. subst. apply Pos.lt_irrefl in Eab. elim Eab.
             + rewrite Pos.compare_lt_iff in Eab. rewrite Pos.compare_lt_iff in Eba. elim (lt_gt_false a_0 b_0 Eab Eba).
-            (*normal cases*)
+
             + rewrite IHx. auto.
-            (*impossible*)
+
             + apply Pos.compare_eq_iff in Eba. subst. rewrite Pos.compare_gt_iff in Eab. apply Pos.lt_irrefl in Eab. elim Eab.
 
             + rewrite <- IHy. auto.
-            (*impossible*)
+
             + rewrite Pos.compare_gt_iff in Eba. rewrite Pos.compare_gt_iff in Eab. elim (lt_gt_false b_0 a_0 Eab Eba).
       Qed.
 
@@ -521,7 +504,7 @@ Module Type SECTYPES(Import Lat: Lattice).
         - simpl.  destruct (ident_eqb a a0) eqn:E.
             * auto.
             * apply (ident_eqb_neq) in E. simpl in H.
-              destruct H as [H1|H2]. elim (E H1). (*a0 = a*)
+              destruct H as [H1|H2]. elim (E H1).
               now apply IHst.
     Qed.
 
@@ -532,10 +515,8 @@ Module Type SECTYPES(Import Lat: Lattice).
                 else a:: (my_set_union st_1 st_2')
     end.
 
-
   Hint Resolve my_set_mem_correct.
   Hint Unfold my_set_union.
-
 
   Fixpoint hm_ext (delta: ident -> Lat.t ) (xs: ST): Lat.t :=
     match xs with
@@ -545,7 +526,7 @@ Module Type SECTYPES(Import Lat: Lattice).
 
   Definition st_remove := List.remove ident_eq_dec.
   Definition st_mem    := my_set_mem.
-  (*Local hint data bases from Lattices*)
+
   Hint Immediate eq_sym.
   Hint Resolve merge_nil merge_nil2 merge_comm intersect_nil intersect_nil2 intersect_comm eq_refl eq_trans eqb_refl
                order_refl order_antisym order_trans
@@ -614,7 +595,6 @@ Module Type SECTYPES(Import Lat: Lattice).
     try (rewrite IHst); auto.
   Qed.
 
-
   Lemma hm_ext_distributive : forall (dlt:ident -> Lat.t) (st1 st2: ST) d1,
     hm_ext dlt st1 ⊑ d1 ->
     hm_ext dlt st2 ⊑ d1 -> hm_ext dlt (st2 ⊔ st1) ⊑ d1.
@@ -633,7 +613,6 @@ Module Type SECTYPES(Import Lat: Lattice).
         + simpl.  apply join_least_upper_bound. apply join_upper_bound_l in H2 as H5. assumption.
           apply IHst2. apply join_upper_bound_r in H2 as H6. assumption.
     Qed.
-
 
   Lemma hm_ext_concat_l : forall dlt a b,
      hm_ext dlt a ⊑ hm_ext dlt (a ⊔ b).
@@ -655,7 +634,6 @@ Module Type SECTYPES(Import Lat: Lattice).
           * rewrite merge_comm in IHb. apply order_trans with (y:=hm_ext dlt (b ⊔ (a_0::a))). apply IHb.
             rewrite merge_comm. simpl. auto.
   Qed.
-
 
   Lemma hm_ext_concat_r : forall dlt a b,
     hm_ext dlt b ⊑ hm_ext dlt (a ⊔ b).
@@ -687,8 +665,6 @@ Module Type SECTYPES(Import Lat: Lattice).
   Hint Resolve hm_ext_concat_l hm_ext_concat_r  hm_ext_distributive
   hm_ext_distributive2  hm_ext_list_in1.
 
-  (*Constraints and substitutions*)
-  (*Under dlt, s_0 ⊑ s_1 *)
   Definition satisfiable (dlt: ident -> Lat.t) (s_0 s_1: ST) :=
     (hm_ext dlt s_0) ⊑ (hm_ext dlt s_1).
 
@@ -696,7 +672,6 @@ Module Type SECTYPES(Import Lat: Lattice).
     satisfiable dlt lhs rhs.
 
   Definition listSatisfiable (dlt: ident -> Lat.t) (cns: list constraint) := Forall (fun c => constraintSatisfiable dlt c) cns.
-    (* Forall (fun '(s,x) => satisfiable dlt s x) cns. *)
 
   Hint Unfold satisfiable constraintSatisfiable listSatisfiable.
 
@@ -739,12 +714,9 @@ Module Type SECTYPES(Import Lat: Lattice).
     apply filter_In in H; intuition.
   Qed.
 
-
-
   Definition wf_constraints (cs: list constraint) : Prop :=
     NoDup (map snd cs) /\ Forall (fun '(_,x) => length x = 1 ) cs.
 
-  (*Properties of well formed constraints*)
   Lemma wf_constraints_no_nil: forall x cs,
     wf_constraints (x::cs) -> wf_constraints cs.
   Proof.
@@ -776,14 +748,8 @@ Module Type SECTYPES(Import Lat: Lattice).
 
   Hint Resolve list_len_1 wf_constraints_shape.
 
-
   Hint Resolve find_correct.
 
-  (** Extending a lattice mapping with one eliminated variable.
-
-      When [d] is eliminated using its defining symbolic type [st], the
-      reconstructed lattice mapping keeps every other identifier unchanged and maps
-      [d] to the interpretation of [st] with [d] removed. *)
   Definition complete_subst (dlt: ident -> Lat.t) (d: ident) (st: ST)
     : ident -> Lat.t :=
     fun x => if ident_eqb x d then hm_ext dlt (st_remove d st) else dlt x.
@@ -863,8 +829,6 @@ Module Type SECTYPES(Import Lat: Lattice).
         apply Hbound. right; exact Hin.
   Qed.
 
-  (* Substitute symbolic type [st'] for identifier [d] in [st].  If [d] does
-     not appear in [st], the original symbolic type is unchanged. *)
   Definition subST st d st' : ST :=
   match st_mem d st with
   | false => st
@@ -931,9 +895,6 @@ Module Type SECTYPES(Import Lat: Lattice).
         apply order_refl, eq_refl.
   Qed.
 
-  (*Substituting st_0 for d in st (results in st_1),             *)
-  (*preseves satisfiability of st ⊑ x (meaning st_1 ⊑ x)        *)
-  (*provided st_0 ⊑ [d]                                         *)
   Lemma subST_correct : forall dlt st x d st_0 st_1,
     satisfiable dlt st_0 [d] -> satisfiable dlt st x -> subST st d st_0 = st_1 -> satisfiable dlt st_1 x.
   Proof.
@@ -955,9 +916,6 @@ Module Type SECTYPES(Import Lat: Lattice).
 
   Hint Resolve subST_correct.
 
-  (*Substituting ident: d with st' in a list of constraints cns  *)
-  (*substitution also removes duplicate constraints with the     *)
-  (*ident that is being removed(case 2), we only sub valid cns:3 *)
   Fixpoint subAll cns d st' : list constraint :=
     match cns with
     | [] => []
@@ -967,9 +925,6 @@ Module Type SECTYPES(Import Lat: Lattice).
     | _ :: cns'   => subAll cns' d st'
     end.
 
-  (* Check Forall_inv.
-  Check Forall_inv_tail.
-  Check Forall_cons. *)
   Lemma subAll_is_correct :  forall dlt cns d v cns',
     satisfiable dlt v [d] ->
     subAll cns d v = cns' -> listSatisfiable dlt cns -> listSatisfiable dlt cns'.
@@ -978,26 +933,25 @@ Module Type SECTYPES(Import Lat: Lattice).
     intros * H_0 H_1 H_2 ; simpl in H_1.
     - subst. assumption.
     - destruct r as [|d_0 r_0] eqn:Er.
-      (*r is empty*)
+
       * inversion H_2. apply IHcns; auto.
-      (*r is a list with one or more elems*)
+
       * destruct r_0 as [|r_1] eqn:El in H_1.
-        (*r has exactly one elem: d_0*)
+
         + subst r_0. destruct (ident_eqb d_0 d) eqn:Edd_0.
-          (*d_0 = d*)
+
           ** inversion H_2. apply IHcns; auto.
-          (*d_0 /=d*)
+
           ** subst cns'. unfold listSatisfiable in *. apply Forall_cons.
-            (*Newly generated constraint after subbing d is sat*)
+
             ++ remember (subST l d v) as st_0 eqn:Hst_0. symmetry in Hst_0.
                apply Forall_inv in H_2 as H_2'. apply (subST_correct dlt l [d_0] d v st_0); auto.
-            (*induction case*)
+
             ++ remember (subAll cns d v) as cns_0 eqn:Hcns_0. inversion  H_2; auto.
-        (*r has more than one elem, no substitution happens*)
+
         + inversion H_2. auto.
   Qed.
   Hint Resolve subAll_is_correct.
-  (*Skipping subAll_noDup and subAll_notin, since the main proof doesn't use it*)
 
   Lemma subAll_rhs_in:
     forall cns d st rhs,
@@ -1042,11 +996,6 @@ Module Type SECTYPES(Import Lat: Lattice).
           -- exact Hfor'.
   Qed.
 
-  (** Completeness of one substitution pass when the eliminated identifier no
-      longer has a defining constraint in the remaining list.
-
-      This is the tail case needed by [subAll_complete] after removing the
-      unique defining constraint guaranteed by [wf_constraints]. *)
   Lemma subAll_complete_none:
     forall dlt cns d v cns',
       wf_constraints cns ->
@@ -1115,10 +1064,6 @@ Module Type SECTYPES(Import Lat: Lattice).
         * eapply IH with (cns' := subAll cns d v); eauto.
   Qed.
 
-  (* [simplify] operates by replaying substitutions found in the constraint
-     list itself.  Its correctness and completeness theorems therefore take
-     explicit [wf_constraints] premises rather than baking well-formedness
-     into the function definition. *)
   Inductive simplifyRel  : list constraint -> list ident ->  list constraint -> Prop :=
   | baseCase  : forall cns,
     simplifyRel cns [] cns
@@ -1137,11 +1082,10 @@ Module Type SECTYPES(Import Lat: Lattice).
   Theorem simplify_is_correct : forall (dlt: ident -> Lat.t) cns cns' d,
     listSatisfiable dlt cns -> simplifyRel cns d cns' -> listSatisfiable dlt cns'.
   Proof.
-    intros dlt cns cns' d H_0 H_1. induction H_1; auto. (*base cases are trivial*)
-    (*induction case*)
+    intros dlt cns cns' d H_0 H_1. induction H_1; auto.
+
     apply find_correct in H. apply subAll_is_correct with (dlt:=dlt) in H0; auto.
-    (*We need to show that the constraint that is being substituted was originally satisfiable*)
-    (*But this is trivial since it's part of a list of constraints that were ALL satisfiable*)
+
     rewrite -> (Forall_forall (fun '(s, x) => satisfiable dlt s x) cns) in H_0. apply H_0 in H. auto.
   Qed.
 
@@ -1206,9 +1150,6 @@ Module Type SECTYPES(Import Lat: Lattice).
     end.
   Hint Unfold simplify.
 
-  (* Fixpoint simplify2 (cns: list constraint) (d: ident): list constraints :=
-    match cns with
-    | []  *)
   Lemma simplify_simplifyRel: forall ds cns  cns', simplify cns ds = cns' -> simplifyRel cns ds cns'.
   Proof.
     induction ds; intros.
@@ -1228,6 +1169,7 @@ Module Type SECTYPES(Import Lat: Lattice).
     eapply simplify_simplifyRel. reflexivity.
   Qed.
 
+  (** This is the public completeness fact for [simplify].  If the raw constraint list is well formed and satisfied under a valuation, then the visible constraint list obtained after eliminating locals is also satisfied.  Signature-generation correctness proofs use this to move from raw local constraints to the public signature constraints. *)
   Corollary simplify_complete:
     forall cns ds scope dlt,
       wf_constraints cns ->
@@ -1255,13 +1197,6 @@ Module Type SECTYPES(Import Lat: Lattice).
       + apply hm_ext_concat_r.
   Qed.
 
-  (** Generic scope metatheory for constraints and symbolic types.
-
-      These lemmas belong next to [findST], [subST], [subAll], and [simplify]:
-      they are independent of any particular source or target language and are
-      reused both by the signature-instantiation layer and by the
-      NLustre/STC translation proof. *)
-
   Definition constraint_scope (c: constraint) : list ident :=
     fst c ++ snd c.
 
@@ -1274,10 +1209,6 @@ Module Type SECTYPES(Import Lat: Lattice).
   Definition st_scoped (scope: list ident) (st: ST) : Prop :=
     forall x, In x st -> In x scope.
 
-  (* Agreement of two lattice mappings on a chosen scope.  This is the generic
-     relation underlying the translation-preservation and replay theorems, so
-     it belongs with the symbolic-type metatheory rather than any specific
-     source/target phase bridge. *)
   Definition agree_on (xs: list ident) (dlt1 dlt2: ident -> Lat.t) : Prop :=
     forall x, In x xs -> dlt1 x = dlt2 x.
 
@@ -1300,9 +1231,6 @@ Module Type SECTYPES(Import Lat: Lattice).
     reflexivity.
   Qed.
 
-  (* Weak preservation of one constraint list by another under a chosen shared
-     scope.  This is generic symbolic-type metatheory: the only
-     lattice-mapping ingredients are agreement and constraint satisfiability. *)
   Definition preserves_on (xs: list ident) (cns1 cns2: list constraint) : Prop :=
     forall dlt,
       listSatisfiable dlt cns1 ->
@@ -1530,9 +1458,6 @@ Module Type SECTYPES(Import Lat: Lattice).
     apply Hagree, Hincl, Hin.
   Qed.
 
-  (* Pointwise lattice-mapping updates used by the call-instantiation metatheory.
-     They are generic symbolic-type operations, so the reusable definitions and
-     their basic agreement lemmas live here. *)
   Definition upd_type (dlt: ident -> Lat.t) (x: ident) (st: ST) : ident -> Lat.t :=
     fun y => if ident_eqb y x then hm_ext dlt st else dlt y.
 
@@ -2160,7 +2085,6 @@ Module Type SECTYPES(Import Lat: Lattice).
           apply NoDup_cons_iff in Hnd as [Hnin _]. contradiction.
         * apply Hdefs. now right.
   Qed.
-
 
 End SECTYPES.
 

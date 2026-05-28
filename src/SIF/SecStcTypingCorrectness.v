@@ -1,14 +1,5 @@
-(* Target-local correctness facts for generated STC signatures.
+(** Correctness facts for generated STC signatures and reset-instance environments. *)
 
-   This file packages the STC facts used by the final translation proof, but
-   which do not themselves compare NLustre and STC:
-   - reset-environment injectivity and namespace separation,
-   - generated target-signature scopedness,
-   - target-side visible-name range facts in the shared [sec] namespace.
-
-   These lemmas are the target-local discharge layer used by
-   [SecNLusStcTranslation] when reconstructing
-   [Signature_head_consistent] for generated source/target signatures. *)
 From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import Operators.
@@ -60,19 +51,6 @@ Module Type SECSTCTYPINGCORRECTNESS
   (Import Clo   : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst Ord CEClo)
   (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo).
 
-  (** Target-local reset-environment correctness.
-
-      These lemmas are purely STC-side: they describe how the translated reset
-      environment is built, why its generated type variables stay in the
-      `sec_reset` namespace, and why that environment preserves injectivity and
-      lookup facts.  They are used by the translation proof, but do not
-      themselves relate NLustre and STC. *)
-
-  (** We reuse the same environment-viewing convention as the shared naming
-      layer: an environment is observed through the list of pairs
-      [(generated_security_name, source_key)] produced by [Env.elements].  The
-      reset-environment proofs only need the generic list properties of this
-      view, so they live here instead of the translation file. *)
   Definition env_values (env: Env.t ident) : list (ident * ident) :=
     map (fun '(x, ty) => (ty, x)) (Env.elements env).
 
@@ -224,13 +202,7 @@ Module Type SECSTCTYPINGCORRECTNESS
     eapply fresh_reset_insert_preserves_find; eauto.
   Qed.
 
-  (** Node-scoped target signature generation.
-
-      This is the STC-side counterpart of
-      [SECNLUSTYPINGCORRECTNESS.generate_node_sig_scoped_env_scoped].  The
-      node-scoped naming layer only changes how the current system's local env
-      is recovered from the outer table; once that local env is projected, the
-      existing target typing proof applies unchanged. *)
+  (** This turns the scoped-env STC generator into a scoped target signature.  The translation file uses it when it reconstructs one translated system from the shared node-scoped environment. *)
   Theorem generate_sys_signature_scoped_env_scoped:
     forall G P s envs env aux_names sig,
       secglobal_scoped G ->
@@ -247,15 +219,6 @@ Module Type SECSTCTYPINGCORRECTNESS
       eapply SECSTCTYPING.generate_sys_signature_scoped; eauto.
   Qed.
 
-  (** Low call outputs force the instantiated reset argument low.
-
-      Relation to the paper:
-      this is the target-side counterpart of the source call fact used in the
-      NLustre noninterference proof.  Once the stored callee signature is
-      known to mention its reset field in every output-defining constraint,
-      any low caller-visible output slot of one instantiated call forces the
-      instantiated reset argument low as well.  The translation bridge
-      uses the same typing fact on the STC side. *)
   Lemma call_output_low_implies_reset_low:
     forall sig inptyp ckty rstty outtyp cns st st'
            dlt t i y v,
@@ -375,7 +338,6 @@ Module Type SECSTCTYPINGCORRECTNESS
         * apply bottom_is_bottom.
   Qed.
 
-  (** Public inversion view for generated STC signatures. *)
   Lemma generate_sys_signature_inv:
     forall G s env aux_names sig,
       SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
@@ -448,7 +410,6 @@ Module Type SECSTCTYPINGCORRECTNESS
     repeat split; eauto.
   Qed.
 
-  (** Visible-field provenance for generated STC signatures. *)
   Lemma generated_sys_signature_scope_key:
     forall G s env aux_names sig ty,
       SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
@@ -500,12 +461,6 @@ Module Type SECSTCTYPINGCORRECTNESS
         * exact Hrst.
   Qed.
 
-  (** Shared-environment range fact for generated STC signature fields.
-
-      This is the target-side namespace corollary paired with
-      [generated_sys_signature_scope_key].  It belongs here because it talks
-      only about STC signature generation plus the shared naming interface,
-      and is reused by translation as the STC-side source of [signature_scope_sec]. *)
   Lemma generated_sys_signature_scope_sec:
     forall all_nodes G s env aux_names sig,
       generate_node_env all_nodes = OK (env, aux_names) ->
@@ -667,11 +622,6 @@ Module Type SECSTCTYPINGCORRECTNESS
     eapply generate_reset_env'_has_reset_stmt; eauto.
   Qed.
 
-  (** Target-only structural fact for reset-key extraction.
-
-      The helper [trconstrs_reset_keys] is combined with NLustre reset
-      bookkeeping, but this append decomposition is purely STC-side and belongs
-      with the other reset-environment support lemmas. *)
   Lemma trconstrs_reset_keys_app:
     forall trs1 trs2,
       SECSTCTYPING.trconstrs_reset_keys (trs1 ++ trs2)

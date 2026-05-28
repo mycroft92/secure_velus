@@ -1,15 +1,4 @@
-(* Final indexed-semantics noninterference theorem for NLustre.
-
-   This file packages the completed source-language noninterference result.
-   The underlying observation layer is the paper's [(⊑ t)] projection, realized
-   here through generated local security environments, ground instantiations of
-   symbolic types, and the relational history predicates developed in
-   [SecNLusNonInterferenceSupport].
-
-   Relative to the papers, this file is the source-level theorem layer:
-   [node_noninterference_outputs_raw] is the proof-internal replay theorem, and
-   [node_noninterference_outputs] is the public indexed-semantics output
-   noninterference statement. *)
+(** Final NLustre indexed noninterference result on observable node outputs. *)
 
 From Coq Require Import List Sorting.Permutation Lia Wf_nat PArith.BinPos Arith.PeanoNat.
 Import List.ListNotations.
@@ -79,22 +68,6 @@ Module Type SECNLUSNONINTERFERENCE
      SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL Lat SecT SIG SIGPROOFS
        NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING).
 
-  (** Vocabulary alignment with the papers.
-
-      The noninterference papers use:
-      - [s] for a ground instantiation of symbolic security variables;
-      - [ρ] for the generated constraints attached to a node signature.
-
-      In the Coq development we standardise this as follows:
-      - [dlt] is the ground instantiation used throughout [SecTypes] and
-        [SIFSignature];
-      - [sig.(s_constraints)] is exactly the paper's [ρ];
-      - "ρ is satisfied by s" is formalised as [signature_satisfied dlt sig].
-
-      Keeping this translation explicit avoids introducing parallel notation in
-      the noninterference proof. *)
-
-
   Include SECNLUSNONINTERFERENCECLOCKEDSTEP
     Ids Lat Op OpAux SC SecT CESyn SynNL SIG NAMEGEN SECCETYPING CETyp CEIsF
     CEClo Str Ord Mem IsD IsF NLCaus Clo CESem CEProps Indexed SIGPROOFS SECNLUSTYPING
@@ -106,14 +79,7 @@ Module Type SECNLUSNONINTERFERENCE
     Variable envs : node_scoped_env.
     Variable aux_names : list node_aux_names.
 
-    (** Internal raw output theorem.
-
-        Relation to the paper:
-        this is not part of the public statement of noninterference.  It is
-        the proof-internal theorem derived from the paired
-        [node_security] predicate and then used to recover the canonical
-        output theorem.  The explicit two-clock statement matches the reset-
-        aware recursive-call structure of the paper's indexed proof. *)
+    (** This converts the packaged node-security assumptions into the raw output specification used by the final output theorem. *)
     Theorem node_noninterference_outputs_raw:
       forall n dlt_sig dlt_raw,
         node_security all_nodes G envs aux_names n dlt_sig dlt_raw ->
@@ -204,13 +170,7 @@ Module Type SECNLUSNONINTERFERENCE
           end.
     Qed.
 
-    (** Output-facing node noninterference theorem.
-
-        Relation to the paper:
-        this is the indexed-semantics analogue of the paper's NLustre
-        noninterference theorem.  It is stated on the paired
-        [node_security] predicate so the replay witness [dlt_raw] remains
-        available for the raw-constraint replay argument. *)
+    (** This is the main NLustre noninterference theorem.  For a generated node signature, a source security witness, and two executions with low-equivalent inputs, it proves that the observable outputs agree at every allowed security level.  The translated STC theorem later reuses this result through the source-to-target bridge instead of reproving noninterference directly on STC. *)
     Theorem node_noninterference_outputs:
       forall n ty_env nsig dlt_sig dlt_raw t bk H H',
         NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->

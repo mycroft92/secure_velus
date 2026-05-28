@@ -1,11 +1,4 @@
-(* Node-local helper lemmas for NLustre indexed noninterference.
-
-   This file supplies the replay and step-support lemmas that sit between the
-   observation layer in [SecNLusNonInterferenceSupport] and the final step
-   theorem in [SecNLusNonInterferenceClockedStep].  It now also contains the
-   clock-aware base case and its local transport lemmas.  Relative to the
-   papers, these are the local semantic bridges used inside the proof of the
-   node-level indexed noninterference theorem. *)
+(** Helper lemmas for replaying signatures and transporting low-equivalence through NLustre equations and calls. *)
 
 From Coq Require Import List Sorting.Permutation Lia Wf_nat PArith.BinPos Arith.PeanoNat.
 Import List.ListNotations.
@@ -74,21 +67,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
      SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL Lat SecT SIG SIGPROOFS
        NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING).
 
-  (** Vocabulary alignment with the papers.
-
-      The noninterference papers use:
-      - [s] for a ground instantiation of symbolic security variables;
-      - [ρ] for the generated constraints attached to a node signature.
-
-      In the Coq development we standardise this as follows:
-      - [dlt] is the ground instantiation used throughout [SecTypes] and
-        [SIFSignature];
-      - [sig.(s_constraints)] is exactly the paper's [ρ];
-      - "ρ is satisfied by s" is formalised as [signature_satisfied dlt sig].
-
-      Keeping this translation explicit avoids introducing parallel notation in
-      the noninterference proof. *)
-
   Include SECNLUSNONINTERFERENCESUPPORT
     Ids Lat Op OpAux SC SecT CESyn SynNL SIG NAMEGEN SECCETYPING CETyp CEIsF
     CEClo Str Ord Mem IsD IsF NLCaus Clo CESem CEProps Indexed SIGPROOFS SECNLUSTYPING
@@ -100,15 +78,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
     Variable envs : node_scoped_env.
     Variable aux_names : list node_aux_names.
 
-    (** Reset control low-equality on a finite prefix.
-
-        Relation to the paper:
-        reset is not a plain NLustre source input carried in
-        [map fst n.(n_in)].  In indexed semantics it appears as a Boolean
-        control stream extracted by [bools_of] and consumed through [count]
-        and [mask].  This definition is therefore the reset-aware analogue of
-        low input equality: if the reset source variable is low, then the
-        induced reset segment counters agree on the whole prefix. *)
     Definition reset_control_low_eq_upto
       (ty_env : local_sec_env) (dlt : ground_instantiation) (t : Lat.t)
       (r : ident) (H H' : history) (k : nat) : Prop :=
@@ -120,14 +89,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         low_var ty_env dlt t r ->
         forall j, j <= k -> count rs j = count rs' j.
 
-    (** Build reset-control equality from prefix equality of the reset source.
-
-        Relation to the paper:
-        resettable calls consume reset through the Boolean/masked semantics,
-        but the causality theorem naturally provides equality first at the
-        source variable level.  This lemma is the semantic bridge from low
-        equality of the reset source stream to equality of reset segment
-        counters on the observed prefix. *)
     Lemma reset_control_low_eq_upto_of_sem_var_eq :
       forall ty_env dlt t r H H' k,
         (low_var ty_env dlt t r ->
@@ -147,13 +108,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       exact (count_eq_upto rs rs' k Hrs_eq j Hj).
     Qed.
 
-    (** Base-clock equality on a finite prefix.
-
-        Relation to the paper:
-        the public theorem ultimately compares two executions under the same
-        ambient clock, but recursive call proofs run under derived clocks.  We
-        keep that extra proof-internal alignment premise explicit at the helper
-        layer so the older local step theorem can consume it directly. *)
     Definition clock_eq_upto
       (bk bk' : cstream) (k : nat) : Prop :=
       forall j, j <= k -> bk j = bk' j.
@@ -166,14 +120,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       reflexivity.
     Qed.
 
-    (** Agreement on a symbolic scope is symmetric.
-
-        Relation to the paper:
-        replay from simplified signatures to raw constraints gives an
-        agreement fact between the canonical valuation and the replayed one.
-        The final noninterference corollary needs to use that agreement in
-        both directions when transporting low-observation facts between the
-        two valuations. *)
     Lemma agree_on_sym:
       forall scope dlt1 dlt2,
         SecT.agree_on scope dlt1 dlt2 ->
@@ -183,13 +129,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       symmetry. exact (Hagree x Hin).
     Qed.
 
-    (** Low observability is preserved under scope agreement.
-
-        Relation to the paper:
-        if two ground instantiations agree on the symbolic identifiers that
-        classify one raw variable, then that variable has the same
-        low-observability status under both instantiations.  This is the
-        valuation-transport step needed after replay. *)
     Lemma low_var_agree_on_scope:
       forall ty_env t scope dlt1 dlt2 x alpha,
         Env.find x ty_env = Some alpha ->
@@ -208,13 +147,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       exact Hle.
     Qed.
 
-    (** Transport low-equivalence across agreeing valuations.
-
-        Relation to the paper:
-        replay changes the valuation used to interpret symbolic security
-        identifiers, but it keeps the visible signature scope unchanged.
-        This lemma lifts that scope agreement from individual variables to the
-        relational history observation [history_low_eq]. *)
     Lemma history_low_eq_agree_on_scope:
       forall ty_env t X scope dlt1 dlt2 H H',
         (forall x, In x X -> exists alpha, Env.find x ty_env = Some alpha /\ In alpha scope) ->
@@ -229,12 +161,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       eapply agree_on_sym; eauto.
     Qed.
 
-    (** Low-equivalence weakens along observation-set inclusion.
-
-        Relation to the paper:
-        once the proof establishes agreement on a larger visible set, it may
-        immediately be restricted to any smaller observed interface such as the
-        node outputs. *)
     Lemma history_low_eq_weaken:
       forall ty_env dlt t X Y H H',
         (forall x, In x Y -> In x X) ->
@@ -245,32 +171,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       eapply Hlow; eauto.
     Qed.
 
-    (** Replaying the stored node signature back to raw equation constraints.
-
-        Relation to the paper:
-        the paper-level node security hypothesis only stores the simplified
-        node constraints [ρ].  The indexed noninterference proof for
-        [vars_defined] must reason about the raw per-equation constraints
-        before local variables are eliminated.  This lemma is the source-side
-        bridge from the stored satisfiability fact [signature_satisfied dlt sig]
-        to a completed ground instantiation that satisfies the raw
-        constraints and still agrees with the original [dlt] on the visible
-        signature scope.
-
-        Concretely, the lemma states that whenever the generated scoped node
-        signature [sig] is satisfied by [dlt], one can recover:
-
-        - the exact raw equation-constraint generation data for the current
-          node (clock/reset security ids, input/output/local mappings, and the
-          raw constraint list [raw]); and
-        - a completed valuation [dlt_raw] such that:
-          [SecT.agree_on (signature_scope sig) dlt dlt_raw] and
-          [SecT.listSatisfiable dlt_raw raw].
-
-        So this lemma is precisely what lets the proof move from the
-        stored simplified signature back to the unsimplified per-equation
-        constraints without losing agreement on the externally visible
-        interface. *)
     Lemma signature_satisfied_replays_raw:
       forall P n ty_env sig dlt,
         NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
@@ -390,21 +290,11 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                          s_clk := clk_type;
                          s_constraints := SymTypes.simplify raw locals |})
                    dlt)
-        as (dlt_raw & Hagree & Hsatraw); eauto. 
+        as (dlt_raw & Hagree & Hsatraw); eauto.
         exists dlt_raw, rec.(nclk), rec.(nrst), clk_type, rst_type, inp, out, locals, raw, st_n.
         repeat split; auto.
     Qed.
 
-    (** Restrict the NLustre causality induction to defined variables.
-
-        Relation to the paper:
-        the source causality proof naturally propagates a pointwise property
-        over the whole node variable set (inputs, locals, outputs).  The
-        internal noninterference theorem only needs the conclusion on
-        [vars_defined n.(n_eqs)], because that is the exact set tracked by the
-        generated raw constraints.  This lemma is the packaging step from the
-        full node-level causality induction back down to the defined-variable
-        view used in the theorem statement. *)
     Lemma nl_node_causal_ind_defined:
       forall (n : node) (P_var : ident -> Prop),
         (forall eq x,
@@ -427,14 +317,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       exact Hdefd.
     Qed.
 
-    (** Turn input low-equivalence into the pointwise input property used by
-        the causality induction.
-
-        Relation to the paper:
-        the base case of the node-level causality induction is agreement on
-        low inputs.  The semantic hypothesis is stated relationally as
-        [history_low_eq], while the induction consumes one pointwise property
-        per input variable. *)
     Lemma history_low_eq_inputs_pointwise:
       forall (n : node) ty_env dlt t H H',
         history_low_eq ty_env dlt t (map fst n.(n_in)) H H' ->
@@ -449,13 +331,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       eapply Hlow; eauto.
     Qed.
 
-    (** Turn prefix input low-equivalence into the pointwise input property
-        consumed by the prefix step theorem.
-
-        Relation to the paper:
-        the time-indexed node proof reasons about one finite prefix at a time.
-        This is the prefix counterpart of the basic input-agreement
-        initialisation. *)
     Lemma history_low_eq_upto_inputs_pointwise:
       forall (n : node) ty_env dlt t H H' k,
         history_low_eq_upto ty_env dlt t (map fst n.(n_in)) H H' k ->
@@ -470,14 +345,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       eapply Hlow; eauto.
     Qed.
 
-    (** Extract one equation's raw constraint block from the node-wide
-        generation result.
-
-        Relation to the paper:
-        the node proof proceeds equation by equation, but the generated source
-        typing stores all raw constraints in one concatenated list.  This
-        lemma is the bookkeeping step that recovers the exact sublist produced
-        by one equation. *)
     Lemma generate_eqns_constraints_member:
       forall ty_env clk_type rst_type eqs raw st st' eq,
         In eq eqs ->
@@ -506,11 +373,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
           * exact Hgeq.
     Qed.
 
-    (** Recover satisfiability of one extracted raw block.
-
-        Relation to the paper:
-        once an equation's raw constraint sublist is isolated, the local
-        noninterference cases only need satisfiability of that one block. *)
     Lemma listSatisfiable_app_middle:
       forall dlt pre mid post,
         SecT.listSatisfiable dlt (pre ++ mid ++ post) ->
@@ -523,13 +385,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       exact Hmid.
     Qed.
 
-    (** Invert the actual-argument typing map produced at a call site.
-
-        Relation to the paper:
-        the call case needs to connect each actual expression with the
-        generated symbolic type used in the instantiated callee valuation.
-        This lemma extracts that pointwise correspondence from the monadic
-        [mmap] returned by [generate_eqn_constraint]. *)
     Lemma mmap_assign_exp_type_inv:
       forall ty_env es tys st st',
         SC.mmap
@@ -558,14 +413,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         constructor; auto.
     Qed.
 
-    (** [option_to_sec] on clock typing is state-irrelevant.
-
-        Relation to the paper:
-        extracted raw call constraints are located at some intermediate
-        monadic state inside [generate_eqns_constraints], but the underlying
-        symbolic clock assignment is pure.  This helper normalises such
-        premises back to an arbitrary starting state when replaying the call
-        theorem. *)
     Lemma option_to_sec_assign_clk_state_irrel:
       forall ty_env base ck st st' ckty st0,
         SC.option_to_sec (SECCETYPING.assign_clk_type ty_env base ck) st = OK (ckty, st') ->
@@ -579,14 +426,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       reflexivity.
     Qed.
 
-    (** [mmap] of pure expression typings is state-irrelevant.
-
-        Relation to the paper:
-        actual-argument typing at a call site depends only on the expressions
-        and the caller environment, not on the surrounding monadic state.
-        This lets the local noninterference proof replay the extracted raw
-        argument typings at the canonical initial state expected by the
-        recursive call theorem. *)
     Lemma mmap_assign_exp_type_state_irrel:
       forall ty_env es tys st st' st0,
         SC.mmap
@@ -623,14 +462,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         + discriminate.
     Qed.
 
-    (** One non-reset call input is low-equal at a chosen instant.
-
-        Relation to the paper:
-        in the [EqApp] case, the first reusable semantic step is to show that
-        one low callee input variable receives the same value in both runs at a
-        fixed instant. This isolates the transport from low-equal caller free
-        variables, through actual-expression semantics, into the callee input
-        history. *)
     Lemma eqapp_input_var_low_eq_pointwise:
       forall ty_env ty_env_c callee callee_sig
              inptyp outtyp dlt rstty ckty t
@@ -737,13 +568,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       exact (f_equal (@Some value) Hv_eq).
     Qed.
 
-    (** Transport one low callee output back to the caller-defined variable.
-
-        Relation to the paper:
-        after the recursive call theorem gives low-equivalence on the callee
-        outputs, the [EqApp] case still has to reconnect that fact to the
-        caller-visible variable defined by the call tuple. This is the
-        position-based semantic transport step for one output slot. *)
     Lemma eqapp_output_transport_pointwise:
       forall ty_env_c dlt_raw_c t
              H H' Hc Hc' callee
@@ -811,15 +635,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       exact Hlowout.
     Qed.
 
-    (** One low reset-call input is low-equal at a chosen instant.
-
-        Relation to the paper:
-        this is the reset-aware companion of the plain [EqApp] input transport
-        step. The actual expressions are still evaluated in the caller, but
-        the callee sees them through the masked reset stream. The proof
-        therefore adds exactly one extra bridge: at the current reset segment,
-        the masked tuple position agrees with the underlying actual-argument
-        tuple position. *)
     Lemma eqapp_reset_input_var_low_eq_pointwise:
       forall ty_env ty_env_c callee callee_sig
              inptyp outtyp dlt rstty ckty t
@@ -936,13 +751,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       exact (f_equal (@Some value) Hv_eq).
     Qed.
 
-    (** Transport one low reset-call output back to the caller-defined variable.
-
-        Relation to the paper:
-        this is the reset-aware output-slot transport for [EqApp]. The
-        recursive theorem gives low-equivalence on the callee outputs under
-        the masked run, and this lemma reconnects that masked equality to the
-        caller-visible output variable at the same tuple position. *)
     Lemma eqapp_reset_output_transport_pointwise:
       forall ty_env_c dlt_raw_c t
              H H' Hc Hc' callee
@@ -1020,13 +828,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       exact Hlowout.
     Qed.
 
-    (** Recover the symbolic type at one position of a [get_mappings] result.
-
-        Relation to the paper:
-        call equations define several caller variables at once.  The
-        noninterference proof needs to relate one chosen caller variable [x]
-        with the matching symbolic output type in [outtyp].  This lemma is the
-        finite-list position bridge for that lookup. *)
     Lemma get_mappings_nth_error_inv:
       forall xs ty_env tys i x,
         get_mappings xs ty_env = Some tys ->
@@ -1052,12 +853,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
           * exact Hfindty.
     Qed.
 
-    (** Successful [get_mappings] preserves list length.
-
-        Relation to the paper:
-        call proofs repeatedly move between the syntactic output tuple, its
-        generated symbolic mapping, and semantic tuples.  This is the basic
-        length bridge behind those position arguments. *)
     Lemma get_mappings_length:
       forall xs ty_env tys,
         get_mappings xs ty_env = Some tys ->
@@ -1073,15 +868,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         eapply IH; eauto.
     Qed.
 
-    (** Prefix low-equivalence on plain call inputs from caller-side argument equality.
-
-        Relation to the paper:
-        recursive noninterference for a plain [EqApp] call is driven by
-        low-equivalence of the callee inputs on the whole prefix considered so
-        far. This lemma packages that bridge directly: if every actual
-        argument is semantically equal across the two caller runs on the
-        prefix, then the instantiated callee input history is low-equivalent
-        on that same prefix. *)
     Lemma eqapp_inputs_low_eq_upto:
       forall ty_env ty_env_c callee callee_sig inp_c
              inptyp outtyp dlt rstty ckty t
@@ -1174,15 +960,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       - exact Hj.
     Qed.
 
-    (** Prefix low-equivalence on reset-call inputs for one fixed reset segment.
-
-        Relation to the paper:
-        the recursive reset-call theorem is applied to one concrete reset
-        segment [kr = count rs k].  This lemma packages the corresponding
-        caller-to-callee input transport on the whole prefix: inside the
-        active segment the mask is transparent and the proof reduces to the
-        ordinary actual-expression argument equality, while outside that
-        segment both masked tuples are uniformly absent. *)
     Lemma eqapp_reset_inputs_low_eq_upto:
       forall ty_env ty_env_c callee callee_sig inp_c
              inptyp outtyp dlt rstty ckty t
@@ -1324,13 +1101,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         reflexivity.
     Qed.
 
-    (** Prefix low-equivalence on plain call outputs transported back to the caller.
-
-        Relation to the paper:
-        after the recursive callee theorem establishes prefix low-equivalence
-        on the callee outputs, the caller proof still has to reconnect that
-        prefix fact to the caller-defined output variable at the matching
-        tuple position. This is the prefix-level version of that transport. *)
     Lemma eqapp_outputs_low_eq_upto:
       forall ty_env_c dlt_raw_c t
              H H' Hc Hc' callee
@@ -1360,14 +1130,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       eapply history_low_eq_upto_monotone; eauto.
     Qed.
 
-    (** Symbolic types of defined caller variables come from outputs or locals.
-
-        Relation to the paper:
-        in a call equation, the generated symbolic output tuple [outtyp]
-        belongs to the current node interface of defined variables.  The
-        recursive call proof uses this helper to reclassify one chosen caller
-        output type as coming from the current node outputs or locals, which
-        is exactly the scope shown fresh from the callee signature. *)
     Lemma defined_var_type_in_out_or_locals:
       forall n ty_env out locals x ty,
         Env.find x ty_env = Some ty ->
@@ -1399,13 +1161,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         apply in_or_app. left. exact Hin'.
     Qed.
 
-    (** Two distinct named nodes appear in one linear order in the program list.
-
-        Relation to the paper:
-        the call-site freshness argument only needs the source program order
-        induced by the generated naming pass.  This lemma packages the pure
-        list decomposition step under the standard [NoDup] node-name
-        hypothesis. *)
     Lemma find_nodes_linear_order:
       forall n1 n2,
         NoDup (map n_name all_nodes) ->
@@ -1438,14 +1193,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         rewrite Hsuffix2. repeat rewrite <- app_assoc. reflexivity.
     Qed.
 
-    (** Unique lookup of one source node under unique node names.
-
-        Relation to the paper:
-        recursive call proofs extract one semantic node witness from each run.
-        Under the standard source assumption that node names are unique, both
-        witnesses for the same callee name must coincide.  This is the exact
-        source-side canonicalisation step used before applying the recursive
-        raw-output theorem. *)
     Lemma find_node_unique_nodup:
       forall f n1 n2,
         NoDup (map n_name all_nodes) ->
@@ -1463,12 +1210,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         + eapply IH; eauto.
     Qed.
 
-    (** Ordered source nodes already have unique names.
-
-        Relation to the paper:
-        the recursive source proof is naturally stated over [Ordered_nodes].
-        Whenever the naming-layer helpers need explicit uniqueness of source
-        node names, this lemma is the bridge back to the [NoDup] list form. *)
     Lemma Ordered_nodes_nodup_names:
       forall nodes,
         Ordered_nodes nodes ->
@@ -1489,15 +1230,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         + exact IH.
     Qed.
 
-    (** Generated node interfaces have pairwise distinct visible symbolic
-        identifiers.
-
-        Relation to the paper:
-        recursive call proofs instantiate input/output substitution lemmas
-        from [SIFSignature], which require [NoDup] on the callee visible
-        signature scope.  For generated NLustre signatures this is a pure
-        naming-side fact, recovered here directly from the successful
-        node-scoped environment generation. *)
     Lemma generated_sig_scope_nodup_scoped_env:
       forall n ty_env clk_id rst_id clk_type rst_type inp out,
         NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
@@ -1570,16 +1302,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         eauto.
     Qed.
 
-    (** Fresh insertion into the node-scoped naming table does not advance
-        the name-generation state.
-
-        Relation to the paper:
-        the node-scoped naming pass only uses the global state when it
-        allocates fresh security identifiers inside one node-local
-        environment.  Inserting that finished local env into the outer
-        node-indexed table is pure bookkeeping.  The cross-node
-        separation proof relies on this to compare the numeric ranges of two
-        generated node scopes precisely. *)
     Lemma fresh_insert_node_env_state:
       forall envs0 name local_env st envs' st',
         NAMEGEN.fresh_insert_node_env envs0 name local_env st = OK (envs', st') ->
@@ -1592,14 +1314,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       inversion Hins; reflexivity.
     Qed.
 
-    (** Freshness from caller-upper versus callee-lower bounds.
-
-        Relation to the paper:
-        one direct call proof case needs the opposite orientation from the
-        standard accumulator freshness theorem.  If every symbolic identifier
-        in the current caller scope is strictly below some pivot [st], and
-        every visible identifier in the callee signature is at least [st],
-        then the two scopes are disjoint. *)
     Lemma scope_fresh_from_upper_lower_bounds:
       forall scope sig st,
         (forall ty,
@@ -1619,14 +1333,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       eapply Pos.lt_le_trans; eauto.
     Qed.
 
-    (** Every mapped call output type belongs to the current caller scope.
-
-        Relation to the paper:
-        the NLustre call proof needs the symbolic output tuple produced for a
-        call equation to be recognised as part of the current caller-visible
-        scope.  This is the source-side bridge from the tuple mapping
-        [get_mappings xs ty_env] back to the generated raw variable scope of
-        the surrounding node. *)
     Lemma eqapp_outtyp_in_out_or_locals:
       forall n ty_env out locals xs ck f exps r outtyp ty,
         In (EqApp xs ck f exps r) n.(n_eqs) ->
@@ -1649,16 +1355,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       eapply defined_var_type_in_out_or_locals; eauto.
     Qed.
 
-    (** Caller scope freshness against a distinct generated callee signature.
-
-        Relation to the paper:
-        ordinary and resettable call proofs both instantiate the callee
-        signature with symbolic types coming from the current caller node.
-        To use the standard signature substitution lemmas, those caller-side
-        identifiers must be disjoint from the visible callee signature scope.
-        In the node-scoped naming discipline this follows purely from the
-        relative generation order of the two nodes: two distinct node-local
-        scopes live in disjoint numeric [sec] ranges. *)
     Lemma generated_caller_scope_fresh_scoped_env:
       forall caller callee
              caller_env callee_env callee_sig
@@ -1866,13 +1562,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         eapply SIG.scope_fresh_from_bounds; eauto.
     Qed.
 
-    (** Invert the generated raw block for one [EqDef].
-
-        Relation to the paper:
-        this exposes the exact symbolic typing data behind the simple
-        combinational case, so the semantic branch can invoke the already
-        proved simple-security lemmas without re-running ad hoc monadic
-        analysis. *)
     Lemma generate_eqdef_constraint_inv:
       forall ty_env base_ty rst_ty x ck ce cns st st',
         SECNLUSTYPING.generate_eqn_constraint G ty_env base_ty rst_ty (EqDef x ck ce) st =
@@ -1904,13 +1593,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       repeat split; reflexivity.
     Qed.
 
-    (** Invert the generated raw block for one [EqFby].
-
-        Relation to the paper:
-        this is the delay-side counterpart of
-        [generate_eqdef_constraint_inv].  It exposes the exact symbolic
-        clock, source-expression, and target-variable types used by the raw
-        typing constraint. *)
     Lemma generate_eqfby_constraint_inv:
       forall ty_env base_ty rst_ty x ck c0 e cns st st',
         SECNLUSTYPING.generate_eqn_constraint G ty_env base_ty rst_ty (EqFby x ck c0 e) st =
@@ -1942,12 +1624,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       repeat split; reflexivity.
     Qed.
 
-    (** Invert the generated raw block for one non-reset node call.
-
-        Relation to the paper:
-        the call case is the first point where the local NLustre proof stops
-        working directly on simple expressions and must recover the full
-        call-site instantiation data used to build the callee constraints. *)
     Lemma generate_eqapp_constraint_inv:
       forall ty_env base_ty rst_ty x xs ck f exps cns st st',
         SECNLUSTYPING.generate_eqn_constraint G ty_env base_ty rst_ty
@@ -1985,12 +1661,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       repeat split; auto.
     Qed.
 
-    (** Invert the generated raw block for one resettable node call.
-
-        Relation to the paper:
-        this is the reset-aware companion of
-        [generate_eqapp_constraint_inv].  It exposes the reset guard typing
-        and the instantiated reset type passed to the callee signature. *)
     Lemma generate_eqreset_constraint_inv:
       forall ty_env base_ty rst_ty x xs ck f exps r ckr cns st st',
         SECNLUSTYPING.generate_eqn_constraint G ty_env base_ty rst_ty
@@ -2037,13 +1707,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       repeat split; auto.
     Qed.
 
-    (** Recover the interface lengths of an instantiated call block.
-
-        Relation to the paper:
-        call-site transport lemmas use positional correspondence between the
-        stored signature interface and the caller actuals.  Those list-length
-        equalities are already forced by [generate_constraints], and this
-        lemma exposes them once so the call proof can reuse them directly. *)
     Lemma generate_constraints_lengths:
       forall sig inp clk rst out cns st st',
         SIG.generate_constraints sig inp clk rst out st = OK (cns, st') ->
@@ -2061,12 +1724,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       - eapply SIGPROOFS.subst_constraints_out_map_length; eauto.
     Qed.
 
-    (** Weakening list membership across an appended suffix.
-
-        Relation to the paper:
-        this is a pure list-bookkeeping lemma used in the call proof to lift
-        caller output/local scope membership into the larger generated caller
-        scope that also includes clock/reset identifiers. *)
     Lemma In_app_weaken_right:
       forall (A : Type) (x : A) a b ,
         In x a ->
@@ -2078,13 +1735,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       exact Hin.
     Qed.
 
-    (** Output-formal lookup under instantiated valuations with only output freshness.
-
-        Relation to the paper:
-        the NLustre call proof only needs the output part of the standard
-        call-substitution equality theorem.  Keeping the premise focused on
-        actual output freshness avoids re-proving irrelevant input-side facts
-        at each call site. *)
     Lemma inst_valuation_outputs_eq_outputs_fresh:
       forall dlt sig inp clk rst out,
         SIG.outputs_fresh (signature_scope sig) out ->
@@ -2205,15 +1855,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       eapply Hconv; eauto.
     Qed.
 
-    (** Internal prefix raw-output specification for one generated node.
-
-        Relation to the paper:
-        this is a proof-internal target only.  The public theorem talks about
-        whole output streams, but the proof of [EqFby] and recursive calls is
-        naturally by induction on the current instant.  This internal spec
-        therefore records output noninterference only up to a chosen prefix
-        bound [k].  It is the exact recursive shape consumed by the local
-        step theorem. *)
     Definition node_outputs_raw_spec
       (nd : node) (dlt_sig dlt_raw : ground_instantiation) : Prop :=
       forall k ty_env sig t bk bk' H H'
@@ -2247,14 +1888,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         history_low_eq_upto ty_env dlt_raw t (map fst nd.(n_in)) H H' k ->
         history_low_eq_upto ty_env dlt_raw t (map fst nd.(n_out)) H H' k.
 
-    (** Internal raw output specification with explicit clock alignment.
-
-        Relation to the paper:
-        recursive call proofs compare two executions of the callee under two
-        derived clocks.  The semantic content is the same as
-        [node_outputs_raw_spec], but the extra [clock_eq_upto] premise records
-        the call-clock alignment explicitly instead of hiding it in the outer
-        theorem. *)
     Definition node_outputs_raw_spec_clocked
       (nd : node) (dlt_sig dlt_raw : ground_instantiation) : Prop :=
       forall k ty_env sig t bk bk' H H'
@@ -2442,14 +2075,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
            j ii y ity e ety); eauto.
     Qed.
 
-    (** Successor-step transport of reset-call inputs from caller equality.
-
-        Relation to the paper:
-        this is the reset-aware analogue of
-        [succ_eqapp_nonreset_inputs_low_eq_upto].  The recursive callee run
-        is taken on one masked reset segment, so the proof must additionally
-        split on whether a past instant still belongs to that active segment
-        or lies in an opaque, fully absent prefix. *)
     Lemma succ_eqapp_reset_inputs_low_eq_upto:
       forall P n ty_env ty_env_c dlt_raw obs
              H H' Hc Hc' bk
@@ -2658,14 +2283,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         reflexivity.
     Qed.
 
-
-    (** Instantaneous [EqDef] noninterference with distinct ambient clocks.
-
-        Relation to the paper:
-        the paper's indexed proof only needs the current instant of a simple
-        definition equation.  Once the two runs are allowed to have different
-        ambient base clocks, the local semantic bridge needs exactly one extra
-        premise: equality of those base clocks at the current instant. *)
     Lemma eqdef_noninterference_instant_pointwise_clocked:
       forall bk bk' H H' x xs xs' ck ce k,
         (forall y, Is_free_in_caexp y ck ce ->
@@ -2704,12 +2321,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       reflexivity.
     Qed.
 
-    (** Prefix preservation for guarded source expressions under two ambient clocks.
-
-        Relation to the paper:
-        delayed equations only read the payload of their source expression on
-        the earlier prefix.  In the two-clock setting, that prefix transport
-        additionally needs equality of the ambient clocks on the same prefix. *)
     Lemma sem_aexp_prefix_eq_clocked:
       forall bk bk' H H' ck e ls ls' k,
         (forall y, Is_free_in_aexp y ck e ->
@@ -2739,13 +2350,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       eapply sem_aexp_instant_det; eauto.
     Qed.
 
-    (** Current-presence preservation for guarded source expressions under two ambient clocks.
-
-        Relation to the paper:
-        the delayed case only needs the current presence/absence bit of the
-        feeding expression.  With distinct ambient clocks, current presence is
-        still determined once the source clock dependencies agree and the two
-        ambient clocks are equal at that instant. *)
     Lemma sem_aexp_same_presence_from_clock_clocked:
       forall bk bk' H H' ck e ls ls' k,
         (forall y, Is_free_in_clock y ck ->
@@ -2784,13 +2388,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         discriminate.
     Qed.
 
-    (** Delayed [EqFby] noninterference under two ambient clocks.
-
-        Relation to the paper:
-        this is the delayed equation step needed by the two-clock current-node
-        theorem.  The current instant consumes equality of the source clock and
-        of the ambient clocks, while the delayed payload still only depends on
-        the earlier prefix. *)
     Lemma eqfby_noninterference_delayed_pointwise_clocked:
       forall bk bk' H H' x xs xs' ls ls' ck c0 e k,
         (forall y, Is_free_in_clock y ck ->
@@ -2826,13 +2423,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       reflexivity.
     Qed.
 
-    (** One non-reset call input is low-equal under two ambient clocks.
-
-        Relation to the paper:
-        recursive calls evaluate their actual expressions in the caller.  The
-        two-clock current-node theorem therefore needs the expression-transport
-        step to account for potentially different ambient clocks on the two
-        caller runs, but only at the observed instant. *)
     Lemma eqapp_input_var_low_eq_pointwise_clocked:
       forall ty_env ty_env_c callee callee_sig
              inptyp outtyp dlt rstty ckty t
@@ -2941,13 +2531,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       exact (f_equal (@Some value) Hv_eq).
     Qed.
 
-    (** One reset-call input is low-equal under two ambient clocks.
-
-        Relation to the paper:
-        this is the reset-aware companion of the previous lemma.  The caller
-        still evaluates the actual expressions under its own ambient clock, so
-        the only extra ingredient beyond the older proof is equality of the
-        two ambient clocks at the observed instant. *)
     Lemma eqapp_reset_input_var_low_eq_pointwise_clocked:
       forall ty_env ty_env_c callee callee_sig
              inptyp outtyp dlt rstty ckty t
@@ -3066,12 +2649,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       exact (f_equal (@Some value) Hv_eq).
     Qed.
 
-    (** Successor-step transport of non-reset call inputs under two ambient clocks.
-
-        Relation to the paper:
-        this is the successor indexed-input transport used at recursive plain
-        calls, but strengthened to compare caller runs that may have different
-        ambient clocks agreeing only on the observed prefix. *)
     Lemma succ_eqapp_nonreset_inputs_low_eq_upto_clocked:
       forall P n ty_env ty_env_c dlt_raw obs
              H H' Hc Hc' bk bk'
@@ -3240,12 +2817,6 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       - exact Hsem_vars_in_c'.
     Qed.
 
-    (** Successor-step transport of reset-call inputs under two ambient clocks.
-
-        Relation to the paper:
-        this is the reset-aware companion of the previous lemma.  The only
-        semantic strengthening is the explicit caller-clock prefix premise used
-        when the active reset segment is observed on both runs. *)
     Lemma succ_eqapp_reset_inputs_low_eq_upto_clocked:
       forall P n ty_env ty_env_c dlt_raw obs
              H H' Hc Hc' bk bk'
@@ -3471,14 +3042,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         reflexivity.
     Qed.
 
-    (** Mainline base case of the clocked current-node step theorem.
-
-        Relation to the paper:
-        the public noninterference theorem compares two indexed runs.  The
-        final internal step theorem must therefore allow different ambient
-        clocks already at the current node, with an explicit prefix-alignment
-        premise [clock_eq_upto bk bk' 0].  This theorem is the designated
-        base-case entry point for that two-clock route. *)
+    (** This is the base transport theorem for the current node.  Assuming the two runs already agree on the low information needed up to the current instant, it proves low-equivalence for the variables defined by the current equation list.  The clocked step theorem builds on this result. *)
     Theorem node_noninterference_vars_defined_step_base_mainline :
       forall n dlt_sig dlt_raw
              ty_env sig t bk bk' H H'

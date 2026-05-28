@@ -1,10 +1,4 @@
-(* Successor-step theorem for NLustre indexed noninterference.
-
-   The papers' node-level noninterference argument is organized around one
-   equation-step theorem.  The clock-aware base case and its local transport
-   lemmas now live in [SecNLusNonInterferenceHelpers].  This file keeps the
-   remaining successor theorem, where the current node may run under two base
-   clocks that agree on the observed prefix. *)
+(** Clocked step lemma used in the NLustre noninterference proof. *)
 
 From Coq Require Import List Sorting.Permutation Lia Wf_nat PArith.BinPos Arith.PeanoNat.
 Import List.ListNotations.
@@ -85,15 +79,7 @@ Module Type SECNLUSNONINTERFERENCECLOCKEDSTEP
     Variable envs : node_scoped_env.
     Variable aux_names : list node_aux_names.
 
-    (** Mainline two-clock step theorem.
-
-        Relation to the paper:
-        this is the proof-internal node-step theorem consumed by the raw
-        output theorem.  It differs from the older helper theorem only in the
-        current-node ambient clocks: the second run uses [bk'] and the proof
-        carries an explicit prefix premise [clock_eq_upto bk bk' k].  The
-        recursive call premises remain the clocked raw-output specs already
-        used in the helper layer. *)
+    (** This is the main successor-step theorem for a secure node.  It combines the local transport lemmas with clock alignment to extend low-equivalence from the observed prefix to the next instant for all currently defined low variables.  The final node-output theorem applies this step result throughout the indexed execution. *)
     Theorem node_noninterference_vars_defined_step_mainline :
       forall n dlt_sig dlt_raw k
              ty_env sig t bk bk' H H'

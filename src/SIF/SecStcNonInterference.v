@@ -1,3 +1,5 @@
+(** Noninterference for STC behaviors that come from translated secure NLustre nodes. *)
+
 From Coq Require Import List.
 Import List.ListNotations.
 
@@ -28,22 +30,6 @@ From Velus Require Import SIF.SecStcTypingCorrectness.
 From Velus Require Import SIF.SecNLusStcTranslation.
 From Velus Require Import Clocks.
 From compcert Require Import common.Errors.
-
-(** * Semantic STC noninterference through translation
-
-    Relation to the paper:
-    this file is the target-side semantic layer of the final development.  We do
-    not reprove a standalone intrinsic STC noninterference theorem for
-    arbitrary target runs.  Instead, we package the weaker property actually
-    needed by the translation-based result:
-
-    - an STC behavior is observable only when it arises from translating an
-      NLustre node;
-    - source noninterference is proved once on indexed NLustre histories;
-    - this file bridges that source theorem to translated STC behaviors.
-
-    Syntactic/source-target preservation facts remain in
-    [SecNLusStcTranslation.v].  Only semantic bridge results belong here. *)
 
 Module Type SECSTCNONINTERFERENCE
   (Import Ids   : IDS)
@@ -98,13 +84,6 @@ Module Type SECSTCNONINTERFERENCE
 
   Definition ground_instantiation : Type := NLusSupport.ground_instantiation.
 
-  (** Stream-level low observation on tuple streams.
-
-      Relation to the paper:
-      the source theorem concludes low-equivalence on histories, but translated
-      STC behaviors are observed as streams of input/output tuples.  This
-      predicate is the finite-product view of [history_low_eq] specialised to
-      one tuple position at a time. *)
   Definition tuple_stream_low_eq
     (ty_env : local_sec_env) (dlt : ground_instantiation) (t : Lat.t)
     (xs : list ident) (xss xss' : stream (list value)) : Prop :=
@@ -115,12 +94,6 @@ Module Type SECSTCNONINTERFERENCE
       nth_error (xss' k) i = Some v' ->
       v = v'.
 
-  (** Target-side translated behavior witness.
-
-      Relation to the paper:
-      the STC theorem should not quantify over arbitrary target runs.  This
-      predicate packages exactly the intended hypothesis: the current STC
-      behavior is one produced by translating an NLustre run. *)
   Definition translated_system_behavior
     (all_nodes : NL.Syn.global) (sys : Stc.Syn.system)
     (xss yss : stream (list value)) : Prop :=
@@ -129,16 +102,6 @@ Module Type SECSTCNONINTERFERENCE
       Stc.Sem.initial_state (Translation.translate all_nodes) (Stc.Syn.s_name sys) (M 0) /\
       Stc.Sem.loop (Translation.translate all_nodes) (Stc.Syn.s_name sys) xss yss (M 0) 0.
 
-  (** STC-side security packaging.
-
-      Relation to the paper:
-      this is the target-facing analogue of [node_security].  It hides the
-      source node witness and keeps only the facts needed by the semantic STC
-      theorem:
-
-      - the current system is a translated NLustre node;
-      - the source and target signatures agree on their shared interface; and
-      - the source node satisfies the paired noninterference invariant. *)
   Definition system_security
     (all_nodes : NL.Syn.global) (Gsrc Gstc : secglobal)
     (envs : node_scoped_env) (aux_names : list node_aux_names)
@@ -152,13 +115,7 @@ Module Type SECSTCNONINTERFERENCE
       NLusStcBridge.Signature_head_consistent nsig ssig /\
       NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw.
 
-  (** Turn tuple-stream low-equivalence into history low-equivalence.
-
-      Relation to the paper:
-      the source theorem consumes [history_low_eq] on the generated local
-      histories.  STC-facing statements use tuple streams instead, so this is
-      the semantic bridge from tuple observation back to source history
-      observation. *)
+  (** This moves low-equivalence from tuple streams back to history form so the source theorem can be applied. *)
   Lemma history_low_eq_of_tuple_stream_low_eq:
     forall ty_env dlt t xs H H' xss xss',
       CE.Sem.sem_vars H xs xss ->
@@ -208,12 +165,7 @@ Module Type SECSTCNONINTERFERENCE
       discriminate.
   Qed.
 
-  (** Recover tuple-stream low-equivalence from history low-equivalence.
-
-      Relation to the paper:
-      this is the output-facing direction of the same bridge.  The source
-      theorem concludes on histories, while the STC theorem should conclude on
-      translated input/output tuple streams. *)
+  (** This converts the source-side history result back to tuple-stream equality on translated inputs or outputs. *)
   Lemma tuple_stream_low_eq_of_history_low_eq:
     forall ty_env dlt t xs H H' xss xss',
       CE.Sem.sem_vars H xs xss ->
@@ -235,12 +187,6 @@ Module Type SECSTCNONINTERFERENCE
     now inversion Hlow.
   Qed.
 
-  (** Build the translated-behavior witness from source memory semantics.
-
-      Relation to the paper:
-      this is the first semantic bridge step.  It packages the existing
-      translation correctness theorem [correctness_loop] into the target-side
-      predicate used by the STC noninterference statement. *)
   Lemma translated_system_behavior_from_msem:
     forall (all_nodes : NL.Syn.global) (sys : Stc.Syn.system) xss M yss,
       NL.Ord.Ordered_nodes all_nodes ->
@@ -257,12 +203,6 @@ Module Type SECSTCNONINTERFERENCE
     repeat split; assumption.
   Qed.
 
-  (** Upgrade a source security witness to a target-system one.
-
-      Relation to the paper:
-      this is the semantic consumer of the syntactic signature-preservation
-      theorem.  The source node remains the real security witness, but the STC
-      theorem should talk about translated systems instead. *)
   Lemma system_security_from_node_security:
     forall all_nodes Gsrc Gstc envs aux_names n dlt_sig dlt_raw,
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
@@ -297,14 +237,7 @@ Module Type SECSTCNONINTERFERENCE
     econstructor; eauto.
   Qed.
 
-  (** STC noninterference for translated behaviors.
-
-      Relation to the paper:
-      this is the weaker target-side theorem justified by the current
-      development.  It speaks only about behaviors of STC systems that arise
-      from translating secure NLustre nodes.  The statement is purely STC-
-      facing: the source semantics is hidden behind [system_security] and
-      [translated_system_behavior]. *)
+  (** This is the final STC-facing theorem.  It takes a translated system together with the source security witness behind it, runs the NLustre noninterference theorem on the matching source node, and transports the conclusion back to the translated STC input and output streams.  The statement is exactly about translated behaviors, which is the target property proved by this development. *)
   Theorem translated_system_noninterference_outputs:
     forall all_nodes Gsrc Gstc envs aux_names sys ty_env
            dlt_sig dlt_raw t xss xss' yss yss',

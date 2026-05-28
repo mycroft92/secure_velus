@@ -1,8 +1,5 @@
-(* Lustre-side symbolic typing experiments.
+(** Symbolic typing definitions for the Lustre-side security layer. *)
 
-   This file records an older Lustre-level typing layer.  It is not part of
-   the final NLustre/STC theorem chain, but it remains as a reference point
-   for the earlier single-phase formulation of symbolic security typing. *)
 From Velus Require Import Common.
 From Velus Require Import Ident.
 From Velus Require Import Operators.
@@ -22,7 +19,7 @@ Module Type SEC_LUSTRE_TYPING
     (Import L     : LUSTRE  Ids Op OpAux CStr IStr)
     (Import Lat   : Lattice).
     Check env.
-    (* Predicate takes Ordered list of nodes with signatures and assigns types/constraints to expressions/statemets*)
+
     Section Lustre_Sec_Typing.
     Variable G: global.
 

@@ -1,18 +1,10 @@
-(* Generic list/positivity helper lemmas for the SIF development.
+(** Utility lemmas on lists and positives used across the SIF proofs. *)
 
-   These facts are independent of any particular source or target language.
-   The symbolic-type utilities in [SymTypes], [SimpleListTypes], and the older
-   Lustre-side experiments reuse them as small proof components. *)
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.
 From Coq Require Import Lia.
-(*From Coq Require Import Logic.Classical_Prop.*)
-From Velus Require Import Common.
-(* From Coq Require Import Arith.
-From Coq Require Import PArith. *)
-(*
-Compute  (Pos.compare (xO (xI xH)) (xO (xI xH))). *)
 
+From Velus Require Import Common.
 
 Import ListNotations.
 
@@ -30,7 +22,6 @@ Inductive sortedNoDup : (list ident) -> Prop :=
   -> sortedNoDup (i2::l)
   -> sortedNoDup (i1::i2::l)) %positive.
 
-(* We are changing the order to decreasing*)
 Inductive sortedDecNoDup : (list ident) -> Prop :=
 | sort_nild  : sortedDecNoDup []
 | sort_1d    : forall i1, sortedDecNoDup [i1]
@@ -38,7 +29,6 @@ Inductive sortedDecNoDup : (list ident) -> Prop :=
   -> sortedDecNoDup (i2::l)
   -> sortedDecNoDup (i1::i2::l)) %positive.
 Hint Constructors sortedNoDup sortedDecNoDup.
-
 
 Lemma sortedNoDup_in: forall i1 l i2, (i1 < i2 -> sortedNoDup (i2::l) -> ~In i1 (i2::l))%positive.
 Proof.
@@ -53,7 +43,6 @@ Proof.
       + eauto.
 Qed.
 
-
 Lemma sortedDecNoDup_in: forall i1 l i2, (i1 > i2 -> sortedDecNoDup (i2::l) -> ~In i1 (i2::l))%positive.
 Proof.
 
@@ -67,10 +56,8 @@ Proof.
       + eauto.
 Qed.
 
-
 Hint Constructors NoDup.
 Hint Resolve sortedNoDup_in sortedDecNoDup_in.
-
 
 Lemma sortedNoDup_NoDup: forall l, sortedNoDup l -> NoDup l.
 Proof.
@@ -86,7 +73,6 @@ Proof.
   - auto.
   - apply NoDup_cons; auto.
 Qed.
-
 
 Lemma sortedNoDup_helper: forall l a b , sortedNoDup (a::b::l) -> sortedNoDup (a::l).
 Proof.

@@ -1,9 +1,4 @@
-(* Observation and replay layer for NLustre indexed noninterference.
-
-   This file formalizes the paper's [(⊑ t)] low-observation view directly over
-   Velus's indexed NLustre semantics.  It introduces the relational history
-   notions used by the final theorem stack and proves the semantic switching,
-   masking, and range lemmas required by the raw-constraint replay argument. *)
+(** Low-equivalence definitions and semantic transport lemmas for NLustre noninterference. *)
 
 From Coq Require Import List Sorting.Permutation Lia Wf_nat PArith.BinPos Arith.PeanoNat.
 Import List.ListNotations.
@@ -71,20 +66,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
      SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL Lat SecT SIG SIGPROOFS
        NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING).
 
-  (** Vocabulary alignment with the papers.
-
-      The noninterference papers use:
-      - [s] for a ground instantiation of symbolic security variables;
-      - [ρ] for the generated constraints attached to a node signature.
-
-      In the Coq development we standardise this as follows:
-      - [dlt] is the ground instantiation used throughout [SecTypes] and
-        [SIFSignature];
-      - [sig.(s_constraints)] is exactly the paper's [ρ];
-      - "ρ is satisfied by s" is formalised as [signature_satisfied dlt sig].
-
-      Keeping this translation explicit avoids introducing parallel notation in
-      the noninterference proof. *)
   Definition ground_instantiation : Type := ident -> Lat.t.
 
   Definition signature_constraints (sig : signature) : list constraint :=
@@ -94,9 +75,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
     (dlt : ground_instantiation) (sig : signature) : Prop :=
     SecT.listSatisfiable dlt (signature_constraints sig).
 
-  (** The paper's [Γ] is not an arbitrary map in this development.  It is the
-      node-local security environment produced by [NameInterface] for the
-      current node and then consumed by [SecNLusTyping]. *)
   Section GENERATED_LOW_OBSERVATION.
     Variable all_nodes : global.
     Variable envs : node_scoped_env.
@@ -111,13 +89,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
     Hypothesis Hfindenv :
       find_node_env n.(n_name) envs = Some ty_env.
 
-    (** One raw variable is observable at level [t] when its generated security
-        identifier is mapped by the ground instantiation below [t].
-
-        Relation to the paper:
-        this is the pointwise membership test behind the set [X⊑t], where the
-        source-side [Γ] is represented here by the generated local typing
-        environment [ty_env] for node [n]. *)
+    (** A variable is low when its generated security type is below the observation level.  The rest of the file uses this as the basic observation predicate. *)
     Definition low_var (x : ident) : Prop :=
       exists α, Env.find x ty_env = Some α /\ dlt α ⊑ t.
 
@@ -136,10 +108,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
     Definition low_var_b (x : ident) : bool :=
       if low_var_dec x then true else false.
 
-    (** Boolean reflection of [low_var].
-
-        Relation to the paper:
-        this is the decidable form of the judgment [x ∈ X⊑t]. *)
     Lemma low_var_b_spec:
       forall x,
         low_var_b x = true <-> low_var x.
@@ -149,18 +117,9 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       destruct (low_var_dec x); split; intro H; auto; discriminate.
     Qed.
 
-    (** List-based representative of the paper's low-observation set [X⊑t].
-
-        Since the mechanisation uses finite lists of raw variables, we realise
-        the paper's set notation by filtering [X] with [low_var]. *)
     Definition vars_le_t (X : list ident) : list ident :=
       filter low_var_b X.
 
-    (** Membership characterisation for [vars_le_t].
-
-        Relation to the paper:
-        this is the formal link between the paper's set notation [X⊑t] and the
-        finite list representation used in Coq. *)
     Lemma vars_le_t_spec:
       forall X x,
         In x (vars_le_t X) <-> In x X /\ low_var x.
@@ -172,11 +131,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       tauto.
     Qed.
 
-    (** Generic projector on one semantic instant environment.
-
-        This helper is independent of security: it keeps exactly the bindings
-        of one semantic snapshot whose keys lie in [xs].  The security-specific
-        projector below instantiates it with [vars_le_t X]. *)
     Definition project_env_on (xs : list ident) (R : env) : env :=
       fold_right
         (fun x acc =>
@@ -187,11 +141,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         (Env.empty _)
         xs.
 
-    (** Pointwise behaviour of the generic projector.
-
-        Relation to the paper:
-        this is the finite-map form of "projection keeps exactly the chosen
-        observable variables and drops the rest". *)
     Lemma project_env_on_find:
       forall xs R x,
         Env.find x (project_env_on xs R) =
@@ -238,56 +187,27 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
                ++ reflexivity.
     Qed.
 
-    (** Paper-style [(⊑ t)] projection for one indexed environment snapshot.
-
-        It keeps exactly the bindings for raw variables in the low-observation
-        set [X⊑t]. *)
     Definition project_env_le_t (X : list ident) (R : env) : env :=
       project_env_on (vars_le_t X) R.
 
-    (** Paper-style [(⊑ t)] projection for an indexed history.
-
-        Relation to the paper:
-        this is the direct indexed-semantics counterpart of [H|X⊑t]. *)
     Definition project_history_le_t (X : list ident) (H : history) : history :=
       fun k => project_env_le_t X (H k).
 
-    (** Relational low-equivalence for one indexed environment snapshot.
-
-        This is the proof-oriented version of the paper's projection notion:
-        two snapshots are low-equivalent when they agree on every variable in
-        [X⊑t]. *)
     Definition env_low_eq (X : list ident) (R R' : env) : Prop :=
       forall x,
         In x X ->
         low_var x ->
         Env.find x R = Env.find x R'.
 
-    (** Relational low-equivalence for indexed histories.
-
-        The noninterference theorem quantifies over this relation,
-        since the semantic switching lemmas are pointwise over instants. *)
     Definition history_low_eq (X : list ident) (H H' : history) : Prop :=
       forall k,
         env_low_eq X (H k) (H' k).
 
-    (** Prefix-bounded low-equivalence for indexed histories.
-
-        Relation to the paper:
-        the public theorem talks about whole-stream equality on low
-        observations, but the internal proof for [EqFby] and recursive calls
-        proceeds by induction on the current instant.  This prefix form is the
-        proof-oriented notion of "the two runs agree on all low observations
-        up to time [k]". *)
     Definition history_low_eq_upto (X : list ident) (H H' : history) (k : nat) : Prop :=
       forall j,
         j <= k ->
         env_low_eq X (H j) (H' j).
 
-    (** Equality of the concrete projected environments.
-
-        This keeps the paper-facing projection operator available while the
-        semantic proofs work with [env_low_eq]. *)
     Definition projected_env_eq (X : list ident) (R R' : env) : Prop :=
       forall x,
         Env.find x (project_env_le_t X R) =
@@ -298,11 +218,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         Env.find x (project_history_le_t X H k) =
         Env.find x (project_history_le_t X H' k).
 
-    (** Low observable bindings survive the concrete projection unchanged.
-
-        Relation to the paper:
-        this is the finite-map reading of "the projection keeps all low
-        variables in [X⊑t]". *)
     Lemma project_env_le_t_find_low:
       forall X R x,
         In x X ->
@@ -319,11 +234,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       now split.
     Qed.
 
-    (** Non-observable bindings are removed by the concrete projection.
-
-        Relation to the paper:
-        this is the finite-map reading of "variables outside [X⊑t] are not
-        observable in the projection". *)
     Lemma project_env_le_t_find_excluded:
       forall X R x,
         ~ In x X \/ ~ low_var x ->
@@ -338,11 +248,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       tauto.
     Qed.
 
-    (** Relational low-equivalence implies equality of concrete projections.
-
-        Relation to the paper:
-        this is the "if two runs agree on low variables, then their projected
-        observations are equal" direction. *)
     Lemma env_low_eq_projected_env_eq:
       forall X R R',
         env_low_eq X R R' ->
@@ -359,12 +264,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         reflexivity.
     Qed.
 
-    (** Equality of concrete projections recovers relational low-equivalence.
-
-        Relation to the paper:
-        this is the converse direction saying that the concrete projected
-        histories carry exactly the same low-observation information as
-        [env_low_eq]. *)
     Lemma projected_env_eq_env_low_eq:
       forall X R R',
         projected_env_eq X R R' ->
@@ -375,11 +274,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       rewrite !project_env_le_t_find_low in Hproj; auto.
     Qed.
 
-    (** Pointwise lifting from relational low-equivalence of histories to
-        equality of their projected observations.
-
-        Relation to the paper:
-        this is the indexed-history form of equality of projected streams. *)
+    (** This rewrites low-equivalence of histories as equality after projection to the low variables.  Later semantic lemmas switch between these two views as needed. *)
     Lemma history_low_eq_projected_history_eq:
       forall X H H',
         history_low_eq X H H' ->
@@ -390,12 +285,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       apply Hlow.
     Qed.
 
-    (** Pointwise lifting from equality of projected observations back to the
-        relational low-equivalence used throughout the proof stack.
-
-        Relation to the paper:
-        this shows that the relational and concrete projector views of
-        [H|X⊑t] are equivalent in the indexed setting. *)
     Lemma projected_history_eq_history_low_eq:
       forall X H H',
         projected_history_eq X H H' ->
@@ -407,11 +296,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       apply Hproj.
     Qed.
 
-    (** Whole-history low-equivalence implies every finite prefix.
-
-        Relation to the paper:
-        this is the trivial restriction step used when a global semantic
-        hypothesis is fed into an induction on the current instant. *)
     Lemma history_low_eq_upto_of_history_low_eq:
       forall X H H' k,
         history_low_eq X H H' ->
@@ -421,12 +305,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       apply Hlow.
     Qed.
 
-    (** Prefix low-equivalence weakens along the observed variable set.
-
-        Relation to the paper:
-        once a prefix proof is established on a larger visible set, it can be
-        restricted immediately to any smaller interface such as the node
-        outputs. *)
     Lemma history_low_eq_upto_weaken:
       forall X Y H H' k,
         (forall x, In x Y -> In x X) ->
@@ -437,11 +315,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       eapply Hlow; eauto.
     Qed.
 
-    (** Prefix low-equivalence is monotone in the prefix bound.
-
-        Relation to the paper:
-        the delayed proof repeatedly reuses an already-established prefix fact
-        at strictly earlier instants. *)
     Lemma history_low_eq_upto_monotone:
       forall X H H' k1 k2,
         k1 <= k2 ->
@@ -452,13 +325,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       eapply Hlow; lia.
     Qed.
 
-    (** Repackage pointwise prefix equalities as prefix low-equivalence.
-
-        Relation to the paper:
-        the causal proof naturally produces one low-equality obligation per
-        variable, but the recursive node theorems consume the relational
-        history view.  This lemma is the prefix-bounded version of that
-        repackaging step. *)
     Lemma history_low_eq_upto_from_Forall_pointwise:
       forall X H H' k,
         Forall
@@ -473,16 +339,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       eapply Hpts; eauto.
     Qed.
 
-    (** Build one larger prefix from the previous prefix plus the current instant.
-
-        Relation to the paper:
-        the successor step of the indexed proof splits naturally into:
-
-        - equality already known on the earlier prefix; and
-        - one fresh equality proof at the current instant.
-
-        This lemma packages exactly that reconstruction back into
-        [history_low_eq_upto]. *)
     Lemma history_low_eq_upto_succ_intro:
       forall X H H' k,
         history_low_eq_upto X H H' k ->
@@ -495,16 +351,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       - subst j. eapply Hcur; eauto.
       - eapply Hprev; eauto. lia.
     Qed.
-
-    (** Free-variable bounds for generated symbolic types.
-
-        Relation to the paper:
-        these lemmas connect the syntax-directed symbolic type assigners from
-        [SecCETyping] to the low-observation proof.  They show that whenever a
-        raw source variable is free in a clock or expression, the security
-        identifier looked up for that variable contributes to the generated
-        symbolic type, hence its instantiated lattice class is bounded by the
-        interpretation of that type. *)
 
     Lemma singleton_type_bound:
       forall alpha,
@@ -773,14 +619,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         apply SecT.hm_ext_concat_l.
     Qed.
 
-    (** Paper-style simple security step.
-
-        Relation to the paper:
-        this is the lattice-level core of the paper's "simple security"
-        argument for simple equations.  If a defined variable [x] is low at
-        observation level [t], and the current typing constraints show that a
-        contributor [y] flows into the symbolic left-hand side [lhs] that is
-        bounded by [x]'s security identifier, then [y] is low as well. *)
     Lemma simple_security:
       forall lhs x y xty alpha,
         Env.find x ty_env = Some xty ->
@@ -804,12 +642,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       - apply bottom_is_bottom.
     Qed.
 
-    (** Low-dependency propagation for [EqDef] right-hand sides.
-
-        Relation to the paper:
-        this is the simple-security instantiation for NLustre [EqDef]:
-        when the defined variable is low, every free variable of the guarded
-        combinational expression on the right-hand side is low as well. *)
     Lemma simple_security_caexp:
       forall base_ty rst_ty x ck ce xty ckty cety y,
         Env.find x ty_env = Some xty ->
@@ -832,12 +664,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
                Hfindx Hfindy Hbound' Hsat Hlowx).
     Qed.
 
-    (** Low-dependency propagation for [EqFby] right-hand sides.
-
-        Relation to the paper:
-        this is the simple-security instantiation for NLustre [EqFby]:
-        when the defined memory variable is low, every free variable of the
-        guarded source expression feeding the delay is low as well. *)
     Lemma simple_security_aexp:
       forall base_ty rst_ty x ck e xty ckty ety y,
         Env.find x ty_env = Some xty ->
@@ -860,13 +686,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
                Hfindx Hfindy Hbound' Hsat Hlowx).
     Qed.
 
-    (** Low-dependency propagation for plain call arguments.
-
-        Relation to the paper:
-        node calls evaluate plain source expressions as actual arguments.
-        This is the non-clocked counterpart of [simple_security_aexp], used
-        to transport low observability from a low call input formal back to
-        the free variables of the matching caller-side actual expression. *)
     Lemma simple_security_exp:
       forall x e xty ety y,
         Env.find x ty_env = Some xty ->
@@ -883,13 +702,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       apply (simple_security ety x y xty alpha Hfindx Hfindy Hbound Hsat Hlowx).
     Qed.
 
-    (** Switching a guarded combinational expression across low-equivalent
-        indexed histories.
-
-        Relation to the paper:
-        this is the indexed-history counterpart of the paper step saying that a
-        simple RHS computes the same stream in both runs when all of its low
-        dependencies agree. *)
     Lemma sem_caexp_switch_history_low:
       forall X bk H H' ck ce xs,
         history_low_eq X H H' ->
@@ -919,13 +731,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       exact Hsem.
     Qed.
 
-    (** Switching a guarded source expression across low-equivalent indexed
-        histories.
-
-        Relation to the paper:
-        this is the indexed-history counterpart of the [fby] simple case: the
-        stream feeding the delay is preserved across the two low-equivalent
-        runs once all low dependencies agree. *)
     Lemma sem_aexp_switch_history_low:
       forall X bk H H' ck e xs,
         history_low_eq X H H' ->
@@ -955,14 +760,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       exact Hsem.
     Qed.
 
-    (** Switching a list of actual arguments across low-equivalent indexed
-        histories.
-
-        Relation to the paper:
-        this is the list-valued version of the simple semantic switching step
-        used for call equations: if every free variable of every actual
-        argument is low and agrees across the two runs, then the actual
-        argument tuple evaluates to the same stream of values. *)
     Lemma sem_exps_switch_history_low:
       forall X bk H H' es ls,
         history_low_eq X H H' ->
@@ -984,12 +781,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       exact Hsem.
     Qed.
 
-    (** Recover one component of a semantic variable tuple.
-
-        Relation to the paper:
-        call equations and output-facing corollaries need to move between the
-        tuple semantics [sem_vars_instant] and one concrete variable position.
-        This lemma is the finite-list bridge for that extraction step. *)
     Lemma sem_vars_instant_nth_error:
       forall R xs vs i x v,
         sem_vars_instant R xs vs ->
@@ -1005,12 +796,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         rewrite Hnthv in Hnthv'. inversion Hnthv'. subst v'. exact Hvar.
     Qed.
 
-    (** Recover one component of a semantic actual-argument tuple.
-
-        Relation to the paper:
-        the call case reasons about one low formal input at a time, and thus
-        needs the corresponding one actual expression/value pair extracted
-        from the list semantics [sem_exps_instant]. *)
     Lemma sem_exps_instant_nth_error:
       forall b R es vs i e v,
         sem_exps_instant b R es vs ->
@@ -1026,14 +811,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       rewrite Hnthv in Hnthv'. inversion Hnthv'. subst v'. exact Hv.
     Qed.
 
-    (** Lift one free variable at a concrete actual-argument position into
-        the NLustre call-dependency predicate.
-
-        Relation to the paper:
-        call causality is recorded over the whole actual-argument list.  The
-        noninterference proof often isolates one list position first, then
-        needs to repackage that pointwise free-variable fact back into
-        [Is_free_in_aexps] to invoke the node-level dependency hypothesis. *)
     Lemma nth_error_free_in_aexps:
       forall es i e y ck,
         nth_error es i = Some e ->
@@ -1053,14 +830,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
           eapply IH; eauto.
     Qed.
 
-    (** Repackage tuple-stream equality as low-equivalence on the underlying
-        semantic histories.
-
-        Relation to the paper:
-        recursive call proofs often obtain equality of the caller-produced
-        argument tuples directly.  This lemma turns that extensional stream
-        equality into the history-based observation relation consumed by the
-        recursive output theorem. *)
     Lemma history_low_eq_upto_of_sem_vars_eq:
       forall xs H H' vs vs' k,
         sem_vars H xs vs ->
@@ -1095,13 +864,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         discriminate.
     Qed.
 
-    (** Prefix preservation for lists of source expressions.
-
-        Relation to the paper:
-        call equations do not need equality of the whole actual-argument tuple
-        a priori.  They only need agreement on the prefix up to the current
-        instant, so that low callee inputs can be related pointwise to the two
-        caller runs. *)
     Lemma sem_exps_prefix_eq:
       forall bk H H' es ls ls' k,
         (forall y, Exists (Is_free_in_exp y) es ->
@@ -1125,12 +887,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       eapply sem_exps_instant_det; eauto.
     Qed.
 
-    (** Invert one plain NLustre call equation semantically.
-
-        Relation to the paper:
-        the call case repeatedly needs the actual-argument stream, the caller
-        output tuple, and the callee semantic run exposed separately.  This
-        is the semantic unpacking step for a non-reset call. *)
     Lemma sem_eqapp_inv:
       forall bk H xs ck f exps,
         Indexed.sem_equation all_nodes bk H (EqApp xs ck f exps None) ->
@@ -1146,12 +902,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       repeat split; assumption.
     Qed.
 
-    (** Invert one resettable NLustre call equation semantically.
-
-        Relation to the paper:
-        reset calls add one reset stream and one masked recursive callee
-        hypothesis to the plain call case.  The noninterference proof uses
-        this wrapper to expose those components explicitly. *)
     Lemma sem_eqreset_inv:
       forall bk H xs ck f exps r ckr,
         Indexed.sem_equation all_nodes bk H (EqApp xs ck f exps (Some (r, ckr))) ->
@@ -1169,12 +919,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       repeat split; assumption.
     Qed.
 
-    (** Invert one indexed NLustre node run.
-
-        Relation to the paper:
-        recursive call reasoning is stated semantically on one callee run.
-        This lemma exposes the internal callee history and local equations
-        from the indexed [SNode] constructor. *)
     Lemma sem_node_inv:
       forall f xss yss,
         Indexed.sem_node all_nodes f xss yss ->
@@ -1193,13 +937,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       repeat split; assumption.
     Qed.
 
-    (** Well-clocked reset calls expose their reset source in the caller vars.
-
-        Relation to the paper:
-        resettable calls add one extra current dependency carried by the reset
-        variable.  The noninterference proof uses the clocking judgment only to
-        recover that this reset source is already part of the caller typing
-        environment. *)
     Lemma wc_reset_in_call_vars:
       forall P vars xs ck f exps rx rck,
         Clo.wc_equation P vars (EqApp xs ck f exps (Some (rx, rck))) ->
@@ -1210,12 +947,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       eapply Hr. reflexivity.
     Qed.
 
-    (** The active reset segment exposes the underlying list unchanged.
-
-        Relation to the paper:
-        reset calls reason on one masked callee run.  At the active
-        reset segment, the mask is transparent, so tuple-position arguments
-        can be pushed back to the original actual/output list. *)
     Lemma nth_error_mask_count_self:
       forall rs xss k i v,
         nth_error (mask (count rs k) rs xss k) i = Some v ->
@@ -1227,13 +958,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       exact Hnth.
     Qed.
 
-    (** An opaque mask exposes only absent values.
-
-        Relation to the paper:
-        reset-call prefix proofs split into the active reset segment, where
-        the mask is transparent, and earlier segments, where the mask is
-        opaque.  In the opaque case, every tuple position is immediately
-        absent, which is the only semantic fact needed to close the branch. *)
     Lemma nth_error_all_absent_absent:
       forall (A : Type) (xs : list A) i v,
         nth_error (all_absent xs) i = Some v ->
@@ -1247,14 +971,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         + simpl in Hnth. eapply IH; eauto.
     Qed.
 
-    (** Low instantiated expression types make all free variables low.
-
-        Relation to the paper:
-        call inputs are typed by symbolic sets rather than by one caller
-        output identifier.  For the recursive call proof, the relevant fact is
-        therefore: if the instantiated symbolic type of one actual expression
-        is already below the observation level, then every free variable of
-        that actual expression is low as well. *)
     Lemma exp_type_low:
       forall e ety y,
         SECCETYPING.assign_exp_type ty_env e = Some ety ->
@@ -1270,13 +986,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       eapply order_trans; eauto.
     Qed.
 
-    (** Prefix extensionality of [hold].
-
-        Relation to the paper:
-        [fby] is the only NLustre simple case whose current value may depend
-        on earlier values of its feeding stream.  This lemma isolates that
-        time-shifted dependency: agreement of the feeding stream on all
-        instants strictly before [n] is enough to make [hold] agree at [n]. *)
     Lemma hold_eq_prefix:
       forall v0 xs xs' k,
         (forall j, j < k -> xs j = xs' j) ->
@@ -1291,12 +1000,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       destruct (xs' m) eqn:Hn; auto.
     Qed.
 
-    (** Prefix extensionality of [fby].
-
-        Relation to the paper:
-        once the feeding stream agrees on all instants up to [n], the delayed
-        stream produced by [fby] also agrees at [n].  This is the basic
-        time-induction ingredient needed by the delayed noninterference case. *)
     Lemma fby_eq_prefix:
       forall v0 xs xs' k,
         (forall j, j <= k -> xs j = xs' j) ->
@@ -1314,13 +1017,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       lia.
     Qed.
 
-    (** Delayed extensionality of [fby].
-
-        Relation to the paper:
-        the current output of a delay depends on the past payload of its
-        feeding stream and only on the current presence/absence bit.  This
-        is the exact semantic shape needed in the [EqFby] case of the
-        indexed noninterference proof. *)
     Lemma fby_eq_delay_prefix:
       forall v0 xs xs' k,
         (forall j, j < k -> xs j = xs' j) ->
@@ -1345,13 +1041,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
           eapply hold_eq_prefix; eauto.
     Qed.
 
-    (** Prefix preservation for guarded source expressions.
-
-        Relation to the paper:
-        this is the time-indexed bridge needed by the delayed case: if all
-        free variables of an annotated expression agree on the earlier
-        instants, then its semantic stream agrees on that earlier prefix as
-        well. *)
     Lemma sem_aexp_prefix_eq:
       forall bk H H' ck e ls ls' k,
         (forall y, Is_free_in_aexp y ck e ->
@@ -1379,12 +1068,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       eapply sem_aexp_instant_det; eauto.
     Qed.
 
-    (** Absent annotated expressions force a false clock at the same instant.
-
-        Relation to the paper:
-        this isolates the current-time control fact used in the delayed case:
-        when the feeding annotated expression is absent, its clock must be
-        false at that instant. *)
     Lemma sem_aexp_instant_absent_clock_false:
       forall b R ck e,
         sem_aexp_instant b R ck e absent ->
@@ -1394,11 +1077,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       inversion Hsem; subst; auto; discriminate.
     Qed.
 
-    (** Present annotated expressions force a true clock at the same instant.
-
-        Relation to the paper:
-        together with the absent case, this turns current clock equality into
-        current presence equality for the feeding stream of an [EqFby]. *)
     Lemma sem_aexp_instant_present_clock_true:
       forall b R ck e v,
         sem_aexp_instant b R ck e (present v) ->
@@ -1408,13 +1086,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       inversion Hsem; subst; auto; discriminate.
     Qed.
 
-    (** Current-presence preservation for guarded source expressions.
-
-        Relation to the paper:
-        in the delayed case, the current instant only needs the clock side of
-        the feeding expression.  This lemma isolates that fact: equality of
-        the clock dependencies at one instant forces the annotated expression
-        to be absent in one run iff it is absent in the other. *)
     Lemma sem_aexp_same_presence_from_clock:
       forall bk H H' ck e ls ls' k,
         (forall y, Is_free_in_clock y ck ->
@@ -1453,13 +1124,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         discriminate.
     Qed.
 
-    (** Repackage pointwise low-equality facts as a history-level relation.
-
-        Relation to the paper:
-        the causality induction naturally produces one proof obligation per
-        variable.  This lemma folds those pointwise obligations back into the
-        relational form [history_low_eq] used by the noninterference theorem
-        statements. *)
     Lemma history_low_eq_from_Forall_pointwise:
       forall X H H',
         Forall (fun x => low_var x -> forall k, Env.find x (H k) = Env.find x (H' k)) X ->
@@ -1470,13 +1134,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       eapply Hpts; eauto.
     Qed.
 
-    (** Simple [EqDef] noninterference step.
-
-        Relation to the paper:
-        this is the indexed semantic proof step for a single non-call
-        definition equation.  Once the raw typing constraint shows that every
-        free dependency of the RHS is low, low-equivalence of those
-        dependencies forces equality of the defined stream. *)
     Lemma eqdef_noninterference:
       forall X bk H H' x xs xs' ck ce base_ty rst_ty xty ckty cety,
         history_low_eq X H H' ->
@@ -1511,12 +1168,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       reflexivity.
     Qed.
 
-    (** Simple [EqFby] noninterference step.
-
-        Relation to the paper:
-        this is the indexed semantic proof step for one delay equation.  The
-        proof reduces to equality of the feeding stream, then transports that
-        through the deterministic [fby] construction. *)
     Lemma eqfby_noninterference:
       forall X bk H H' x xs xs' ls ls' ck c0 e base_ty rst_ty xty ckty ety,
         history_low_eq X H H' ->
@@ -1559,14 +1210,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       reflexivity.
     Qed.
 
-    (** Switching a guarded combinational expression from direct pointwise
-        dependency equality.
-
-        Relation to the paper:
-        the causal step theorem does not naturally produce a global
-        low-equivalence relation over a chosen observation set.  It produces
-        one equality fact per immediate dependency.  This lemma is the direct
-        semantic bridge from those pointwise equalities to RHS preservation. *)
     Lemma sem_caexp_switch_pointwise:
       forall bk H H' ck ce xs,
         (forall y, Is_free_in_caexp y ck ce ->
@@ -1588,12 +1231,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       exact Hsem.
     Qed.
 
-    (** Switching a guarded source expression from direct pointwise dependency
-        equality.
-
-        Relation to the paper:
-        this is the direct-pointwise version of the semantic [fby] step used
-        inside the causality induction. *)
     Lemma sem_aexp_switch_pointwise:
       forall bk H H' ck e xs,
         (forall y, Is_free_in_aexp y ck e ->
@@ -1615,12 +1252,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       exact Hsem.
     Qed.
 
-    (** Simple [EqDef] noninterference from direct dependency equality.
-
-        Relation to the paper:
-        this is the equation-local form needed by the causality induction:
-        once every immediate dependency of the RHS is known equal across the
-        two runs, the defined low variable is equal as well. *)
     Lemma eqdef_noninterference_pointwise:
       forall bk H H' x xs xs' ck ce base_ty rst_ty xty ckty cety,
         (forall y, Is_free_in_caexp y ck ce ->
@@ -1649,14 +1280,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       reflexivity.
     Qed.
 
-    (** Instantaneous [EqDef] noninterference from current dependency
-        equality.
-
-        Relation to the paper:
-        once the main theorem is rephrased around an outer induction on the
-        instant, the simple definition case only needs equality of its
-        dependencies at that one instant.  This lemma is the exact local step
-        for that fixed-time form. *)
     Lemma eqdef_noninterference_instant_pointwise:
       forall bk H H' x xs xs' ck ce k,
         (forall y, Is_free_in_caexp y ck ce ->
@@ -1693,11 +1316,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       reflexivity.
     Qed.
 
-    (** Simple [EqFby] noninterference from direct dependency equality.
-
-        Relation to the paper:
-        this is the pointwise-dependency form of the delay case used by the
-        causality induction. *)
     Lemma eqfby_noninterference_pointwise:
       forall bk H H' x xs xs' ls ls' ck c0 e base_ty rst_ty xty ckty ety,
         (forall y, Is_free_in_aexp y ck e ->
@@ -1734,14 +1352,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       reflexivity.
     Qed.
 
-    (** Delayed [EqFby] noninterference from current-clock and past-data
-        equality.
-
-        Relation to the paper:
-        this is the precise indexed delayed step needed by the causal proof.
-        The current instant only needs clock agreement, while the payload of
-        the delay is recovered from equality of the feeding expression on the
-        earlier prefix. *)
     Lemma eqfby_noninterference_delayed_pointwise:
       forall bk H H' x xs xs' ls ls' ck c0 e k,
         (forall y, Is_free_in_clock y ck ->
@@ -1783,13 +1393,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
     Variable envs : node_scoped_env.
     Variable aux_names : list node_aux_names.
 
-    (** Recover the local clocking premise for one found source node.
-
-        Relation to the paper:
-        the final theorem is stated against the exact generated source program,
-        but the replay lemma only needs the local [wc_node] fact for the
-        current node.  This lemma extracts that local premise from the global
-        well-clockedness assumption without changing the theorem statement. *)
+    (** This recovers the local clocking fact for a node found in a well-clocked global.  Many generated-signature and semantic lemmas use it to move from a global assumption to a node-local one. *)
     Lemma wc_global_find_node:
       forall n,
         Clo.wc_global all_nodes ->
@@ -1812,13 +1416,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         eapply IH; eauto.
     Qed.
 
-    (** Free variables of a well-clocked clock belong to the current node
-        environment.
-
-        Relation to the paper:
-        the delayed case needs to classify the free variables of a source
-        expression as inputs or already-defined node variables.  This helper
-        starts that bridge on the clock side. *)
     Lemma Is_free_in_wc_clock:
       forall vars x ck,
         wc_clock vars ck ->
@@ -1835,12 +1432,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         end.
     Qed.
 
-    (** Free variables of a well-clocked expression belong to the current
-        node environment.
-
-        Relation to the paper:
-        this is the expression-side membership fact used when the delayed
-        proof moves from "low free variable" to "input or defined variable". *)
     Lemma Is_free_in_wc_exp:
       forall vars x e ck,
         wc_exp vars e ck ->
@@ -1865,13 +1456,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         destruct H1; eauto.
     Qed.
 
-    (** Free variables of a well-clocked annotated expression belong to the
-        current node environment.
-
-        Relation to the paper:
-        the delayed proof reasons about whole annotated expressions [ck, e],
-        so the free-variable membership fact must cover both the data and the
-        clock side together. *)
     Lemma Is_free_in_wc_aexp:
       forall vars x ck e,
         wc_env vars ->
@@ -1887,13 +1471,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         + exact H.
     Qed.
 
-    (** Classify delayed free variables as inputs or defined variables.
-
-        Relation to the paper:
-        the delayed proof needs to know that every source dependency of an
-        [EqFby] right-hand side comes either from the node inputs or from a
-        variable defined elsewhere in the node.  This is the exact source-side
-        classification step extracted from well-clockedness. *)
     Lemma free_aexp_in_inputs_or_defined:
       forall P n x ck c0 e y,
         Clo.wc_node P n ->
@@ -1933,15 +1510,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
           eapply Permutation_in; [apply Permutation_sym, n.(n_defd)|exact Hin_vo].
     Qed.
 
-    (** Past low-equality for delayed free variables from inputs or already-defined vars.
-
-        Relation to the paper:
-        in the successor [EqFby] case, the current instant only depends on the
-        clock, but the delayed payload may read earlier values of the source
-        expression. This lemma packages the source-side classification step:
-        every such free variable comes either from the inputs, where low
-        equality is assumed, or from a variable already defined in the node,
-        where low equality is supplied by the previous prefix induction. *)
     Lemma free_aexp_low_eq_prefix_from_inputs_or_defined:
       forall P n ty_env dlt t H H' x ck c0 e y k,
         Clo.wc_node P n ->
@@ -1962,14 +1530,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         lia.
     Qed.
 
-    (** Classify free actual-argument variables as inputs or defined variables.
-
-        Relation to the paper:
-        the successor [EqApp] proof needs prefix equality for the free
-        variables of actual arguments.  This is the call-side analogue of
-        [free_aexp_in_inputs_or_defined]: every free actual-argument variable
-        comes either from the node inputs or from one of the variables already
-        defined by the node equations. *)
     Lemma free_exp_in_inputs_or_defined:
       forall P n xs ck f exps r y,
         Clo.wc_node P n ->
@@ -2042,13 +1602,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
           eapply Permutation_in; [apply Permutation_sym, n.(n_defd)|exact Hin_vo].
     Qed.
 
-    (** Classify the reset source of a resettable call as input or defined variable.
-
-        Relation to the paper:
-        the reset-control prefix proof for [EqApp ... (Some ...)] needs to
-        transport equality of the reset source stream from either the input
-        hypothesis or the already-established previous-prefix equality on
-        defined variables. *)
     Lemma reset_var_in_inputs_or_defined:
       forall P n xs ck f exps r ckr,
         Clo.wc_node P n ->
@@ -2090,14 +1643,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
           eapply Permutation_in; [apply Permutation_sym, n.(n_defd)|exact Hin_vo].
     Qed.
 
-    (** Prefix equality of one semantic source stream from low-equivalent histories.
-
-        Relation to the paper:
-        reset calls introduce one explicit source variable whose semantic value
-        stream is converted to a Boolean reset stream. This lemma is the
-        first step in that bridge: if the raw variable is low and the two
-        histories agree on it up to a prefix, then the semantic source streams
-        selected by [sem_var] are equal on that prefix. *)
     Lemma sem_var_low_eq_upto:
       forall H H' x ys ys' k,
         sem_var H x ys ->
@@ -2116,12 +1661,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       reflexivity.
     Qed.
 
-    (** Prefix equality of reset booleans from equality of their source values.
-
-        Relation to the paper:
-        after showing that the reset source stream is equal across the two
-        runs, the proof needs the same fact for the Boolean reset stream used
-        by [mask]. This is the direct [bools_of] transport step. *)
     Lemma bools_of_eq_upto:
       forall ys ys' rs rs' k,
         bools_of ys rs ->
@@ -2138,12 +1677,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       reflexivity.
     Qed.
 
-    (** Prefix equality of reset counts from prefix equality of reset booleans.
-
-        Relation to the paper:
-        the masked indexed semantics separates reset segments using [count].
-        To align the masked histories of the two runs, it is enough to know
-        that the Boolean reset streams agree on the whole prefix. *)
     Lemma count_eq_upto:
       forall rs rs' k,
         (forall j, j <= k -> rs j = rs' j) ->
@@ -2160,14 +1693,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         reflexivity.
     Qed.
 
-    (** Classify free call-clock variables as inputs or defined variables.
-
-        Relation to the paper:
-        recursive call noninterference needs agreement on each free variable of
-        the source call clock.  This is the clock-side companion of
-        [free_exp_in_inputs_or_defined]: every such variable comes either from
-        the node inputs or from a variable already defined by the node
-        equations. *)
     Lemma clock_var_in_inputs_or_defined:
       forall P n xs ck f exps r y,
         Clo.wc_node P n ->
@@ -2204,13 +1729,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
           eapply Permutation_in; [apply Permutation_sym, n.(n_defd)|exact Hin_vo].
     Qed.
 
-    (** Transport free call-clock variables across low-equivalent prefixes.
-
-        Relation to the paper:
-        after classifying a free call-clock variable, the call-clock alignment
-        proof still needs its concrete value equality on the observed prefix.
-        This is the direct prefix-equality bridge from the caller-side low
-        hypotheses. *)
     Lemma free_clock_low_eq_prefix_from_inputs_or_defined:
       forall P n ty_env dlt t H H' xs ck f exps r y k,
         Clo.wc_node P n ->
@@ -2231,14 +1749,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         lia.
     Qed.
 
-    (** Every free call-clock variable contributes its environment type to the
-        assigned symbolic clock type.
-
-        Relation to the paper:
-        typing proves low-ness of the instantiated symbolic call clock.  The NI
-        proof still needs to push that fact back to source clock variables, and
-        this lemma is the bookkeeping step that recovers membership of each
-        free source-clock variable inside the assigned symbolic clock type. *)
     Lemma assign_clk_type_free_var_in :
       forall env base ck ckty z ty,
         SECCETYPING.assign_clk_type env base ck = Some ckty ->
@@ -2263,13 +1773,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
           eapply IH; eauto.
     Qed.
 
-    (** Transport semantic clock equality from free-variable equality.
-
-        Relation to the paper:
-        the recursive call theorem is indexed by the callee base clock.  This
-        lemma turns equality of the ambient base clocks and of every free
-        source clock variable into equality of the derived semantic clocks on
-        the observed prefix. *)
     Lemma sem_clock_eq_upto_from_env_eq :
       forall bk bk' H H' ck bs bs' k,
         sem_clock bk H ck bs ->
@@ -2294,14 +1797,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
       eapply sem_clock_instant_det; eauto.
     Qed.
 
-    (** Combine reset-count equality and unmasked call-clock equality into
-        equality of masked call clocks.
-
-        Relation to the paper:
-        resettable recursive calls execute only on the active reset segment.
-        Outside that segment both masked clocks are absent; inside it they
-        agree because the underlying unmasked call clocks already agree on the
-        observed prefix. *)
     Lemma clock_of_mask_eq_upto :
       forall ls ls' rs rs' kr kr' k,
         kr = count rs k ->
@@ -2350,13 +1845,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         reflexivity.
     Qed.
 
-    (** Upper bounds for one generated caller scope.
-
-        Relation to the paper:
-        recursive call proofs need to know that the current caller's symbolic
-        identifiers live strictly below the naming state reached after
-        generating that caller environment.  Combined with lower bounds
-        for another node, this gives the required cross-node freshness. *)
     Lemma node_scope_upper_bounded_from_local_env:
       forall n st env rec st'
              clk_id rst_id clk_type rst_type inp out locals ty,
@@ -2399,57 +1887,6 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
         exists m. split; assumption.
     Qed.
 
-    (** Paired node security for generated NLustre nodes.
-
-        Relation to the paper:
-        the paper states node security over one canonical signature valuation.
-        The current mechanization strengthens that notion to carry, together:
-
-        - the canonical signature valuation [dlt_sig];
-        - a replayed raw valuation [dlt_raw] that agrees with [dlt_sig] on the
-          visible signature scope of the current node; and
-        - the generated raw constraint witnesses for the current node, together
-          with satisfiability of those raw constraints under [dlt_raw].
-
-        This paired form is the active proof route because the [EqApp] case
-        for caller locals needs recursive callee noninterference under both
-        the canonical call-site instantiation and the replayed raw one.
-        Threading both valuations directly through [node_security] keeps that
-        bridge explicit and avoids reopening a separate replay/agreement
-        argument at every recursive call.  The definition is still phrased
-        entirely through the generated local typing environment from
-        [NameInterface] and the generated signatures from [SecNLusTyping];
-        it does not introduce a second typing judgment, but it now also stores
-        the current node's raw generation data explicitly so recursive proofs
-        can reuse it without replaying from scratch. *)
-
-    (** Why just signature satisfiability is not sufficient.
-
-        It is tempting to define node security only by requiring that the
-        current node's generated signature constraints [ρ] are satisfied by the
-        chosen ground instantiation [dlt].  That local condition is enough for
-        the non-call equation cases:
-
-        - [EqDef], where the current node's constraint directly bounds the
-          clock and expression dependencies of one defined variable;
-        - [EqFby], where the current node's constraint directly bounds the
-          clock, reset, and expression dependencies of one memory variable.
-
-        It is not enough for [EqApp] and resettable [EqApp], because in those
-        cases the current node's satisfiable constraints only establish that
-        the call site is well instantiated.  Using the existing signature
-        metatheory, we can replay that into satisfiability of the callee
-        signature under the call-specific instantiated valuation.  However,
-        satisfiability of the callee signature is still only a typing fact.
-
-        To conclude low-equivalence of the callee outputs across two semantic
-        runs, the noninterference proof needs a semantic induction hypothesis
-        for the callee itself.  In the active proof route, that recursive
-        hypothesis must be available under both the canonical signature
-        valuation and the replayed raw valuation induced at the call site.
-        That is why [node_security] now recursively carries both valuations
-        for each direct callee. *)
-
     Inductive node_security
       (nd : node) (dlt_sig dlt_raw : ground_instantiation) : Prop :=
     | SecureNode :
@@ -2475,7 +1912,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
           signature_satisfied dlt_sig sig ->
           SecT.agree_on (signature_scope sig) dlt_sig dlt_raw ->
           SecT.listSatisfiable dlt_raw raw ->
-          (* normal call security *)
+
           (forall xs ck f exps callee callee_sig
                   ckty inptyp outtyp st_clk st_inp,
               In (EqApp xs ck f exps None) nd.(n_eqs) ->
@@ -2493,7 +1930,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
                    [sig.(s_reset)] outtyp)
                 (SIGPROOFS.inst_valuation dlt_raw callee_sig inptyp ckty
                    [sig.(s_reset)] outtyp)) ->
-          (*reset call security*)
+
           (forall xs ck f exps r ckr callee callee_sig
                   ckty rty rstty inptyp outtyp st_clk st_rst st_inp,
               In (EqApp xs ck f exps (Some (r, ckr))) nd.(n_eqs) ->
@@ -2518,6 +1955,5 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
           node_security nd dlt_sig dlt_raw.
 
   End GENERATED_NODE_SECURITY.
-
 
 End SECNLUSNONINTERFERENCESUPPORT.

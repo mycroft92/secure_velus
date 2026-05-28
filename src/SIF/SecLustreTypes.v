@@ -1,13 +1,8 @@
-(* Non-canonical symbolic types for the older Lustre-side normalization
-   experiments.
+(** Symbolic types and constraint operations used by the Lustre-side security layer. *)
 
-   This file is auxiliary to the finalized [SymTypes] representation.  It
-   keeps an explicit syntax of symbolic joins and qualifiers together with its
-   canonicalization function, which is useful when comparing the older Lustre
-   experiments with the final simple-list representation. *)
 From Coq Require Import List.
 From Coq Require Import Lists.ListSet.
-(*From Coq Require Import Logic.Classical_Prop.*)
+
 From Velus Require Import Common.
 From Velus Require Import SIF.Helpers.
 From Coq Require Import Lia.
@@ -23,7 +18,7 @@ Inductive nonCanonST : Type :=
 with uConstraint: Type :=
 | CNil : uConstraint
 | Cns  : (nonCanonST * nonCanonST) -> uConstraint -> uConstraint.
-  (* Concatenate the explicit qualifier constraints accumulated on each side. *)
+
 Fixpoint gatherCns (c1 c2:uConstraint): uConstraint:=
   match c1 with
     | CNil => c2
@@ -38,17 +33,14 @@ Fixpoint gatherCns (c1 c2:uConstraint): uConstraint:=
   | ref_lub  : forall α_1 α_2 ρ_1 ρ_2,
      EqNL (Lub (Qual α_1 ρ_1) (Qual α_2 ρ_2)) (Qual (Lub α_1 α_2) (gatherCns ρ_1 ρ_2))
   | ref_ref  : forall α ρ_1 ρ_2, EqNL (Qual (Qual α ρ_1) ρ_2) (Qual α (gatherCns ρ_1 ρ_2))
-  (* | ref_lub_assocl: forall α_1 α_2 ρ,
-              EqNL (Lub (Qual α_1 ρ) (Var α_2)) (Qual (Lub α_1 α_2) ρ)
-  | ref_lub_assocr: forall α_1 α_2 ρ,
-              EqNL (Lub (Var α_1) (Qual α_2 ρ) ) (Qual (Lub α_1 α_2) ρ) *)
+
   | ref_lub_assocl: forall α_1 α_2 ρ,
               EqNL (Lub α_1 (Qual α_2 ρ) ) (Qual (Lub α_1 α_2) ρ)
   | ref_lub_assocr: forall α_1 α_2 ρ,
               EqNL (Lub (Qual α_1 ρ) α_2) (Qual (Lub α_1 α_2) ρ).
 
 Hint Constructors EqNL.
-(*Need to write a new append for flat constraints like merge*)
+
 Fixpoint canon (x:nonCanonST): (ST*(list constraint)) :=
   match x with
   | Bot   => ([],[])
@@ -72,7 +64,6 @@ with unfurl (ρ: uConstraint): list constraint :=
       (α_1',α_2') :: ρ_1 ++ ρ_2 ++ ρ''
   end.
 
-
 Lemma cannon_sortedNoDup: forall x,
               match canon x with
               | (α,_) => sortedNoDup α
@@ -82,4 +73,3 @@ Proof.
     - destruct (canon α_1). destruct (canon α_2). apply sortedNoDup_merge; auto.
     - destruct (canon α). auto.
 Qed.
-
