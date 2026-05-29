@@ -88,13 +88,6 @@ The main proof entry points and core interfaces are:
 | [`src/SIF/SecNLusNonInterference.v`](src/SIF/SecNLusNonInterference.v) | [`node_noninterference_outputs_raw`](src/SIF/SecNLusNonInterference.v#L83), [`node_noninterference_outputs`](src/SIF/SecNLusNonInterference.v#L174) | Final NLustre indexed noninterference result on observable outputs. |
 | [`src/SIF/SecStcNonInterference.v`](src/SIF/SecStcNonInterference.v) | [`translated_system_behavior`](src/SIF/SecStcNonInterference.v#L97), [`system_security`](src/SIF/SecStcNonInterference.v#L105), [`translated_system_noninterference_outputs`](src/SIF/SecStcNonInterference.v#L241) | Target-side translated-behavior formulation and the final STC-facing noninterference theorem. |
 
-#### Legacy and exploratory files
-
-| File | Highlight definitions / theorems | Role |
-| --- | --- | --- |
-| [`src/SIF/SecLusTyping.v`](src/SIF/SecLusTyping.v#L13) | [`SEC_LUSTRE_TYPING`](src/SIF/SecLusTyping.v#L13) | Retained Lustre-side module shell for an older security-typing direction. |
-| [`src/SIF/SecLustreTypes.v`](src/SIF/SecLustreTypes.v#L67) | [`cannon_sortedNoDup`](src/SIF/SecLustreTypes.v#L67) | Older Lustre-side symbolic-type utilities kept in the repository. |
-
 Related executable constraint-export code is also in `src/SIF/`, especially:
 
 - [`src/SIF/SecNLusConstraintExport.v`](src/SIF/SecNLusConstraintExport.v#L126)
