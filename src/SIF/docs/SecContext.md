@@ -2,56 +2,39 @@
 
 ## Role
 
-`SecContext.v` provides the small state/error monad and generic environment
-lookup lemmas used by every SIF generator.
+`SecContext.v` provides the state-and-error monad used by the SIF generators
+and the small lookup lemmas that keep the typing files from repeating the same
+environment plumbing.
 
-It is not a typing file by itself.  Its job is to keep the recurring
-environment plumbing out of the NLustre, STC, and translation proofs.
+## Main Operations
 
-## Main Definitions
+- `Sec`, `sec_state`, `init_state`
+- `ret`, `bind`, `bind2`, `error`
+- `find_env`
+- `mmap`
+- `option_to_sec`
 
-- `Sec`: stateful error monad used by the generators
-- `sec_state`, `init_state`
-- `bind`, `bind2`, `ret`, `error`
-- `find_env`: monadic wrapper around `Env.find`
-- `mmap`: monadic list traversal
-- `option_to_sec`: convert `option` failures into monadic failures
+The generators in `SecNLusTyping.v`, `SecSTCTyping.v`, and `SIFSignature.v`
+all run in this monad so that generated fresh names and lookup failures are
+handled uniformly.
 
-## Key Theorem Families
+## What The Lemmas Prove
 
-- monad inversion:
-  - `sec_bind_inv`
-  - `sec_bind2_inv`
-- environment lookup consistency/scopedness:
-  - `find_env_consistent`
-  - `find_env_of_Env_find`
-  - `find_env_in_scope`
-  - `mmap_find_env_scoped`
-- generic monadic extensionality/consistency:
-  - `option_to_sec_consistent`
-  - `mmap_consistent`
+- `sec_bind_inv` and `sec_bind2_inv` invert successful monadic computations
+  into their intermediate results.
+- `find_env_consistent` and `find_env_of_Env_find` relate monadic lookups back
+  to plain `Env.find`.
+- `find_env_in_scope` and `mmap_find_env_scoped` lift pointwise scope facts to
+  successful monadic lookups.
+- `option_to_sec_consistent` and `mmap_consistent` provide extensionality facts
+  used when two generators are known to compute the same result.
 
-## Theorem Statements
+## Downstream Use
 
-- `find_env_consistent`: two successful runs of `find_env x env` always return
-  the same mapped security identifier.
-- `find_env_in_scope`: if every source variable in `vars` maps into `scope`,
-  then a successful `find_env x env` for any `(x, ann)` in `vars` returns a
-  security identifier that is also in `scope`.
-- `mmap_find_env_scoped`: if every element of `xs` maps into `scope`, then a
-  successful `mmap (fun x => find_env x env) xs` returns only identifiers in
-  `scope`.
-- `mmap_consistent`: if two monadic functions are pointwise consistent on
-  results, then mapping them over the same list produces the same output list
-  whenever both traversals succeed.
-
-## Relation To The Final Theorem
-
-These lemmas sit below every later proof layer:
-
-- `SecNLusTyping.v` and `SecSTCTyping.v` use them to turn lookups into scoped
-  typing facts.
-- the correctness modules reuse them when reconstructing generated naming and
-  signature facts.
-- `SecNLusStcTranslation.v` relies on the shared lookup-consistency facts so
-  it does not have to duplicate environment plumbing in the cross-phase proof.
+- The typing files use `find_env_in_scope` and `mmap_find_env_scoped` whenever
+  interface variables are recovered from a generated environment.
+- The correctness files use the inversion lemmas to unpack successful generator
+  runs.
+- The translation proof relies on the consistency lemmas so that source and
+  target generation can share lookup arguments without reproving monad facts
+  locally.
