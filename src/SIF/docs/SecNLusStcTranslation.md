@@ -2,132 +2,125 @@
 
 ## Role
 
-`SecNLusStcTranslation.v` is the cross-phase syntactic comparison layer between
-the NLustre and STC security typings. It states and proves the weakened
-preservation theorem used by the thesis development.
+`SecNLusStcTranslation.v` is the cross-phase preservation file.  It compares
+generated NLustre signatures with generated STC signatures and proves that
+every generated source signature has a matching generated target signature with
+the same visible interface and call behavior.
 
-## Main Lattice-Mapping Notions
+## Core Interfaces
 
-- `agree_on`: two lattice mappings coincide on the variables we care about.
-- `preserves_on`: source satisfiability transfers to target satisfiability while
-  preserving `agree_on`.
-- `signatures_preserved`: signature-level version of the same idea.
+- `signatures_preserved`
+  says that two stored signatures have matching interface fields and that the
+  target constraint list preserves satisfiability of the source list on the
+  source visible scope.
+- `Signature_call_preserves`
+  strengthens that to call sites.  It states that both ordinary calls and
+  reset calls preserve satisfiability after instantiation inside a caller.
+- `Signature_head_consistent`
+  packages matching names, matching visible interface fields, and
+  `Signature_call_preserves`.
+- `Signature_consistent`
+  lifts that pairwise relation to whole generated globals.
 
-These definitions encode the deliberate weakening from the paper's strongest
-interface-equality reading: STC may introduce private auxiliary variables as
-long as shared variables agree.
+These definitions separate the public lookup-level result from the internal
+work needed to handle call instantiation and STC-only reset auxiliaries.
 
-## Scoped Concatenation
+## Reset Extras And Scoped Composition
 
-`preserves_on_concat_scoped` is the composition lemma used throughout the
-equation-list proof.
+The STC translation may introduce reset-instance variables for one translated
+equation that do not exist on the source side.  This file isolates them with:
 
-It says that two preservation witnesses compose if the target-side private
-variables are:
+- `eqn_reset_extras`
+- `eqns_reset_extras`
+- `trconstrs_reset_keys_translate_eqn`
+- `translated_reset_key_in_extras`
+- `translated_reset_key_fresh`
 
-- scoped to `scope ++ extras_i`,
-- outside the shared scope `scope`,
-- disjoint across the two blocks.
+The point of this layer is to make translated target extras explicit so that
+composition can be handled by `preserves_on_concat_scoped` from `SecTypes.v`.
 
-For this development, the intended instantiation is:
+## Equation And Node Preservation
 
-- `scope`: the shared NLustre/STC node scope,
-- `extras_i`: the STC reset-instance variables introduced by translating one
-  equation.
-
-## Equation-List Preservation
-
-The equation-list proof works by:
-
-1. prove one-step preservation for a single equation;
-2. prove scopedness of the translated STC block for that equation;
-3. accumulate reset-instance extras along the equation list;
-4. compose head and tail with `preserves_on_concat_scoped`.
-
-## Current Status
-
-- This file contains the reset-extra bookkeeping layer:
-  `eqn_reset_extras`, `eqns_reset_extras`,
-  `trconstrs_reset_keys_translate_eqns`,
-  `translated_reset_key_in_extras`,
-  `translated_reset_key_fresh`.
-- The generated-signature bridge lives here:
-  `generated_signatures_preserved_from_simplify_bridge_local_env`.
-- The global consistency and program theorems also live here:
-  `generate_all_signatures_consistent_scoped'`,
-  `generate_all_signatures_consistent`,
-  `generated_program_signatures_preserved_global`.
-  The last corollary is now lookup-based over the generated globals, so it no
-  longer reruns per-node signature generation in its statement.
-
-## Final Theorem Flow
-
-The important theorem chain is now:
+The preservation chain is:
 
 1. `eqn_preserv`
+   proves one NLustre equation preserves to its translated STC block on the
+   shared visible scope.
 2. `eqns_preserv_scoped`
+   folds that argument over the equation list while accumulating the reset
+   extras of each translated block.
 3. `node_preserv_scoped`
-4. `generated_signatures_preserved_from_simplify_bridge_local_env`
-5. `generate_all_signatures_consistent_scoped'`
-6. `generate_all_signatures_consistent`
-7. `generated_program_signatures_preserved_global`
+   instantiates the list theorem with the concrete generated interface,
+   locals, clock, reset, and reset extras of one node.
+4. `generated_node_preserv_scoped` and
+   `generated_node_preserv_scoped_scoped_env`
+   specialize the node theorem to signatures produced by the actual generators.
 
-The semantic consumer of this chain is now the weaker translated-behavior STC
-noninterference corollary in `SecStcNonInterference.v`. That corollary uses:
+At this stage the theorem still talks about raw generated constraints, not yet
+about stored simplified signatures.
 
-- `SecNLusNonInterference.v` for the source indexed theorem;
-- the existing NLustre indexed/memory semantic bridge;
-- `NLustreToStc.Correctness.correctness_loop`; and
-- `generated_program_signatures_preserved_global`.
+## Signature Bridge
 
-`Signature_call_preserves` is proved internally in this file from:
+The raw-to-stored bridge is handled by:
 
-- `signature_good` and call-instantiation lemmas from `SIFSignature.v`
-- source-side generated-signature facts from `SecNLusTypingCorrectness.v`
-- target-side reset/scopedness facts from `SecStcTypingCorrectness.v`
+- `generated_signatures_preserved_from_simplify_bridge_scoped`
+- `generated_signatures_preserved_from_simplify_bridge_local_env`
+- `generated_signatures_preserved_from_simplify_bridge_scoped_env`
 
-## Theorem Statements
+These theorems combine:
 
-- `signatures_preserved (n1, n2)` means the source and target signatures agree
-  on their interface fields and the target constraint list preserves source
-  satisfiability on `signature_scope n1`.
-- `Signature_call_preserves (n1, n2)` packages two call-side obligations:
-  ordinary calls preserve satisfiability on the shared caller scope, and reset
-  calls preserve satisfiability after allowing STC to prepend one fresh
-  reset-instance constraint outside that scope.
-- `eqn_preserv`: if the source and target signature globals are
-  `Signature_consistent`, the local equation and translated block are well
-  clocked, the shared variable environment is scoped, reset-instance names are
-  fresh from the shared scope, and both constraint generators succeed, then the
-  generated STC constraint block `preserves_on scope` the NLustre one.
-- `node_preserv_scoped`: the node-level theorem instantiates
-  `eqns_preserv_scoped` with
-  `scope = inp ++ out ++ locals ++ [clk_type; rst_type]` and the concrete
-  reset-instance extras generated for the translated STC system.
-- `generate_all_signatures_consistent_scoped'`: the accumulator induction over
-  node-scoped environments returns three facts at once for the generated
-  globals: `Signature_consistent G1 G2`, `secglobal_scoped G2`, and
-  `secglobal_scope_sec G2`.
-- `generated_program_signatures_preserved_global`: the public corollary is
-  lookup based. For every source signature `nsig` found in the generated
-  NLustre global `G1`, there exists a target signature `ssig` found in the
-  generated STC global `G2` such that `Signature_head_consistent nsig ssig`.
+- source-side signature goodness and scope `NoDup` from
+  `SecNLusTypingCorrectness.v`,
+- target-side scopedness and namespace facts from
+  `SecStcTypingCorrectness.v`,
+- and the call replay lemmas from `SIFSignature.v`.
 
-## Proof Boundary
+The result is a stored-signature preservation statement that is strong enough
+to support call instantiation on both sides.
 
-This file now owns only syntactic/cross-phase results. Source-local and
-target-local correctness facts live in:
+## Call Preservation Internals
 
-- `SecNLusTypingCorrectness.v`
-- `SecStcTypingCorrectness.v`
+The ordinary and reset call arguments are proved inside this file through:
 
-The public theorem stack is now free of the old call-side assumptions. This
-file remains a preservation library for `SecStcNonInterference.v`, not a second
-noninterference stack in its own right.
+- `signatures_preserved_simple_calls_from_good`
+- `signatures_preserved_reset_underlying_calls_from_good`
+- `signatures_preserved_reset_calls_from_good`
 
-## Relation to the Paper
+These theorems start from stored-signature preservation plus generated-source
+signature goodness, then reconstruct the caller-side valuation needed by
+`generate_constraints_correct_inst` and `generate_constraints_complete_good`.
+The reset-call theorem adds one STC-only reset constraint outside the shared
+scope and uses the target reset-environment facts to keep that extra variable
+fresh.
 
-This file contains the mechanized preservation argument itself.  The current
-weakened theorem keeps the spirit of the paper by preserving agreement on the
-shared interface/local scope while allowing STC-only auxiliaries outside that
-scope.
+## Global Induction
+
+`generate_all_signatures_consistent_scoped'` is the main accumulator theorem
+for whole programs.  It performs a single induction over the node list and
+builds three results at once for the generated target global:
+
+- `Signature_consistent G1 G2`
+- `secglobal_scoped G2`
+- `secglobal_scope_sec G2`
+
+At each step, the proof:
+
+1. recovers the current node's generated local environment;
+2. applies the node-level raw preservation theorem;
+3. crosses the simplify bridge to obtain a stored source/target signature pair;
+4. packages that pair as a `generated_signature_step_consistent`;
+5. extends the accumulator with `Signature_consistent_cons`;
+6. re-establishes target global scopedness and namespace facts for the new
+   accumulator.
+
+`generate_all_signatures_consistent` is the empty-accumulator corollary.
+
+## Public Theorem
+
+`generated_program_signatures_preserved_global` is the exported lookup-based
+result.  Once the node-scoped environments and both generated globals have been
+built successfully, every source signature found in the NLustre global has a
+matching STC signature in the translated global with
+`Signature_head_consistent`.
+
+That theorem is the exact interface consumed by `SecStcNonInterference.v`.

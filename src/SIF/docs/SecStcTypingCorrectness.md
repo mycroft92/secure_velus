@@ -2,56 +2,38 @@
 
 ## Role
 
-`SecStcTypingCorrectness.v` owns target-local correctness lemmas used by the
-translation proof but not requiring NLustre/STC comparison.
+`SecStcTypingCorrectness.v` proves the target-local invariants that the
+translation proof needs after raw STC signature generation has succeeded.
 
-## Main Contents
+## Main Facts
 
-- reset-environment range facts
-- reset-environment lookup preservation facts
-- reset-environment injectivity facts
-- generated STC signature scopedness for generated globals
-- target-side namespace facts showing visible STC signature identifiers stay in
-  the shared `sec` namespace
+- generated reset environments map reset-call keys into the dedicated
+  `sec_reset` namespace;
+- those reset environments are injective;
+- generated STC signatures obtained from node-scoped environments are scoped;
+- visible identifiers of generated STC signatures stay in the shared `sec`
+  namespace.
 
-## Relation To The Translation Proof
+The file does not compare source and target signatures directly.  It proves the
+target side is structurally well behaved before the cross-phase argument starts.
 
-These lemmas provide the target-side structural invariants needed in
-`SecNLusStcTranslation.v`:
+## Main Theorems
 
-- translated reset calls receive fresh STC-only reset-instance names
-- reset-instance lookups preserve the intended namespace separation
-- generated target signatures are scoped to their visible interface
+- `generate_reset_env_range`
+  proves that every successful reset-environment lookup returns a generated
+  `sec_reset` identifier.
+- `generate_reset_env_injective`
+  proves that two reset-call keys cannot map to the same generated reset name.
+- `generate_sys_signature_scoped_env_scoped`
+  packages scopedness for generated STC signatures through the node-scoped
+  environment interface.
+- `generated_sys_signature_scope_sec`
+  proves that every visible identifier in a generated target signature lies in
+  the shared `sec` namespace.
 
-## Relation To The Final Theorem
+## Downstream Use
 
-This file discharges the target-local premises used by the final call bridge
-and the global consistency induction:
-
-- `generate_sys_signature_scoped_env_scoped` supplies generated target
-  signature scopedness
-- `generated_sys_signature_scope_sec` connects generated target visible names
-  back to the shared `sec` namespace
-- the reset-environment lemmas justify the extra `TcReset` prefix constraint in
-  the reset-call preservation argument
-
-This keeps target-local environment reasoning out of the cross-phase
-translation file.
-
-## Theorem Statements
-
-- `generate_reset_env_range`: every successful lookup in a generated reset
-  environment returns a `sec_reset` identifier
-  `Ids.gensym Ids.sec_reset n`.
-- `generate_reset_env_injective`: a reset environment produced by
-  `generate_reset_env` is injective, so equal generated reset-instance names
-  come from the same source reset key.
-- `generate_sys_signature_scoped_env_scoped`: if the target accumulator is
-  already scoped, the translated system is well clocked, the current local
-  environment is found in `envs`, and that local environment is injective,
-  then a successful `generate_sys_signature_scoped_env` result is
-  `signature_scoped`.
-- `generated_sys_signature_scope_sec`: if
-  `generate_node_env all_nodes = OK (env, aux_names)` and
-  `generate_sys_signature G s env aux_names = OK sig`, then every visible
-  identifier in `signature_scope sig` lies in the shared `sec` namespace.
+- `SecNLusStcTranslation.v` uses the reset-environment theorems when proving
+  reset-call preservation and when isolating STC-only extras.
+- The same file uses the scopedness and namespace theorems to build
+  `Signature_head_consistent` for generated source/target signature pairs.

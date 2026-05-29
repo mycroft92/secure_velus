@@ -2,89 +2,83 @@
 
 ## Role
 
-`SecNLusTyping.v` is the source-side security typing layer for NLustre.  It
-turns equations and nodes into symbolic security constraints using the shared
-naming environment.
+`SecNLusTyping.v` is the NLustre-side symbolic typing generator.  It reads a
+generated node-local security environment and turns one NLustre node into:
 
-## Main Sections
+- raw equation constraints,
+- a simplified stored signature,
+- and a global list of generated source signatures.
 
-### Equation Constraint Generation
+## Generation Structure
 
-`generate_eqn_constraint` assigns symbolic constraints to one NLustre equation.
-This is the entry point for source-side raw constraint generation.
+The file is organized around three levels.
 
-### Node-Scoped Naming Input
+### Equation Level
 
-The current generation path is parameterized by the shared node-scoped naming
-environment from `NameInterface.v`:
+`generate_eqn_constraint` types one NLustre equation.  The cases mirror the
+syntax:
 
-- `generate_node_sig_scoped_env`
-- `generate_all_signatures_scoped_env`
+- `EqDef`
+- `EqFby`
+- ordinary `EqApp`
+- reset `EqApp`
 
-These are the source-side generators consumed by the final lookup-based
-translation theorem.
+For call equations, the generator looks up the callee signature in the current
+global and instantiates it through `SIFSignature.generate_constraints`.
 
-### Shape and Well-Formedness
+### Node Level
 
-The central structural flow is:
+- `generate_eqns_constraints` folds equation generation over the node body.
+- `generate_node_sig` packages the resulting raw constraints into a stored
+  signature by simplifying away node locals.
+- `generate_node_sig_scoped_env` is the node-scoped entry point used by the
+  current development: it first recovers the node's local generated
+  environment from `NameInterface.v` and then runs `generate_node_sig`.
 
-- `generate_eqn_constraint_shape`
-- `generate_eqns_constraints_shape`
-- `generate_eqns_constraints_wf`
-- `generate_node_eqns_constraints_wf`
+### Global Level
 
-This proves that raw generated NLustre constraints are well formed before
-signature simplification.
+- `generate_all_signatures'` accumulates source signatures.
+- `generate_all_signatures_scoped_env` is the top-level current interface used
+  by the translation and noninterference theorems.
 
-### Scopedness
+## Main Theorem Families
 
-The scopedness flow is:
+- Shape and well-formedness:
+  `generate_eqn_constraint_shape`,
+  `generate_eqns_constraints_shape`,
+  `generate_eqns_constraints_wf`,
+  `generate_node_eqns_constraints_wf`.
+- Scopedness:
+  `generate_eqn_constraint_scoped`,
+  `generate_eqns_constraints_scoped`,
+  `generate_node_sig_scoped`,
+  `generate_all_signatures_scoped`,
+  `generate_node_sig_scoped_env`,
+  `generate_all_signatures_scoped_env`.
 
-- local `assign_*_scoped` lemmas for expressions and clocks
-- `generate_eqn_constraint_scoped`
-- `generate_eqns_constraints_scoped`
-- `generate_node_sig_scoped`
-- `generate_all_signatures_scoped`
+The shape lemmas show that generated raw constraints have the expected single
+target structure.  The scopedness lemmas show that every generated identifier
+mentioned by the source constraints comes from the visible generated node
+scope.
 
-This is the source-side input used later by the translation proof when it needs
-to show that generated NLustre signatures mention only interface variables.
+## Call Cases
 
-## Relation To The Final Theorem
+The call cases do not implement their own substitution metatheory.  They rely
+on `SIFSignature.v` for:
 
-This file supplies the source-side generation theorems used in the final proof
-stack:
+- call-block generation,
+- well-formedness of instantiated call constraints,
+- and scopedness of the caller-facing constraint block.
 
-1. `generate_node_sig_scoped` is the local source scopedness theorem.
-2. `generate_all_signatures_scoped_env` lifts that to generated source
-   globals.
-3. `SecNLusTypingCorrectness.v` then strengthens those results with
-   `signature_good`, `NoDup (signature_scope ...)`, and naming/freshness facts
-   that are consumed by `SecNLusStcTranslation.v`.
+This keeps source typing focused on where the actual arguments come from and
+what scope they live in, rather than on replaying signature substitutions.
 
-## Relation to the Paper
+## Downstream Use
 
-This file is the NLustre half of the paper's symbolic typing story.  It proves
-that the source symbolic constraints are structurally sound and appropriately
-scoped before they are compared against STC.
-
-## Current Design Note
-
-The call case no longer depends on an external `call_constraints_shape`
-premise.  It consumes the signature-layer call-instantiation facts provided by
-`SIFSignature.v`.
-
-## Theorem Statements
-
-- `generate_node_sig_scoped`: if `secglobal_scoped G`, `env_injective env`,
-  and `wc_node P n`, then any successful
-  `generate_node_sig n env aux_names = OK sig` satisfies `signature_scoped sig`.
-- `generate_all_signatures_scoped'`: if `wc_global nodes`, the accumulator is
-  already `secglobal_scoped`, the shared environment is injective, and
-  `generate_all_signatures' acc nodes env aux_names = OK G`, then
-  `secglobal_scoped G`.
-- `generate_all_signatures_scoped`: the top-level corollary packages the same
-  result for `generate_all_signatures nodes env aux_names` started from the
-  empty accumulator.
-- `generate_node_sig_scoped_env`: the node-scoped entry point simply projects
-  the current node's local security environment from `envs` and reuses
-  `generate_node_sig` on that recovered local environment.
+- `SecNLusTypingCorrectness.v` strengthens these generation results with
+  `signature_good`, `NoDup (signature_scope sig)`, and generated-name
+  freshness.
+- `SecNLusStcTranslation.v` uses the scoped generated source signatures when it
+  compares NLustre and STC signatures.
+- The NLustre noninterference proof uses the same generator to recover the raw
+  source constraints tied to a secure node.

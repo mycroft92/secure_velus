@@ -2,13 +2,12 @@
 
 ## Role
 
-`SecTypes.v` is the generic lattice-mapping layer for symbolic security types
-and constraint satisfaction once a mapping `dlt : ident -> Lat.t` is fixed.
+`SecTypes.v` is the generic lattice-mapping layer for symbolic security types.
+It does not depend on NLustre or STC syntax.  Its job is to define what it
+means for two valuations to agree on a scope and what it means for one
+constraint list to preserve satisfiability to another.
 
-It is intentionally phase-agnostic.  Both the signature layer and the
-translation-preservation proof build on top of it.
-
-## Main Definitions
+## Core Definitions
 
 - `wf_constraints`
 - `constraint_scoped`, `constraints_scoped`, `st_scoped`
@@ -16,62 +15,53 @@ translation-preservation proof build on top of it.
 - `preserves_on`
 - `overlay_scope`
 - `upd_type`, `upd_ident`, `upd_types`, `upd_idents`
-- reverse-order update variants used by call-instantiation replay:
-  `upd_types_rev`, `upd_idents_rev`
+- `upd_types_rev`, `upd_idents_rev`
 
-## Key Theorem Families
+`agree_on` is the basic interface notion: two valuations may differ globally
+but must coincide on the variables currently visible to a proof.  All later
+preservation theorems are stated in those terms.
 
-- agreement and scopedness:
-  - `agree_on_trans`
-  - `agree_on_refl`
-  - `hm_ext_agree_on_st`
-  - `hm_ext_agree_on_scoped_type`
-  - `overlay_scope_agree_on`
-- preservation combinators:
-  - `constraintSatisfiable_ext`
-  - `listSatisfiable_ext`
-  - `preserves_on_concat_scoped`
-  - `preserves_on_nil`
-  - `preserves_on_weaken`
-- update-side agreement lemmas:
-  - `upd_types_agree_on`
-  - `upd_types_rev_agree_on`
-  - `upd_idents_agree_on`
-  - `upd_idents_rev_agree_on`
-  - `upd_type_agree_on`
-  - `upd_ident_agree_on`
-  - `upd_types_rev_outside`
-  - `upd_idents_rev_outside`
+## Main Lemma Groups
 
-## Theorem Statements
+- Agreement transport:
+  `agree_on_refl`,
+  `agree_on_trans`,
+  `hm_ext_agree_on_st`,
+  `hm_ext_agree_on_scoped_type`,
+  `overlay_scope_agree_on`.
+- Preservation combinators:
+  `constraintSatisfiable_ext`,
+  `listSatisfiable_ext`,
+  `preserves_on_nil`,
+  `preserves_on_weaken`,
+  `preserves_on_concat_scoped`.
+- Update lemmas:
+  `upd_types_agree_on`,
+  `upd_types_rev_agree_on`,
+  `upd_idents_agree_on`,
+  `upd_idents_rev_agree_on`,
+  `upd_types_rev_outside`,
+  `upd_idents_rev_outside`.
 
-- `agree_on xs dlt1 dlt2` means `dlt1` and `dlt2` return the same lattice
-  value on every identifier in `xs`.
-- `listSatisfiable_ext`: if `constraints_scoped scope cns`, the two lattice
-  mappings agree on `scope`, and `cns` is satisfiable under the first mapping,
-  then `cns` is satisfiable under the second one as well.
-- `preserves_on_concat_scoped`: if the target-side extras are disjoint from the
-  shared `scope`, each target block is scoped to `scope ++ extras_i`, and each
-  block separately preserves satisfiability on `scope`, then the concatenated
-  source block preserves to the concatenated target block on that same scope.
-- `upd_types_rev_agree_on`: reverse-order type updates on identifiers outside
-  `scope` preserve agreement on `scope`.
-- `hm_ext_agree_on_scoped_type`: if a symbolic type is scoped to `scope` and
-  two lattice mappings agree on `scope`, then they compute the same
-  `hm_ext` value for that type.
+## Why `preserves_on_concat_scoped` Matters
 
-## Relation To The Final Theorem
+`preserves_on_concat_scoped` is the key composition lemma used by the
+translation proof.  It allows two translated target blocks to be concatenated
+while preserving the same shared source scope, provided each block's private
+extras are:
 
-`SecNLusStcTranslation.v` defines the cross-phase notion
-`signatures_preserved` by instantiating `preserves_on` on source and target
-signature constraints.
+- scoped to `scope ++ extras`,
+- outside the shared `scope`,
+- and disjoint from the extras of the other block.
 
-The final theorem path then uses:
+This is exactly the shape needed when the STC translation introduces reset
+instance variables that are local to one translated equation.
 
-1. `preserves_on_concat_scoped` to compose translated equation blocks,
-2. the update/agreement lemmas to replay call instantiations,
-3. `listSatisfiable_ext` to transport satisfaction across lattice mappings that
-   agree on the relevant scope.
+## Downstream Use
 
-So this file is the generic lattice-mapping substrate beneath the final
-signature-preservation theorem.
+- `SIFSignature.v` uses the update lemmas to replay call instantiations.
+- `SecNLusStcTranslation.v` defines signature preservation in terms of
+  `preserves_on` and composes translated equation blocks with
+  `preserves_on_concat_scoped`.
+- The noninterference files use `agree_on` and satisfiability transport when
+  moving between simplified signatures and raw generated constraints.
