@@ -1926,9 +1926,9 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
                 exps st_clk = OK (inptyp, st_inp) ->
               get_mappings xs ty_env = Some outtyp ->
               node_security callee
-                (SIGPROOFS.inst_valuation dlt_sig callee_sig inptyp ckty
+                (SIGPROOFS.lat_valuation dlt_sig callee_sig inptyp ckty
                    [sig.(s_reset)] outtyp)
-                (SIGPROOFS.inst_valuation dlt_raw callee_sig inptyp ckty
+                (SIGPROOFS.lat_valuation dlt_raw callee_sig inptyp ckty
                    [sig.(s_reset)] outtyp)) ->
 
           (forall xs ck f exps r ckr callee callee_sig
@@ -1948,9 +1948,9 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
                 exps st_rst = OK (inptyp, st_inp) ->
               get_mappings xs ty_env = Some outtyp ->
               node_security callee
-                (SIGPROOFS.inst_valuation dlt_sig callee_sig inptyp ckty
+                (SIGPROOFS.lat_valuation dlt_sig callee_sig inptyp ckty
                    ([rty] ⊔ rstty) outtyp)
-                (SIGPROOFS.inst_valuation dlt_raw callee_sig inptyp ckty
+                (SIGPROOFS.lat_valuation dlt_raw callee_sig inptyp ckty
                    ([rty] ⊔ rstty) outtyp)) ->
           node_security nd dlt_sig dlt_raw.
 

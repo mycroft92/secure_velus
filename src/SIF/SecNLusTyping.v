@@ -880,25 +880,7 @@ Module Type SECNLUSTYPING
       apply NoDup_var_defined_n_eqs.
     Qed.
 
-    Definition generate_node_signature (n: node): res signature :=
-      match  (do (env_in,  inp)  <- insert_vars (List.map fst (n.(n_in))) (Env.empty _);
-              do (env_out, out)  <- insert_vars (List.map fst n.(n_out)) env_in;
-              do ck_id           <- fresh_ident;
-              do rst_id          <- fresh_ident;
-              do (env, locals)   <- insert_vars (List.map fst n.(n_vars)) env_out;
-              do constraints'    <- generate_eqns_constraints G env ck_id rst_id (n.(n_eqs));
-              ret (n_name n, inp, out, rst_id, ck_id, simplify constraints' locals, env_out)) init_state with
-      | Error e => Error e
-      | OK ((name, inp, out, rst_id, ck_id, constraints, _),_) =>
-          OK {| s_name  := name;
-                s_in    := inp;
-                s_out   := out;
-                s_reset := rst_id;
-                s_clk   := ck_id;
-                s_constraints := constraints|}
-      end.
-
-      Definition generate_node_sig (n: node) (env: Env.t ident) (aux_names: list node_aux_names) : res signature :=
+    Definition generate_node_sig (n: node) (env: Env.t ident) (aux_names: list node_aux_names) : res signature :=
       match  (do (clk_id, rst_id) <- option_to_sec (get_node_aux (n.(n_name)) aux_names);
               do clk_type <- option_to_sec (Env.find clk_id env);
               do rst_type <- option_to_sec (Env.find rst_id env);
@@ -916,9 +898,9 @@ Module Type SECNLUSTYPING
                 s_reset := rst_id;
                 s_clk   := ck_id;
                 s_constraints := constraints|}
-      end.
+    end.
 
-      Definition generate_node_sig_scoped_env
+    Definition generate_node_sig_scoped_env
         (n: node) (envs: node_scoped_env) (aux_names: list node_aux_names)
         : res signature :=
         match find_node_env n.(n_name) envs with
@@ -1123,15 +1105,6 @@ Module Type SECNLUSTYPING
       apply secglobal_scoped_nil.
     Qed.
 
-    Fixpoint generate_signatures' (acc: list signature) (node_list: global): res (list signature) :=
-      match node_list with
-      | [] => OK acc
-      | n::ns =>
-        do sig <- generate_node_signature acc n;
-        generate_signatures' (sig::acc) ns
-      end.
-
-    Definition generate_signatures (node_list: global) := generate_signatures' [] node_list.
 
   End SECGLOBALTYPING.
 

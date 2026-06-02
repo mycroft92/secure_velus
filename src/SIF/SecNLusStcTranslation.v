@@ -2061,10 +2061,10 @@ Module Type SECNLUSSTCTRANSLATION
         { rewrite <- (signature_fields_agree_scope_eq _ _ Hfields). exact Hndscope. }
         assert (Hinst_agree :
                   agree_on (sig_scope ssig)
-                           (SIGPROOFS.inst_valuation dlt nsig inptyp ckty rstty outtyp)
-                           (SIGPROOFS.inst_valuation dlt_ov ssig inptyp ckty rstty outtyp)).
+                           (SIGPROOFS.lat_valuation dlt nsig inptyp ckty rstty outtyp)
+                           (SIGPROOFS.lat_valuation dlt_ov ssig inptyp ckty rstty outtyp)).
         {
-          eapply SIGPROOFS.inst_valuation_fields_agree_on_sig_scope.
+          eapply SIGPROOFS.lat_valuation_fields_agree_on_sig_scope.
           - exact Hfields.
           - exact Hndscope.
           - exact Hscopefresh.
@@ -2077,7 +2077,7 @@ Module Type SECNLUSSTCTRANSLATION
         assert (Hmid_src :
                   agree_on (sig_scope ssig)
                            dlt_mid
-                           (SIGPROOFS.inst_valuation dlt nsig inptyp ckty rstty outtyp)).
+                           (SIGPROOFS.lat_valuation dlt nsig inptyp ckty rstty outtyp)).
         {
           intros x Hin.
           symmetry.
@@ -2088,29 +2088,29 @@ Module Type SECNLUSSTCTRANSLATION
         assert (Hmid_tgt_inst :
                   agree_on (sig_scope ssig)
                            dlt_mid
-                           (SIGPROOFS.inst_valuation dlt_ov ssig inptyp ckty rstty outtyp)).
+                           (SIGPROOFS.lat_valuation dlt_ov ssig inptyp ckty rstty outtyp)).
         {
           eapply agree_on_trans; eauto.
         }
         assert (Hsat_ssig_inst :
                   listSatisfiable
-                    (SIGPROOFS.inst_valuation dlt_ov ssig inptyp ckty rstty outtyp)
+                    (SIGPROOFS.lat_valuation dlt_ov ssig inptyp ckty rstty outtyp)
                     ssig.(s_constraints)).
         {
           eapply listSatisfiable_ext; eauto.
         }
         assert (Hsat_sconst :
                   listSatisfiable
-                    (SIGPROOFS.inst_valuation dlt_ov ssig inptyp ckty rstty outtyp)
+                    (SIGPROOFS.lat_valuation dlt_ov ssig inptyp ckty rstty outtyp)
                     sconst).
         {
           eapply SIGPROOFS.generate_constraints_correct_inst; eauto.
         }
-        exists (SIGPROOFS.inst_valuation dlt_ov ssig inptyp ckty rstty outtyp).
+        exists (SIGPROOFS.lat_valuation dlt_ov ssig inptyp ckty rstty outtyp).
         split.
         - eapply agree_on_trans.
           + apply overlay_scope_agree_on.
-          + eapply SIGPROOFS.inst_valuation_agree_on_scope; eauto.
+          + eapply SIGPROOFS.lat_valuation_agree_on_scope; eauto.
         - exact Hsat_sconst.
       Qed.
 
@@ -2200,15 +2200,15 @@ Module Type SECNLUSSTCTRANSLATION
         }
         assert (Hinst_agree :
                   agree_on (sig_scope ssig)
-                           (SIGPROOFS.inst_valuation dlt nsig inptyp ckty srcrst outtyp)
-                           (SIGPROOFS.inst_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)).
+                           (SIGPROOFS.lat_valuation dlt nsig inptyp ckty srcrst outtyp)
+                           (SIGPROOFS.lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)).
         {
-          eapply SIGPROOFS.inst_valuation_fields_agree_on_sig_scope_reset; eauto.
+          eapply SIGPROOFS.lat_valuation_fields_agree_on_sig_scope_reset; eauto.
         }
         assert (Hmid_src :
                   agree_on (sig_scope ssig)
                            dlt_mid
-                           (SIGPROOFS.inst_valuation dlt nsig inptyp ckty srcrst outtyp)).
+                           (SIGPROOFS.lat_valuation dlt nsig inptyp ckty srcrst outtyp)).
         {
           intros x Hin.
           symmetry.
@@ -2219,20 +2219,20 @@ Module Type SECNLUSSTCTRANSLATION
         assert (Hmid_tgt_inst :
                   agree_on (sig_scope ssig)
                            dlt_mid
-                           (SIGPROOFS.inst_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)).
+                           (SIGPROOFS.lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)).
         {
           eapply agree_on_trans; eauto.
         }
         assert (Hsat_ssig_inst :
                   listSatisfiable
-                    (SIGPROOFS.inst_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
+                    (SIGPROOFS.lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
                     ssig.(s_constraints)).
         {
           eapply listSatisfiable_ext; eauto.
         }
         assert (Hsat_sconst :
                   listSatisfiable
-                    (SIGPROOFS.inst_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
+                    (SIGPROOFS.lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
                     sconst).
         {
           eapply SIGPROOFS.generate_constraints_correct_inst; eauto.
@@ -2249,15 +2249,15 @@ Module Type SECNLUSSTCTRANSLATION
         }
         assert (Hagree_scope_final :
                   agree_on scope dlt
-                           (SIGPROOFS.inst_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)).
+                           (SIGPROOFS.lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)).
         {
           eapply agree_on_trans.
           + exact Hagree_rst_scope.
-          + eapply SIGPROOFS.inst_valuation_agree_on_scope; eauto.
+          + eapply SIGPROOFS.lat_valuation_agree_on_scope; eauto.
         }
         assert (Hagree_scope_final_sym :
                   agree_on scope
-                    (SIGPROOFS.inst_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
+                    (SIGPROOFS.lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
                     dlt).
         {
           intros x Hin.
@@ -2267,28 +2267,28 @@ Module Type SECNLUSSTCTRANSLATION
         }
         assert (Hsat_reset :
                   constraintSatisfiable
-                    (SIGPROOFS.inst_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
+                    (SIGPROOFS.lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
                     (srcrst, [rst_inst])).
         {
           unfold constraintSatisfiable, satisfiable.
           rewrite (hm_ext_agree_on_scoped_type
                      scope srcrst
-                     (SIGPROOFS.inst_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
+                     (SIGPROOFS.lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
                      dlt
                      Hsrcrstscope
                      Hagree_scope_final_sym).
           simpl.
-          rewrite SIGPROOFS.inst_valuation_outside_sig_scope by exact Hrstinst_notin_sig.
+          rewrite SIGPROOFS.lat_valuation_outside_sig_scope by exact Hrstinst_notin_sig.
           rewrite Hrstinst_eq.
           apply join_bound1.
         }
-        exists (SIGPROOFS.inst_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp).
+        exists (SIGPROOFS.lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp).
         split.
         - intros x Hin.
           transitivity (dlt_rst x).
           + exact (Hagree_rst_scope x Hin).
           + symmetry.
-            apply SIGPROOFS.inst_valuation_outside_sig_scope.
+            apply SIGPROOFS.lat_valuation_outside_sig_scope.
             exact (Hscopefresh_ssig x Hin).
         - constructor; [exact Hsat_reset|exact Hsat_sconst].
       Qed.

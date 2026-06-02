@@ -128,9 +128,9 @@ Module Type SECNLUSNONINTERFERENCE
                 get_mappings xs ty_env = Some outtyp ->
                 node_outputs_raw_spec_clocked all_nodes G envs aux_names
                   callee
-                  (inst_valuation dlt_sig callee_sig inptyp ckty
+                  (lat_valuation dlt_sig callee_sig inptyp ckty
                      [s_reset sig] outtyp)
-                  (inst_valuation dlt_raw callee_sig inptyp ckty
+                  (lat_valuation dlt_raw callee_sig inptyp ckty
                      [s_reset sig] outtyp) |- _ =>
               eapply Hrec; eauto
           end.
@@ -162,9 +162,9 @@ Module Type SECNLUSNONINTERFERENCE
                 get_mappings xs ty_env = Some outtyp ->
                 node_outputs_raw_spec_clocked all_nodes G envs aux_names
                   callee
-                  (inst_valuation dlt_sig callee_sig inptyp ckty
+                  (lat_valuation dlt_sig callee_sig inptyp ckty
                      ([rty] ⊔ rstty) outtyp)
-                  (inst_valuation dlt_raw callee_sig inptyp ckty
+                  (lat_valuation dlt_raw callee_sig inptyp ckty
                      ([rty] ⊔ rstty) outtyp) |- _ =>
               eapply Hrec; eauto
           end.

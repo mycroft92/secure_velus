@@ -986,7 +986,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
          Hgood Hgen dlt Hsat Hinfresh Hclkfresh_notin Hrstfresh_notin)
       as Hsat_sig.
     pose proof
-      (inst_valuation_outputs_eq
+      (lat_valuation_outputs_eq
          dlt sig inptyp ckty rstty outtyp
          Hfresh Hndscope HlenOut)
       as Hout_eq.
@@ -994,8 +994,8 @@ Module Type SECNLUSTYPINGCORRECTNESS
       (Forall2_nth_error_inv
          _ _
          (fun x v0 =>
-            inst_valuation dlt sig inptyp ckty rstty outtyp v0 =
-            inst_valuation dlt sig inptyp ckty rstty outtyp x)
+            lat_valuation dlt sig inptyp ckty rstty outtyp v0 =
+            lat_valuation dlt sig inptyp ckty rstty outtyp x)
          sig.(s_out) outtyp i y
          Hout_eq Hnthy)
       as (v' & Hnthv' & Hinst_out).
@@ -1014,10 +1014,10 @@ Module Type SECNLUSTYPINGCORRECTNESS
     assert (Hresetin : In sig.(s_reset) lhs).
     { eapply Hresetlhs; eauto. }
     assert (Hlowv_inst :
-              inst_valuation dlt sig inptyp ckty rstty outtyp v ⊑ t).
+              lat_valuation dlt sig inptyp ckty rstty outtyp v ⊑ t).
     {
       destruct Hfresh as [_ [_ [_ Houtfresh]]].
-      rewrite (inst_valuation_outside_sig_scope
+      rewrite (lat_valuation_outside_sig_scope
                  dlt sig inptyp ckty rstty outtyp v).
       - exact Hlowv.
       - unfold outputs_fresh in Houtfresh.
@@ -1026,7 +1026,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
         eapply nth_error_In_local; eauto.
     }
     assert (Hlowy :
-              inst_valuation dlt sig inptyp ckty rstty outtyp y ⊑ t).
+              lat_valuation dlt sig inptyp ckty rstty outtyp y ⊑ t).
     {
       rewrite <- Hinst_out.
       exact Hlowv_inst.
@@ -1036,15 +1036,15 @@ Module Type SECNLUSTYPINGCORRECTNESS
     specialize (Hsat_sig _ (find_correct _ _ _ Hfindlhs)).
     unfold constraintSatisfiable, satisfiable in Hsat_sig.
     simpl in Hsat_sig.
-    rewrite <- (inst_valuation_reset_eq
+    rewrite <- (lat_valuation_reset_eq
                   dlt sig inptyp ckty rstty outtyp
                   Hfresh Hndscope).
     apply order_trans with
-        (y := hm_ext (inst_valuation dlt sig inptyp ckty rstty outtyp) lhs).
+        (y := hm_ext (lat_valuation dlt sig inptyp ckty rstty outtyp) lhs).
     - apply hm_ext_list_in1.
       exact Hresetin.
     - apply order_trans with
-        (y := join (inst_valuation dlt sig inptyp ckty rstty outtyp y) bottom).
+        (y := join (lat_valuation dlt sig inptyp ckty rstty outtyp y) bottom).
       + exact Hsat_sig.
       + apply join_least_upper_bound.
         * exact Hlowy.
@@ -1105,7 +1105,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
          Hgood Hgen dlt Hsat Hinfresh Hclkfresh_notin Hrstfresh_notin)
       as Hsat_sig.
     pose proof
-      (inst_valuation_outputs_eq
+      (lat_valuation_outputs_eq
          dlt sig inptyp ckty rstty outtyp
          Hfresh Hndscope HlenOut)
       as Hout_eq.
@@ -1113,8 +1113,8 @@ Module Type SECNLUSTYPINGCORRECTNESS
       (Forall2_nth_error_inv
          _ _
          (fun x v0 =>
-            inst_valuation dlt sig inptyp ckty rstty outtyp v0 =
-            inst_valuation dlt sig inptyp ckty rstty outtyp x)
+            lat_valuation dlt sig inptyp ckty rstty outtyp v0 =
+            lat_valuation dlt sig inptyp ckty rstty outtyp x)
          sig.(s_out) outtyp i y
          Hout_eq Hnthy)
       as (v' & Hnthv' & Hinst_out).
@@ -1133,10 +1133,10 @@ Module Type SECNLUSTYPINGCORRECTNESS
     assert (Hclkin : In sig.(s_clk) lhs).
     { eapply Hclklhs; eauto. }
     assert (Hlowv_inst :
-              inst_valuation dlt sig inptyp ckty rstty outtyp v ⊑ t).
+              lat_valuation dlt sig inptyp ckty rstty outtyp v ⊑ t).
     {
       destruct Hfresh as [_ [_ [_ Houtfresh]]].
-      rewrite (inst_valuation_outside_sig_scope
+      rewrite (lat_valuation_outside_sig_scope
                  dlt sig inptyp ckty rstty outtyp v).
       - exact Hlowv.
       - unfold outputs_fresh in Houtfresh.
@@ -1145,7 +1145,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
         eapply nth_error_In_local; eauto.
     }
     assert (Hlowy :
-              inst_valuation dlt sig inptyp ckty rstty outtyp y ⊑ t).
+              lat_valuation dlt sig inptyp ckty rstty outtyp y ⊑ t).
     {
       rewrite <- Hinst_out.
       exact Hlowv_inst.
@@ -1155,15 +1155,15 @@ Module Type SECNLUSTYPINGCORRECTNESS
     specialize (Hsat_sig _ (find_correct _ _ _ Hfindlhs)).
     unfold constraintSatisfiable, satisfiable in Hsat_sig.
     simpl in Hsat_sig.
-    rewrite <- (inst_valuation_clk_eq
+    rewrite <- (lat_valuation_clk_eq
                   dlt sig inptyp ckty rstty outtyp
                   Hfresh Hndscope).
     apply order_trans with
-        (y := hm_ext (inst_valuation dlt sig inptyp ckty rstty outtyp) lhs).
+        (y := hm_ext (lat_valuation dlt sig inptyp ckty rstty outtyp) lhs).
     - apply hm_ext_list_in1.
       exact Hclkin.
     - apply order_trans with
-        (y := join (inst_valuation dlt sig inptyp ckty rstty outtyp y) bottom).
+        (y := join (lat_valuation dlt sig inptyp ckty rstty outtyp y) bottom).
       + exact Hsat_sig.
       + apply join_least_upper_bound.
         * exact Hlowy.

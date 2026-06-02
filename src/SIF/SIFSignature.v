@@ -1225,7 +1225,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       apply upd_ident_eq_upd_type_singleton; exact Hneq.
   Qed.
 
-  Definition inst_valuation
+  Definition lat_valuation
     (dlt: ident -> Lat.t) (sig: signature)
     (inp: list ST) (clk rst: ST) (out: list ident)
     : ident -> Lat.t :=
@@ -1237,13 +1237,13 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
          sig.(s_clk) clk)
       sig.(s_in) inp.
 
-  Lemma inst_valuation_agree_on_scope:
+  Lemma lat_valuation_agree_on_scope:
     forall dlt sig scope inp clk rst out,
       scope_fresh scope sig ->
-      agree_on scope dlt (inst_valuation dlt sig inp clk rst out).
+      agree_on scope dlt (lat_valuation dlt sig inp clk rst out).
   Proof.
     intros dlt sig scope inp clk rst out Hfresh.
-    unfold inst_valuation.
+    unfold lat_valuation.
     eapply agree_on_trans.
     - eapply upd_idents_rev_agree_on.
       eapply scope_fresh_notin_outputs; eauto.
@@ -1464,13 +1464,13 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
     apply ident_eqb_eq in Heq. subst x. contradiction.
   Qed.
 
-  Lemma inst_valuation_outside_sig_scope:
+  Lemma lat_valuation_outside_sig_scope:
     forall dlt sig inp clk rst out y,
       ~ In y (sig_scope sig) ->
-      inst_valuation dlt sig inp clk rst out y = dlt y.
+      lat_valuation dlt sig inp clk rst out y = dlt y.
   Proof.
     intros dlt sig inp clk rst out y Hnout.
-    unfold inst_valuation.
+    unfold lat_valuation.
     rewrite upd_types_rev_outside.
     2:{
       intro Hin.
@@ -1498,13 +1498,13 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       unfold sig_scope. apply in_or_app. right. apply in_or_app. left. exact Hin.
   Qed.
 
-  Lemma hm_ext_inst_valuation_on_fresh_type:
+  Lemma hm_ext_lat_valuation_on_fresh_type:
     forall dlt sig inp clk rst out ty,
       type_fresh (sig_scope sig) ty ->
-      hm_ext (inst_valuation dlt sig inp clk rst out) ty = hm_ext dlt ty.
+      hm_ext (lat_valuation dlt sig inp clk rst out) ty = hm_ext dlt ty.
   Proof.
     intros dlt sig inp clk rst out ty Hfresh.
-    unfold inst_valuation.
+    unfold lat_valuation.
     assert (Hagree :
               agree_on ty
                 (upd_type
@@ -1526,15 +1526,15 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
     eapply hm_ext_after_output_reset_clk_updates_on_fresh_type; eauto.
   Qed.
 
-  Lemma inst_valuation_outputs_eq:
+  Lemma lat_valuation_outputs_eq:
     forall dlt sig inp clk rst out,
       call_subst_fresh sig inp clk rst out ->
       NoDup (sig_scope sig) ->
       List.length sig.(s_out) = List.length out ->
       Forall2
         (fun x v =>
-           inst_valuation dlt sig inp clk rst out v =
-           inst_valuation dlt sig inp clk rst out x)
+           lat_valuation dlt sig inp clk rst out v =
+           lat_valuation dlt sig inp clk rst out x)
         sig.(s_out) out.
   Proof.
     intros dlt sig inp clk rst out Hfresh Hndscope Hlen.
@@ -1548,7 +1548,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
               s_reset := sreset;
               s_clk := sclk;
               s_constraints := sconstraints |}).
-    set (ival := inst_valuation dlt sigfull inp clk rst out).
+    set (ival := lat_valuation dlt sigfull inp clk rst out).
     destruct (sig_scope_nodup_decomp sigfull Hndscope)
       as [_ [Hnout [Hfreshin [Houtnotin _]]]].
     assert (Htail :
@@ -1583,7 +1583,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
                 ival x = upd_idents_rev dlt sout out x).
     {
       intros x Hinout.
-      unfold ival, inst_valuation.
+      unfold ival, lat_valuation.
       rewrite upd_types_rev_outside.
       2:{
         destruct (Houtsafe x Hinout) as [Hxin _].
@@ -1608,7 +1608,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
     {
       intros v Hinout.
       unfold ival.
-      eapply inst_valuation_outside_sig_scope.
+      eapply lat_valuation_outside_sig_scope.
       unfold outputs_fresh in Houtfresh.
       rewrite Forall_forall in Houtfresh.
       exact (Houtfresh _ Hinout).
@@ -1647,14 +1647,14 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
     eapply Hconv; eauto.
   Qed.
 
-  Lemma inst_valuation_inputs_eq:
+  Lemma lat_valuation_inputs_eq:
     forall dlt sig inp clk rst out,
       call_subst_fresh sig inp clk rst out ->
       NoDup (sig_scope sig) ->
       List.length sig.(s_in) = List.length inp ->
       Forall2
         (fun x ty =>
-           inst_valuation dlt sig inp clk rst out x = hm_ext dlt ty)
+           lat_valuation dlt sig inp clk rst out x = hm_ext dlt ty)
         sig.(s_in) inp.
   Proof.
     intros dlt [sname sin sout sreset sclk sconstraints] inp clk rst out
@@ -1722,7 +1722,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
                upd_type
                  (upd_type (upd_idents_rev dlt sout out) sreset rst)
                  sclk clk).
-        unfold inst_valuation.
+        unfold lat_valuation.
         simpl.
         unfold upd_type.
         rewrite ident_eqb_refl.
@@ -1796,7 +1796,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
           (IH Hndscope_tail
               ltac:(inversion Hndin; assumption)
               tys Hfresh_tail H0) as Htail.
-        cbn [inst_valuation] in Htail |- *.
+        cbn [lat_valuation] in Htail |- *.
         change
           (Forall2
              (fun x0 ty0 =>
@@ -1807,11 +1807,11 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
         * exact Htail.
   Qed.
 
-  Lemma inst_valuation_clk_eq:
+  Lemma lat_valuation_clk_eq:
     forall dlt sig inp clk rst out,
       call_subst_fresh sig inp clk rst out ->
       NoDup (sig_scope sig) ->
-      inst_valuation dlt sig inp clk rst out sig.(s_clk) = hm_ext dlt clk.
+      lat_valuation dlt sig inp clk rst out sig.(s_clk) = hm_ext dlt clk.
   Proof.
     intros dlt sig inp clk rst out Hfresh Hndscope.
     destruct Hfresh as [_ [Hclkfresh [_ _]]].
@@ -1826,18 +1826,18 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       apply in_or_app. right.
       simpl. now left.
     }
-    unfold inst_valuation.
+    unfold lat_valuation.
     rewrite upd_types_rev_outside by exact Hclknotin.
     unfold upd_type.
     rewrite ident_eqb_refl.
     eapply hm_ext_after_output_reset_updates_on_fresh_type; eauto.
   Qed.
 
-  Lemma inst_valuation_reset_eq:
+  Lemma lat_valuation_reset_eq:
     forall dlt sig inp clk rst out,
       call_subst_fresh sig inp clk rst out ->
       NoDup (sig_scope sig) ->
-      inst_valuation dlt sig inp clk rst out sig.(s_reset) = hm_ext dlt rst.
+      lat_valuation dlt sig inp clk rst out sig.(s_reset) = hm_ext dlt rst.
   Proof.
     intros dlt sig inp clk rst out Hfresh Hndscope.
     destruct Hfresh as [_ [_ [Hrstfresh _]]].
@@ -1852,7 +1852,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       apply in_or_app. right.
       simpl. now right; left.
     }
-    unfold inst_valuation.
+    unfold lat_valuation.
     rewrite upd_types_rev_outside by exact Hrstnotin.
     rewrite upd_type_outside.
     2:{
@@ -1912,7 +1912,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       + eapply IH; eauto.
   Qed.
 
-  Lemma inst_valuation_same_sig_agree_on_sig_scope:
+  Lemma lat_valuation_same_sig_agree_on_sig_scope:
     forall sig scope dlt dlt' inp clk rst out,
       NoDup (sig_scope sig) ->
       scope_fresh scope sig ->
@@ -1922,25 +1922,25 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       List.length sig.(s_in) = List.length inp ->
       List.length sig.(s_out) = List.length out ->
       agree_on (sig_scope sig)
-               (inst_valuation dlt sig inp clk rst out)
-               (inst_valuation dlt' sig inp clk rst out).
+               (lat_valuation dlt sig inp clk rst out)
+               (lat_valuation dlt' sig inp clk rst out).
   Proof.
     intros sig scope dlt dlt' inp clk rst out
            Hndscope Hscopefresh Hscoped Hfresh HagreeScope HlenIn HlenOut
            x Hin.
     destruct Hscoped as [[HinpScope [HckScope HoutScope]] HrstScope].
     assert (HinstScope :
-              agree_on scope dlt (inst_valuation dlt sig inp clk rst out)).
-    { eapply inst_valuation_agree_on_scope; eauto. }
+              agree_on scope dlt (lat_valuation dlt sig inp clk rst out)).
+    { eapply lat_valuation_agree_on_scope; eauto. }
     assert (HinstScope' :
-              agree_on scope dlt' (inst_valuation dlt' sig inp clk rst out)).
-    { eapply inst_valuation_agree_on_scope; eauto. }
+              agree_on scope dlt' (lat_valuation dlt' sig inp clk rst out)).
+    { eapply lat_valuation_agree_on_scope; eauto. }
     unfold sig_scope in Hin.
     apply in_app_iff in Hin.
     destruct Hin as [Hin|Hin].
-    - pose proof (inst_valuation_inputs_eq dlt sig inp clk rst out Hfresh Hndscope HlenIn)
+    - pose proof (lat_valuation_inputs_eq dlt sig inp clk rst out Hfresh Hndscope HlenIn)
         as HsrcInputs.
-      pose proof (inst_valuation_inputs_eq dlt' sig inp clk rst out Hfresh Hndscope HlenIn)
+      pose proof (lat_valuation_inputs_eq dlt' sig inp clk rst out Hfresh Hndscope HlenIn)
         as HtgtInputs.
       destruct (SecTypes.In_nth_error_ex _ _ _ Hin) as [n Hnth].
       destruct (SecTypes.Forall2_nth_error_inv _ _ _ _ _ _ _ HsrcInputs Hnth)
@@ -1955,9 +1955,9 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       eapply SecTypes.nth_error_In_local. exact Hnthty.
     - apply in_app_iff in Hin.
       destruct Hin as [Hin|Hin].
-      + pose proof (inst_valuation_outputs_eq dlt sig inp clk rst out Hfresh Hndscope HlenOut)
+      + pose proof (lat_valuation_outputs_eq dlt sig inp clk rst out Hfresh Hndscope HlenOut)
           as HsrcOuts.
-        pose proof (inst_valuation_outputs_eq dlt' sig inp clk rst out Hfresh Hndscope HlenOut)
+        pose proof (lat_valuation_outputs_eq dlt' sig inp clk rst out Hfresh Hndscope HlenOut)
           as HtgtOuts.
         destruct (SecTypes.In_nth_error_ex _ _ _ Hin) as [n Hnth].
         destruct (SecTypes.Forall2_nth_error_inv _ _ _ _ _ _ _ HsrcOuts Hnth)
@@ -1982,28 +1982,28 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
              eapply SecTypes.nth_error_In_local. exact Hnthv.
       + simpl in Hin.
         destruct Hin as [Heq|[Heq|[]]]; subst x.
-        * rewrite (inst_valuation_clk_eq dlt sig inp clk rst out Hfresh Hndscope).
-          rewrite (inst_valuation_clk_eq dlt' sig inp clk rst out Hfresh Hndscope).
+        * rewrite (lat_valuation_clk_eq dlt sig inp clk rst out Hfresh Hndscope).
+          rewrite (lat_valuation_clk_eq dlt' sig inp clk rst out Hfresh Hndscope).
           eapply hm_ext_agree_on_scoped_type; eauto.
-        * rewrite (inst_valuation_reset_eq dlt sig inp clk rst out Hfresh Hndscope).
-          rewrite (inst_valuation_reset_eq dlt' sig inp clk rst out Hfresh Hndscope).
+        * rewrite (lat_valuation_reset_eq dlt sig inp clk rst out Hfresh Hndscope).
+          rewrite (lat_valuation_reset_eq dlt' sig inp clk rst out Hfresh Hndscope).
           eapply hm_ext_agree_on_scoped_type; eauto.
   Qed.
 
-  Lemma inst_valuation_fields_agree_eq:
+  Lemma lat_valuation_fields_agree_eq:
     forall dlt nsig ssig inp clk rst out x,
       signature_fields_agree nsig ssig ->
-      inst_valuation dlt nsig inp clk rst out x =
-      inst_valuation dlt ssig inp clk rst out x.
+      lat_valuation dlt nsig inp clk rst out x =
+      lat_valuation dlt ssig inp clk rst out x.
   Proof.
     intros dlt nsig ssig inp clk rst out x Hfields.
     destruct Hfields as [HinEq [HoutEq [HrstEq HclkEq]]].
-    unfold inst_valuation.
+    unfold lat_valuation.
     simpl.
     now rewrite HinEq, HoutEq, HrstEq, HclkEq.
   Qed.
 
-  Lemma inst_valuation_fields_agree_on_sig_scope:
+  Lemma lat_valuation_fields_agree_on_sig_scope:
     forall nsig ssig scope dlt dlt' inp clk rst out,
       signature_fields_agree nsig ssig ->
       NoDup (sig_scope nsig) ->
@@ -2014,24 +2014,24 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       List.length nsig.(s_in) = List.length inp ->
       List.length nsig.(s_out) = List.length out ->
       agree_on (sig_scope ssig)
-               (inst_valuation dlt nsig inp clk rst out)
-               (inst_valuation dlt' ssig inp clk rst out).
+               (lat_valuation dlt nsig inp clk rst out)
+               (lat_valuation dlt' ssig inp clk rst out).
   Proof.
     intros nsig ssig scope dlt dlt' inp clk rst out
            Hfields Hndscope Hscopefresh Hscoped Hfresh Hagree HlenIn HlenOut.
     pose proof
-      (inst_valuation_same_sig_agree_on_sig_scope
+      (lat_valuation_same_sig_agree_on_sig_scope
          nsig scope dlt dlt' inp clk rst out
          Hndscope Hscopefresh Hscoped Hfresh Hagree HlenIn HlenOut)
       as Hsame.
     unfold agree_on in Hsame |- *.
     intros x Hin.
     rewrite <- (signature_fields_agree_scope_eq _ _ Hfields) in Hin.
-    rewrite <- (inst_valuation_fields_agree_eq dlt' nsig ssig inp clk rst out x Hfields).
+    rewrite <- (lat_valuation_fields_agree_eq dlt' nsig ssig inp clk rst out x Hfields).
     exact (Hsame x Hin).
   Qed.
 
-  Lemma inst_valuation_fields_agree_on_sig_scope_reset:
+  Lemma lat_valuation_fields_agree_on_sig_scope_reset:
     forall nsig ssig scope dlt dlt' inp clk srcrst rst_inst out,
       signature_fields_agree nsig ssig ->
       NoDup (sig_scope nsig) ->
@@ -2046,8 +2046,8 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       List.length nsig.(s_in) = List.length inp ->
       List.length nsig.(s_out) = List.length out ->
       agree_on (sig_scope ssig)
-               (inst_valuation dlt nsig inp clk srcrst out)
-               (inst_valuation dlt' ssig inp clk (rst_inst :: nil) out).
+               (lat_valuation dlt nsig inp clk srcrst out)
+               (lat_valuation dlt' ssig inp clk (rst_inst :: nil) out).
   Proof.
     intros nsig ssig scope dlt dlt' inp clk srcrst rst_inst out
            Hfields Hndscope Hscopefresh Hscoped Hsrcrstscope
@@ -2056,16 +2056,16 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
     destruct Hscoped as [HinpScope [HckScope HoutScope]].
     destruct Hfields as [HinEq [HoutEq [HrstEq HclkEq]]].
     assert (HinstScope :
-              agree_on scope dlt (inst_valuation dlt nsig inp clk srcrst out)).
-    { eapply inst_valuation_agree_on_scope; eauto. }
+              agree_on scope dlt (lat_valuation dlt nsig inp clk srcrst out)).
+    { eapply lat_valuation_agree_on_scope; eauto. }
     assert (Hndscope_ssig : NoDup (sig_scope ssig)).
     { rewrite <- (signature_fields_agree_scope_eq _ _ (conj HinEq (conj HoutEq (conj HrstEq HclkEq)))). exact Hndscope. }
     unfold sig_scope in Hin.
     apply in_app_iff in Hin.
     destruct Hin as [Hin|Hin].
-    - pose proof (inst_valuation_inputs_eq dlt nsig inp clk srcrst out Hfresh_nsig Hndscope HlenIn)
+    - pose proof (lat_valuation_inputs_eq dlt nsig inp clk srcrst out Hfresh_nsig Hndscope HlenIn)
         as HsrcInputs.
-      pose proof (inst_valuation_inputs_eq dlt' ssig inp clk (rst_inst :: nil) out Hfresh_ssig Hndscope_ssig)
+      pose proof (lat_valuation_inputs_eq dlt' ssig inp clk (rst_inst :: nil) out Hfresh_ssig Hndscope_ssig)
         as HtgtInputs0.
       assert (HlenIn_ssig : List.length ssig.(s_in) = List.length inp).
       { now rewrite <- HinEq. }
@@ -2086,9 +2086,9 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       eapply SecTypes.nth_error_In_local. exact Hnthty.
     - apply in_app_iff in Hin.
       destruct Hin as [Hin|Hin].
-      + pose proof (inst_valuation_outputs_eq dlt nsig inp clk srcrst out Hfresh_nsig Hndscope HlenOut)
+      + pose proof (lat_valuation_outputs_eq dlt nsig inp clk srcrst out Hfresh_nsig Hndscope HlenOut)
           as HsrcOuts.
-        pose proof (inst_valuation_outputs_eq dlt' ssig inp clk (rst_inst :: nil) out Hfresh_ssig Hndscope_ssig)
+        pose proof (lat_valuation_outputs_eq dlt' ssig inp clk (rst_inst :: nil) out Hfresh_ssig Hndscope_ssig)
           as HtgtOuts0.
         assert (HlenOut_ssig : List.length ssig.(s_out) = List.length out).
         { now rewrite <- HoutEq. }
@@ -2114,7 +2114,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
              eapply HoutScope.
              eapply SecTypes.nth_error_In_local. exact Hnthv.
           -- symmetry.
-             eapply inst_valuation_outside_sig_scope.
+             eapply lat_valuation_outside_sig_scope.
              destruct Hfresh_ssig as [_ [_ [_ Houtfresh_ssig]]].
              unfold outputs_fresh in Houtfresh_ssig.
              rewrite Forall_forall in Houtfresh_ssig.
@@ -2122,17 +2122,17 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
              eapply SecTypes.nth_error_In_local. exact Hnthv.
       + simpl in Hin.
         destruct Hin as [Heq|[Heq|[]]]; subst x.
-        * replace (inst_valuation dlt nsig inp clk srcrst out (s_clk ssig))
-            with (inst_valuation dlt nsig inp clk srcrst out (s_clk nsig))
+        * replace (lat_valuation dlt nsig inp clk srcrst out (s_clk ssig))
+            with (lat_valuation dlt nsig inp clk srcrst out (s_clk nsig))
             by now rewrite HclkEq.
-          rewrite (inst_valuation_clk_eq dlt nsig inp clk srcrst out Hfresh_nsig Hndscope).
-          rewrite (inst_valuation_clk_eq dlt' ssig inp clk (rst_inst :: nil) out Hfresh_ssig Hndscope_ssig).
+          rewrite (lat_valuation_clk_eq dlt nsig inp clk srcrst out Hfresh_nsig Hndscope).
+          rewrite (lat_valuation_clk_eq dlt' ssig inp clk (rst_inst :: nil) out Hfresh_ssig Hndscope_ssig).
           eapply hm_ext_agree_on_scoped_type; eauto.
-        * replace (inst_valuation dlt nsig inp clk srcrst out (s_reset ssig))
-            with (inst_valuation dlt nsig inp clk srcrst out (s_reset nsig))
+        * replace (lat_valuation dlt nsig inp clk srcrst out (s_reset ssig))
+            with (lat_valuation dlt nsig inp clk srcrst out (s_reset nsig))
             by now rewrite HrstEq.
-          rewrite (inst_valuation_reset_eq dlt nsig inp clk srcrst out Hfresh_nsig Hndscope).
-          rewrite (inst_valuation_reset_eq dlt' ssig inp clk (rst_inst :: nil) out Hfresh_ssig Hndscope_ssig).
+          rewrite (lat_valuation_reset_eq dlt nsig inp clk srcrst out Hfresh_nsig Hndscope).
+          rewrite (lat_valuation_reset_eq dlt' ssig inp clk (rst_inst :: nil) out Hfresh_ssig Hndscope_ssig).
           simpl.
           rewrite <- join_bottom_eq1.
           symmetry.
@@ -2456,8 +2456,8 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       NoDup (sig_scope sig) ->
       call_subst_fresh sig inp clk rst out ->
       generate_constraints sig inp clk rst out st = OK (cns, st') ->
-      listSatisfiable (inst_valuation dlt sig inp clk rst out) sig.(s_constraints) ->
-      listSatisfiable (inst_valuation dlt sig inp clk rst out) cns.
+      listSatisfiable (lat_valuation dlt sig inp clk rst out) sig.(s_constraints) ->
+      listSatisfiable (lat_valuation dlt sig inp clk rst out) cns.
   Proof.
     intros sig inp clk rst out cns st st' dlt Hndscope Hfresh Hgen Hsat0.
     destruct Hfresh as [Hinfresh [Hclkfresh [Hrstfresh Houtfresh]]].
@@ -2468,20 +2468,20 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
     eapply sec_bind_inv in Hgen as (c4 & st4 & HoutSub & Hreorder).
     pose proof (subst_constraints_inp_map_length _ _ _ _ _ _ HinpSub) as HlenIn.
     pose proof (subst_constraints_out_map_length _ _ _ _ _ _ HoutSub) as HlenOut.
-    set (ival := inst_valuation dlt sig inp clk rst out).
+    set (ival := lat_valuation dlt sig inp clk rst out).
     assert (Hfresh_all : call_subst_fresh sig inp clk rst out).
     { repeat split; assumption. }
-    pose proof (inst_valuation_inputs_eq dlt sig inp clk rst out Hfresh_all Hndscope HlenIn)
+    pose proof (lat_valuation_inputs_eq dlt sig inp clk rst out Hfresh_all Hndscope HlenIn)
       as Hinputs_eq.
     assert (Hinput_cond :
               forall x ty,
-                inst_valuation dlt sig inp clk rst out x = hm_ext dlt ty ->
+                lat_valuation dlt sig inp clk rst out x = hm_ext dlt ty ->
                 type_fresh (sig_scope sig) ty ->
                 inp_replace_cond ival x ty).
     {
       intros x ty Heq Hty.
       unfold inp_replace_cond, ival.
-      rewrite (hm_ext_inst_valuation_on_fresh_type dlt sig inp clk rst out ty Hty).
+      rewrite (hm_ext_lat_valuation_on_fresh_type dlt sig inp clk rst out ty Hty).
       rewrite Heq.
       exact (order_refl _ _ (eq_refl (hm_ext dlt ty))).
     }
@@ -2491,7 +2491,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
                 forall xs ys,
                   Forall2
                     (fun x ty =>
-                       inst_valuation dlt sig inp clk rst out x = hm_ext dlt ty)
+                       lat_valuation dlt sig inp clk rst out x = hm_ext dlt ty)
                     xs ys ->
                   types_fresh (sig_scope sig) ys ->
                   Forall2 (inp_replace_cond ival) xs ys).
@@ -2515,9 +2515,9 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
     }
     assert (Hsat2 : listSatisfiable ival c2).
     {
-      pose proof (inst_valuation_clk_eq dlt sig inp clk rst out Hfresh_all Hndscope)
+      pose proof (lat_valuation_clk_eq dlt sig inp clk rst out Hfresh_all Hndscope)
         as HclkEq.
-      pose proof (hm_ext_inst_valuation_on_fresh_type dlt sig inp clk rst out clk Hclkfresh)
+      pose proof (hm_ext_lat_valuation_on_fresh_type dlt sig inp clk rst out clk Hclkfresh)
         as HclkFreshEq.
       eapply subst_ident_in_constraints_correct.
       - exact HclkSub.
@@ -2529,9 +2529,9 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
     }
     assert (Hsat3 : listSatisfiable ival c3).
     {
-      pose proof (inst_valuation_reset_eq dlt sig inp clk rst out Hfresh_all Hndscope)
+      pose proof (lat_valuation_reset_eq dlt sig inp clk rst out Hfresh_all Hndscope)
         as HrstEq.
-      pose proof (hm_ext_inst_valuation_on_fresh_type dlt sig inp clk rst out rst Hrstfresh)
+      pose proof (hm_ext_lat_valuation_on_fresh_type dlt sig inp clk rst out rst Hrstfresh)
         as HrstFreshEq.
       eapply subst_ident_in_constraints_correct.
       - exact HrstSub.
@@ -2546,7 +2546,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       eapply subst_constraints_out_map_correct.
       - exact HoutSub.
       - exact Hsat3.
-      - eapply inst_valuation_outputs_eq.
+      - eapply lat_valuation_outputs_eq.
         * exact Hfresh_all.
         * exact Hndscope.
         * exact HlenOut.
