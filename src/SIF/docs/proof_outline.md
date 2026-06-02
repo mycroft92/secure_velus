@@ -18,8 +18,6 @@ fit together.
 - `SecTypes.v`
   valuation agreement, constraint scopedness, and satisfiability-preservation
   combinators.
-- `SIFTactics.v`
-  proof-script utilities.
 
 ## Naming And Local Typing
 
