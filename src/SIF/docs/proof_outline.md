@@ -9,7 +9,7 @@ fit together.
 
 - `Helpers.v`
   list and positivity lemmas used throughout the proofs.
-- `SimpleListTypes.v`, `SymTypes.v`
+- `SymTypes.v`
   symbolic security types and list-level utilities on them.
 - `SecLattice.v`
   abstract lattice interface and derived lattice lemmas.
