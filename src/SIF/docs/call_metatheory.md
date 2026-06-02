@@ -67,7 +67,7 @@ The ordinary-call theorem is:
 Its proof has three stages.
 
 1. Use `generate_constraints_complete_good` to replay the instantiated source
-   call block back to the stored source signature under `inst_valuation`.
+   call block back to the stored source signature under `lat_valuation`.
 2. Apply the stored relation `signatures_preserved` on that replay valuation.
 3. Use `generate_constraints_correct_inst` to turn the resulting target stored
    satisfiability into satisfiability of the instantiated target call block.

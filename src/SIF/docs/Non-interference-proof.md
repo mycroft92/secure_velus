@@ -177,7 +177,7 @@ inputs.
 
 It then applies the recursive `node_security` witness for the callee, but under
 the instantiated valuations
-`inst_valuation dlt_sig ...` and `inst_valuation dlt_raw ...`.  The callee
+`lat_valuation dlt_sig ...` and `lat_valuation dlt_raw ...`.  The callee
 gives low-equivalent outputs, and the helper lemmas transport that result back
 to the caller-side output variables.
 

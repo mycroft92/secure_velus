@@ -53,7 +53,7 @@ well formed and indexed by the caller outputs.
 
 ## Replay Valuation
 
-`inst_valuation` reconstructs the callee-side lattice valuation induced by one
+`lat_valuation` reconstructs the callee-side lattice valuation induced by one
 concrete call.  It is the bridge between:
 
 - satisfiability of the stored signature constraints, and
@@ -61,12 +61,12 @@ concrete call.  It is the bridge between:
 
 The important replay lemmas are:
 
-- `inst_valuation_agree_on_scope`
-- `inst_valuation_outputs_eq`
-- `inst_valuation_inputs_eq`
-- `inst_valuation_clk_eq`
-- `inst_valuation_reset_eq`
-- `inst_valuation_fields_agree_on_sig_scope`
+- `lat_valuation_agree_on_scope`
+- `lat_valuation_outputs_eq`
+- `lat_valuation_inputs_eq`
+- `lat_valuation_clk_eq`
+- `lat_valuation_reset_eq`
+- `lat_valuation_fields_agree_on_sig_scope`
 
 These lemmas say that the replay valuation behaves exactly like the caller's
 valuation on the callee's visible scope, while remaining stable outside that
@@ -80,7 +80,7 @@ scope when freshness side conditions hold.
   proves that scoped actuals yield scoped instantiated constraints.
 - `generate_constraints_correct_inst`
   transports satisfiability from the stored signature constraints to the
-  generated call constraints under `inst_valuation`.
+  generated call constraints under `lat_valuation`.
 - `generate_constraints_complete_good`
   performs the converse transport for well-formed generated signatures.
 
