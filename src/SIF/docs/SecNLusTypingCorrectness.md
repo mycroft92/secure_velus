@@ -23,17 +23,20 @@ replaying calls through them.
 ## Main Theorems
 
 - `generated_node_simplify_ready_from_local_env`
-  shows that the raw generated constraint list can be simplified into the
-  stored source signature in the form expected by the signature layer.
+  proves the raw generated equation constraints are well formed and that the
+  simplified-away locals do not leak back into the stored visible scope.
 - `generate_node_sig_good_from_local_env`
-  proves `signature_good` for a generated NLustre signature.
+  proves one generated NLustre signature satisfies the signature layer's main
+  replay invariant `signature_good`.
 - `generate_node_sig_scope_nodup_from_local_env`
-  proves `NoDup (signature_scope sig)` for that same signature.
+  proves the visible interface of that generated signature has no duplicate
+  identifiers.
 - `generate_node_sig_scoped_env_scoped`
-  packages generated source signature scopedness through the node-scoped
-  environment interface.
-- `node_scope_fresh_in_env_from_bounds` and related lemmas derive freshness of
-  the current caller scope from the name-generation bounds.
+  re-expresses source-signature scopedness through the node-scoped environment
+  API used by the rest of the development.
+- `node_scope_fresh_in_env_from_bounds` and related lemmas
+  derive that a current node's visible generated names are fresh from earlier
+  signatures by using the monotone fresh-name bounds from `NameInterface.v`.
 
 ## Why The Freshness Lemmas Matter
 

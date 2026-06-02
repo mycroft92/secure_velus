@@ -20,16 +20,16 @@ target side is structurally well behaved before the cross-phase argument starts.
 ## Main Theorems
 
 - `generate_reset_env_range`
-  proves that every successful reset-environment lookup returns a generated
-  `sec_reset` identifier.
+  proves every generated reset-environment entry lives in the dedicated
+  `sec_reset` namespace.
 - `generate_reset_env_injective`
-  proves that two reset-call keys cannot map to the same generated reset name.
+  proves distinct reset-call keys receive distinct generated reset identifiers.
 - `generate_sys_signature_scoped_env_scoped`
-  packages scopedness for generated STC signatures through the node-scoped
-  environment interface.
+  packages target-signature scopedness through the same node-scoped environment
+  interface used by the translation proof.
 - `generated_sys_signature_scope_sec`
-  proves that every visible identifier in a generated target signature lies in
-  the shared `sec` namespace.
+  proves the visible part of a generated STC signature stays in the ordinary
+  shared `sec` namespace, not in the private reset namespace.
 
 ## Downstream Use
 

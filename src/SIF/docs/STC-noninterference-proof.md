@@ -9,18 +9,22 @@ systems, not arbitrary STC systems.
 The main theorem is:
 
 - `translated_system_noninterference_outputs`
+  says two translated STC executions of the same secure source node have
+  low-equivalent outputs whenever their translated inputs are low-equivalent
+  and their base clocks agree.
 
 ## Core Definitions
 
 - `tuple_stream_low_eq`
-  is the target-facing low-equivalence relation on STC tuple streams.
+  says two STC input or output tuple streams agree pointwise on every
+  translated variable that is low at the observation threshold.
 - `translated_system_behavior`
-  states that an observed STC behavior comes from an NLustre memory-semantics
-  run together with the translated `initial_state` and `loop` witnesses.
+  says an observed STC behavior really is the translation of some NLustre
+  memory-semantics execution, together with the translated `initial_state` and
+  `loop` witnesses.
 - `system_security`
-  packages the translated-system identity, source and target signature lookups,
-  `Signature_head_consistent`, and the underlying source
-  `node_security` witness.
+  packages the translated system, aligned source/target signature lookups,
+  `Signature_head_consistent`, and the underlying secure source node witness.
 
 The theorem is therefore phrased entirely in terms of translated STC systems,
 while keeping the source proof obligations hidden inside `system_security`.
@@ -30,7 +34,11 @@ while keeping the source proof obligations hidden inside `system_security`.
 Two small conversion lemmas connect the source and target observation formats:
 
 - `history_low_eq_of_tuple_stream_low_eq`
+  converts low-equivalent target tuple streams into the history relation needed
+  by the source NLustre theorem.
 - `tuple_stream_low_eq_of_history_low_eq`
+  converts the source theorem's history result back into target tuple-stream
+  equality.
 
 They let the proof move back and forth between:
 

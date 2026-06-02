@@ -9,33 +9,52 @@ facts used by every later typing and preservation proof.
 
 ## Data Model
 
-- `node_aux_names` stores the generated clock and reset identifiers for one
-  node.
-- `local_sec_env` maps one node's raw inputs, outputs, and locals to generated
-  security identifiers.
-- `node_scoped_env` maps node names to their `local_sec_env`.
-- `find_node_env` and `get_node_aux` recover the generated data for one node.
+- `node_aux_names`
+  stores the generated clock and reset identifiers that belong to one node.
+- `local_sec_env`
+  is the per-node map from raw Lustre variables to generated security names.
+- `node_scoped_env`
+  is the outer map from node names to their own local generated environments.
+- `find_node_env`
+  looks up the generated local environment for one node name.
+- `get_node_aux`
+  recovers the generated clock/reset pair recorded for one node.
 
 The module keeps node-local names local.  Two different nodes may reuse the
 same raw variable name because the outer environment is keyed by node name.
 
 ## Generation Pipeline
 
-1. `generate_local_env_for_node` allocates one node's local environment and its
-   clock/reset names.
-2. `generate_node_scoped_env'` folds that step over a node list and builds the
-   full `node_scoped_env`.
-3. `generate_node_scoped_env` exposes the top-level node-scoped generator.
-4. `generate_node_env` provides a flat environment interface for the parts of
-   the development that only need a single shared map.
+1. `generate_local_env_for_node`
+   allocates fresh security names for one node's inputs, outputs, locals,
+   clock, and reset identifiers.
+2. `generate_node_scoped_env'`
+   folds that local step over a node list while storing each node's environment
+   under its node name.
+3. `generate_node_scoped_env`
+   runs the fold from the empty environment and exposes the finished node-keyed
+   environment plus auxiliary names.
+4. `generate_node_env`
+   runs the flat global allocator used by proofs that only need one shared raw
+   variable map instead of the node-keyed view.
 
 ## Core Lookup Interface
 
-- `get_mappings` looks up a list of raw identifiers in a local environment.
-- `get_mappings_from_node` performs the same lookup on `(ident * A)` lists such
-  as node inputs, outputs, and locals.
-- `get_mappings_in`, `get_mappings_In`, and related lemmas convert successful
-  bulk lookups back into individual `Env.find` facts.
+- `get_mappings`
+  bulk-looks up a plain list of raw identifiers and returns their generated
+  names in the same order.
+- `get_mappings_from_node`
+  does the same for `(ident * A)` lists, which is the shape used by node
+  inputs, outputs, and locals.
+- `get_mappings_in`
+  says every source identifier present in a successful bulk lookup really comes
+  from a matching `Env.find`.
+- `get_mappings_from_node_In`
+  runs that argument in the opposite direction: every generated identifier in a
+  successful result came from some raw variable in the original node list.
+- `get_mappings_In` and related lemmas
+  are the bookkeeping bridge between list-level lookup results and pointwise
+  environment facts used later in proofs.
 
 These lookup lemmas are what let the typing and noninterference proofs move
 between list-level interfaces and pointwise environment facts.
@@ -44,24 +63,46 @@ between list-level interfaces and pointwise environment facts.
 
 The main theorem groups are:
 
-- Split lemmas:
-  `generate_node_scoped_env'_app_inv`,
-  `generate_node_scoped_env'_split_node`,
-  `generate_node_env'_app_inv`,
-  `generate_node_env'_split_node`.
-- Preservation lemmas:
-  `fresh_insert_preserves_find`,
-  `fresh_map_list_preserves_find`,
-  `generate_node_scoped_env'_preserves_find`.
-- Injectivity and range:
-  `generate_local_env_for_node_injective`,
-  `generate_node_env_injective`,
-  `generate_local_env_for_node_sec_range`,
-  `generate_node_env_sec_range`.
-- Bounds and freshness:
-  `generate_local_env_for_node_bounded`,
-  `generate_local_env_for_node_fresh_from_bound`,
-  `generate_node_scoped_env'_bounded`.
+- `generate_node_scoped_env'_app_inv`
+  splits a successful run on `ns1 ++ ns2` into the exact intermediate state
+  reached after `ns1` and the tail run on `ns2`.
+- `generate_node_scoped_env'_split_node`
+  isolates the local generation step for one chosen node inside a larger
+  successful node-scoped pass.
+- `generate_node_env'_app_inv`
+  gives the same successful-split decomposition for the flat global generator.
+- `generate_node_env'_split_node`
+  isolates one node's flat-name generation step inside a larger successful
+  global run.
+- `fresh_insert_preserves_find`
+  says inserting one fresh generated name does not change existing lookup
+  results for other keys.
+- `fresh_map_list_preserves_find`
+  lifts that stability fact across a whole list of fresh insertions.
+- `generate_node_scoped_env'_preserves_find`
+  says once a node environment has been inserted, later node generation does
+  not change that stored mapping.
+- `generate_local_env_for_node_injective`
+  proves one node-local environment never maps two raw names to the same
+  generated security identifier.
+- `generate_node_env_injective`
+  lifts that injectivity fact to the flat environment generated for the whole
+  program.
+- `generate_local_env_for_node_sec_range`
+  proves every identifier generated for one node lives in the ordinary `sec`
+  namespace.
+- `generate_node_env_sec_range`
+  gives the same namespace-range guarantee for the whole flat program
+  environment.
+- `generate_local_env_for_node_bounded`
+  says names generated for one node stay below the final fresh-state bound
+  returned by that node's generation run.
+- `generate_local_env_for_node_fresh_from_bound`
+  turns the bound fact around: any later `sec` gensym is fresh from that node's
+  already-generated names.
+- `generate_node_scoped_env'_bounded`
+  lifts the same bound discipline to the entire node-scoped environment after a
+  successful global pass.
 
 Together these results say:
 

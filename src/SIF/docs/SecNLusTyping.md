@@ -43,18 +43,32 @@ global and instantiates it through `SIFSignature.generate_constraints`.
 
 ## Main Theorem Families
 
-- Shape and well-formedness:
-  `generate_eqn_constraint_shape`,
-  `generate_eqns_constraints_shape`,
-  `generate_eqns_constraints_wf`,
-  `generate_node_eqns_constraints_wf`.
-- Scopedness:
-  `generate_eqn_constraint_scoped`,
-  `generate_eqns_constraints_scoped`,
-  `generate_node_sig_scoped`,
-  `generate_all_signatures_scoped`,
-  `generate_node_sig_scoped_env`,
-  `generate_all_signatures_scoped_env`.
+- `generate_eqn_constraint_shape`
+  says one generated equation block defines exactly the variables of that
+  equation and does so with well-formed singleton right-hand sides.
+- `generate_eqns_constraints_shape`
+  lifts the same shape guarantee to the full list of node equations.
+- `generate_eqns_constraints_wf`
+  extracts the well-formedness part of that shape theorem for a whole equation
+  list.
+- `generate_node_eqns_constraints_wf`
+  packages the same well-formedness fact at node level.
+- `generate_eqn_constraint_scoped`
+  proves one generated equation block only mentions identifiers from the
+  generated node scope.
+- `generate_eqns_constraints_scoped`
+  lifts that scopedness fact to the entire node equation list.
+- `generate_node_sig_scoped`
+  proves the simplified stored source signature only mentions identifiers from
+  its visible interface.
+- `generate_all_signatures_scoped`
+  lifts source-signature scopedness to the whole generated NLustre global.
+- `generate_node_sig_scoped_env`
+  is the node-scoped entry point that recovers the node's generated local
+  environment before building one source signature.
+- `generate_all_signatures_scoped_env`
+  is the top-level node-scoped global generator used downstream by translation
+  and noninterference.
 
 The shape lemmas show that generated raw constraints have the expected single
 target structure.  The scopedness lemmas show that every generated identifier

@@ -38,16 +38,28 @@ meant to be compared with the NLustre signature.
 
 ## Main Theorem Families
 
-- Reset-key scopedness:
-  `trconstr_reset_keys`,
-  `trconstrs_reset_keys`,
-  `generate_trconstr_constraint_scoped_on_keys`,
-  `generate_trconstrs_constraints_scoped_on_keys`.
-- Signature scopedness:
-  `generate_sys_signature_scoped`,
-  `generate_all_sys_signatures_scoped`,
-  `generate_sys_signature_scoped_env`,
-  `generate_all_sys_signatures_scoped_env`.
+- `trconstr_reset_keys`
+  extracts exactly which reset-instance keys one translated STC transition
+  constraint reads.
+- `trconstrs_reset_keys`
+  accumulates those reset keys across a whole translated transition block.
+- `generate_trconstr_constraint_scoped_on_keys`
+  says one generated translated constraint block is scoped once the proof
+  includes the visible scope plus the reset keys that block may read.
+- `generate_trconstrs_constraints_scoped_on_keys`
+  lifts that scopedness argument from one transition constraint to an entire
+  translated transition list.
+- `generate_sys_signature_scoped`
+  proves the simplified stored STC signature only mentions identifiers from its
+  visible translated interface.
+- `generate_all_sys_signatures_scoped`
+  lifts that signature-scopedness fact to the whole generated STC global.
+- `generate_sys_signature_scoped_env`
+  is the node-scoped entry point that first recovers the right local generated
+  environment and then builds one scoped STC signature.
+- `generate_all_sys_signatures_scoped_env`
+  is the top-level node-scoped global generator consumed by the translation
+  theorem.
 
 The reset-key lemmas are the crucial interface for the translation proof.  They
 show that one translated STC block is scoped once the proof knows the scope of

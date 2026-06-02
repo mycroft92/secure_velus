@@ -22,20 +22,36 @@ This file defines the observation model and the generic semantic transport
 lemmas:
 
 - low variables:
-  `low_var`, `vars_le_t`, `env_low_eq`, `history_low_eq`,
-  `history_low_eq_upto`
+  `low_var` marks the identifiers whose security type is below the observation
+  threshold.
+  `vars_le_t` filters a variable list down to just those observable low
+  variables.
+  `env_low_eq` says two environments agree on the low variables from a chosen
+  list.
+  `history_low_eq` lifts that equality to all time instants.
+  `history_low_eq_upto` is the bounded prefix version used by the induction.
 - environment and history projection:
-  `project_env_le_t`, `project_history_le_t`
+  `project_env_le_t` erases every non-observable variable from one
+  environment.
+  `project_history_le_t` does the same pointwise over a whole history.
 - generic expression and clock transport:
-  `sem_caexp_switch_history_low`,
-  `sem_aexp_switch_history_low`,
-  `sem_exps_switch_history_low`
+  `sem_caexp_switch_history_low` says a clocked core expression has the same
+  meaning in two low-equivalent histories when all its free variables are low.
+  `sem_aexp_switch_history_low` gives the same semantic transport for
+  clocked arithmetic expressions.
+  `sem_exps_switch_history_low` lifts that transport to lists of expressions,
+  which is what call arguments need.
 - base equation reasoning:
-  `eqdef_noninterference`,
-  `eqfby_noninterference`,
-  and their pointwise / instant variants
+  `eqdef_noninterference` proves a low `EqDef` cannot distinguish two
+  low-equivalent histories.
+  `eqfby_noninterference` proves the same for `EqFby`, taking the delayed case
+  into account.
+  Their pointwise and instant variants are the time-indexed forms used inside
+  the main induction.
 - the security predicate:
-  `node_security`
+  `node_security` is the inductive invariant that packages the generated
+  signature facts, raw constraint facts, and recursive call-security
+  obligations for one secure node.
 
 This is the semantic foundation of the proof.  It does not yet perform the
 generated-program bookkeeping needed for real call sites.
@@ -45,15 +61,20 @@ generated-program bookkeeping needed for real call sites.
 This file adds the generated-program machinery:
 
 - replay of raw satisfiability from stored signatures:
-  `signature_satisfied_replays_raw`
+  `signature_satisfied_replays_raw` turns satisfaction of the stored signature
+  summary back into satisfaction of the node's unsimplified raw constraints.
 - lookup and membership inversion for generated constraints
 - caller-scope freshness and generated-environment facts
 - call-input and call-output transport lemmas for both ordinary and reset
   calls
 - the intermediate specifications
-  `node_outputs_raw_spec` and `node_outputs_raw_spec_clocked`
+  `node_outputs_raw_spec` says secure executions with low-equivalent inputs
+  produce low-equivalent raw outputs.
+  `node_outputs_raw_spec_clocked` is the clock-aware strengthened version that
+  threads the base-clock agreement needed by the step theorem.
 - the base step theorem
-  `node_noninterference_vars_defined_step_base_mainline`
+  `node_noninterference_vars_defined_step_base_mainline` proves the induction
+  base case at instant `0` for all variables defined by the node equations.
 
 The helper file is where generic semantic lemmas become usable on actual
 generated nodes and actual generated call signatures.
@@ -63,6 +84,9 @@ generated nodes and actual generated call signatures.
 This file proves the successor-step theorem:
 
 - `node_noninterference_vars_defined_step_mainline`
+  extends low-equivalence from time `k` to all variables defined at time
+  `S k`, assuming the node is secure and the inputs stayed low-equivalent up to
+  `k`.
 
 It is the time-indexed induction that extends low-equivalence from instant `k`
 to instant `S k` for the variables defined by the current node equations.
@@ -72,9 +96,11 @@ to instant `S k` for the variables defined by the current node equations.
 This file packages the step theorem into the two public layers:
 
 - `node_noninterference_outputs_raw`
-  turns a `node_security` witness into the clocked raw-output specification.
+  turns a `node_security` witness into the internal clocked specification on
+  generated raw outputs.
 - `node_noninterference_outputs`
-  is the exported source noninterference theorem on observable outputs.
+  hides the raw replay machinery and exports the final source theorem:
+  low-equivalent inputs imply low-equivalent observable outputs.
 
 ## The Security Predicate
 

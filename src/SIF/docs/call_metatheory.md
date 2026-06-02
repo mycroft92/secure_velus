@@ -15,8 +15,14 @@ instantiated inside a caller.
 At the stored-signature level, the translation file works with:
 
 - `signatures_preserved`
+  is the stored-summary preservation relation used before any call actuals are
+  substituted.
 - `Signature_call_preserves`
+  is the strengthened statement saying that this stored preservation survives
+  concrete caller-side call instantiation.
 - `Signature_head_consistent`
+  is the packaged lookup-level result that later files consume, with call
+  preservation already built in.
 
 `signatures_preserved` is the static relation on stored signatures.  It says:
 
@@ -63,6 +69,9 @@ signatures and generated caller environments using:
 The ordinary-call theorem is:
 
 - `signatures_preserved_simple_calls_from_good`
+  proves that one instantiated source call can always be matched by an
+  instantiated target call when the stored signatures already preserve and the
+  generated source signature is structurally good.
 
 Its proof has three stages.
 
@@ -81,7 +90,11 @@ scope where freshness is required.
 The reset-call argument is split into:
 
 - `signatures_preserved_reset_underlying_calls_from_good`
+  handles the ordinary-call replay part of a reset call before the STC-only
+  reset auxiliary is introduced.
 - `signatures_preserved_reset_calls_from_good`
+  finishes the reset-call proof by adding the fresh translated reset variable
+  and showing it stays outside the source-visible interface.
 
 It follows the same replay pattern as ordinary calls, but adds one STC-only
 reset-instance variable and one extra reset constraint.  The target-local reset
