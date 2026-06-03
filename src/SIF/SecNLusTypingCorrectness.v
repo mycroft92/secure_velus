@@ -37,15 +37,15 @@ Module Type SECNLUSTYPINGCORRECTNESS
   (Import SIG   : SIGNATURE Ids SC)
   (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
-  (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
+  (Import SECCETYPING: SECCETYPING Ids Op CESyn CEIsF CEClo)
   (Import Ord   : NLORDERED Ids Op CESyn SynNL)
   (Import Mem   : MEMORIES Ids Op CESyn SynNL)
   (Import IsD   : ISDEFINED Ids Op CESyn SynNL Mem)
   (Import IsF   : ISFREE Ids Op CESyn SynNL CEIsF)
   (Import Clo   : NLCLOCKING Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo)
-  (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo).
+  (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN CEIsF CEClo SECCETYPING Ord Mem IsD IsF Clo).
 
   Lemma node_scope_sec_range:
     forall all_nodes env aux_names n
@@ -2295,12 +2295,12 @@ Module Type SECNLUSTYPINGCORRECTNESS
                      destruct (SECCETYPING.assign_clk_type env rst_type rck) as [rstty'|]
                        eqn:Hrstopt; try discriminate.
                      unfold SC.ret in Hrstc. inversion Hrstc; subst rstty_call st_rst.
-                     eapply SECNLUSTYPING.assign_clk_type_scoped with (base := rst_type) (ck := rck).
+                     eapply (SECCETYPING.assign_clk_type_scoped env rst_type scope rck rstty').
                      + unfold scope. repeat rewrite in_app_iff. right. right. right.
                        simpl. right. left. reflexivity.
                      + intros z Hz.
                        assert (Hinz : InMembers z (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
-                       { eapply SECNLUSTYPING.wc_clock_free_in_vars; eauto. }
+                       { eapply SECCETYPING.wc_clock_free_in_vars; eauto. }
                        destruct (Hvars z Hinz) as (ty & Hfind & Hscopez).
                        exists ty. split; [exact Hfind|exact Hscopez].
                      + exact Hrstopt.
@@ -2775,7 +2775,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
                    destruct (SECCETYPING.assign_clk_type env clk_type ck) as [ckty'|]
                      eqn:Hckopt; try discriminate.
                    unfold SC.ret in Hckc. inversion Hckc; subst ckty st_clk.
-                   refine (SECNLUSTYPING.assign_clk_type_scoped
+                   refine (SECCETYPING.assign_clk_type_scoped
                              env clk_type scope ck ckty' _ _ Hckopt).
                    -
                      unfold scope. repeat rewrite in_app_iff. right. right. right.
@@ -2831,7 +2831,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
                    destruct (SECCETYPING.assign_clk_type env clk_type ck) as [ckty'|]
                      eqn:Hckopt; try discriminate.
                    unfold SC.ret in Hckc. inversion Hckc; subst ckty st_clk.
-                   refine (SECNLUSTYPING.assign_clk_type_scoped
+                   refine (SECCETYPING.assign_clk_type_scoped
                              env clk_type scope ck ckty' _ _ Hckopt).
                    -
                      unfold scope. repeat rewrite in_app_iff. right. right. right.
@@ -3140,17 +3140,17 @@ Module SecNLusTypingCorrectness
   (Import SIG   : SIGNATURE Ids SC)
   (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
-  (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
+  (Import SECCETYPING: SECCETYPING Ids Op CESyn CEIsF CEClo)
   (Import Ord   : NLORDERED Ids Op CESyn SynNL)
   (Import Mem   : MEMORIES Ids Op CESyn SynNL)
   (Import IsD   : ISDEFINED Ids Op CESyn SynNL Mem)
   (Import IsF   : ISFREE Ids Op CESyn SynNL CEIsF)
   (Import Clo   : NLCLOCKING Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo)
-  (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo)
-  <: SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL Lat SecT SIG SIGPROOFS NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING.
+  (Import SECNLUSTYPING: SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN CEIsF CEClo SECCETYPING Ord Mem IsD IsF Clo)
+  <: SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL Lat SecT SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING Ord Mem IsD IsF Clo SECNLUSTYPING.
 
-Include SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL Lat SecT SIG SIGPROOFS NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING.
+Include SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL Lat SecT SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING Ord Mem IsD IsF Clo SECNLUSTYPING.
 
 End SecNLusTypingCorrectness.

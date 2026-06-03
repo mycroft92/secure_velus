@@ -46,10 +46,10 @@ Module Type SECNLUSNONINTERFERENCECLOCKEDSTEP
   (Import SynNL  : NLSYNTAX Ids Op CESyn)
   (Import SIG    : SIGNATURE Ids SC)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
-  (Import SECCETYPING : SECCETYPING Ids Op CESyn)
   (Import CETyp  : CETYPING Ids Op CESyn)
   (Import CEIsF  : CEISFREE Ids Op CESyn)
   (Import CEClo  : CECLOCKING Ids Op CESyn)
+  (Import SECCETYPING : SECCETYPING Ids Op CESyn CEIsF CEClo)
   (Import Str    : INDEXEDSTREAMS Op OpAux)
   (Import Ord    : NLORDERED Ids Op CESyn SynNL)
   (Import Mem    : MEMORIES Ids Op CESyn SynNL)
@@ -62,15 +62,15 @@ Module Type SECNLUSNONINTERFERENCECLOCKEDSTEP
   (Import Indexed : NLINDEXEDSEMANTICS Ids Op OpAux CESyn SynNL Str Ord CESem)
   (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import SECNLUSTYPING :
-     SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo
+     SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN CEIsF CEClo SECCETYPING
        Ord Mem IsD IsF Clo)
   (Import SECNLUSTYPINGCORRECTNESS :
      SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL Lat SecT SIG SIGPROOFS
-       NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING).
+       NAMEGEN CEIsF CEClo SECCETYPING Ord Mem IsD IsF Clo SECNLUSTYPING).
 
   Include SECNLUSNONINTERFERENCEHELPERS
-    Ids Lat Op OpAux SC SecT CESyn SynNL SIG NAMEGEN SECCETYPING CETyp CEIsF
-    CEClo Str Ord Mem IsD IsF NLCaus Clo CESem CEProps Indexed SIGPROOFS
+    Ids Lat Op OpAux SC SecT CESyn SynNL SIG NAMEGEN CETyp CEIsF CEClo
+    SECCETYPING Str Ord Mem IsD IsF NLCaus Clo CESem CEProps Indexed SIGPROOFS
     SECNLUSTYPING SECNLUSTYPINGCORRECTNESS.
 
   Section GENERATED_NODE_NONINTERFERENCE_CLOCKED_STEP.
@@ -457,7 +457,7 @@ Module Type SECNLUSNONINTERFERENCECLOCKEDSTEP
                  }
                  assert (Hck_scope : SecT.st_scoped caller_scope ckty0).
                  {
-                   eapply SECNLUSTYPING.assign_clk_type_scoped with (base := clk_type) (ck := ck).
+                   eapply (SECCETYPING.assign_clk_type_scoped ty_env clk_type caller_scope ck ckty0).
                    - simpl. repeat (apply in_or_app; right).
                      simpl. now left.
                    - exact Hfree_clock_scope.
@@ -970,7 +970,7 @@ Module Type SECNLUSNONINTERFERENCECLOCKEDSTEP
                  }
                  assert (Hck_scope : SecT.st_scoped caller_scope ckty0).
                  {
-                   eapply SECNLUSTYPING.assign_clk_type_scoped with (base := clk_type) (ck := ck).
+                   eapply (SECCETYPING.assign_clk_type_scoped ty_env clk_type caller_scope ck ckty0).
                    - simpl. repeat (apply in_or_app; right).
                      simpl. now left.
                    - exact Hfree_clock_scope.
@@ -1001,7 +1001,7 @@ Module Type SECNLUSNONINTERFERENCECLOCKEDSTEP
                    assert (Hwr : wc_clock (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ckr).
                    { eapply wc_env_var; eauto. }
                    destruct (Hvars_scoped z) as (ty0 & Hfindz & Hinscope).
-                   - eapply SECNLUSTYPING.wc_clock_free_in_vars; eauto.
+                   - eapply SECCETYPING.wc_clock_free_in_vars; eauto.
                    - exists ty0; split; [exact Hfindz|exact Hinscope].
                  }
                  assert
@@ -1015,7 +1015,7 @@ Module Type SECNLUSNONINTERFERENCECLOCKEDSTEP
                  }
                  assert (Hrst_scope : SecT.st_scoped caller_scope rstty0).
                  {
-                   eapply SECNLUSTYPING.assign_clk_type_scoped with (base := rst_type) (ck := ckr).
+                   eapply (SECCETYPING.assign_clk_type_scoped ty_env rst_type caller_scope ckr rstty0).
                    - simpl. repeat (apply in_or_app; right).
                      simpl. now right; left.
                    - exact Hfree_rclock_scope.
@@ -1550,10 +1550,10 @@ Module SecNLusNonInterferenceClockedStep
   (Import SynNL  : NLSYNTAX Ids Op CESyn)
   (Import SIG    : SIGNATURE Ids SC)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
-  (Import SECCETYPING : SECCETYPING Ids Op CESyn)
   (Import CETyp  : CETYPING Ids Op CESyn)
   (Import CEIsF  : CEISFREE Ids Op CESyn)
   (Import CEClo  : CECLOCKING Ids Op CESyn)
+  (Import SECCETYPING : SECCETYPING Ids Op CESyn CEIsF CEClo)
   (Import Str    : INDEXEDSTREAMS Op OpAux)
   (Import Ord    : NLORDERED Ids Op CESyn SynNL)
   (Import Mem    : MEMORIES Ids Op CESyn SynNL)
@@ -1566,19 +1566,19 @@ Module SecNLusNonInterferenceClockedStep
   (Import Indexed : NLINDEXEDSEMANTICS Ids Op OpAux CESyn SynNL Str Ord CESem)
   (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import SECNLUSTYPING :
-     SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo
+     SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN CEIsF CEClo SECCETYPING
        Ord Mem IsD IsF Clo)
   (Import SECNLUSTYPINGCORRECTNESS :
      SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn SynNL Lat SecT SIG SIGPROOFS
-       NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo SECNLUSTYPING)
+       NAMEGEN CEIsF CEClo SECCETYPING Ord Mem IsD IsF Clo SECNLUSTYPING)
   <: SECNLUSNONINTERFERENCECLOCKEDSTEP Ids Lat Op OpAux SC SecT CESyn SynNL
-       SIG NAMEGEN SECCETYPING CETyp CEIsF CEClo Str Ord Mem IsD IsF NLCaus
+       SIG NAMEGEN CETyp CEIsF CEClo SECCETYPING Str Ord Mem IsD IsF NLCaus
        Clo CESem CEProps Indexed SIGPROOFS SECNLUSTYPING
        SECNLUSTYPINGCORRECTNESS.
 
 Include SECNLUSNONINTERFERENCECLOCKEDSTEP
-  Ids Lat Op OpAux SC SecT CESyn SynNL SIG NAMEGEN SECCETYPING CETyp CEIsF
-  CEClo Str Ord Mem IsD IsF NLCaus Clo CESem CEProps Indexed SIGPROOFS
+  Ids Lat Op OpAux SC SecT CESyn SynNL SIG NAMEGEN CETyp CEIsF CEClo
+  SECCETYPING Str Ord Mem IsD IsF NLCaus Clo CESem CEProps Indexed SIGPROOFS
   SECNLUSTYPING SECNLUSTYPINGCORRECTNESS.
 
 End SecNLusNonInterferenceClockedStep.

@@ -39,9 +39,9 @@ Module Type SECSTCTYPINGCORRECTNESS
   (Import SIG   : SIGNATURE Ids SC)
   (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
-  (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
+  (Import SECCETYPING: SECCETYPING Ids Op CESyn CEIsF CEClo)
   (Import Last  : STCISLAST Ids Op CESyn SynStc)
   (Import Var   : STCISVARIABLE Ids Op CESyn SynStc)
   (Import Def   : STCISDEFINED Ids Op CESyn SynStc Var Last)
@@ -49,7 +49,7 @@ Module Type SECSTCTYPINGCORRECTNESS
   (Import Ord   : STCORDERED Ids Op CESyn SynStc Syst)
   (Import IsF   : STCISFREE Ids Op CESyn SynStc CEIsF)
   (Import Clo   : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst Ord CEClo)
-  (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo).
+  (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo).
 
   Definition env_values (env: Env.t ident) : list (ident * ident) :=
     map (fun '(x, ty) => (ty, x)) (Env.elements env).
@@ -647,9 +647,9 @@ Module SecStcTypingCorrectness
   (Import SIG   : SIGNATURE Ids SC)
   (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
-  (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
+  (Import SECCETYPING: SECCETYPING Ids Op CESyn CEIsF CEClo)
   (Import Last  : STCISLAST Ids Op CESyn SynStc)
   (Import Var   : STCISVARIABLE Ids Op CESyn SynStc)
   (Import Def   : STCISDEFINED Ids Op CESyn SynStc Var Last)
@@ -657,9 +657,9 @@ Module SecStcTypingCorrectness
   (Import Ord   : STCORDERED Ids Op CESyn SynStc Syst)
   (Import IsF   : STCISFREE Ids Op CESyn SynStc CEIsF)
   (Import Clo   : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst Ord CEClo)
-  (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo)
-  <: SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecT SIG SIGPROOFS NAMEGEN SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo SECSTCTYPING.
+  (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo)
+  <: SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecT SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo SECSTCTYPING.
 
-Include SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecT SIG SIGPROOFS NAMEGEN SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo SECSTCTYPING.
+Include SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecT SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo SECSTCTYPING.
 
 End SecStcTypingCorrectness.

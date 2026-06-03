@@ -26,15 +26,15 @@ Module SIG := Signature Ids SC.
 Module ConcreteNameGen <: NAMEGEN Ids Op CE.Syn NL.Syn.
 Include NAMEGEN Ids Op CE.Syn NL.Syn.
 End ConcreteNameGen.
-Module ConcreteSecCETyping <: SECCETYPING Ids Op CE.Syn.
-Include SECCETYPING Ids Op CE.Syn.
+Module ConcreteSecCETyping <: SECCETYPING Ids Op CE.Syn CE.IsF CE.Clo.
+Include SECCETYPING Ids Op CE.Syn CE.IsF CE.Clo.
 End ConcreteSecCETyping.
 Module NAMEGEN := ConcreteNameGen.
 Module SECCETYPING := ConcreteSecCETyping.
 Module SECNLUSTYPING :=
   SecNLusTyping
-    Ids Op SC CE.Syn NL.Syn SIG NAMEGEN SECCETYPING
-    CE.IsF CE.Clo NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo.
+    Ids Op SC CE.Syn NL.Syn SIG NAMEGEN
+    CE.IsF CE.Clo SECCETYPING NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo.
 
 Record node_constraint_dump := mkNodeConstraintDump {
   dump_name : ident;

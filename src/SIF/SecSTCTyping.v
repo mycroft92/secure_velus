@@ -38,9 +38,9 @@ Module Type SECSTCTYPING
   (Import CESyn : CESYNTAX Op)
   (Import SynStc: STCSYNTAX Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
-  (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
+  (Import SECCETYPING: SECCETYPING Ids Op CESyn CEIsF CEClo)
   (Import Last  : STCISLAST Ids Op CESyn SynStc)
   (Import Var   : STCISVARIABLE Ids Op CESyn SynStc)
   (Import Def   : STCISDEFINED Ids Op CESyn SynStc Var Last)
@@ -120,44 +120,6 @@ Module Type SECSTCTYPING
         InMembers x vars ->
         exists ty, Env.find x env = Some ty /\ In ty scope.
 
-    Lemma wc_clock_free_in_vars:
-      forall vars x ck,
-        wc_clock vars ck ->
-        Is_free_in_clock x ck ->
-        InMembers x vars.
-    Proof.
-      intros vars x ck Hwc Hfree.
-      induction Hwc.
-      - inversion Hfree.
-      - inversion Hfree; subst; eauto using In_InMembers.
-    Qed.
-
-      Lemma wc_exp_free_in_vars:
-        forall vars x e ck,
-          wc_exp vars e ck ->
-          CEIsF.Is_free_in_exp x e ->
-          InMembers x vars.
-      Proof.
-        intros vars x e ck Hwc Hfree.
-        induction Hwc.
-        - inversion Hfree.
-        - inversion Hfree; subst; eauto using In_InMembers.
-        - inversion Hfree; subst; eauto using In_InMembers.
-        - inversion Hfree; subst; eauto.
-        - inversion Hfree; subst; eauto.
-          destruct H1; eauto.
-      Qed.
-
-      Lemma wc_cexp_free_in_vars:
-        forall vars x ce ck,
-          wc_cexp vars ce ck ->
-          CEIsF.Is_free_in_cexp x ce ->
-          InMembers x vars.
-    Proof.
-      intros vars x ce ck Hwc.
-      induction Hwc; intro Hfree; inversion Hfree; subst; eauto using In_InMembers, wc_exp_free_in_vars.
-    Qed.
-
       Lemma wc_aexp_free_in_vars:
         forall vars x ck e,
           wc_env vars ->
@@ -183,132 +145,6 @@ Module Type SECSTCTYPING
       - eauto using wc_cexp_free_in_vars.
         - eauto using wc_clock_free_in_vars, wc_clock_cexp.
     Qed.
-
-    Lemma assign_clk_type_scoped:
-      forall base scope ck st,
-        In base scope ->
-        (forall x, Is_free_in_clock x ck -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
-        assign_clk_type env base ck = Some st ->
-        st_scoped scope st.
-    Proof.
-      intros base scope ck.
-      induction ck as [|ck IH x b]; intros st Hbase Hfree Hassign.
-      - simpl in Hassign. inversion Hassign; subst.
-        apply st_scoped_singleton. exact Hbase.
-      - simpl in Hassign.
-        destruct (assign_clk_type env base ck) as [ckty|] eqn:Hck; try discriminate.
-        destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
-          inversion Hassign; subst st.
-          eapply st_scoped_merge.
-          + eapply IH.
-            * exact Hbase.
-            * intros y Hy.
-              apply Hfree. now constructor 2.
-            * exact eq_refl.
-          + apply st_scoped_singleton.
-            destruct (Hfree x) as (? & Hfind' & Hin); [constructor 1|].
-            rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
-    Qed.
-
-    Lemma assign_exp_type_scoped:
-      forall scope e st,
-        (forall x, CEIsF.Is_free_in_exp x e -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
-        assign_exp_type env e = Some st ->
-        st_scoped scope st.
-    Proof.
-      induction e; intros st Hfree Hassign.
-      - simpl in Hassign. inversion Hassign; subst. intros x Hin. inversion Hin.
-      - simpl in Hassign.
-        destruct (Env.find i env) as [xty|] eqn:Hfind; try discriminate.
-        inversion Hassign; subst.
-        apply st_scoped_singleton.
-        destruct (Hfree i) as (? & Hfind' & Hin); [constructor|].
-        rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
-      - simpl in Hassign.
-        destruct (assign_exp_type env e) as [ety|] eqn:He; try discriminate.
-        destruct (Env.find i env) as [xty|] eqn:Hfind; try discriminate.
-          inversion Hassign; subst.
-          eapply st_scoped_merge.
-          + eapply IHe.
-            * intros x Hx. apply Hfree. now constructor 2.
-            * exact eq_refl.
-          + apply st_scoped_singleton.
-            destruct (Hfree i) as (? & Hfind' & Hin); [constructor 3|].
-            rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
-      - simpl in Hassign. eauto.
-      - simpl in Hassign.
-        destruct (assign_exp_type env e1) as [sty1|] eqn:He1; try discriminate.
-          destruct (assign_exp_type env e2) as [sty2|] eqn:He2; try discriminate.
-          inversion Hassign; subst.
-          eapply st_scoped_merge.
-          + eapply IHe1.
-            * intros x Hx. apply Hfree. now constructor 5; left.
-            * exact eq_refl.
-          + eapply IHe2.
-            * intros x Hx. apply Hfree. now constructor 5; right.
-            * exact eq_refl.
-      Qed.
-
-    Lemma assign_cexp_type_scoped:
-      forall scope ce st,
-        (forall x, CEIsF.Is_free_in_cexp x ce -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
-        assign_cexp_type env ce = Some st ->
-        st_scoped scope st.
-    Proof.
-      induction ce; intros st Hfree Hassign.
-      - simpl in Hassign.
-        destruct (Env.find i env) as [xty|] eqn:Hfind; try discriminate.
-        destruct (assign_cexp_type env ce1) as [sty1|] eqn:He1; try discriminate.
-          destruct (assign_cexp_type env ce2) as [sty2|] eqn:He2; try discriminate.
-          inversion Hassign; subst.
-          change (st_scoped scope (([xty] ⊔ sty1) ⊔ sty2)).
-          eapply st_scoped_merge.
-          + change (st_scoped scope ([xty] ⊔ sty1)).
-            eapply st_scoped_merge.
-            * apply st_scoped_singleton.
-              destruct (Hfree i) as (? & Hfind' & Hin); [constructor 1|].
-              rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
-            * eapply IHce1.
-              -- intros x Hx. apply Hfree. now constructor 2.
-              -- exact eq_refl.
-          + eapply IHce2.
-            * intros x Hx. apply Hfree. now constructor 3.
-            * exact eq_refl.
-      - simpl in Hassign.
-        destruct (assign_exp_type env e) as [ety|] eqn:He; try discriminate.
-        destruct (assign_cexp_type env ce1) as [sty1|] eqn:He1; try discriminate.
-          destruct (assign_cexp_type env ce2) as [sty2|] eqn:He2; try discriminate.
-          inversion Hassign; subst.
-          change (st_scoped scope ((ety ⊔ sty1) ⊔ sty2)).
-          eapply st_scoped_merge.
-          + change (st_scoped scope (ety ⊔ sty1)).
-            eapply st_scoped_merge.
-            * eapply assign_exp_type_scoped.
-              -- intros x Hx.
-                 apply Hfree.
-                 apply CEIsF.FreeEite_cond.
-                 exact Hx.
-              -- exact He.
-            * eapply IHce1.
-              -- intros x Hx.
-                 apply Hfree.
-                 apply CEIsF.FreeEite_true.
-                 exact Hx.
-              -- exact eq_refl.
-          + eapply IHce2.
-            * intros x Hx.
-              apply Hfree.
-              apply CEIsF.FreeEite_false.
-              exact Hx.
-            * exact eq_refl.
-        - simpl in Hassign.
-          eapply assign_exp_type_scoped.
-          + intros x Hx.
-            apply Hfree.
-            apply CEIsF.FreeEexp.
-            exact Hx.
-          + exact Hassign.
-      Qed.
 
     Lemma mmap_assign_exp_type_scoped:
       forall scope es tys st st',
@@ -704,13 +540,13 @@ Module Type SECSTCTYPING
           destruct (assign_cexp_type env ce) eqn:Hexp'; try discriminate.
           inversion Hexp; subst. reflexivity. }
         assert (Hckscope : st_scoped scope ckty).
-        { eapply (assign_clk_type_scoped base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
+        { eapply (assign_clk_type_scoped env base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
           intros z Hz.
           pose proof (wc_clock_cexp _ _ _ Henv Hce) as Hceck.
           assert (Hinm : InMembers z vars) by (eapply wc_clock_free_in_vars; eauto).
           exact (Hvars z Hinm). }
         assert (Hexpscope : st_scoped scope expty).
-        { eapply (assign_cexp_type_scoped scope ce expty); [|exact Hexpopt].
+        { eapply (assign_cexp_type_scoped env scope ce expty); [|exact Hexpopt].
           intros z Hz.
           assert (Hinm : InMembers z vars) by (eapply wc_caexp_free_in_vars; eauto).
           exact (Hvars z Hinm). }
@@ -747,13 +583,13 @@ Module Type SECSTCTYPING
           destruct (assign_exp_type env e) eqn:Hexp'; try discriminate.
           inversion Hexp; subst. reflexivity. }
         assert (Hckscope : st_scoped scope ckty).
-        { eapply (assign_clk_type_scoped base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
+        { eapply (assign_clk_type_scoped env base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
           intros z Hz.
           pose proof (wc_clock_exp _ _ _ Henv Hexpwc) as Hckwc.
           assert (Hinm : InMembers z vars) by (eapply wc_clock_free_in_vars; eauto).
           exact (Hvars z Hinm). }
         assert (Hexpscope : st_scoped scope expty).
-        { eapply (assign_exp_type_scoped scope e expty); [|exact Hexpopt].
+        { eapply (assign_exp_type_scoped env scope e expty); [|exact Hexpopt].
           intros z Hz.
           assert (Hinm : InMembers z vars) by (eapply wc_aexp_free_in_vars; eauto).
           exact (Hvars z Hinm). }
@@ -786,7 +622,7 @@ Module Type SECSTCTYPING
           { unfold option_to_sec in Hck.
             simpl in Hck. inversion Hck; subst. reflexivity. }
           assert (Hckscope : st_scoped scope rckty).
-          { eapply (assign_clk_type_scoped base_ty scope Cbase rckty); [exact Hbase| |exact Hckopt].
+          { eapply (assign_clk_type_scoped env base_ty scope Cbase rckty); [exact Hbase| |exact Hckopt].
             intros z Hz. inversion Hz. }
           assert (Hlhsscope : st_scoped scope ([rst_ty] ⊔ rckty)).
           { eapply st_scoped_merge.
@@ -822,7 +658,7 @@ Module Type SECSTCTYPING
               destruct (Hvars r0 Hinm) as (ty & Hfind & Hinscope).
               rewrite Hrfind in Hfind. inversion Hfind; subst. exact Hinscope. }
             assert (Hrstckscope : st_scoped scope rstckty).
-            { eapply (assign_clk_type_scoped rst_ty scope ck0 rstckty); [exact Hrst| |exact Hrstckopt].
+            { eapply (assign_clk_type_scoped env rst_ty scope ck0 rstckty); [exact Hrst| |exact Hrstckopt].
               intros z Hz.
               assert (Hinm : InMembers z vars) by (eapply wc_clock_free_in_vars; eauto).
               exact (Hvars z Hinm). }
@@ -850,7 +686,7 @@ Module Type SECSTCTYPING
               destruct (Env.find r0 env) as [xty'|] eqn:Hr0; try discriminate.
               inversion Hck; subst. simpl. rewrite Hck0, Hr0. reflexivity. }
             assert (Hckscope : st_scoped scope rckty).
-            { eapply (assign_clk_type_scoped base_ty scope (Con ck0 r0 false) rckty); [exact Hbase| |exact Hckopt].
+            { eapply (assign_clk_type_scoped env base_ty scope (Con ck0 r0 false) rckty); [exact Hbase| |exact Hckopt].
               intros z Hz.
               assert (Hinm : InMembers z vars) by (eapply wc_clock_free_in_vars; eauto).
               exact (Hvars z Hinm). }
@@ -883,7 +719,7 @@ Module Type SECSTCTYPING
               destruct (assign_clk_type env base_ty ck) eqn:Hck'; try discriminate.
               inversion Hck; subst. reflexivity. }
             assert (Hckscope : st_scoped scope ckty).
-            { eapply (assign_clk_type_scoped base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
+            { eapply (assign_clk_type_scoped env base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
               intros z Hz.
               assert (Hinm : InMembers z vars) by (eapply wc_tc_clock_free_in_vars; eauto).
               exact (Hvars z Hinm). }
@@ -919,7 +755,7 @@ Module Type SECSTCTYPING
               destruct (assign_clk_type env base_ty ck) eqn:Hck'; try discriminate.
               inversion Hck; subst. reflexivity. }
             assert (Hckscope : st_scoped scope ckty).
-            { eapply (assign_clk_type_scoped base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
+            { eapply (assign_clk_type_scoped env base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
               intros z Hz.
               assert (Hinm : InMembers z vars) by (eapply wc_tc_clock_free_in_vars; eauto).
               exact (Hvars z Hinm). }
@@ -1583,9 +1419,9 @@ Module SecSTCTyping
   (Import CESyn : CESYNTAX Op)
   (Import SynStc: STCSYNTAX Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
-  (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
+  (Import SECCETYPING: SECCETYPING Ids Op CESyn CEIsF CEClo)
   (Import Last  : STCISLAST Ids Op CESyn SynStc)
   (Import Var   : STCISVARIABLE Ids Op CESyn SynStc)
   (Import Def   : STCISDEFINED Ids Op CESyn SynStc Var Last)
@@ -1593,8 +1429,8 @@ Module SecSTCTyping
   (Import Ord   : STCORDERED Ids Op CESyn SynStc Syst)
   (Import IsF   : STCISFREE Ids Op CESyn SynStc CEIsF)
   (Import Clo   : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst Ord CEClo)
-  <: SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo.
+  <: SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo.
 
-Include SECSTCTYPING Ids Op SC CESyn SynStc SIG SECCETYPING CEIsF CEClo Last Var Def Syst Ord IsF Clo.
+Include SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo.
 
 End SecSTCTyping.

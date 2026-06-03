@@ -35,9 +35,9 @@ Module Type SECNLUSTYPING
   (Import SynNL : NLSYNTAX  Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
-  (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
+  (Import SECCETYPING: SECCETYPING Ids Op CESyn CEIsF CEClo)
   (Import Ord   : NLORDERED Ids Op CESyn SynNL)
   (Import Mem   : MEMORIES Ids Op CESyn SynNL)
   (Import IsD   : ISDEFINED Ids Op CESyn SynNL Mem)
@@ -107,175 +107,6 @@ Module Type SECNLUSTYPING
     forall x,
       InMembers x vars ->
       exists ty, Env.find x env = Some ty /\ In ty scope.
-
-  Lemma wc_clock_free_in_vars:
-    forall vars x ck,
-      wc_clock vars ck ->
-      Is_free_in_clock x ck ->
-      InMembers x vars.
-  Proof.
-    intros vars x ck Hwc Hfree.
-    induction Hwc.
-    - inversion Hfree.
-    - inversion Hfree; subst; eauto using In_InMembers.
-  Qed.
-
-  Lemma wc_exp_free_in_vars:
-    forall vars x e ck,
-      wc_exp vars e ck ->
-      Is_free_in_exp x e ->
-      InMembers x vars.
-  Proof.
-    intros vars x e ck Hwc.
-    induction Hwc; intro Hfree.
-    - inversion Hfree.
-    - inversion Hfree; subst; eauto using In_InMembers.
-    - inversion Hfree; subst; eauto using In_InMembers.
-    - inversion Hfree; subst; eauto.
-    - inversion Hfree; subst.
-      match goal with
-      | H : _ \/ _ |- _ => destruct H as [Hfree1|Hfree2]; eauto
-      end.
-  Qed.
-
-  Lemma wc_cexp_free_in_vars:
-    forall vars x ce ck,
-      wc_cexp vars ce ck ->
-      Is_free_in_cexp x ce ->
-      InMembers x vars.
-  Proof.
-    intros vars x ce ck Hwc.
-    induction Hwc; intro Hfree.
-    - inversion Hfree; subst; eauto using In_InMembers.
-    - inversion Hfree; subst; eauto using wc_exp_free_in_vars.
-    - inversion Hfree; subst; eauto using wc_exp_free_in_vars.
-  Qed.
-
-  Lemma assign_clk_type_scoped:
-    forall base scope ck st,
-      In base scope ->
-      (forall x, Is_free_in_clock x ck -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
-      assign_clk_type env base ck = Some st ->
-      st_scoped scope st.
-  Proof.
-    intros base scope ck.
-    induction ck as [|ck IH x b]; intros st Hbase Hfree Hassign.
-    - simpl in Hassign. inversion Hassign; subst.
-      apply st_scoped_singleton. exact Hbase.
-    - simpl in Hassign.
-      destruct (assign_clk_type env base ck) as [ckty|] eqn:Hck; try discriminate.
-      destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
-      inversion Hassign; subst st.
-      apply st_scoped_merge.
-      * eapply IH.
-        1: exact Hbase.
-        intros y Hy.
-        apply Hfree. now apply FreeCon2.
-        reflexivity.
-      * apply st_scoped_singleton.
-        destruct (Hfree x) as (? & Hfind' & Hin); [apply FreeCon1|].
-        rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
-  Qed.
-
-  Lemma assign_exp_type_scoped:
-    forall scope e st,
-      (forall x, Is_free_in_exp x e -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
-      assign_exp_type env e = Some st ->
-      st_scoped scope st.
-  Proof.
-    induction e; intros st Hfree Hassign.
-    - simpl in Hassign. inversion Hassign; subst. intros x Hin. inversion Hin.
-    - simpl in Hassign.
-      destruct (Env.find i env) as [xty|] eqn:Hfind; try discriminate.
-      inversion Hassign; subst.
-      apply st_scoped_singleton.
-      destruct (Hfree i) as (? & Hfind' & Hin); [constructor|].
-      rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
-    - simpl in Hassign.
-      destruct (assign_exp_type env e) as [ety|] eqn:He; try discriminate.
-      destruct (Env.find i env) as [xty|] eqn:Hfind; try discriminate.
-      inversion Hassign; subst.
-      apply st_scoped_merge.
-      + eapply IHe.
-        * intros x Hx. apply Hfree. now apply FreeEwhen1.
-        * reflexivity.
-      + apply st_scoped_singleton.
-        destruct (Hfree i) as (? & Hfind' & Hin); [apply FreeEwhen2|].
-        rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
-    - simpl in Hassign. eauto.
-    - simpl in Hassign.
-      destruct (assign_exp_type env e1) as [sty1|] eqn:He1; try discriminate.
-      destruct (assign_exp_type env e2) as [sty2|] eqn:He2; try discriminate.
-      inversion Hassign; subst.
-      apply st_scoped_merge.
-      + eapply IHe1.
-        * intros x Hx. apply Hfree. now apply FreeEbinop; left.
-        * reflexivity.
-      + eapply IHe2.
-        * intros x Hx. apply Hfree. now apply FreeEbinop; right.
-        * reflexivity.
-  Qed.
-
-  Lemma assign_cexp_type_scoped:
-    forall scope ce st,
-      (forall x, Is_free_in_cexp x ce -> exists ty, Env.find x env = Some ty /\ In ty scope) ->
-      assign_cexp_type env ce = Some st ->
-      st_scoped scope st.
-  Proof.
-    induction ce; intros st Hfree Hassign.
-    - simpl in Hassign.
-      destruct (Env.find i env) as [xty|] eqn:Hfind; try discriminate.
-      destruct (assign_cexp_type env ce1) as [sty1|] eqn:He1; try discriminate.
-      destruct (assign_cexp_type env ce2) as [sty2|] eqn:He2; try discriminate.
-      inversion Hassign; subst.
-      change (st_scoped scope ((([xty] ⊔ sty1) ⊔ sty2))).
-      apply st_scoped_merge.
-      + change (st_scoped scope ([xty] ⊔ sty1)).
-        apply st_scoped_merge.
-        * apply st_scoped_singleton.
-          destruct (Hfree i) as (? & Hfind' & Hin); [apply FreeEmerge_cond|].
-          rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
-        * eapply IHce1.
-          -- intros x Hx. apply Hfree. now apply FreeEmerge_true.
-          -- reflexivity.
-      + eapply IHce2.
-        * intros x Hx. apply Hfree. now apply FreeEmerge_false.
-        * reflexivity.
-    - simpl in Hassign.
-      destruct (assign_exp_type env e) as [ety|] eqn:He; try discriminate.
-      destruct (assign_cexp_type env ce1) as [sty1|] eqn:He1; try discriminate.
-      destruct (assign_cexp_type env ce2) as [sty2|] eqn:He2; try discriminate.
-      inversion Hassign; subst.
-      change (st_scoped scope (((ety ⊔ sty1) ⊔ sty2))).
-      apply st_scoped_merge.
-      + change (st_scoped scope (ety ⊔ sty1)).
-        apply st_scoped_merge.
-        * eapply assign_exp_type_scoped.
-          -- intros x Hx.
-             apply Hfree.
-             apply FreeEite_cond.
-             exact Hx.
-          -- exact He.
-        * eapply IHce1.
-          -- intros x Hx.
-             apply Hfree.
-             apply FreeEite_true.
-             exact Hx.
-          -- reflexivity.
-      + eapply IHce2.
-        * intros x Hx.
-           apply Hfree.
-           apply FreeEite_false.
-           exact Hx.
-        * reflexivity.
-    - simpl in Hassign.
-      eapply assign_exp_type_scoped.
-      + intros x Hx.
-        apply Hfree.
-        apply FreeEexp.
-        exact Hx.
-      + exact Hassign.
-  Qed.
 
   Lemma mmap_assign_exp_type_scoped:
     forall scope es tys st st',
@@ -420,7 +251,7 @@ Module Type SECNLUSTYPING
       assert (Hsc_rst : st_scoped scope [rst_ty]).
       { apply st_scoped_singleton. exact Hrst. }
       assert (Hsc_ck : st_scoped scope ckty).
-      { eapply assign_clk_type_scoped with (base := base_ty) (ck := ck).
+      { eapply (assign_clk_type_scoped env base_ty scope ck ckty).
           - exact Hbase.
           - intros z Hz.
             assert (Hwc_ck : wc_clock vars ck) by (eapply wc_clock_cexp; eauto).
@@ -477,7 +308,7 @@ Module Type SECNLUSTYPING
           -- eapply mmap_assign_exp_type_scoped.
              ++ eapply wc_call_args_scoped; eauto.
              ++ exact Hinp0.
-          -- eapply assign_clk_type_scoped with (base := base_ty) (ck := ck).
+          -- eapply (assign_clk_type_scoped env base_ty scope ck ckty).
              ++ exact Hbase.
              ++ intros z Hz.
                 destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_call_clock_free_in_vars.
@@ -487,7 +318,7 @@ Module Type SECNLUSTYPING
                 destruct (Hvars rx) as (ty & Henv' & Hscope).
                 ** eapply In_InMembers. specialize (Hreset (rx, rck) eq_refl). exact Hreset.
                 ** rewrite Hrfind in Henv'. inversion Henv'. subst. exact Hscope.
-             ++ eapply assign_clk_type_scoped with (base := rst_ty) (ck := rck).
+             ++ eapply (assign_clk_type_scoped env rst_ty scope rck rstty).
                 ** exact Hrst.
                 ** intros z Hz.
                    assert (Hinr : In (rx, rck) vars) by (specialize (Hreset (rx, rck) eq_refl); exact Hreset).
@@ -514,7 +345,7 @@ Module Type SECNLUSTYPING
           -- eapply mmap_assign_exp_type_scoped.
              ++ eapply wc_call_args_scoped; eauto.
              ++ exact Hinp0.
-          -- eapply assign_clk_type_scoped with (base := base_ty) (ck := ck).
+          -- eapply (assign_clk_type_scoped env base_ty scope ck ckty).
              ++ exact Hbase.
              ++ intros z Hz.
                 destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_call_clock_free_in_vars.
@@ -542,7 +373,7 @@ Module Type SECNLUSTYPING
       assert (Hsc_rst : st_scoped scope [rst_ty]).
       { apply st_scoped_singleton. exact Hrst. }
       assert (Hsc_ck : st_scoped scope ckty).
-      { eapply assign_clk_type_scoped with (base := base_ty) (ck := ck).
+      { eapply (assign_clk_type_scoped env base_ty scope ck ckty).
           - exact Hbase.
           - intros z Hz.
             assert (Hwc_ck : wc_clock vars ck) by (eapply wc_clock_exp; eauto).
@@ -1118,16 +949,16 @@ Module SecNLusTyping
   (Import SynNL : NLSYNTAX  Ids Op CESyn)
   (Import SIG   : SIGNATURE   Ids SC)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
-  (Import SECCETYPING: SECCETYPING Ids Op CESyn)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
+  (Import SECCETYPING: SECCETYPING Ids Op CESyn CEIsF CEClo)
   (Import Ord   : NLORDERED Ids Op CESyn SynNL)
   (Import Mem   : MEMORIES Ids Op CESyn SynNL)
   (Import IsD   : ISDEFINED Ids Op CESyn SynNL Mem)
   (Import IsF   : ISFREE Ids Op CESyn SynNL CEIsF)
   (Import Clo   : NLCLOCKING Ids Op CESyn SynNL Ord Mem IsD CEIsF IsF CEClo)
-  <: SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo.
+  <: SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN CEIsF CEClo SECCETYPING Ord Mem IsD IsF Clo.
 
-Include SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN SECCETYPING CEIsF CEClo Ord Mem IsD IsF Clo.
+Include SECNLUSTYPING Ids Op SC CESyn SynNL SIG NAMEGEN CEIsF CEClo SECCETYPING Ord Mem IsD IsF Clo.
 
 End SecNLusTyping.

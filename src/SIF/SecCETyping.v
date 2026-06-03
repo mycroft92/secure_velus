@@ -6,16 +6,21 @@ From Velus Require Import Environment.
 From Velus Require Import Operators.
 From Velus Require Import Clocks.
 From Velus Require Import CoreExpr.CESyntax.
+From Velus Require Import CoreExpr.CEIsFree.
+From Velus Require Import CoreExpr.CEClocking.
 
 From Coq Require Import PArith.
 From Velus Require Import SymTypes.
+From Velus Require Import SIF.SecTypes.
 From Coq Require Import List.
 Import ListNotations.
 
 Module Type SECCETYPING
     (Import Ids   : IDS)
     (Import Op    : OPERATORS)
-    (Import CESyn : CESYNTAX Op).
+    (Import CESyn : CESYNTAX Op)
+    (Import CEIsF : CEISFREE Ids Op CESyn)
+    (Import CEClo : CECLOCKING Ids Op CESyn).
 
   Open Scope option_monad_scope.
 
@@ -127,5 +132,184 @@ Module Type SECCETYPING
       end.
 
   End SecExpTypingCE.
+
+  Section SecTypingFreeVars.
+
+    Lemma wc_clock_free_in_vars:
+      forall vars x ck,
+        wc_clock vars ck ->
+        Is_free_in_clock x ck ->
+        InMembers x vars.
+    Proof.
+      intros vars x ck Hwc Hfree.
+      induction Hwc.
+      - inversion Hfree.
+      - inversion Hfree; subst; eauto using In_InMembers.
+    Qed.
+
+    Lemma wc_exp_free_in_vars:
+      forall vars x e ck,
+        wc_exp vars e ck ->
+        Is_free_in_exp x e ->
+        InMembers x vars.
+    Proof.
+      intros vars x e ck Hwc.
+      induction Hwc; intro Hfree.
+      - inversion Hfree.
+      - inversion Hfree; subst; eauto using In_InMembers.
+      - inversion Hfree; subst; eauto using In_InMembers.
+      - inversion Hfree; subst; eauto.
+      - inversion Hfree; subst.
+        match goal with
+        | H : _ \/ _ |- _ => destruct H as [Hfree1|Hfree2]; eauto
+        end.
+    Qed.
+
+    Lemma wc_cexp_free_in_vars:
+      forall vars x ce ck,
+        wc_cexp vars ce ck ->
+        Is_free_in_cexp x ce ->
+        InMembers x vars.
+    Proof.
+      intros vars x ce ck Hwc.
+      induction Hwc; intro Hfree.
+      - inversion Hfree; subst; eauto using In_InMembers.
+      - inversion Hfree; subst; eauto using wc_exp_free_in_vars.
+      - inversion Hfree; subst; eauto using wc_exp_free_in_vars.
+    Qed.
+
+  End SecTypingFreeVars.
+
+  Section SecTypingScoped.
+    Variable ctxt: Env.t ident.
+    Variable base_ty: ident.
+
+    Lemma assign_clk_type_scoped:
+      forall scope ck st,
+        In base_ty scope ->
+        (forall x, Is_free_in_clock x ck -> exists ty, Env.find x ctxt = Some ty /\ In ty scope) ->
+        assign_clk_type ctxt base_ty ck = Some st ->
+        st_scoped scope st.
+    Proof.
+      intros scope ck.
+      induction ck as [|ck IH x b]; intros st Hbase Hfree Hassign.
+      - simpl in Hassign. inversion Hassign; subst.
+        apply st_scoped_singleton. exact Hbase.
+      - simpl in Hassign.
+        destruct (assign_clk_type ctxt base_ty ck) as [ckty|] eqn:Hck; try discriminate.
+        destruct (Env.find x ctxt) as [xty|] eqn:Hfind; try discriminate.
+        inversion Hassign; subst st.
+        apply st_scoped_merge.
+        + eapply IH.
+          1: exact Hbase.
+          intros y Hy.
+          apply Hfree. now apply FreeCon2.
+          reflexivity.
+        + apply st_scoped_singleton.
+          destruct (Hfree x) as (? & Hfind' & Hin); [apply FreeCon1|].
+          rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
+    Qed.
+
+    Lemma assign_exp_type_scoped:
+      forall scope e st,
+        (forall x, Is_free_in_exp x e -> exists ty, Env.find x ctxt = Some ty /\ In ty scope) ->
+        assign_exp_type ctxt e = Some st ->
+        st_scoped scope st.
+    Proof.
+      induction e; intros st Hfree Hassign.
+      - simpl in Hassign. inversion Hassign; subst. intros x Hin. inversion Hin.
+      - simpl in Hassign.
+        destruct (Env.find i ctxt) as [xty|] eqn:Hfind; try discriminate.
+        inversion Hassign; subst.
+        apply st_scoped_singleton.
+        destruct (Hfree i) as (? & Hfind' & Hin); [constructor|].
+        rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
+      - simpl in Hassign.
+        destruct (assign_exp_type ctxt e) as [ety|] eqn:He; try discriminate.
+        destruct (Env.find i ctxt) as [xty|] eqn:Hfind; try discriminate.
+        inversion Hassign; subst.
+        apply st_scoped_merge.
+        + eapply IHe.
+          * intros x Hx. apply Hfree. now apply FreeEwhen1.
+          * reflexivity.
+        + apply st_scoped_singleton.
+          destruct (Hfree i) as (? & Hfind' & Hin); [apply FreeEwhen2|].
+          rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
+      - simpl in Hassign. eauto.
+      - simpl in Hassign.
+        destruct (assign_exp_type ctxt e1) as [sty1|] eqn:He1; try discriminate.
+        destruct (assign_exp_type ctxt e2) as [sty2|] eqn:He2; try discriminate.
+        inversion Hassign; subst.
+        apply st_scoped_merge.
+        + eapply IHe1.
+          * intros x Hx. apply Hfree. now apply FreeEbinop; left.
+          * reflexivity.
+        + eapply IHe2.
+          * intros x Hx. apply Hfree. now apply FreeEbinop; right.
+          * reflexivity.
+    Qed.
+
+    Lemma assign_cexp_type_scoped:
+      forall scope ce st,
+        (forall x, Is_free_in_cexp x ce -> exists ty, Env.find x ctxt = Some ty /\ In ty scope) ->
+        assign_cexp_type ctxt ce = Some st ->
+        st_scoped scope st.
+    Proof.
+      induction ce; intros st Hfree Hassign.
+      - simpl in Hassign.
+        destruct (Env.find i ctxt) as [xty|] eqn:Hfind; try discriminate.
+        destruct (assign_cexp_type ctxt ce1) as [sty1|] eqn:He1; try discriminate.
+        destruct (assign_cexp_type ctxt ce2) as [sty2|] eqn:He2; try discriminate.
+        inversion Hassign; subst.
+        change (st_scoped scope ((([xty] ⊔ sty1) ⊔ sty2))).
+        apply st_scoped_merge.
+        + change (st_scoped scope ([xty] ⊔ sty1)).
+          apply st_scoped_merge.
+          * apply st_scoped_singleton.
+            destruct (Hfree i) as (? & Hfind' & Hin); [apply FreeEmerge_cond|].
+            rewrite Hfind in Hfind'. inversion Hfind'. subst. exact Hin.
+          * eapply IHce1.
+            -- intros x Hx. apply Hfree. now apply FreeEmerge_true.
+            -- reflexivity.
+        + eapply IHce2.
+          * intros x Hx. apply Hfree. now apply FreeEmerge_false.
+          * reflexivity.
+      - simpl in Hassign.
+        destruct (assign_exp_type ctxt e) as [ety|] eqn:He; try discriminate.
+        destruct (assign_cexp_type ctxt ce1) as [sty1|] eqn:He1; try discriminate.
+        destruct (assign_cexp_type ctxt ce2) as [sty2|] eqn:He2; try discriminate.
+        inversion Hassign; subst.
+        change (st_scoped scope (((ety ⊔ sty1) ⊔ sty2))).
+        apply st_scoped_merge.
+        + change (st_scoped scope (ety ⊔ sty1)).
+          apply st_scoped_merge.
+          * eapply assign_exp_type_scoped.
+            -- intros x Hx.
+               apply Hfree.
+               apply FreeEite_cond.
+               exact Hx.
+            -- exact He.
+          * eapply IHce1.
+            -- intros x Hx.
+               apply Hfree.
+               apply FreeEite_true.
+               exact Hx.
+            -- reflexivity.
+        + eapply IHce2.
+          * intros x Hx.
+             apply Hfree.
+             apply FreeEite_false.
+             exact Hx.
+          * reflexivity.
+      - simpl in Hassign.
+        eapply assign_exp_type_scoped.
+        + intros x Hx.
+          apply Hfree.
+          apply FreeEexp.
+          exact Hx.
+        + exact Hassign.
+    Qed.
+
+  End SecTypingScoped.
 
 End SECCETYPING.
