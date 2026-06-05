@@ -2,69 +2,110 @@
 
 ## Scope
 
-`SecStcNonInterference.v` proves the target-side theorem exported by the SIF
-development.  The statement is about translated STC systems, not arbitrary
-STC systems.
+`SecStcNonInterference.v` proves the target-side noninterference theorem that
+is actually exported by this development.  The theorem is about translated STC
+systems, not arbitrary STC systems.
 
 The main theorem is:
 
 - `translated_system_noninterference_outputs`
-
-It says two translated STC executions of the same secure source node have
-low-equivalent outputs whenever their translated inputs are low-equivalent and
-their base clocks agree.
+  says two translated STC executions of the same secure source node have
+  low-equivalent outputs whenever their translated inputs are low-equivalent
+  and their base clocks agree.
 
 ## Core Definitions
 
 - `tuple_stream_low_eq`
-  pointwise low-equivalence of STC input or output tuple streams
+  says two STC input or output tuple streams agree pointwise on every
+  translated variable that is low at the observation threshold.
 - `translated_system_behavior`
-  an observed STC behavior really comes from a translated NLustre execution
+  says an observed STC behavior really is the translation of some NLustre
+  memory-semantics execution, together with the translated `initial_state` and
+  `loop` witnesses.
 - `system_security`
   packages the translated system, aligned source/target signature lookups,
-  `Signature_head_consistent`, and the underlying secure source node witness
+  `Signature_head_consistent`, and the underlying secure source node witness.
 
-The target theorem is therefore phrased entirely in STC terms while hiding the
-source-side proof obligations inside `system_security`.
+The theorem is therefore phrased entirely in terms of translated STC systems,
+while keeping the source proof obligations hidden inside `system_security`.
+
+## Conversion Lemmas
+
+Two small conversion lemmas connect the source and target observation formats:
+
+- `history_low_eq_of_tuple_stream_low_eq`
+  converts low-equivalent target tuple streams into the history relation needed
+  by the source NLustre theorem.
+- `tuple_stream_low_eq_of_history_low_eq`
+  converts the source theorem's history result back into target tuple-stream
+  equality.
+
+They let the proof move back and forth between:
+
+- the NLustre history view used by the source theorem, and
+- the tuple-stream view used by the STC theorem statement.
 
 ## Proof Ingredients
 
-The theorem combines four already proved components.
+The target theorem combines four already proved components.
 
-1. `SecNLusNonInterference.node_noninterference_outputs`
-   source-side output noninterference
-2. the repository's bridge between indexed NLustre semantics and the memory
-   semantics used by STC translation correctness
-3. `NLustreToStc.Correctness.correctness_loop`
-   translation correctness from NLustre memory runs to STC behavior
-4. `SecNLusStcTranslation.generated_program_signatures_preserved_global`
-   lookup alignment and call preservation between generated source and target
-   signatures
+### Source Noninterference
 
-The last ingredient already packages call preservation between normalized
-stored signatures, so the target theorem does not reopen the symbolic replay
-proof.
+`SecNLusNonInterference.node_noninterference_outputs` gives low-equivalent
+source outputs once the source node is secure and the source inputs are
+low-equivalent.
+
+### NLustre Indexed / Memory Bridge
+
+The repository already contains the bridge between indexed NLustre semantics
+and the memory semantics used by the STC translation correctness theorem.
+
+### Translation Correctness
+
+`NLustreToStc.Correctness.correctness_loop` transports an NLustre memory run to
+the translated STC `initial_state` and `loop` behavior.
+
+### Signature Preservation
+
+`SecNLusStcTranslation.generated_program_signatures_preserved_global` ensures
+that the generated source and target signatures agree on the visible interface
+and on call behavior.  This is what lets the source `node_security` witness be
+reused as the semantic security witness for the translated STC system.
 
 ## Proof Flow
 
-The argument is a direct bridge.
+The target theorem follows a direct bridge argument.
 
-1. recover the secure source node and aligned generated signatures from
-   `system_security`
-2. convert target input low-equivalence into the history relation consumed by
-   the source theorem
-3. apply the source theorem to obtain low-equivalent source outputs
-4. use the indexed/memory bridge and translation correctness to identify the
-   observed STC outputs with those translated source outputs
-5. convert the result back to `tuple_stream_low_eq`
+1. Use `system_security` to recover the source node, the generated source and
+   target signatures, and the source `node_security` witness.
+2. Convert target input low-equivalence into the NLustre history form consumed
+   by the source theorem.
+3. Apply `node_noninterference_outputs` to obtain low-equivalent source
+   outputs.
+4. Use the indexed/memory bridge plus translation correctness to show that the
+   observed STC outputs are exactly the translated outputs of those source
+   runs.
+5. Convert the resulting source output relation back to
+   `tuple_stream_low_eq`.
 
-## Why Base-Clock Equality Appears
+## Why The Theorem Mentions Base-Clock Equality
 
-The theorem assumes `eq_str (clock_of xss) (clock_of xss')`.  This is the
-target-side form of the same clock-alignment requirement already present in
-the source theorem.
+The STC theorem assumes
+`eq_str (clock_of xss) (clock_of xss')`.
+This is the target-side packaging of the clock alignment needed to compare the
+two translated behaviors pointwise.  The source theorem already works with
+clocked histories; this hypothesis is the STC-facing way of carrying the same
+alignment requirement.
 
-## Result
+## Resulting Interface
 
-The exported theorem is the exact STC-facing noninterference guarantee proved
-by the current development.
+The exported theorem says:
+
+- if two observed STC behaviors come from translated executions of the same
+  secure source node,
+- and their translated inputs are low-equivalent,
+- and their base clocks agree,
+
+then their translated outputs are low-equivalent as well.
+
+This is the exact target theorem justified by the current development.

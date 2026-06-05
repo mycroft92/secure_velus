@@ -2,92 +2,123 @@
 
 ## Role
 
-`NameInterface.v` generates the symbolic security identifiers used by the SIF
-development.  It is the source of truth for how raw Lustre names become
-generated security names, and it proves the lookup, range, injectivity, and
-freshness facts used by every later typing and preservation proof.
+`NameInterface.v` generates the symbolic identifiers used by the SIF
+development.  It is the single source of truth for how raw node-local Lustre
+names become generated security names, and it provides the lookup and freshness
+facts used by every later typing and preservation proof.
 
-## Main Data
+## Data Model
 
 - `node_aux_names`
-  the generated clock and reset identifiers attached to one node
+  stores the generated clock and reset identifiers that belong to one node.
 - `local_sec_env`
-  the per-node map from raw Lustre variables to generated security names
+  is the per-node map from raw Lustre variables to generated security names.
 - `node_scoped_env`
-  the outer map from node names to their own local generated environments
+  is the outer map from node names to their own local generated environments.
 - `find_node_env`
-  lookup of one node-local generated environment
+  looks up the generated local environment for one node name.
 - `get_node_aux`
-  lookup of one node's generated clock/reset pair
+  recovers the generated clock/reset pair recorded for one node.
 
-Two different nodes may reuse the same raw variable name.  The outer
-environment is keyed by node name, so node-local naming remains local.
+The module keeps node-local names local.  Two different nodes may reuse the
+same raw variable name because the outer environment is keyed by node name.
 
 ## Generation Pipeline
 
 1. `generate_local_env_for_node`
-   allocates fresh generated names for one node's inputs, outputs, locals,
-   clock, and reset identifiers
+   allocates fresh security names for one node's inputs, outputs, locals,
+   clock, and reset identifiers.
 2. `generate_node_scoped_env'`
-   folds that step over the node list and stores the result under each node
-   name
+   folds that local step over a node list while storing each node's environment
+   under its node name.
 3. `generate_node_scoped_env`
-   runs the fold from the empty environment
+   runs the fold from the empty environment and exposes the finished node-keyed
+   environment plus auxiliary names.
 4. `generate_node_env`
-   builds the flat global environment used by proofs that only need one raw
-   variable map
+   runs the flat global allocator used by proofs that only need one shared raw
+   variable map instead of the node-keyed view.
 
-## Lookup Interface
+## Core Lookup Interface
 
 - `get_mappings`
-  bulk lookup for a plain list of raw identifiers
+  bulk-looks up a plain list of raw identifiers and returns their generated
+  names in the same order.
 - `get_mappings_from_node`
-  bulk lookup for `(ident * A)` lists, which is the shape used by node
-  inputs, outputs, and locals
+  does the same for `(ident * A)` lists, which is the shape used by node
+  inputs, outputs, and locals.
 - `get_mappings_in`
-  every successful lookup result really came from the environment
+  says every source identifier present in a successful bulk lookup really comes
+  from a matching `Env.find`.
 - `get_mappings_from_node_In`
-  every generated identifier in a successful result comes from some raw
-  variable in the original node list
+  runs that argument in the opposite direction: every generated identifier in a
+  successful result came from some raw variable in the original node list.
 - `get_mappings_In` and related lemmas
-  move between list-level lookup facts and pointwise `Env.find` facts
+  are the bookkeeping bridge between list-level lookup results and pointwise
+  environment facts used later in proofs.
 
-These lemmas are what let later proofs talk about generated signatures using
-the list-based interfaces produced by the generators.
+These lookup lemmas are what let the typing and noninterference proofs move
+between list-level interfaces and pointwise environment facts.
 
 ## Structural Invariants
 
-The main theorem families say that:
+The main theorem groups are:
 
-- successful generation over `ns1 ++ ns2` can be split at the exact
-  intermediate state after `ns1`
-- once a node environment has been inserted, later generation does not change
-  it
-- generated node-local environments are injective
-- generated ordinary visible names stay in the `sec` namespace
-- later generated names are above the range used by earlier nodes, and are
-  therefore fresh from them
-
-Representative lemmas are:
-
+- `generate_node_scoped_env'_app_inv`
+  splits a successful run on `ns1 ++ ns2` into the exact intermediate state
+  reached after `ns1` and the tail run on `ns2`.
 - `generate_node_scoped_env'_split_node`
+  isolates the local generation step for one chosen node inside a larger
+  successful node-scoped pass.
+- `generate_node_env'_app_inv`
+  gives the same successful-split decomposition for the flat global generator.
 - `generate_node_env'_split_node`
+  isolates one node's flat-name generation step inside a larger successful
+  global run.
 - `fresh_insert_preserves_find`
+  says inserting one fresh generated name does not change existing lookup
+  results for other keys.
+- `fresh_map_list_preserves_find`
+  lifts that stability fact across a whole list of fresh insertions.
 - `generate_node_scoped_env'_preserves_find`
+  says once a node environment has been inserted, later node generation does
+  not change that stored mapping.
 - `generate_local_env_for_node_injective`
+  proves one node-local environment never maps two raw names to the same
+  generated security identifier.
 - `generate_node_env_injective`
+  lifts that injectivity fact to the flat environment generated for the whole
+  program.
 - `generate_local_env_for_node_sec_range`
+  proves every identifier generated for one node lives in the ordinary `sec`
+  namespace.
 - `generate_node_env_sec_range`
+  gives the same namespace-range guarantee for the whole flat program
+  environment.
 - `generate_local_env_for_node_bounded`
+  says names generated for one node stay below the final fresh-state bound
+  returned by that node's generation run.
 - `generate_local_env_for_node_fresh_from_bound`
+  turns the bound fact around: any later `sec` gensym is fresh from that node's
+  already-generated names.
+- `generate_node_scoped_env'_bounded`
+  lifts the same bound discipline to the entire node-scoped environment after a
+  successful global pass.
+
+Together these results say:
+
+- previously generated names stay stable when later nodes are processed;
+- generated security identifiers stay inside the intended namespace;
+- one generated identifier cannot correspond to two different raw names;
+- later nodes receive identifiers above the range already used by earlier
+  nodes.
 
 ## Downstream Use
 
-- `SecNLusTyping.v` and `SecSTCTyping.v`
-  read node-local environments from this file before generating signatures
-- `SecNLusTypingCorrectness.v` and `SecStcTypingCorrectness.v`
-  use the range, injectivity, and bound lemmas to prove signature structure
-  and freshness
-- `SecNLusStcTranslation.v`
-  uses the split and freshness lemmas to separate caller scope from STC-only
-  reset extras
+- `SecNLusTyping.v` and `SecSTCTyping.v` read node-local environments from this
+  file before generating signatures.
+- `SecNLusTypingCorrectness.v` and `SecStcTypingCorrectness.v` use the range,
+  injectivity, and bound lemmas to prove signature goodness and freshness.
+- `SecNLusStcTranslation.v` uses the split and freshness lemmas to justify
+  caller/callee separation and reset-name side conditions.
+- The NLustre noninterference proof uses the same lookup and bound lemmas to
+  recover the exact generated environment of a secure node and of its callees.

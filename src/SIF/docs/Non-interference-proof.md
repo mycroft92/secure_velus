@@ -2,148 +2,254 @@
 
 ## Scope
 
-This document explains the source-side noninterference development across:
+This document explains the current NLustre noninterference development.  The
+main Coq files are:
 
 - `SecNLusNonInterferenceSupport.v`
 - `SecNLusNonInterferenceHelpers.v`
 - `SecNLusNonInterferenceClockedStep.v`
 - `SecNLusNonInterference.v`
 
-The exported theorem is `node_noninterference_outputs`: two indexed
-executions of a secure node with low-equivalent inputs have low-equivalent
-observable outputs.
+The exported theorem is `node_noninterference_outputs`, which states that two
+indexed executions of a secure node with low-equivalent inputs have
+low-equivalent outputs.
 
 ## Module Split
 
 ### `SecNLusNonInterferenceSupport.v`
 
-This file provides the semantic base:
+This file defines the observation model and the generic semantic transport
+lemmas:
 
-- the observation predicates `low_var`, `env_low_eq`, `history_low_eq`, and
-  `history_low_eq_upto`
-- projection helpers such as `project_env_le_t` and `project_history_le_t`
-- expression and clock transport lemmas for low-equivalent histories
-- base noninterference lemmas for `EqDef` and `EqFby`
-- the central security predicate `node_security`
+- low variables:
+  `low_var` marks the identifiers whose security type is below the observation
+  threshold.
+  `vars_le_t` filters a variable list down to just those observable low
+  variables.
+  `env_low_eq` says two environments agree on the low variables from a chosen
+  list.
+  `history_low_eq` lifts that equality to all time instants.
+  `history_low_eq_upto` is the bounded prefix version used by the induction.
+- environment and history projection:
+  `project_env_le_t` erases every non-observable variable from one
+  environment.
+  `project_history_le_t` does the same pointwise over a whole history.
+- generic expression and clock transport:
+  `sem_caexp_switch_history_low` says a clocked core expression has the same
+  meaning in two low-equivalent histories when all its free variables are low.
+  `sem_aexp_switch_history_low` gives the same semantic transport for
+  clocked arithmetic expressions.
+  `sem_exps_switch_history_low` lifts that transport to lists of expressions,
+  which is what call arguments need.
+- base equation reasoning:
+  `eqdef_noninterference` proves a low `EqDef` cannot distinguish two
+  low-equivalent histories.
+  `eqfby_noninterference` proves the same for `EqFby`, taking the delayed case
+  into account.
+  Their pointwise and instant variants are the time-indexed forms used inside
+  the main induction.
+- the security predicate:
+  `node_security` is the inductive invariant that packages the generated
+  signature facts, raw constraint facts, and recursive call-security
+  obligations for one secure node.
 
-This is the semantic foundation.  It does not yet perform the
+This is the semantic foundation of the proof.  It does not yet perform the
 generated-program bookkeeping needed for real call sites.
 
 ### `SecNLusNonInterferenceHelpers.v`
 
-This file connects the semantic base to generated signatures and generated
-program structure:
+This file adds the generated-program machinery:
 
-- replay of raw satisfiability from stored signatures
+- replay of raw satisfiability from stored signatures:
+  `signature_satisfied_replays_raw` turns satisfaction of the stored signature
+  summary back into satisfaction of the node's unsimplified raw constraints.
 - lookup and membership inversion for generated constraints
 - caller-scope freshness and generated-environment facts
-- ordinary-call and reset-call transport lemmas
+- call-input and call-output transport lemmas for both ordinary and reset
+  calls
+- the intermediate specifications
+  `node_outputs_raw_spec` says secure executions with low-equivalent inputs
+  produce low-equivalent raw outputs.
+  `node_outputs_raw_spec_clocked` is the clock-aware strengthened version that
+  threads the base-clock agreement needed by the step theorem.
 - the base step theorem
-  `node_noninterference_vars_defined_step_base_mainline`
+  `node_noninterference_vars_defined_step_base_mainline` proves the induction
+  base case at instant `0` for all variables defined by the node equations.
 
-The crucial bridge here is:
-
-- `signature_satisfied_replays_raw`
-
-It starts from satisfaction of the stored simplified signature and reconstructs
-satisfaction of the raw generated constraints used by the step proof.
+The helper file is where generic semantic lemmas become usable on actual
+generated nodes and actual generated call signatures.
 
 ### `SecNLusNonInterferenceClockedStep.v`
 
 This file proves the successor-step theorem:
 
 - `node_noninterference_vars_defined_step_mainline`
+  extends low-equivalence from time `k` to all variables defined at time
+  `S k`, assuming the node is secure and the inputs stayed low-equivalent up to
+  `k`.
 
-It extends low-equivalence from time `k` to time `S k` for every variable
-defined by the current node equations.
+It is the time-indexed induction that extends low-equivalence from instant `k`
+to instant `S k` for the variables defined by the current node equations.
 
 ### `SecNLusNonInterference.v`
 
-This file packages the internal step theorem into:
+This file packages the step theorem into the two public layers:
 
 - `node_noninterference_outputs_raw`
+  turns a `node_security` witness into the internal clocked specification on
+  generated raw outputs.
 - `node_noninterference_outputs`
-
-The second theorem hides the replay machinery and exports the source-facing
-statement on observable outputs.
+  hides the raw replay machinery and exports the final source theorem:
+  low-equivalent inputs imply low-equivalent observable outputs.
 
 ## The Security Predicate
 
 `node_security all_nodes G envs aux_names n dlt_sig dlt_raw` is the central
-invariant.  A witness contains:
+inductive invariant.  A witness contains:
 
-- the generated local environment and stored signature of `n`
-- the generated clock/reset identifiers and generated input/output/local
-  mappings of `n`
-- the raw generated constraints and the equation linking them to the stored
-  simplified signature
-- satisfiability of the stored signature under `dlt_sig`
-- satisfiability of the raw constraints under `dlt_raw`
-- agreement of `dlt_sig` and `dlt_raw` on the visible stored signature scope
-- recursive security obligations for ordinary calls and reset calls
+- the generated local environment and generated stored signature of `n`;
+- the generated clock/reset identifiers and the generated input/output/local
+  mappings of `n`;
+- the raw generated constraints and the simplified stored signature equation
+  that links them;
+- satisfiability of the stored signature under `dlt_sig`;
+- satisfiability of the raw generated constraints under `dlt_raw`;
+- agreement of `dlt_sig` and `dlt_raw` on the visible signature scope;
+- recursive security obligations for every ordinary call and every reset call
+  in `n`.
 
 The proof keeps both `dlt_sig` and `dlt_raw` because the stored signature is
-the reusable public summary, while the equation-by-equation reasoning still
-needs the raw node constraints.
-
-## Where Simplification Enters
-
-The stored signature inside `node_security` is already in the shared normal
-form produced by `SymTypes.simplify`.  That means:
-
-- node locals have been eliminated
-- singleton-right-hand-side constraints have had trivial self-dependencies
-  removed
-
-The helper layer is what reconnects that stored summary to the raw generated
-constraints needed by the semantic induction.
+the reusable public summary, while the equation-by-equation step proof needs
+the unsimplified raw constraints.
 
 ## What The Main Step Theorem Proves
 
-`node_noninterference_vars_defined_step_mainline` says:
+`node_noninterference_vars_defined_step_mainline` proves:
 
-- if two histories are low-equivalent on the node inputs up to instant `k`
-- and the current node is secure
-- and both histories satisfy the node equations
-- and the base clocks agree up to `k`
+- if two histories are low-equivalent on the node inputs up to instant `k`,
+- and the current node is secure,
+- and both histories satisfy the node equations,
+- and the base clocks agree up to `k`,
 
-then the histories are low-equivalent up to `k` on every variable defined by
-the node equations.
+then the two histories are low-equivalent up to `k` on every variable defined
+by the node equations.
 
-This stronger statement is what makes the induction work for equations that
-depend on earlier equations in the same node.
+This theorem is stronger than the final output theorem because it tracks all
+defined variables, not only the observable outputs.  That stronger statement is
+what makes the induction go through for equations that depend on earlier
+equations in the same node.
 
 ## How The Induction Works
 
 There are two interacting proof structures.
 
-### 1. Time Induction
+### 1. Time induction on `k`
 
-The theorem in `SecNLusNonInterferenceClockedStep.v` proceeds by induction on
+The theorem in `SecNLusNonInterferenceClockedStep.v` is proved by induction on
 the time bound `k`.
 
-- base case:
-  `node_noninterference_vars_defined_step_base_mainline`
-- successor case:
-  reuse the induction hypothesis on time `k`, then prove pointwise equality at
-  time `S k`
+#### Base case
 
-### 2. Causal Induction Inside One Instant
+At `k = 0`, the proof uses
+`node_noninterference_vars_defined_step_base_mainline` from the helper file.
+This theorem handles the first instant directly, where:
 
-Inside the successor step, the proof uses the node causality induction to
-reason over variables in the order they are defined at the current instant.
+- `EqDef` only depends on current inputs and already available environment
+  facts,
+- `EqFby` uses its initial branch,
+- call equations only need the callee result at the initial instant.
 
-- `EqDef`
-  current expression equality follows from low-equivalence of free variables
-- `EqFby`
-  delayed values come from the induction hypothesis on the previous instant
-- ordinary `EqApp`
-  call inputs are transported to the callee, the recursive security witness is
-  applied, and the result is transported back
-- reset `EqApp`
-  same structure, with extra bookkeeping for the reset control and reset type
+#### Successor case
 
-## Result
+For `S k`, the proof first invokes the induction hypothesis to recover
+low-equivalence on all variables defined by the node up to instant `k`.
+That gives the delayed information needed by `EqFby` and the prefix facts
+needed by call equations.
 
-The exported theorem `node_noninterference_outputs` is the exact source-side
-noninterference statement justified by the current development.
+The proof then establishes pointwise equality at instant `S k` for every low
+defined variable.  That pointwise statement is turned back into
+`history_low_eq_upto ... (S k)` with `history_low_eq_upto_succ_intro`.
+
+### 2. Causal induction on defined variables at the current instant
+
+Inside the successor case, the proof uses
+`nl_node_causal_ind_defined` to reason over variables in the node's causal
+order.  This is what handles dependencies between equations within the same
+instant.
+
+For a currently defined low variable `x`, the proof picks the equation that
+defines `x` and uses the theorem corresponding to that equation form.
+
+#### `EqDef`
+
+The proof uses the generated typing witness for the defining equation and the
+instant-level switch lemmas from `CEProperties`.  Because every low free
+variable of the defining expression already agrees between the two histories,
+the current output of the expression agrees as well.
+
+#### `EqFby`
+
+The initial value or delayed predecessor is handled with the `fby` lemmas from
+the support file.  The delayed branch uses the induction hypothesis on `k`
+because the predecessor value comes from an earlier instant, not from the
+current one.
+
+#### Ordinary `EqApp`
+
+The proof first shows that the actual input arguments of the call are
+low-equivalent up to the relevant instant.  This uses the helper lemmas that
+transport low-equivalence from caller variables to the instantiated callee
+inputs.
+
+It then applies the recursive `node_security` witness for the callee, but under
+the instantiated valuations
+`lat_valuation dlt_sig ...` and `lat_valuation dlt_raw ...`.  The callee
+gives low-equivalent outputs, and the helper lemmas transport that result back
+to the caller-side output variables.
+
+#### Reset `EqApp`
+
+The reset-call case follows the same structure, but it also carries:
+
+- low-equivalence of the reset control stream,
+- clock alignment for the reset clock,
+- the reset type contribution `([rty] ⊔ rstty)` used in the instantiated
+  callee valuation.
+
+The helper layer contains the extra transport lemmas that keep the reset
+control aligned across the two histories.
+
+## From Defined Variables To Observable Outputs
+
+`node_noninterference_outputs_raw` takes a `node_security` witness and builds
+`node_outputs_raw_spec_clocked`.  The only additional step is to weaken the
+defined-variable result to the output list using the node's `n_defd`
+permutation between `vars_defined n.(n_eqs)` and the declared outputs/locals.
+
+`node_noninterference_outputs` then converts the clocked raw specification into
+the public theorem on outputs alone.  The statement only exposes:
+
+- successful generated environments and source signatures,
+- the secure-node witness,
+- two indexed executions of the node,
+- and low-equivalent inputs.
+
+All raw-constraint replay, generated-name lookup, and callee-security recursion
+remain internal to the proof.
+
+## Why The Proof Is Structured This Way
+
+The theorem has to reason about three different kinds of dependency at once:
+
+- same-instant equation dependencies inside one node;
+- previous-instant dependencies created by `fby`;
+- inter-node dependencies introduced by calls.
+
+The current split assigns one mechanism to each:
+
+- causal induction handles same-instant dependencies;
+- time induction handles delayed dependencies;
+- `node_security` handles recursive call dependencies.
+
+That is the reason the public theorem looks compact while the internal proof
+stack is split across support, helper, step, and final packaging files.

@@ -4,101 +4,120 @@
 
 `SIFSignature.v` defines the stored signature format shared by the NLustre and
 STC typing developments and proves the call-instantiation metatheory used by
-translation and noninterference.
-
-The important point is that this file works over stored signatures that have
-already been simplified by `SymTypes.simplify`.
+the translation proof.
 
 ## Stored Interface
 
 - `signature`
-  stored summary for one node or translated system: visible inputs, outputs,
-  clock, reset, and replayable constraints
+  is the stored summary exported for one node or system: visible inputs,
+  outputs, clock/reset identifiers, and the replayable constraint list.
 - `secglobal`
-  a global list of stored signatures
+  is just the global list of those stored summaries.
 - `find_signature`
-  lookup by node or system name
+  looks up one stored summary by node or system name.
 - `signature_scope`
-  the visible interface that later proofs preserve: inputs, outputs, clock,
-  and reset
+  is the visible interface set that later replay and preservation proofs agree
+  to preserve: inputs, outputs, clock, and reset.
 
-This is the boundary between local raw generation and reusable cross-call
-summaries.
+This file is where the development moves from raw generated constraints inside
+one node or system to reusable summaries that later callers can instantiate.
 
 ## Call Instantiation
 
-`generate_constraints` takes one stored callee signature together with:
+`generate_constraints` takes a stored callee signature and concrete caller-side
+actuals:
 
-- caller-side input symbolic types
-- caller-side clock type
-- caller-side reset type
-- caller-side output identifiers
+- input symbolic types,
+- clock type,
+- reset type,
+- output identifiers.
 
-It instantiates the stored constraints by substituting those actuals and then
-reorders the resulting block so that right-hand sides follow the caller output
-order.
+It performs input substitution, clock/reset substitution, output substitution,
+and then reorders the resulting constraints so that the final list is indexed
+by the caller output order.
 
-`generate_constraints` does not run simplification itself.  It assumes the
-stored signature was already normalized when it was generated.
+That last reorder step is important.  Later typing proofs do not consume the
+callee's internal constraint order; they consume a caller-facing block whose
+right-hand sides match the caller outputs exactly.
 
 ## Structural Invariants
 
 - `signature_good`
-  the stored signature has well-formed constraints and one singleton
-  right-hand side per declared output
+  says a stored signature has well-formed constraints and exactly one
+  right-hand side per declared output.
 - `secglobal_good`
-  every signature in a global is good
+  says every signature found in a global satisfies `signature_good`.
 - `signature_scoped`
-  stored constraints only mention identifiers from the visible interface
+  says every stored constraint only mentions identifiers from the visible
+  signature interface.
 - `secglobal_scoped`
-  global version of that scopedness fact
+  lifts that scopedness guarantee to every signature found in a global.
 - `signature_scope_sec`
-  visible identifiers live in the ordinary `sec` namespace
+  says every visible identifier in one signature comes from the ordinary `sec`
+  namespace.
 - `call_subst_fresh`
-  caller actuals are fresh from the callee scope where replay needs that
+  packages the freshness side conditions needed so caller actuals do not clash
+  with the callee's stored scope during replay.
 - `call_subst_scoped`
-  caller actuals really live in the caller-visible scope
+  packages the dual scopedness side conditions saying the caller actuals really
+  live inside the caller-visible scope.
+
+The core shape theorem is `generate_constraints_shape`.  It turns
+`signature_good` into the concrete fact that every generated call block is
+well formed and indexed by the caller outputs.
 
 ## Replay Valuation
 
 `lat_valuation` reconstructs the callee-side lattice valuation induced by one
 concrete call.  It is the bridge between:
 
-- satisfiability of the stored callee signature
-- satisfiability of the instantiated caller-facing call block
+- satisfiability of the stored signature constraints, and
+- satisfiability of the instantiated caller-facing call block.
 
-The main replay lemmas are:
+The important replay lemmas are:
 
 - `lat_valuation_agree_on_scope`
+  says replaying a call does not change the valuation on the caller scope when
+  the caller scope is fresh from the callee signature.
 - `lat_valuation_outputs_eq`
+  relates each callee output identifier to the concrete caller output variable
+  it was instantiated with.
 - `lat_valuation_inputs_eq`
+  says each stored callee input is interpreted exactly as the caller actual
+  type substituted for it.
 - `lat_valuation_clk_eq`
+  says the stored callee clock identifier evaluates to the caller clock type.
 - `lat_valuation_reset_eq`
+  says the stored callee reset identifier evaluates to the caller reset type.
 - `lat_valuation_fields_agree_on_sig_scope`
+  transports those replay equalities across two signatures with matching
+  interface fields, which is what the translation proof needs at call sites.
 
-Together they say that replay behaves exactly like the caller valuation on the
-callee's visible scope while remaining stable outside that scope when the
-freshness side conditions hold.
+These lemmas say that the replay valuation behaves exactly like the caller's
+valuation on the callee's visible scope, while remaining stable outside that
+scope when freshness side conditions hold.
 
 ## Main Theorems
 
 - `generate_constraints_shape`
-  instantiating one stored signature produces a well-formed call block whose
-  right-hand sides are exactly the caller outputs
+  proves that instantiating one stored signature produces a well-formed call
+  block whose right-hand sides are exactly the caller outputs, in caller order.
 - `generate_constraints_scoped`
-  scoped actuals produce a scoped caller-facing call block
+  proves that if the caller actuals stay in scope, every instantiated call
+  constraint also stays in that same caller scope.
 - `generate_constraints_correct_inst`
-  satisfiability of the stored signature replays forward to satisfiability of
-  the instantiated call block
+  shows how a satisfying stored-signature valuation can be replayed forward to
+  satisfy the generated caller-side call block.
 - `generate_constraints_complete_good`
-  the reverse replay direction for good stored signatures
+  proves the reverse direction: if the generated call block is satisfied and
+  the stored signature is good, then the stored signature constraints are
+  satisfied under the replay valuation.
 
 ## Downstream Use
 
-- `SecNLusTyping.v` and `SecSTCTyping.v`
-  use `generate_constraints` in the call cases
-- `SecNLusTypingCorrectness.v`
-  proves generated source signatures satisfy `signature_good`
-- `SecNLusStcTranslation.v`
-  uses the replay theorems here to prove ordinary-call and reset-call
-  preservation
+- `SecNLusTyping.v` and `SecSTCTyping.v` use `generate_constraints` when
+  typing source and translated call equations.
+- `SecNLusTypingCorrectness.v` proves generated source signatures satisfy
+  `signature_good` and have `NoDup (signature_scope sig)`.
+- `SecNLusStcTranslation.v` uses the replay theorems here to prove
+  `Signature_call_preserves` for both ordinary and reset calls.

@@ -2,20 +2,20 @@
 
 ## Role
 
-`SecNLusTyping.v` is the NLustre-side constraint generator.  Starting from a
-generated node-local security environment, it produces:
+`SecNLusTyping.v` is the NLustre-side symbolic typing generator.  It reads a
+generated node-local security environment and turns one NLustre node into:
 
 - raw equation constraints,
-- a simplified stored source signature,
-- and a generated global of source signatures
+- a simplified stored signature,
+- and a global list of generated source signatures.
 
-## Generation Flow
+## Generation Structure
 
-The file is organized at three levels.
+The file is organized around three levels.
 
 ### Equation Level
 
-`generate_eqn_constraint` types one NLustre equation.  The cases follow the
+`generate_eqn_constraint` types one NLustre equation.  The cases mirror the
 syntax:
 
 - `EqDef`
@@ -23,73 +23,81 @@ syntax:
 - ordinary `EqApp`
 - reset `EqApp`
 
-Call equations do not replay signatures locally.  They reuse
-`SIFSignature.generate_constraints`.
+For call equations, the generator looks up the callee signature in the current
+global and instantiates it through `SIFSignature.generate_constraints`.
 
 ### Node Level
 
-- `generate_eqns_constraints`
-  folds equation generation over the node body
-- `generate_node_sig`
-  builds the stored signature for one node
-- `generate_node_sig_scoped_env`
-  recovers the right node-local environment and then calls
-  `generate_node_sig`
+- `generate_eqns_constraints` folds equation generation over the node body.
+- `generate_node_sig` packages the resulting raw constraints into a stored
+  signature by calling the shared `SymTypes.simplify` to eliminate node
+  locals.
+- `generate_node_sig_scoped_env` is the node-scoped entry point used by the
+  current development: it first recovers the node's local generated
+  environment from `NameInterface.v` and then runs `generate_node_sig`.
 
-The important node-level step is:
-
-- `generate_node_sig`
-  stores `SymTypes.simplify raw locals`
-
-So node locals are eliminated before the signature is exported.
+That simplifier is also the place where surviving singleton-right-hand-side
+constraints are normalized so they no longer mention their own target on the
+left.
 
 ### Global Level
 
-- `generate_all_signatures'`
-  accumulates source signatures
-- `generate_all_signatures_scoped_env`
-  is the top-level node-scoped interface used downstream
-
-## What `simplify` Means Here
-
-The source generator and the target generator both use the same
-`SymTypes.simplify`.  The stored source signature is therefore not just a
-projection of the raw constraint list; it is the shared canonical form.
-
-In particular, singleton-right-hand-side constraints are normalized so that a
-target does not mention itself on the left.  That is why extracted dumps now
-omit trivial self-dependencies.
+- `generate_all_signatures'` accumulates source signatures.
+- `generate_all_signatures_scoped_env` is the top-level current interface used
+  by the translation and noninterference theorems.
 
 ## Main Theorem Families
 
 - `generate_eqn_constraint_shape`
-  one generated equation block has singleton right-hand sides for the defined
-  variables
+  says one generated equation block defines exactly the variables of that
+  equation and does so with well-formed singleton right-hand sides.
 - `generate_eqns_constraints_shape`
-  the full node body has the expected right-hand-side structure
+  lifts the same shape guarantee to the full list of node equations.
 - `generate_eqns_constraints_wf`
-  whole-node raw constraints are well formed
+  extracts the well-formedness part of that shape theorem for a whole equation
+  list.
 - `generate_node_eqns_constraints_wf`
-  node-level packaging of the same well-formedness fact
+  packages the same well-formedness fact at node level.
 - `generate_eqn_constraint_scoped`
-  one equation block only mentions identifiers from the generated node scope
+  proves one generated equation block only mentions identifiers from the
+  generated node scope.
 - `generate_eqns_constraints_scoped`
-  scopedness for the whole node body
+  lifts that scopedness fact to the entire node equation list.
 - `generate_node_sig_scoped`
-  the simplified stored source signature stays inside the visible interface
+  proves the simplified stored source signature only mentions identifiers from
+  its visible interface.
 - `generate_all_signatures_scoped`
-  scopedness for the generated source global
+  lifts source-signature scopedness to the whole generated NLustre global.
 - `generate_node_sig_scoped_env`
-  node-scoped entry point used by later files
+  is the node-scoped entry point that recovers the node's generated local
+  environment before building one source signature.
 - `generate_all_signatures_scoped_env`
-  top-level source generator
+  is the top-level node-scoped global generator used downstream by translation
+  and noninterference.
+
+The shape lemmas show that generated raw constraints have the expected single
+target structure.  The scopedness lemmas show that every generated identifier
+mentioned by the source constraints comes from the visible generated node
+scope.
+
+## Call Cases
+
+The call cases do not implement their own substitution metatheory.  They rely
+on `SIFSignature.v` for:
+
+- call-block generation,
+- well-formedness of instantiated call constraints,
+- and scopedness of the caller-facing constraint block.
+
+This keeps source typing focused on where the actual arguments come from and
+what scope they live in, rather than on replaying signature substitutions.
 
 ## Downstream Use
 
-- `SecNLusTypingCorrectness.v`
-  strengthens the raw shape facts into `signature_good`, `NoDup`, freshness,
-  and visibility results
-- `SecNLusStcTranslation.v`
-  compares these generated source signatures with generated STC signatures
-- the source noninterference stack replays from the stored simplified
-  signature back to the raw generated constraints
+- `SecNLusTypingCorrectness.v` strengthens these generation results with
+  `signature_good`, `NoDup (signature_scope sig)`, and generated-name
+  freshness.
+- `SecNLusStcTranslation.v` uses the scoped generated source signatures when it
+  compares NLustre and STC signatures.
+- The NLustre noninterference proof uses the same generator to recover the raw
+  source constraints tied to a secure node.
