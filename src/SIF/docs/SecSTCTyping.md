@@ -2,11 +2,11 @@
 
 ## Role
 
-`SecSTCTyping.v` is the STC-side symbolic typing generator.  It assigns
-security constraints to translated transition constraints, isolates STC-only
-state, and packages the visible part into stored target signatures.
+`SecSTCTyping.v` is the STC-side constraint generator.  It assigns security
+constraints to translated transition constraints, makes STC-only state
+explicit, and packages the visible part into stored target signatures.
 
-## Generation Structure
+## STC-Specific State
 
 ### Reset Environment
 
@@ -20,55 +20,54 @@ typing.
 `hidden_sys_vars` records which generated identifiers are removed before the
 exported STC signature is stored:
 
-- translated locals,
-- memory variables such as `s_lasts`,
-- STC-only reset-instance names.
+- translated locals
+- memory variables such as `s_lasts`
+- STC-only reset-instance names
 
 The stored signature therefore exposes only the translated interface that is
 meant to be compared with the NLustre signature.
 
-### Signature Generation
+## Signature Generation
 
-- transition-level generators produce raw target constraints;
-- list-level generators assemble one translated block;
-- `generate_sys_signature` simplifies the raw result into a stored signature;
-- `generate_sys_signature_scoped_env` and
-  `generate_all_sys_signatures_scoped_env` are the node-scoped entry points
-  used by the current translation theorem.
+- transition-level generators produce raw target constraints
+- list-level generators assemble one translated block
+- `generate_sys_signature`
+  stores `SymTypes.simplify raw (hidden_sys_vars ...)`
+- `generate_sys_signature_scoped_env`
+  node-scoped entry point
+- `generate_all_sys_signatures_scoped_env`
+  top-level target generator
+
+As on the source side, stored target signatures are canonicalized by the same
+shared `SymTypes.simplify`, including removal of trivial self-dependencies on
+singleton right-hand sides.
 
 ## Main Theorem Families
 
 - `trconstr_reset_keys`
-  extracts exactly which reset-instance keys one translated STC transition
-  constraint reads.
+  extracts the reset-instance keys read by one translated transition
+  constraint
 - `trconstrs_reset_keys`
-  accumulates those reset keys across a whole translated transition block.
+  accumulates those keys across a whole translated block
 - `generate_trconstr_constraint_scoped_on_keys`
-  says one generated translated constraint block is scoped once the proof
-  includes the visible scope plus the reset keys that block may read.
+  one translated block is scoped once the proof includes the visible scope
+  plus the reset keys it may read
 - `generate_trconstrs_constraints_scoped_on_keys`
-  lifts that scopedness argument from one transition constraint to an entire
-  translated transition list.
+  list-level version of the same argument
 - `generate_sys_signature_scoped`
-  proves the simplified stored STC signature only mentions identifiers from its
-  visible translated interface.
+  the simplified stored target signature stays inside the visible translated
+  interface
 - `generate_all_sys_signatures_scoped`
-  lifts that signature-scopedness fact to the whole generated STC global.
-- `generate_sys_signature_scoped_env`
-  is the node-scoped entry point that first recovers the right local generated
-  environment and then builds one scoped STC signature.
-- `generate_all_sys_signatures_scoped_env`
-  is the top-level node-scoped global generator consumed by the translation
-  theorem.
+  scopedness for the generated target global
 
-The reset-key lemmas are the crucial interface for the translation proof.  They
-show that one translated STC block is scoped once the proof knows the scope of
-the visible variables and of exactly the reset-instance keys that block reads.
+The reset-key lemmas are the interface consumed by the translation proof when
+it needs to isolate STC-only extras from the shared source-visible scope.
 
 ## Downstream Use
 
-- `SecStcTypingCorrectness.v` proves the extra namespace and injectivity facts
-  about generated reset names and generated target signatures.
-- `SecNLusStcTranslation.v` uses the reset-key scopedness theorems to compose
-  translated equation blocks while keeping their private reset extras separate
-  from the shared NLustre scope.
+- `SecStcTypingCorrectness.v`
+  proves the extra namespace and injectivity facts about generated reset names
+  and target signatures
+- `SecNLusStcTranslation.v`
+  uses the reset-key scopedness theorems to compose translated equation blocks
+  while keeping private reset extras separate from the NLustre scope

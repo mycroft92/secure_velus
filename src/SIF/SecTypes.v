@@ -5,338 +5,10 @@ From Coq Require Import Lists.ListSet.
 
 From Velus Require Import Common.
 From Coq Require Import Lia.
-From Velus Require Import SymTypes.
+From Velus Require Export SIF.SymTypes.
 From Velus Require Export SIF.SecLattice.
 Require Import Coq.Program.Equality.
 Import List.ListNotations.
-
-Definition wf_constraints (cs: list SymTypes.constraint) : Prop :=
-  NoDup (map snd cs) /\ Forall (fun '(_, x) => length x = 1) cs.
-
-Definition constraint_scope (c: SymTypes.constraint) : list ident :=
-  fst c ++ snd c.
-
-Definition constraint_scoped (scope: list ident) (c: SymTypes.constraint) : Prop :=
-  forall x, In x (constraint_scope c) -> In x scope.
-
-Definition constraints_scoped (scope: list ident) (cns: list SymTypes.constraint) : Prop :=
-  Forall (constraint_scoped scope) cns.
-
-Definition st_scoped (scope: list ident) (st: SymTypes.ST) : Prop :=
-  forall x, In x st -> In x scope.
-
-Lemma st_scoped_weaken:
-  forall scope1 scope2 st,
-    incl scope1 scope2 ->
-    st_scoped scope1 st ->
-    st_scoped scope2 st.
-Proof.
-  intros scope1 scope2 st Hincl Hsc x Hin.
-  apply Hincl, Hsc, Hin.
-Qed.
-
-Lemma constraints_scoped_weaken:
-  forall scope1 scope2 cns,
-    incl scope1 scope2 ->
-    constraints_scoped scope1 cns ->
-    constraints_scoped scope2 cns.
-Proof.
-  intros scope1 scope2 cns Hincl Hsc.
-  unfold constraints_scoped in *.
-  rewrite Forall_forall in *.
-  intros c Hin.
-  specialize (Hsc c Hin).
-  intros x Hinx.
-  apply Hincl, Hsc, Hinx.
-Qed.
-
-Lemma scope_remove_choice:
-  forall pre post (x y : ident),
-    In y (pre ++ x :: post) ->
-    y = x \/ In y (pre ++ post).
-Proof.
-  intros pre post x y Hin.
-  rewrite in_app_iff in Hin.
-  destruct Hin as [Hin|Hin].
-  - right. now apply in_or_app; left.
-  - simpl in Hin. destruct Hin as [Heq|Hin].
-    + now left.
-    + right. now apply in_or_app; right.
-Qed.
-
-Lemma in_merge_inv:
-  forall x a b,
-    In x (a ⊔ b) ->
-    In x a \/ In x b.
-Proof.
-  intros x a.
-  induction a as [|a0 a IHa]; intros b Hin.
-  - assert (Hmerge : merge (@nil ident) b = b).
-    { induction b as [|b0 b IHb]; simpl; auto. }
-    rewrite Hmerge in Hin.
-    right. exact Hin.
-  - revert a0 a IHa Hin.
-    induction b as [|b0 b IHb]; intros a0 a IHa Hin.
-    + assert (Hmerge : merge (a0 :: a) (@nil ident) = (a0 :: a)) by reflexivity.
-      rewrite Hmerge in Hin.
-      left. exact Hin.
-    + simpl in Hin.
-      destruct (Pos.compare a0 b0) eqn:Hcmp.
-      * simpl in Hin. destruct Hin as [Hin|Hin].
-        { subst x. now left; left. }
-        apply IHa in Hin. destruct Hin as [Hin|Hin].
-        { now left; right. }
-        { now right; right. }
-      * simpl in Hin. destruct Hin as [Hin|Hin].
-        { subst x. now left; left. }
-        specialize (IHa (b0 :: b) Hin). destruct IHa as [Hin'|Hin'].
-        { now left; right. }
-        { now right. }
-      * simpl in Hin. destruct Hin as [Hin|Hin].
-        { subst x. now right; left. }
-        specialize (IHb a0 a IHa Hin). destruct IHb as [Hin'|Hin'].
-        { now left. }
-        { now right; right. }
-Qed.
-
-Lemma st_remove_in_inv:
-  forall x y st,
-    In y (st_remove x st) ->
-    In y st /\ y <> x.
-Proof.
-  intros x y st.
-  induction st as [|a st IH]; simpl; intros Hin.
-  - contradiction.
-  - destruct (ident_eq_dec x a) as [Heq|Hneq].
-    + subst a.
-      specialize (IH Hin) as [Hin' Hneq'].
-      split; [now right|exact Hneq'].
-    + simpl in Hin.
-      destruct Hin as [Heq|Hin].
-      * subst y. split.
-        -- now left.
-        -- intro Heq'. apply Hneq. symmetry. exact Heq'.
-      * specialize (IH Hin) as [Hin' Hneq'].
-        split; [now right|exact Hneq'].
-Qed.
-
-Lemma st_scoped_remove_app:
-  forall pre post x st,
-    st_scoped (pre ++ x :: post) st ->
-    st_scoped (pre ++ post) (st_remove x st).
-Proof.
-  intros pre post x st Hsc y Hin.
-  destruct (st_remove_in_inv _ _ _ Hin) as [Hin' Hneq].
-  specialize (Hsc y Hin').
-  destruct (scope_remove_choice pre post x y Hsc) as [Heq|Hin''].
-  - contradiction.
-  - exact Hin''.
-Qed.
-
-Lemma st_scoped_drop_absent_app:
-  forall pre post x st,
-    ~ In x st ->
-    st_scoped (pre ++ x :: post) st ->
-    st_scoped (pre ++ post) st.
-Proof.
-  intros pre post x st Hnin Hsc y Hin.
-  destruct (scope_remove_choice pre post x y (Hsc _ Hin)) as [Heq|Hin'].
-  - subst y. contradiction.
-  - exact Hin'.
-Qed.
-
-Lemma st_scoped_merge:
-  forall scope st1 st2,
-    st_scoped scope st1 ->
-    st_scoped scope st2 ->
-    st_scoped scope (st1 ⊔ st2).
-Proof.
-  intros scope st1 st2 H1 H2 x Hin.
-  destruct (in_merge_inv _ _ _ Hin) as [Hin'|Hin']; auto.
-Qed.
-
-Lemma constraint_scoped_lhs:
-  forall scope lhs rhs x,
-    constraint_scoped scope (lhs, rhs) ->
-    In x lhs ->
-    In x scope.
-Proof.
-  intros scope lhs rhs x Hsc Hin.
-  apply Hsc. unfold constraint_scope. now apply in_or_app; left.
-Qed.
-
-Lemma constraint_scoped_rhs:
-  forall scope lhs rhs x,
-    constraint_scoped scope (lhs, rhs) ->
-    In x rhs ->
-    In x scope.
-Proof.
-  intros scope lhs rhs x Hsc Hin.
-  apply Hsc. unfold constraint_scope. now apply in_or_app; right.
-Qed.
-
-Lemma st_scoped_singleton:
-  forall scope x,
-    In x scope ->
-    st_scoped scope [x].
-Proof.
-  intros scope x Hin y Hy.
-  simpl in Hy. destruct Hy as [Heq|[]]. subst. exact Hin.
-Qed.
-
-Lemma findST_of_rhs_in:
-  forall cns d,
-    In [d] (map snd cns) ->
-    exists st, findST cns d = Some st.
-Proof.
-  induction cns as [|[lhs rhs] cns IH]; intros d Hin.
-  - inversion Hin.
-  - simpl in Hin.
-    destruct rhs as [|r rhs'].
-    + destruct Hin as [Heq|Hin].
-      * discriminate Heq.
-      * apply IH. exact Hin.
-    + destruct rhs' as [|r' rhs''].
-      * simpl in Hin. destruct Hin as [Heq|Hin].
-        -- inversion Heq. subst r.
-           exists lhs.
-           simpl.
-           rewrite ident_eqb_refl.
-           reflexivity.
-        -- destruct (ident_eqb r d) eqn:Hrd.
-           ++ apply ident_eqb_eq in Hrd. subst r.
-              exists lhs.
-              simpl.
-              rewrite ident_eqb_refl.
-              reflexivity.
-           ++ apply IH in Hin as (st & Hfind).
-              exists st.
-              simpl.
-              rewrite Hrd.
-              exact Hfind.
-      * destruct Hin as [Heq|Hin].
-        -- discriminate Heq.
-        -- apply IH. exact Hin.
-Qed.
-
-Lemma subST_scoped_elim:
-  forall scope ds d lhs st,
-    st_scoped (scope ++ d :: ds) lhs ->
-    st_scoped (scope ++ d :: ds) st ->
-    st_scoped (scope ++ ds) (subST lhs d st).
-Proof.
-  intros scope ds d lhs st Hlhs Hst.
-  unfold subST.
-  destruct (st_mem d lhs) eqn:Hmem.
-  - destruct (st_mem d st) eqn:Hmem'.
-    + eapply st_scoped_merge.
-      * eapply st_scoped_remove_app; eauto.
-      * eapply st_scoped_remove_app; eauto.
-    + eapply st_scoped_merge.
-      * eapply st_scoped_remove_app; eauto.
-      * eapply st_scoped_drop_absent_app with (x := d); eauto.
-        intro Hin. apply my_set_mem_correct in Hin. unfold st_mem in Hmem'. rewrite Hin in Hmem'. discriminate.
-  - eapply st_scoped_drop_absent_app with (x := d); eauto.
-    intro Hin. apply my_set_mem_correct in Hin. unfold st_mem in Hmem. rewrite Hin in Hmem. discriminate.
-Qed.
-
-Lemma subAll_scoped_elim:
-  forall scope ds cns d st,
-    constraints_scoped (scope ++ d :: ds) cns ->
-    st_scoped (scope ++ d :: ds) st ->
-    constraints_scoped (scope ++ ds) (subAll cns d st).
-Proof.
-  induction cns as [|[lhs rhs] cns IH]; intros d st Hsc Hst; simpl.
-  - constructor.
-  - inversion Hsc as [|c0 cs0 Hc Hcs]; subst c0 cs0.
-    destruct rhs as [|r rhs'].
-    + exact (IH d st Hcs Hst).
-    + destruct rhs' as [|r' rhs''].
-      * destruct (ident_eqb r d) eqn:Hrd.
-        -- exact (IH d st Hcs Hst).
-        -- apply Forall_cons.
-           ++ unfold constraint_scoped.
-              intros y Hin.
-              unfold constraint_scope in Hin.
-              apply in_app_iff in Hin.
-              destruct Hin as [Hin|Hin].
-              ** assert (Hlhs : st_scoped (scope ++ d :: ds) lhs).
-                 { intros z Hz.
-                   eapply constraint_scoped_lhs with (rhs := [r]); eauto. }
-                 pose proof (subST_scoped_elim scope ds d lhs st Hlhs Hst) as Hsub.
-                 exact (Hsub y Hin).
-              ** simpl in Hin.
-                 destruct Hin as [Heq|HinFalse].
-                 { subst y.
-                   assert (HrScope : In r (scope ++ d :: ds)).
-                   { eapply constraint_scoped_rhs with (lhs := lhs) (rhs := [r]); eauto.
-                     simpl; left; reflexivity. }
-                   destruct (scope_remove_choice scope ds d r HrScope) as [Heqd|Hin'].
-                   - apply ident_eqb_neq in Hrd. contradiction.
-                   - exact Hin'. }
-                 { contradiction. }
-           ++ exact (IH d st Hcs Hst).
-      * exact (IH d st Hcs Hst).
-Qed.
-
-Lemma subAll_preserves_other_rhs:
-  forall cns d st d',
-    d' <> d ->
-    In [d'] (map snd cns) ->
-    In [d'] (map snd (subAll cns d st)).
-Proof.
-  induction cns as [|[lhs rhs] cns IH]; intros d st d' Hneq Hin; simpl in *.
-  - contradiction.
-  - destruct rhs as [|r rhs'].
-    + destruct Hin as [Heq|Hin].
-      * discriminate Heq.
-      * apply IH; auto.
-    + destruct rhs' as [|r' rhs''].
-      * simpl in Hin.
-        destruct Hin as [Heq|Hin].
-        -- inversion Heq; subst r.
-           destruct (ident_eqb d' d) eqn:Hd.
-           ++ apply ident_eqb_eq in Hd. contradiction.
-           ++ simpl. left. reflexivity.
-        -- destruct (ident_eqb r d) eqn:Hrd.
-           ++ apply IH; auto.
-           ++ simpl. right. apply IH; auto.
-      * destruct Hin as [Heq|Hin].
-        -- discriminate Heq.
-        -- apply IH; auto.
-Qed.
-
-Theorem simplify_scoped:
-  forall scope ds cns,
-    NoDup ds ->
-    constraints_scoped (scope ++ ds) cns ->
-    (forall d, In d ds -> In [d] (map snd cns)) ->
-    constraints_scoped scope (simplify cns ds).
-Proof.
-  intros scope ds.
-  induction ds as [|d ds IH]; intros cns Hnd Hsc Hdefs.
-  - simpl in *. rewrite app_nil_r in Hsc. exact Hsc.
-  - simpl.
-    assert (Hrhs : In [d] (map snd cns)) by (apply Hdefs; left; reflexivity).
-    destruct (findST_of_rhs_in _ _ Hrhs) as [st Hfind].
-    rewrite Hfind.
-    apply IH.
-    + now apply NoDup_cons_iff in Hnd.
-    + assert (Hst_scoped : st_scoped (scope ++ d :: ds) st).
-      { intros x Hin.
-        pose proof Hsc as Hsc_forall.
-        unfold constraints_scoped in Hsc_forall.
-        rewrite Forall_forall in Hsc_forall.
-        eapply constraint_scoped_lhs with (rhs := [d]).
-        - apply Hsc_forall. apply find_correct. exact Hfind.
-        - exact Hin. }
-      eapply subAll_scoped_elim; eauto.
-    + intros d' Hin.
-      eapply subAll_preserves_other_rhs.
-      * intro Heq. subst d'.
-        apply NoDup_cons_iff in Hnd as [Hnin _]. contradiction.
-      * apply Hdefs. now right.
-Qed.
 
 Module Type SECTYPES(Import Lat: Lattice).
     Import ListNotations.
@@ -524,8 +196,8 @@ Module Type SECTYPES(Import Lat: Lattice).
     | x::xs' => join  (delta x) (hm_ext delta xs')
     end.
 
-  Definition st_remove := List.remove ident_eq_dec.
-  Definition st_mem    := my_set_mem.
+  Definition st_remove := SymTypes.st_remove.
+  Definition st_mem    := SymTypes.st_mem.
 
   Hint Immediate eq_sym.
   Hint Resolve merge_nil merge_nil2 merge_comm intersect_nil intersect_nil2 intersect_comm eq_refl eq_trans eqb_refl
@@ -675,25 +347,12 @@ Module Type SECTYPES(Import Lat: Lattice).
 
   Hint Unfold satisfiable constraintSatisfiable listSatisfiable.
 
-  Fixpoint findST cns d: option ST :=
-    match cns with
-    | []  => None
-    | (st,[d'])::cns'  => if ident_eqb d' d then Some st else findST cns' d
-    | _ :: cns'        => findST cns' d
-    end.
+  Definition findST := SymTypes.findST.
 
   Lemma find_correct : forall cs d v,
     findST cs d = Some v -> List.In (v,[d]) cs.
   Proof.
-    induction cs as [| (st',d') cs' IHcs]; intros d_0 v H; simpl in H.
-    - inversion H.
-    - destruct d'  as [|d_1 d''] eqn:E' in H.
-      * apply IHcs in H. simpl. right. auto.
-      * destruct d''.
-        + destruct (ident_eqb d_1 d_0) eqn:E in H.
-          ** apply ident_eqb_eq in E. subst. inversion H. simpl. auto.
-          ** simpl. right. apply IHcs. auto.
-        + apply IHcs in H. simpl. right. auto.
+    exact SymTypes.find_correct.
   Qed.
 
   Example NoDup_1:  (NoDup [[1];[2]]).
@@ -714,8 +373,7 @@ Module Type SECTYPES(Import Lat: Lattice).
     apply filter_In in H; intuition.
   Qed.
 
-  Definition wf_constraints (cs: list constraint) : Prop :=
-    NoDup (map snd cs) /\ Forall (fun '(_,x) => length x = 1 ) cs.
+  Definition wf_constraints := SymTypes.wf_constraints.
 
   Lemma wf_constraints_no_nil: forall x cs,
     wf_constraints (x::cs) -> wf_constraints cs.
@@ -779,20 +437,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       my_set_mem d st = false ->
       st_remove d st = st.
   Proof.
-    intros d st.
-    induction st as [|a st IH]; intro Hmem; simpl in *; auto.
-    destruct (ident_eqb d a) eqn:Hda.
-    - apply ident_eqb_eq in Hda. subst a.
-      rewrite ident_eqb_refl in Hmem.
-      discriminate.
-    - apply ident_eqb_neq in Hda.
-      unfold st_remove. simpl.
-      destruct (ident_eq_dec d a) as [Heq|Hneq].
-      + contradiction.
-      + assert (Hda' : ident_eqb a d = false).
-        { apply (proj2 (ident_eqb_neq a d)). congruence. }
-        rewrite Hda' in Hmem.
-        f_equal. apply IH. exact Hmem.
+    exact SymTypes.st_remove_notin.
   Qed.
 
   Lemma st_remove_preserves_other_in:
@@ -801,18 +446,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       In x st ->
       In x (st_remove d st).
   Proof.
-    intros x d st Hneq Hin.
-    induction st as [|a st IH]; simpl in *.
-    - contradiction.
-    - destruct Hin as [->|Hin].
-      + unfold st_remove. simpl.
-        destruct (ident_eq_dec d x) as [Heq|Hneq'].
-        * symmetry in Heq. contradiction.
-        * left; reflexivity.
-      + unfold st_remove. simpl.
-        destruct (ident_eq_dec d a) as [Heq|Hneq'].
-        * subst a. apply IH. exact Hin.
-        * right. apply IH. exact Hin.
+    exact SymTypes.st_remove_preserves_other_in.
   Qed.
 
   Lemma hm_ext_bound_from_members:
@@ -829,28 +463,21 @@ Module Type SECTYPES(Import Lat: Lattice).
         apply Hbound. right; exact Hin.
   Qed.
 
-  Definition subST st d st' : ST :=
-  match st_mem d st with
-  | false => st
-  | true =>
-      if st_mem d st'
-      then (st_remove d st) ⊔ (st_remove d st')
-      else (st_remove d st) ⊔ st'
-  end.
+  Definition subST := SymTypes.subST.
 
   Lemma subST_complete_bound:
     forall dlt st d st',
       hm_ext (complete_subst dlt d st') st ⊑ hm_ext dlt (subST st d st').
   Proof.
     intros dlt st d st'.
-    destruct (st_mem d st) eqn:Hmem.
+    destruct (SymTypes.st_mem d st) eqn:Hmem.
     - apply hm_ext_bound_from_members.
       intros x Hin.
       destruct (ident_eqb x d) eqn:Hxd.
       + apply ident_eqb_eq in Hxd. subst x.
         rewrite complete_subst_eq.
-        unfold subST. rewrite Hmem.
-        destruct (st_mem d st') eqn:Hmem'.
+        unfold subST, SymTypes.subST. rewrite Hmem.
+        destruct (SymTypes.st_mem d st') eqn:Hmem'.
         * eapply order_trans; [apply hm_ext_concat_r | apply order_refl, eq_refl].
         * rewrite st_remove_notin by exact Hmem'.
           eapply order_trans; [apply hm_ext_concat_r | apply order_refl, eq_refl].
@@ -858,20 +485,20 @@ Module Type SECTYPES(Import Lat: Lattice).
         rewrite complete_subst_neq by exact Hxd.
         assert (Hin' : In x (st_remove d st)).
         { eapply st_remove_preserves_other_in; eauto. }
-        unfold subST. rewrite Hmem.
-        destruct (st_mem d st') eqn:Hmem'.
+        unfold subST, SymTypes.subST. rewrite Hmem.
+        destruct (SymTypes.st_mem d st') eqn:Hmem'.
         * eapply order_trans; [eapply hm_ext_list_in1; exact Hin' | apply hm_ext_concat_l].
         * eapply order_trans; [eapply hm_ext_list_in1; exact Hin' | apply hm_ext_concat_l].
     - apply hm_ext_bound_from_members.
       intros x Hin.
       assert (x <> d).
       { intro Heq. subst x.
-        apply my_set_mem_correct in Hin.
-        unfold st_mem in Hmem.
+        apply SymTypes.my_set_mem_correct in Hin.
+        unfold SymTypes.st_mem in Hmem.
         rewrite Hmem in Hin.
         discriminate. }
       rewrite complete_subst_neq by exact H.
-      unfold subST. rewrite Hmem.
+      unfold subST, SymTypes.subST. rewrite Hmem.
       eapply hm_ext_list_in1; exact Hin.
   Qed.
 
@@ -885,9 +512,9 @@ Module Type SECTYPES(Import Lat: Lattice).
     rewrite <- join_bottom_eq1.
     eapply order_trans.
     - apply subST_complete_bound.
-    - unfold subST.
-      destruct (st_mem d st) eqn:Hmem.
-      + destruct (st_mem d st) eqn:Hmem'; [|congruence].
+    - unfold subST, SymTypes.subST.
+      destruct (SymTypes.st_mem d st) eqn:Hmem.
+      + destruct (SymTypes.st_mem d st) eqn:Hmem'; [|congruence].
         apply hm_ext_distributive.
         * apply order_refl, eq_refl.
         * apply order_refl, eq_refl.
@@ -900,30 +527,52 @@ Module Type SECTYPES(Import Lat: Lattice).
   Proof.
     intros * H_0 H_1 H_2. unfold satisfiable in *. simpl in H_0.
     rewrite <- join_bottom_eq1 in H_0. subst st_1.
-    unfold subST.
-    destruct (st_mem d st) eqn:Edst; auto.
-    destruct (st_mem d st_0) eqn:Edst_0.
+    unfold subST, SymTypes.subST.
+    destruct (SymTypes.st_mem d st) eqn:Edst; auto.
+    destruct (SymTypes.st_mem d st_0) eqn:Edst_0.
       * apply hm_ext_distributive.
-        + apply set_rm_lub2. apply my_set_mem_correct in Edst.
+        + apply set_rm_lub2. apply SymTypes.my_set_mem_correct in Edst.
           apply hm_ext_list_in1 with (dlt:=dlt) in Edst.
           eapply order_trans. eauto. eapply order_trans; eauto.
         + auto.
       * apply hm_ext_distributive.
-        + apply my_set_mem_correct in Edst. apply hm_ext_list_in1 with (dlt:=dlt) in Edst.
+        + apply SymTypes.my_set_mem_correct in Edst. apply hm_ext_list_in1 with (dlt:=dlt) in Edst.
           eapply order_trans. eauto. eapply order_trans; eauto.
         + auto.
   Qed.
 
+  Lemma satisfiable_remove_self_lhs:
+    forall dlt lhs d,
+      satisfiable dlt lhs [d] ->
+      satisfiable dlt (st_remove d lhs) [d].
+  Proof.
+    intros dlt lhs d Hsat.
+    unfold satisfiable in *.
+    eapply set_rm_lub2.
+    exact Hsat.
+  Qed.
+
+  Lemma satisfiable_restore_self_lhs:
+    forall dlt lhs d,
+      satisfiable dlt (st_remove d lhs) [d] ->
+      satisfiable dlt lhs [d].
+  Proof.
+    intros dlt lhs d Hsat.
+    unfold satisfiable in *.
+    apply hm_ext_bound_from_members.
+    intros x Hin.
+    destruct (ident_eq_dec x d) as [Heq|Hneq].
+    - subst x. simpl. apply join_bound1.
+    - assert (Hin' : In x (st_remove d lhs)).
+      { eapply st_remove_preserves_other_in; eauto. }
+      eapply order_trans.
+      + apply hm_ext_list_in1. exact Hin'.
+      + exact Hsat.
+  Qed.
+
   Hint Resolve subST_correct.
 
-  Fixpoint subAll cns d st' : list constraint :=
-    match cns with
-    | [] => []
-    | (st, [d'])::cns' => if ident_eqb d' d then
-                          subAll cns' d st'
-                        else ((subST st d st'),[d']):: (subAll cns' d st')
-    | _ :: cns'   => subAll cns' d st'
-    end.
+  Definition subAll := SymTypes.subAll.
 
   Lemma subAll_is_correct :  forall dlt cns d v cns',
     satisfiable dlt v [d] ->
@@ -944,8 +593,9 @@ Module Type SECTYPES(Import Lat: Lattice).
 
           ** subst cns'. unfold listSatisfiable in *. apply Forall_cons.
 
-            ++ remember (subST l d v) as st_0 eqn:Hst_0. symmetry in Hst_0.
-               apply Forall_inv in H_2 as H_2'. apply (subST_correct dlt l [d_0] d v st_0); auto.
+            ++ apply Forall_inv in H_2 as H_2'.
+               eapply satisfiable_remove_self_lhs.
+               eapply (subST_correct dlt l [d_0] d v (subST l d v)); eauto.
 
             ++ remember (subAll cns d v) as cns_0 eqn:Hcns_0. inversion  H_2; auto.
 
@@ -958,17 +608,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       In rhs (map snd (subAll cns d st)) ->
       In rhs (map snd cns).
   Proof.
-    induction cns as [|(lhs, rhs0) cns IH]; intros d st rhs Hin; simpl in *.
-    - contradiction.
-    - destruct rhs0 as [|d0 rhs0'].
-      + right. eapply IH; eauto.
-      + destruct rhs0' as [|r rhs0'].
-        * destruct (ident_eqb d0 d) eqn:Hd0.
-          -- right. eapply IH; eauto.
-          -- simpl in Hin. destruct Hin as [Heq|Hin].
-             ++ subst rhs. left. reflexivity.
-             ++ right. eapply IH; eauto.
-        * right. eapply IH; eauto.
+    exact SymTypes.subAll_rhs_in.
   Qed.
 
   Lemma subAll_wf:
@@ -976,24 +616,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       wf_constraints cns ->
       wf_constraints (subAll cns d st).
   Proof.
-    induction cns as [|(lhs, rhs) cns IH]; intros d st Hwf; simpl.
-    - split; constructor.
-    - destruct Hwf as [Hnd Hfor].
-      apply NoDup_cons_iff in Hnd as [Hnotin Hndtail].
-      inversion Hfor as [|[lhs' rhs'] cns' Hlen Hfortail]; subst lhs' rhs' cns'; clear Hfor.
-      apply list_len_1 in Hlen as [d0 Hr]. subst rhs.
-      destruct (ident_eqb d0 d) eqn:Hd0.
-      + eapply IH. split; eauto.
-      + specialize (IH d st (conj Hndtail Hfortail)) as [Hnd' Hfor'].
-        split.
-        * apply NoDup_cons.
-          -- intro Hin.
-             apply Hnotin.
-             eapply subAll_rhs_in; eauto.
-          -- exact Hnd'.
-        * apply Forall_cons.
-          -- simpl. reflexivity.
-          -- exact Hfor'.
+    exact SymTypes.subAll_wf.
   Qed.
 
   Lemma subAll_complete_none:
@@ -1018,10 +641,16 @@ Module Type SECTYPES(Import Lat: Lattice).
         apply Forall_cons.
         * unfold constraintSatisfiable, satisfiable in *.
           simpl in Hhead |- *.
+          rewrite complete_subst_neq; [|exact Hd0].
           eapply order_trans.
           -- apply subST_complete_bound.
-          -- rewrite complete_subst_neq; eauto.
-        * eapply IH with (cns' := subAll cns d v); eauto.
+          -- eapply satisfiable_restore_self_lhs.
+             exact Hhead.
+        * eapply IH with (cns' := subAll cns d v).
+          -- split; assumption.
+          -- exact Hfind.
+          -- reflexivity.
+          -- exact Htail.
   Qed.
 
   Theorem subAll_complete:
@@ -1051,17 +680,27 @@ Module Type SECTYPES(Import Lat: Lattice).
             apply in_map with (f := snd) in Htail.
             simpl in Htail.
             exact Htail. }
-          eapply subAll_complete_none with (cns' := cns'); eauto.
+          eapply subAll_complete_none with (cns' := cns').
+          -- split; assumption.
+          -- exact Hfind_tail.
+          -- exact Hsub.
+          -- exact Hsat.
       + apply ident_eqb_neq in Hd0.
         rewrite <- Hsub in Hsat.
         inversion Hsat as [|c cs Hhead Htail]; subst c cs.
         apply Forall_cons.
         * unfold constraintSatisfiable, satisfiable in *.
           simpl in Hhead |- *.
+          rewrite complete_subst_neq; [|exact Hd0].
           eapply order_trans.
             -- apply subST_complete_bound.
-            -- rewrite complete_subst_neq; eauto.
-        * eapply IH with (cns' := subAll cns d v); eauto.
+            -- eapply satisfiable_restore_self_lhs.
+               exact Hhead.
+        * eapply IH with (cns' := subAll cns d v).
+          -- split; assumption.
+          -- exact Hfind.
+          -- reflexivity.
+          -- exact Htail.
   Qed.
 
   Inductive simplifyRel  : list constraint -> list ident ->  list constraint -> Prop :=
@@ -1140,23 +779,23 @@ Module Type SECTYPES(Import Lat: Lattice).
       right; exact Hin.
   Qed.
 
-  Fixpoint simplify (cns: list constraint) (ds: list ident) : list constraint :=
-    match ds with
-    | []    => cns
-    | d::ds' => match findST cns d with
-               | None    => simplify cns ds'
-               | Some st => simplify (subAll cns d st) ds'
-               end
-    end.
+  Definition simplify := SymTypes.simplify.
   Hint Unfold simplify.
 
   Lemma simplify_simplifyRel: forall ds cns  cns', simplify cns ds = cns' -> simplifyRel cns ds cns'.
   Proof.
-    induction ds; intros.
-    - cbn in H. subst. auto.
-    - cbn in H. destruct (findST cns a) eqn:E.
-      * remember (subAll cns a s) as cns''. eapply elimCase1; eauto.
-      * apply elimCase2; auto.
+    induction ds as [|d ds IH]; intros cns cns' Hsimp.
+    - cbn in Hsimp. subst. constructor.
+    - unfold simplify in Hsimp |- *.
+      cbn in Hsimp |- *.
+      destruct (SymTypes.findST cns d) as [st|] eqn:Hfind.
+      + cbn in Hsimp.
+        eapply elimCase1 with (st_0 := st) (cns' := SymTypes.subAll cns d st).
+        * eapply IH. exact Hsimp.
+        * exact Hfind.
+        * reflexivity.
+      + cbn in Hsimp.
+        eapply elimCase2; eauto.
   Qed.
 
   Corollary simplify_wf:
@@ -1197,17 +836,13 @@ Module Type SECTYPES(Import Lat: Lattice).
       + apply hm_ext_concat_r.
   Qed.
 
-  Definition constraint_scope (c: constraint) : list ident :=
-    fst c ++ snd c.
+  Definition constraint_scope := SymTypes.constraint_scope.
 
-  Definition constraint_scoped (scope: list ident) (c: constraint) : Prop :=
-    forall x, In x (constraint_scope c) -> In x scope.
+  Definition constraint_scoped := SymTypes.constraint_scoped.
 
-  Definition constraints_scoped (scope: list ident) (cns: list constraint) : Prop :=
-    Forall (constraint_scoped scope) cns.
+  Definition constraints_scoped := SymTypes.constraints_scoped.
 
-  Definition st_scoped (scope: list ident) (st: ST) : Prop :=
-    forall x, In x st -> In x scope.
+  Definition st_scoped := SymTypes.st_scoped.
 
   Definition agree_on (xs: list ident) (dlt1 dlt2: ident -> Lat.t) : Prop :=
     forall x, In x xs -> dlt1 x = dlt2 x.
@@ -1799,8 +1434,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       st_scoped scope1 st ->
       st_scoped scope2 st.
   Proof.
-    intros scope1 scope2 st Hincl Hsc x Hin.
-    apply Hincl, Hsc, Hin.
+    exact SymTypes.st_scoped_weaken.
   Qed.
 
   Lemma scope_remove_choice:
@@ -1873,12 +1507,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       st_scoped (pre ++ x :: post) st ->
       st_scoped (pre ++ post) (st_remove x st).
   Proof.
-    intros pre post x st Hsc y Hin.
-    destruct (st_remove_in_inv _ _ _ Hin) as [Hin' Hneq].
-    specialize (Hsc y Hin').
-    destruct (scope_remove_choice pre post x y Hsc) as [Heq|Hin''].
-    - contradiction.
-    - exact Hin''.
+    exact SymTypes.st_scoped_remove_app.
   Qed.
 
   Lemma st_scoped_drop_absent_app:
@@ -1887,10 +1516,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       st_scoped (pre ++ x :: post) st ->
       st_scoped (pre ++ post) st.
   Proof.
-    intros pre post x st Hnin Hsc y Hin.
-    destruct (scope_remove_choice pre post x y (Hsc _ Hin)) as [Heq|Hin'].
-    - subst y. contradiction.
-    - exact Hin'.
+    exact SymTypes.st_scoped_drop_absent_app.
   Qed.
 
   Lemma st_scoped_merge:
@@ -1899,8 +1525,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       st_scoped scope st2 ->
       st_scoped scope (st1 ⊔ st2).
   Proof.
-    intros scope st1 st2 H1 H2 x Hin.
-    destruct (in_merge_inv _ _ _ Hin) as [Hin'|Hin']; auto.
+    exact SymTypes.st_scoped_merge.
   Qed.
 
   Lemma constraint_scoped_lhs:
@@ -1909,8 +1534,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       In x lhs ->
       In x scope.
   Proof.
-    intros scope lhs rhs x Hsc Hin.
-    apply Hsc. unfold constraint_scope. now apply in_or_app; left.
+    exact SymTypes.constraint_scoped_lhs.
   Qed.
 
   Lemma constraint_scoped_rhs:
@@ -1919,8 +1543,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       In x rhs ->
       In x scope.
   Proof.
-    intros scope lhs rhs x Hsc Hin.
-    apply Hsc. unfold constraint_scope. now apply in_or_app; right.
+    exact SymTypes.constraint_scoped_rhs.
   Qed.
 
   Lemma st_scoped_singleton:
@@ -1928,8 +1551,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       In x scope ->
       st_scoped scope [x].
   Proof.
-    intros scope x Hin y Hy.
-    simpl in Hy. destruct Hy as [Heq|[]]. subst. exact Hin.
+    exact SymTypes.st_scoped_singleton.
   Qed.
 
   Lemma findST_of_rhs_in:
@@ -1937,34 +1559,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       In [d] (map snd cns) ->
       exists st, findST cns d = Some st.
   Proof.
-    induction cns as [|[lhs rhs] cns IH]; intros d Hin.
-    - inversion Hin.
-    - simpl in Hin.
-      destruct rhs as [|r rhs'].
-      + destruct Hin as [Heq|Hin].
-        * discriminate Heq.
-        * apply IH. exact Hin.
-      + destruct rhs' as [|r' rhs''].
-        * simpl in Hin. destruct Hin as [Heq|Hin].
-          -- inversion Heq. subst r.
-             exists lhs.
-             simpl.
-             rewrite ident_eqb_refl.
-             reflexivity.
-          -- destruct (ident_eqb r d) eqn:Hrd.
-             ++ apply ident_eqb_eq in Hrd. subst r.
-                exists lhs.
-                simpl.
-                rewrite ident_eqb_refl.
-                reflexivity.
-             ++ apply IH in Hin as (st & Hfind).
-                exists st.
-                simpl.
-                rewrite Hrd.
-                exact Hfind.
-        * destruct Hin as [Heq|Hin].
-          -- discriminate Heq.
-          -- apply IH. exact Hin.
+    exact SymTypes.findST_of_rhs_in.
   Qed.
 
   Lemma subST_scoped_elim:
@@ -1973,19 +1568,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       st_scoped (scope ++ d :: ds) st ->
       st_scoped (scope ++ ds) (subST lhs d st).
   Proof.
-    intros scope ds d lhs st Hlhs Hst.
-    unfold subST.
-    destruct (st_mem d lhs) eqn:Hmem.
-    - destruct (st_mem d st) eqn:Hmem'.
-      + eapply st_scoped_merge.
-        * eapply st_scoped_remove_app; eauto.
-        * eapply st_scoped_remove_app; eauto.
-      + eapply st_scoped_merge.
-        * eapply st_scoped_remove_app; eauto.
-        * eapply st_scoped_drop_absent_app with (x := d); eauto.
-          intro Hin. apply my_set_mem_correct in Hin. unfold st_mem in Hmem'. rewrite Hin in Hmem'. discriminate.
-    - eapply st_scoped_drop_absent_app with (x := d); eauto.
-      intro Hin. apply my_set_mem_correct in Hin. unfold st_mem in Hmem. rewrite Hin in Hmem. discriminate.
+    exact SymTypes.subST_scoped_elim.
   Qed.
 
   Lemma subAll_scoped_elim:
@@ -1994,37 +1577,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       st_scoped (scope ++ d :: ds) st ->
       constraints_scoped (scope ++ ds) (subAll cns d st).
   Proof.
-    induction cns as [|[lhs rhs] cns IH]; intros d st Hsc Hst; simpl.
-    - constructor.
-    - inversion Hsc as [|c0 cs0 Hc Hcs]; subst c0 cs0.
-      destruct rhs as [|r rhs'].
-      + exact (IH d st Hcs Hst).
-      + destruct rhs' as [|r' rhs''].
-        * destruct (ident_eqb r d) eqn:Hrd.
-          -- exact (IH d st Hcs Hst).
-          -- apply Forall_cons.
-             ++ unfold constraint_scoped.
-                intros y Hin.
-                unfold constraint_scope in Hin.
-                apply in_app_iff in Hin.
-                destruct Hin as [Hin|Hin].
-                ** assert (Hlhs : st_scoped (scope ++ d :: ds) lhs).
-                   { intros z Hz.
-                     eapply constraint_scoped_lhs with (rhs := [r]); eauto. }
-                   pose proof (subST_scoped_elim scope ds d lhs st Hlhs Hst) as Hsub.
-                   exact (Hsub y Hin).
-                ** simpl in Hin.
-                   destruct Hin as [Heq|HinFalse].
-                   { subst y.
-                     assert (HrScope : In r (scope ++ d :: ds)).
-                     { eapply constraint_scoped_rhs with (lhs := lhs) (rhs := [r]); eauto.
-                       simpl; left; reflexivity. }
-                     destruct (scope_remove_choice scope ds d r HrScope) as [Heqd|Hin'].
-                     - apply ident_eqb_neq in Hrd. contradiction.
-                     - exact Hin'. }
-                   { contradiction. }
-             ++ exact (IH d st Hcs Hst).
-        * exact (IH d st Hcs Hst).
+    exact SymTypes.subAll_scoped_elim.
   Qed.
 
   Lemma subAll_preserves_other_rhs:
@@ -2033,25 +1586,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       In [d'] (map snd cns) ->
       In [d'] (map snd (subAll cns d st)).
   Proof.
-    induction cns as [|[lhs rhs] cns IH]; intros d st d' Hneq Hin; simpl in *.
-    - contradiction.
-    - destruct rhs as [|r rhs'].
-      + destruct Hin as [Heq|Hin].
-        * discriminate Heq.
-        * apply IH; auto.
-      + destruct rhs' as [|r' rhs''].
-        * simpl in Hin.
-          destruct Hin as [Heq|Hin].
-          -- inversion Heq; subst r.
-             destruct (ident_eqb d' d) eqn:Hd.
-             ++ apply ident_eqb_eq in Hd. contradiction.
-             ++ simpl. left. reflexivity.
-          -- destruct (ident_eqb r d) eqn:Hrd.
-             ++ apply IH; auto.
-             ++ simpl. right. apply IH; auto.
-        * destruct Hin as [Heq|Hin].
-          -- discriminate Heq.
-          -- apply IH; auto.
+    exact SymTypes.subAll_preserves_other_rhs.
   Qed.
 
   Theorem simplify_scoped:
@@ -2061,29 +1596,7 @@ Module Type SECTYPES(Import Lat: Lattice).
       (forall d, In d ds -> In [d] (map snd cns)) ->
       constraints_scoped scope (simplify cns ds).
   Proof.
-    intros scope ds.
-    induction ds as [|d ds IH]; intros cns Hnd Hsc Hdefs.
-    - simpl in *. rewrite app_nil_r in Hsc. exact Hsc.
-    - simpl.
-      assert (Hrhs : In [d] (map snd cns)) by (apply Hdefs; left; reflexivity).
-      destruct (findST_of_rhs_in _ _ Hrhs) as [st Hfind].
-      rewrite Hfind.
-      apply IH.
-      + now apply NoDup_cons_iff in Hnd.
-      + assert (Hst_scoped : st_scoped (scope ++ d :: ds) st).
-        { intros x Hin.
-          pose proof Hsc as Hsc_forall.
-          unfold constraints_scoped in Hsc_forall.
-          rewrite Forall_forall in Hsc_forall.
-          eapply constraint_scoped_lhs with (rhs := [d]).
-          - apply Hsc_forall. apply find_correct. exact Hfind.
-          - exact Hin. }
-        eapply subAll_scoped_elim; eauto.
-      + intros d' Hin.
-        eapply subAll_preserves_other_rhs.
-        * intro Heq. subst d'.
-          apply NoDup_cons_iff in Hnd as [Hnin _]. contradiction.
-        * apply Hdefs. now right.
+    exact SymTypes.simplify_scoped.
   Qed.
 
 End SECTYPES.

@@ -263,89 +263,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
         exact Hscope.
   Qed.
 
-  Lemma subAll_rhs_in_local:
-    forall cns d st rhs,
-      In rhs (map snd (subAll cns d st)) ->
-      In rhs (map snd cns).
-  Proof.
-    induction cns as [|(lhs, rhs0) cns IH]; intros d st rhs Hin; simpl in *.
-    - contradiction.
-    - destruct rhs0 as [|d0 rhs0'].
-      + right. eapply IH; eauto.
-      + destruct rhs0' as [|r rhs0'].
-        * destruct (ident_eqb d0 d) eqn:Hd0.
-          -- right. eapply IH; eauto.
-          -- simpl in Hin. destruct Hin as [Heq|Hin].
-             ++ subst rhs. left. reflexivity.
-             ++ right. eapply IH; eauto.
-        * right. eapply IH; eauto.
-  Qed.
-
-  Lemma subAll_preserves_other_rhs_local:
-    forall cns d st d0,
-      d0 <> d ->
-      In (d0 :: nil) (map snd cns) ->
-      In (d0 :: nil) (map snd (subAll cns d st)).
-  Proof.
-    induction cns as [|[lhs rhs] cns IH]; intros d st d0 Hneq Hin; simpl in *.
-    - contradiction.
-    - destruct rhs as [|r rhs'].
-      + destruct Hin as [Heq|Hin].
-        * discriminate Heq.
-        * apply IH; auto.
-      + destruct rhs' as [|r' rhs''].
-        * simpl in Hin.
-          destruct Hin as [Heq|Hin].
-          -- inversion Heq; subst r.
-             destruct (ident_eqb d0 d) eqn:Hd.
-             ++ apply ident_eqb_eq in Hd. contradiction.
-             ++ simpl. left. reflexivity.
-          -- destruct (ident_eqb r d) eqn:Hrd.
-             ++ apply IH; auto.
-             ++ simpl. right. apply IH; auto.
-        * destruct Hin as [Heq|Hin].
-          -- discriminate Heq.
-          -- apply IH; auto.
-  Qed.
-
-  Lemma simplify_rhs_in:
-    forall cns ds rhs,
-      In rhs (map snd (SymTypes.simplify cns ds)) ->
-      In rhs (map snd cns).
-  Proof.
-    intros cns ds.
-    revert cns.
-    induction ds as [|d ds IH]; intros cs rhs Hin; simpl in *.
-    - exact Hin.
-    - destruct (SymTypes.findST cs d) as [st|] eqn:Hfind.
-      + simpl in Hin.
-        specialize (IH (SymTypes.subAll cs d st) rhs Hin).
-        eapply subAll_rhs_in_local. exact IH.
-      + simpl in Hin.
-        eapply (IH cs rhs). exact Hin.
-  Qed.
-
-  Lemma simplify_preserves_other_rhs:
-    forall cns ds d0,
-      (forall d, In d ds -> d0 <> d) ->
-      In (d0 :: nil) (map snd cns) ->
-      In (d0 :: nil) (map snd (SymTypes.simplify cns ds)).
-  Proof.
-    intros cns ds.
-    revert cns.
-    induction ds as [|d ds IH]; intros cs d0 Hneq Hin; simpl.
-    - exact Hin.
-    - destruct (SymTypes.findST cs d) as [st|] eqn:Hfind.
-      + simpl.
-        eapply (IH (SymTypes.subAll cs d st) d0).
-        * intros d' Hin'. apply Hneq. now right.
-        * eapply subAll_preserves_other_rhs_local; eauto.
-          apply Hneq. now left.
-      + simpl.
-        eapply (IH cs d0); eauto.
-        intros d' Hin'. apply Hneq. now right.
-  Qed.
-
   Lemma get_mappings_In_here_local:
     forall xs env tys ty,
       get_mappings xs env = Some tys ->
@@ -363,75 +280,6 @@ Module Type SECNLUSTYPINGCORRECTNESS
       + subst ty. exists x. split; [left; reflexivity|exact Hfind].
       + destruct (IH _ _ _ Htail Hin) as (x' & Hinx' & Hfind').
         exists x'. split; [right; exact Hinx'|exact Hfind'].
-  Qed.
-
-  Lemma subAll_nodup_local:
-    forall cns d st,
-      NoDup (map snd cns) ->
-      NoDup (map snd (subAll cns d st)).
-  Proof.
-    induction cns as [|[lhs rhs] cns IH]; intros d st Hnd; simpl.
-    - constructor.
-    - apply NoDup_cons_iff in Hnd as [Hnin Hnd].
-      destruct rhs as [|r rhs'].
-      + exact (IH _ _ Hnd).
-      + destruct rhs' as [|r' rhs''].
-        * destruct (ident_eqb r d) eqn:Hr.
-          -- exact (IH _ _ Hnd).
-          -- apply NoDup_cons_iff. split.
-             ++ intro Hin.
-                apply Hnin.
-                eapply subAll_rhs_in_local.
-                exact Hin.
-             ++ exact (IH _ _ Hnd).
-        * exact (IH _ _ Hnd).
-  Qed.
-
-  Lemma subAll_singleton_rhs_local:
-    forall cns d st,
-      Forall (fun '(_, rhs) => length rhs = 1) cns ->
-      Forall (fun '(_, rhs) => length rhs = 1) (subAll cns d st).
-  Proof.
-    induction cns as [|[lhs rhs] cns IH]; intros d st Hlen; simpl.
-    - constructor.
-    - inversion Hlen as [|[lhs0 rhs0] cns0 Hhd Htl]; subst lhs0 rhs0 cns0.
-      destruct rhs as [|r rhs'].
-      + discriminate Hhd.
-      + destruct rhs' as [|r' rhs''].
-        * destruct (ident_eqb r d) eqn:Hr.
-          -- exact (IH _ _ Htl).
-          -- constructor.
-             ++ simpl. reflexivity.
-             ++ exact (IH _ _ Htl).
-        * discriminate Hhd.
-  Qed.
-
-  Lemma simplify_nodup_local:
-    forall cns ds,
-      NoDup (map snd cns) ->
-      NoDup (map snd (SymTypes.simplify cns ds)).
-  Proof.
-    intros cns ds.
-    revert cns.
-    induction ds as [|d ds IH]; intros cns Hnd; simpl.
-    - exact Hnd.
-    - destruct (SymTypes.findST cns d) as [st|] eqn:Hfind.
-      + apply IH. eapply subAll_nodup_local. exact Hnd.
-      + apply IH. exact Hnd.
-  Qed.
-
-  Lemma simplify_singleton_rhs_local:
-    forall cns ds,
-      Forall (fun '(_, rhs) => length rhs = 1) cns ->
-      Forall (fun '(_, rhs) => length rhs = 1) (SymTypes.simplify cns ds).
-  Proof.
-    intros cns ds.
-    revert cns.
-    induction ds as [|d ds IH]; intros cns Hlen; simpl.
-    - exact Hlen.
-    - destruct (SymTypes.findST cns d) as [st|] eqn:Hfind.
-      + apply IH. eapply subAll_singleton_rhs_local. exact Hlen.
-      + apply IH. exact Hlen.
   Qed.
 
   Lemma get_mappings_perm:
@@ -851,9 +699,9 @@ Module Type SECNLUSTYPINGCORRECTNESS
     assert (Hwf_simpl : wf_constraints (SymTypes.simplify raw locals)).
     {
       split.
-      - eapply simplify_nodup_local.
+      - eapply SymTypes.simplify_nodup.
         exact (proj1 Hwfraw).
-      - eapply simplify_singleton_rhs_local.
+      - eapply SymTypes.simplify_singleton_rhs.
         exact (proj2 Hwfraw).
     }
     unfold signature_good; cbn.
@@ -870,7 +718,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
         apply nodup_singleton_map.
         eapply NoDup_app_r. exact Hndall.
       + intros rhs; split; intro Hin.
-        * pose proof (simplify_rhs_in _ _ _ Hin) as Hinraw.
+        * pose proof (SymTypes.simplify_rhs_in _ _ _ Hin) as Hinraw.
           eapply Permutation_in in Hinraw; [|exact Hpermraw].
           apply in_map_iff in Hinraw as (ty & Hrhs & Hinall).
           subst rhs.
@@ -878,7 +726,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
           destruct Hinall as [Hinlocal|Hinout].
           -- exfalso.
              assert (Hfindrhs : exists stc, findST (SymTypes.simplify raw locals) ty = Some stc).
-             { eapply findST_of_rhs_in. exact Hin. }
+             { eapply SymTypes.findST_of_rhs_in. exact Hin. }
              destruct Hfindrhs as (stc & Hfindrhs).
              apply find_correct in Hfindrhs.
              change
@@ -925,7 +773,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
             apply in_map_iff. exists ty. split; [reflexivity|].
             apply in_or_app. right. exact Hinout.
           }
-          eapply simplify_preserves_other_rhs.
+          eapply SymTypes.simplify_preserves_other_rhs.
           -- intros d Hd Htyeq.
              subst d.
              exact (Hlocalsdisj ty Hd Hinsigscope).
@@ -1009,7 +857,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
       split; [reflexivity|].
       eapply nth_error_In_local; eauto.
     }
-    destruct (findST_of_rhs_in sig.(s_constraints) y Hinrhs)
+    destruct (SymTypes.findST_of_rhs_in sig.(s_constraints) y Hinrhs)
       as (lhs & Hfindlhs).
     assert (Hresetin : In sig.(s_reset) lhs).
     { eapply Hresetlhs; eauto. }
@@ -1128,7 +976,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
       split; [reflexivity|].
       eapply nth_error_In_local; eauto.
     }
-    destruct (findST_of_rhs_in sig.(s_constraints) y Hinrhs)
+    destruct (SymTypes.findST_of_rhs_in sig.(s_constraints) y Hinrhs)
       as (lhs & Hfindlhs).
     assert (Hclkin : In sig.(s_clk) lhs).
     { eapply Hclklhs; eauto. }
@@ -1671,16 +1519,16 @@ Module Type SECNLUSTYPINGCORRECTNESS
     forall lhs d st x,
       x <> d ->
       In x lhs ->
-      In x (subST lhs d st).
+      In x (SymTypes.subST lhs d st).
   Proof.
     intros lhs d st x Hneq Hin.
-    unfold subST.
-    destruct (st_mem d lhs) eqn:Hmem.
-    - destruct (st_mem d st) eqn:Hmemst.
+    unfold SymTypes.subST.
+    destruct (SymTypes.st_mem d lhs) eqn:Hmem.
+    - destruct (SymTypes.st_mem d st) eqn:Hmemst.
       + apply in_merge_left.
-        eapply st_remove_preserves_other_in; eauto.
+        eapply SymTypes.st_remove_preserves_other_in; eauto.
       + apply in_merge_left.
-        eapply st_remove_preserves_other_in; eauto.
+        eapply SymTypes.st_remove_preserves_other_in; eauto.
     - exact Hin.
   Qed.
 
@@ -1689,15 +1537,15 @@ Module Type SECNLUSTYPINGCORRECTNESS
       In d lhs ->
       ~ In d st ->
       In x st ->
-      In x (subST lhs d st).
+      In x (SymTypes.subST lhs d st).
   Proof.
     intros lhs d st x Hind Hnotin Hinx.
-    unfold subST.
-    assert (Hmemd : st_mem d lhs = true).
-    { apply my_set_mem_correct. exact Hind. }
+    unfold SymTypes.subST.
+    assert (Hmemd : SymTypes.st_mem d lhs = true).
+    { apply SymTypes.my_set_mem_correct. exact Hind. }
     rewrite Hmemd.
-    destruct (st_mem d st) eqn:Hmemst.
-    - apply my_set_mem_correct in Hmemst.
+    destruct (SymTypes.st_mem d st) eqn:Hmemst.
+    - apply SymTypes.my_set_mem_correct in Hmemst.
       contradiction.
     - apply in_merge_right.
       exact Hinx.
@@ -1739,14 +1587,17 @@ Module Type SECNLUSTYPINGCORRECTNESS
   Lemma subAll_mentions_other:
     forall ty cns d st,
       ty <> d ->
+      ~ In [ty] (map snd cns) ->
       constraints_mention ty cns ->
-      constraints_mention ty (subAll cns d st).
+      constraints_mention ty (SymTypes.subAll cns d st).
   Proof.
     intros ty cns.
-    induction cns as [|[lhs rhs] cns IH]; intros d st Hneq Hmention lhs' y Hin.
+    induction cns as [|[lhs rhs] cns IH]; intros d st Hneq Hrhs Hmention lhs' y Hin.
     - contradiction.
     - assert (Htail : constraints_mention ty cns).
       { intros lhs0 y0 Hin0. eapply Hmention. right; exact Hin0. }
+      assert (Hrhs_tail : ~ In [ty] (map snd cns)).
+      { intro Hin0. apply Hrhs. simpl. now right. }
       destruct rhs as [|r rhs'].
       + simpl in Hin. eapply IH; eauto.
       + destruct rhs' as [|r' rhs''].
@@ -1755,33 +1606,10 @@ Module Type SECNLUSTYPINGCORRECTNESS
           -- eapply IH; eauto.
           -- destruct Hin as [Heq|Hin].
              ++ inversion Heq; subst lhs' y. clear Heq.
+                assert (Htyneqr : ty <> r).
+                { intro Heq. apply Hrhs. subst r. simpl. now left. }
+                eapply SymTypes.st_remove_preserves_other_in; eauto.
                 eapply subST_preserves_other_in; eauto.
-                eapply Hmention. left; reflexivity.
-             ++ eapply IH; eauto.
-        * simpl in Hin. eapply IH; eauto.
-  Qed.
-
-  Lemma subAll_mentions_subst:
-    forall cns d st ty,
-      constraints_mention d cns ->
-      ~ In d st ->
-      In ty st ->
-      constraints_mention ty (subAll cns d st).
-  Proof.
-    intros cns d st ty Hmention Hnotin Hty.
-    induction cns as [|[lhs rhs] cns IH]; intros lhs' y Hin.
-    - contradiction.
-    - assert (Htail : constraints_mention d cns).
-      { intros lhs0 y0 Hin0. eapply Hmention. right; exact Hin0. }
-      destruct rhs as [|r rhs'].
-      + simpl in Hin. eapply IH; eauto.
-      + destruct rhs' as [|r' rhs''].
-        * simpl in Hin.
-          destruct (ident_eqb r d) eqn:Hrd.
-          -- eapply IH; eauto.
-          -- destruct Hin as [Heq|Hin].
-             ++ inversion Heq; subst lhs' y. clear Heq.
-                eapply subST_replaces_target_in; eauto.
                 eapply Hmention. left; reflexivity.
              ++ eapply IH; eauto.
         * simpl in Hin. eapply IH; eauto.
@@ -1790,20 +1618,25 @@ Module Type SECNLUSTYPINGCORRECTNESS
   Lemma simplify_mentions_other:
     forall ty cns ds,
       (forall d, In d ds -> ty <> d) ->
+      ~ In [ty] (map snd cns) ->
       constraints_mention ty cns ->
       constraints_mention ty (SymTypes.simplify cns ds).
   Proof.
     intros ty cns ds Hfresh.
     revert cns.
-    induction ds as [|d ds IH]; intros cns Hmention; simpl.
+    induction ds as [|d ds IH]; intros cns Hrhs Hmention; simpl.
     - exact Hmention.
     - destruct (SymTypes.findST cns d) as [st|] eqn:Hfind.
       + eapply IH.
         * intros d' Hin. apply Hfresh. now right.
+        * intro Hin.
+          apply Hrhs.
+          eapply SymTypes.subAll_rhs_in; eauto.
         * eapply subAll_mentions_other; eauto.
           apply Hfresh. now left.
       + eapply IH.
         * intros d' Hin. apply Hfresh. now right.
+        * exact Hrhs.
         * exact Hmention.
   Qed.
 
@@ -2391,6 +2224,33 @@ Module Type SECNLUSTYPINGCORRECTNESS
         now apply in_map with (f := fst) in Hxraw.
       - exact Hrstid.
     }
+    assert (Hrst_not_rhs : ~ In [rst_type] (map snd raw)).
+    {
+      intro Hinrhs.
+      pose proof (NAMEGEN.generate_local_env_for_node_injective _ _ _ _ _ Hlocal)
+        as Hinj.
+      pose proof (NAMEGEN.generate_local_env_for_node_aux_sec_names _ _ _ _ _ Hlocal)
+        as [_ Hrstid].
+      assert (Hndeqs : NoDup (vars_defined n.(n_eqs))).
+      { apply NoDup_var_defined_n_eqs. }
+      destruct (generate_eqns_constraints_shape
+                  G env clk_type rst_type n.(n_eqs) raw init_state st_n
+                  Hinj Hndeqs Hraw)
+        as (tys & Hmapdefs & Hsnd & _).
+      rewrite Hsnd in Hinrhs.
+      apply in_map_iff in Hinrhs as (ty & Hpair & Hintys).
+      inversion Hpair; subst ty; clear Hpair.
+      destruct (get_mappings_In_here_local _ _ _ _ Hmapdefs Hintys)
+        as (x & Hinx & Hfindx).
+      assert (Hxeq : x = rec.(nrst)).
+      { eapply Hinj; eauto. }
+      subst x.
+      assert (Hinvarsout : In rec.(nrst) (map fst (n.(n_vars) ++ n.(n_out)))).
+      { eapply Permutation_in; [exact n.(n_defd)|exact Hinx]. }
+      eapply (node_var_not_sec_gensym n rec.(nrst) (Pos.succ st)).
+      - rewrite map_app. apply in_or_app. right. exact Hinvarsout.
+      - exact Hrstid.
+    }
     eapply simplify_mentions_other; eauto.
   Qed.
 
@@ -2902,6 +2762,33 @@ Module Type SECNLUSTYPINGCORRECTNESS
       - rewrite map_app. apply in_or_app. right.
         rewrite map_app. apply in_or_app. left.
         now apply in_map with (f := fst) in Hxraw.
+      - exact Hclkid.
+    }
+    assert (Hclk_not_rhs : ~ In [clk_type] (map snd raw)).
+    {
+      intro Hinrhs.
+      pose proof (NAMEGEN.generate_local_env_for_node_injective _ _ _ _ _ Hlocal)
+        as Hinj.
+      pose proof (NAMEGEN.generate_local_env_for_node_aux_sec_names _ _ _ _ _ Hlocal)
+        as [Hclkid _].
+      assert (Hndeqs : NoDup (vars_defined n.(n_eqs))).
+      { apply NoDup_var_defined_n_eqs. }
+      destruct (generate_eqns_constraints_shape
+                  G env clk_type rst_type n.(n_eqs) raw init_state st_n
+                  Hinj Hndeqs Hraw)
+        as (tys & Hmapdefs & Hsnd & _).
+      rewrite Hsnd in Hinrhs.
+      apply in_map_iff in Hinrhs as (ty & Hpair & Hintys).
+      inversion Hpair; subst ty; clear Hpair.
+      destruct (get_mappings_In_here_local _ _ _ _ Hmapdefs Hintys)
+        as (x & Hinx & Hfindx).
+      assert (Hxeq : x = rec.(nclk)).
+      { eapply Hinj; eauto. }
+      subst x.
+      assert (Hinvarsout : In rec.(nclk) (map fst (n.(n_vars) ++ n.(n_out)))).
+      { eapply Permutation_in; [exact n.(n_defd)|exact Hinx]. }
+      eapply (node_var_not_sec_gensym n rec.(nclk) st).
+      - rewrite map_app. apply in_or_app. right. exact Hinvarsout.
       - exact Hclkid.
     }
     eapply simplify_mentions_other; eauto.

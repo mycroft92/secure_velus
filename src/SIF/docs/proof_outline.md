@@ -2,86 +2,99 @@
 
 ## Overview
 
-This document gives the current module layout of `src/SIF/` and how the pieces
-fit together.
+This document gives the current module layout of `src/SIF/` and the intended
+split between the symbolic and lattice-valued layers.
 
 ## Foundations
 
 - `Helpers.v`
-  list and positivity lemmas used throughout the proofs.
+  list and positivity lemmas used by the symbolic layer
 - `SymTypes.v`
-  symbolic security types and list-level utilities on them.
+  the single symbolic source of truth for symbolic types, constraints,
+  scopedness, substitution, and `simplify`
 - `SecLattice.v`
-  abstract lattice interface and derived lattice lemmas.
+  abstract lattice interface and derived lattice lemmas
 - `SecContext.v`
-  state-and-error monad plus reusable lookup lemmas.
+  state-and-error monad plus lookup lemmas shared by the generators
 - `SecTypes.v`
-  valuation agreement, constraint scopedness, and satisfiability-preservation
-  combinators.
+  valuation agreement, replay updates, and satisfiability-preservation results
+  over the symbolic objects defined in `SymTypes.v`
 
-## Naming And Local Typing
+The key split is:
+
+- `SymTypes.v`
+  purely symbolic reasoning with no `dlt`
+- `SecTypes.v`
+  proofs that interpret symbolic constraints under lattice valuations
+
+## Naming And Raw Generation
 
 - `NameInterface.v`
-  generated security-name allocation and node-scoped environments.
+  generated security-name allocation and node-scoped environments
 - `SecCETyping.v`
-  symbolic typing for clocks and CoreExpr expressions.
+  symbolic typing for clocks and CoreExpr fragments
 - `SecNLusTyping.v`
-  NLustre-side raw constraint and signature generation.
+  NLustre-side raw constraint generation and source signature construction
 - `SecSTCTyping.v`
-  STC-side raw constraint and signature generation, including reset-instance
-  handling.
+  STC-side raw constraint generation and target signature construction
 
-## Signature And Correctness Layers
+Both `SecNLusTyping.v` and `SecSTCTyping.v` finish by calling the same
+`SymTypes.simplify`, so source and target stored signatures use the same
+normal form.
+
+## Stored Signatures And Local Correctness
 
 - `SIFSignature.v`
-  stored signature format and call-instantiation replay metatheory.
+  stored signature format and call-instantiation metatheory
 - `SecNLusTypingCorrectness.v`
-  source-local structural facts for generated signatures.
+  source-side structure, freshness, and visibility facts for generated
+  signatures
 - `SecStcTypingCorrectness.v`
-  target-local structural facts for generated signatures and reset
-  environments.
+  target-side reset-environment and generated-signature structure facts
 - `NLustreCausality.v`
-  node causality facts used by the noninterference proof.
+  causality facts used by the source noninterference proof
 
 ## Translation Preservation
 
 - `SecNLusStcTranslation.v`
-  cross-phase preservation from generated NLustre signatures to generated STC
-  signatures.
+  proves that generated NLustre signatures preserve to generated STC
+  signatures
 
-This file is where:
+This is where:
 
-- raw equation preservation is proved,
-- reset-instance extras are isolated,
-- call preservation is reconstructed from the signature metatheory,
-- and the whole-program generated signature globals are shown consistent.
+- equation-level preservation is proved,
+- STC-only reset extras are isolated,
+- call preservation is reconstructed from stored-signature metatheory,
+- and the whole-program source and target globals are shown lookup-consistent
 
-## Source Noninterference Stack
+## Source Noninterference
 
 - `SecNLusNonInterferenceSupport.v`
-  observation model, generic semantic transport, and `node_security`.
+  observation model and generic semantic transport
 - `SecNLusNonInterferenceHelpers.v`
-  generated-program replay and call transport lemmas.
+  replay lemmas and generated-program bookkeeping
 - `SecNLusNonInterferenceClockedStep.v`
-  time-step induction for low-equivalence of defined variables.
+  time-step induction
 - `SecNLusNonInterference.v`
-  packaging into the exported source output theorem.
+  exported NLustre noninterference theorem
 
-This stack proves noninterference directly on the indexed NLustre semantics.
+The source proof keeps both the stored simplified signature and the raw
+generated constraints, because replay arguments use the stored summary while
+the step proof still reasons equation by equation over the raw node body.
 
 ## Target Noninterference
 
 - `SecStcNonInterference.v`
   translated-system noninterference theorem obtained by combining:
   source noninterference, NLustre/STC semantic preservation, and generated
-  signature preservation.
+  signature preservation
 
 ## Constraint Export
 
 - `SecNLusConstraintExport.v`
-  executable dump of generated NLustre constraints and stored signatures.
+  executable NLustre dump path
 - `SecStcConstraintExport.v`
-  corresponding executable dump for generated STC constraints.
+  executable STC dump path
 
-These files are the user-facing tooling layer.  They reuse the same naming and
-typing generators as the proof development.
+These reuse the same generators and therefore dump the same normalized
+constraint form produced by `SymTypes.simplify`.
