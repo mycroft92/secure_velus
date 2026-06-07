@@ -1125,8 +1125,8 @@ Module Type NLUSTRECAUSALITYBRIDGE
       { eapply to_equation_depends_trans; eauto. }
       (* Show x ∈ xs using the vertex-set equalities. *)
       assert (Hinx : In x xs).
-      { assert (Hxvar : In x (var_defined eq')).
-        { apply nl_depends_on_eq_var_defined. exact Hdep'. }
+      { assert (Hxvar : In x (var_defined eq'))
+          by exact (nl_depends_on_eq_var_defined eq' x y Hdep').
         apply ok_fst_defined in Heqto.
         rewrite <- Heqto in Hxvar.
         assert (Hvd : In x (L.vars_defined n.(L.n_eqs))).
