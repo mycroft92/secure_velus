@@ -1092,7 +1092,7 @@ Module Type NLUSTRECAUSALITYBRIDGE
       as (v' & a' & g' & Hv' & Htail').
     (* Extract the equation mmap and wc_equation facts. *)
     assert (Hmmap : mmap (to_equation (node_env n) (node_not_out n)) n.(L.n_eqs) = OK n'.(n_eqs))
-      by (apply to_node_eqs; exact Htr).
+      by exact (to_node_eqs n n' Hpref Htr).
     destruct HwcN as (_ & _ & _ & HwcEqs).
     (* Record that in/vars/out are preserved by translation. *)
     assert (Hin_eq  : L.n_in   n = n'.(n_in))   by (apply to_node_in;   exact Htr).
