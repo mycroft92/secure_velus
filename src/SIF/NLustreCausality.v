@@ -198,13 +198,9 @@ Module Type NLUSTRECAUSALITYBRIDGE
       In x xs ->
       exists k, nth_error xs k = Some x.
   Proof.
-    intros x xs Hin.
-    induction xs as [|y xs IH]; simpl in *.
-    - contradiction.
-    - destruct Hin as [<-|Hin].
-      + exists 0. reflexivity.
-      + destruct (IH Hin) as (k & Hk).
-        exists (S k). exact Hk.
+    induction xs as [|y xs IH]; [contradiction|]; intros [<-|Hin].
+    - exists 0; auto.
+    - destruct (IH Hin) as (k & Hk); exists (S k); auto.
   Qed.
 
   Lemma Forall2_in_left_ex :
@@ -213,18 +209,9 @@ Module Type NLUSTRECAUSALITYBRIDGE
       In x xs ->
       exists y, In y ys /\ P x y.
   Proof.
-    intros A B P xs ys x Hfor.
-    induction Hfor; intros Hin.
-    - contradiction.
-    - simpl in Hin.
-      destruct Hin as [<-|Hin].
-      + exists y. split.
-        * now left.
-        * exact H.
-      + destruct (IHHfor Hin) as (y' & Hin' & HP).
-        exists y'. split.
-        * now right.
-        * exact HP.
+    intros A B P xs ys x Hfor; induction Hfor; intros [<-|Hin].
+    - exists y; auto.
+    - destruct (IHHfor Hin) as (y' & Hin' & HP); exists y'; auto.
   Qed.
 
   Lemma Forall2_in_right_ex :
@@ -233,18 +220,9 @@ Module Type NLUSTRECAUSALITYBRIDGE
       In y ys ->
       exists x, In x xs /\ P x y.
   Proof.
-    intros A B P xs ys y Hfor.
-    induction Hfor; intros Hin.
-    - contradiction.
-    - simpl in Hin.
-      destruct Hin as [<-|Hin].
-      + exists x. split.
-        * now left.
-        * exact H.
-      + destruct (IHHfor Hin) as (x' & Hin' & HP).
-        exists x'. split.
-        * now right.
-        * exact HP.
+    intros A B P xs ys y Hfor; induction Hfor; intros [<-|Hin].
+    - exists x; auto.
+    - destruct (IHHfor Hin) as (x' & Hin' & HP); exists x'; auto.
   Qed.
 
   Lemma source_arc_of_singleton {v a} :
@@ -260,7 +238,7 @@ Module Type NLUSTRECAUSALITYBRIDGE
     - left. inversion Hdep; subst; clear Hdep.
       + eapply Exists_exists. exists eq. split; eauto.
       + inversion H0.
-    - right. exists ck. auto.
+    - right; eauto.
   Qed.
 
   Lemma mmap_in_exists :
@@ -272,20 +250,12 @@ Module Type NLUSTRECAUSALITYBRIDGE
   Proof.
     intros A B f xs.
     induction xs as [|x xs IH]; intros ys P y Hmap Hfor Hin; simpl in Hmap.
-    - inversion Hmap; subst. contradiction.
-    - inversion Hfor as [|x' xs' HPx HPxs]; subst x' xs'.
-      monadInv Hmap.
-      simpl in Hin.
+    - inversion Hmap; subst; contradiction.
+    - inversion Hfor as [|? ? HPx HPxs]; subst; monadInv Hmap.
       destruct Hin as [<-|Hin].
-      + exists x. repeat split.
-        * now left.
-        * exact EQ.
-        * exact HPx.
+      + exists x; repeat split; [now left | exact EQ | exact HPx].
       + destruct (IH _ _ _ EQ1 HPxs Hin) as (x' & Hin' & Hfx' & HPx').
-        exists x'. repeat split.
-        * now right.
-        * exact Hfx'.
-        * exact HPx'.
+        exists x'; repeat split; [now right | exact Hfx' | exact HPx'].
   Qed.
 
   Lemma find_base_clock_of_wi :
@@ -398,11 +368,8 @@ Module Type NLUSTRECAUSALITYBRIDGE
       Exists (fun e => LCA.Is_free_left x 0 e) es.
   Proof.
     induction es as [|e es IH]; intros les x Hmap Hfree; simpl in Hmap.
-    - inversion Hmap; subst. inversion Hfree.
-    - monadInv Hmap.
-      inversion Hfree; subst.
-      + left. eapply to_lexp_free; eauto.
-      + right. eapply IH; eauto.
+    - inversion Hmap; subst; inversion Hfree.
+    - monadInv Hmap; inversion Hfree; [left; eauto using to_lexp_free | right; eauto].
   Qed.
 
   Lemma to_cexp_eexp_free :
@@ -411,9 +378,7 @@ Module Type NLUSTRECAUSALITYBRIDGE
       CEIsF.Is_free_in_cexp id (Eexp le) ->
       LCA.Is_free_left id 0 e.
   Proof.
-    intros e le id Hto Hfree.
-    inversion Hfree; subst.
-    eauto using to_lexp_free.
+    intros e le id Hto Hfree; inversion Hfree; subst; eauto using to_lexp_free.
   Qed.
 
   Lemma to_cexp_numstreams :
@@ -543,8 +508,7 @@ Module Type NLUSTRECAUSALITYBRIDGE
       LCA.Is_free_left_list y k es ->
       LCA.depends_on [(xs, es)] x y.
   Proof.
-    intros xs es x y k Hnth Hfree.
-    constructor. exists k. split; auto.
+    intros xs es x y k Hnth Hfree; constructor; eauto.
   Qed.
 
   Lemma node_env_clock_in :
@@ -552,31 +516,22 @@ Module Type NLUSTRECAUSALITYBRIDGE
       find_clock (node_env n) x = OK ck ->
       In (x, ck) (idck (L.n_in n ++ L.n_vars n ++ L.n_out n)).
   Proof.
-    intros n x ck Hfind.
-    eapply envs_eq_find'; eauto.
-    apply envs_eq_node.
+    intros n x ck Hfind; eapply envs_eq_find'; eauto using envs_eq_node.
   Qed.
 
   Lemma is_arc_trans {v a} :
     forall (g : AcyGraph v a) x y,
       is_arc g x y ->
       is_trans_arc g x y.
-  Proof.
-    intros g x y Harc.
-    unfold is_trans_arc, is_arc in *.
-    now left.
-  Qed.
+  Proof. intros g x y Harc; now left. Qed.
 
   Lemma source_defined_in_node_vars :
     forall n x,
       In x (L.vars_defined n.(L.n_eqs)) ->
       In x (map fst (L.n_in n ++ L.n_vars n ++ L.n_out n)).
   Proof.
-    intros n x Hin.
-    rewrite map_app, in_app_iff. right.
-    eapply Permutation_in.
-    - exact (L.n_defd n).
-    - exact Hin.
+    intros n x Hin; rewrite map_app, in_app_iff; right.
+    eapply Permutation_in; [exact (L.n_defd n) | exact Hin].
   Qed.
 
   Lemma eqdef_depends_trans {v a} :
@@ -622,13 +577,8 @@ Module Type NLUSTRECAUSALITYBRIDGE
       Is_free_in_clock y ck ->
       is_trans_arc g y x.
   Proof.
-    intros n xs e0 e1 anns x ck y g Heqin Harc Hfind Hxs Hfree.
-    subst xs.
-    apply is_arc_trans.
-    apply Harc.
-    right. exists ck. split.
-    - apply node_env_clock_in. exact Hfind.
-    - exact Hfree.
+    intros n xs e0 e1 anns x ck y g Heqin Harc Hfind -> Hfree.
+    apply is_arc_trans, Harc; right; exists ck; auto using node_env_clock_in.
   Qed.
 
   Lemma eqapp_args_trans_none {v a} :
@@ -805,12 +755,7 @@ Module Type NLUSTRECAUSALITYBRIDGE
   Lemma map_stripname_map_snd_clock_of_nclock :
     forall (anns : list L.ann),
       map stripname (map snd anns) = map L.clock_of_nclock anns.
-  Proof.
-    intros anns.
-    unfold L.clock_of_nclock.
-    rewrite map_map.
-    reflexivity.
-  Qed.
+  Proof. intros anns; unfold L.clock_of_nclock; now rewrite map_map. Qed.
 
   Lemma lhscks_clock_of_nclock :
     forall n xs (anns : list L.ann),
@@ -821,10 +766,15 @@ Module Type NLUSTRECAUSALITYBRIDGE
         (fun x ck => In (x, ck) (idck (L.n_in n ++ L.n_vars n ++ L.n_out n)))
         xs (map stripname (map snd anns)).
   Proof.
-    intros n xs anns Hlhscks.
-    rewrite map_stripname_map_snd_clock_of_nclock.
-    exact Hlhscks.
+    intros n xs anns Hlhscks; now rewrite map_stripname_map_snd_clock_of_nclock.
   Qed.
+
+  Local Ltac eqdef_trans n Expr :=
+    let x0 := fresh "x0" in
+    destruct xs as [|x0 [|]]; try discriminate;
+    monadInv Htoeq;
+    destruct Hdep as [-> ?];
+    eapply (eqdef_depends_trans n [x0] Expr); eauto; reflexivity.
 
   Lemma to_equation_depends_trans {v a} :
     forall G n eq eq' (g : AcyGraph v a) x y,
@@ -847,26 +797,10 @@ Module Type NLUSTRECAUSALITYBRIDGE
     destruct e as [c|z ann|op e ann|op e1 e2 ann|e0s es0 anns
                   |e0s es0 anns|es0 z b ann|z ets efs ann|econd ets efs ann|f es0 ro anns];
       simpl in Htoeq.
-    - destruct xs as [|x0 xs']; try discriminate.
-      destruct xs'; try discriminate.
-      monadInv Htoeq.
-      destruct Hdep as [Hx Hfree]. subst x.
-      eapply (eqdef_depends_trans n [x0] (L.Econst c)); eauto; reflexivity.
-    - destruct xs as [|x0 xs']; try discriminate.
-      destruct xs'; try discriminate.
-      monadInv Htoeq.
-      destruct Hdep as [Hx Hfree]. subst x.
-      eapply (eqdef_depends_trans n [x0] (L.Evar z ann)); eauto; reflexivity.
-    - destruct xs as [|x0 xs']; try discriminate.
-      destruct xs'; try discriminate.
-      monadInv Htoeq.
-      destruct Hdep as [Hx Hfree]. subst x.
-      eapply (eqdef_depends_trans n [x0] (L.Eunop op e ann)); eauto; reflexivity.
-    - destruct xs as [|x0 xs']; try discriminate.
-      destruct xs'; try discriminate.
-      monadInv Htoeq.
-      destruct Hdep as [Hx Hfree]. subst x.
-      eapply (eqdef_depends_trans n [x0] (L.Ebinop op e1 e2 ann)); eauto; reflexivity.
+    - eqdef_trans n (L.Econst c).
+    - eqdef_trans n (L.Evar z ann).
+    - eqdef_trans n (L.Eunop op e ann).
+    - eqdef_trans n (L.Ebinop op e1 e2 ann).
     - destruct e0s as [|einit e0s'].
       { destruct xs as [|xbad xs']; simpl in Htoeq; try discriminate.
         destruct xs'; simpl in Htoeq; try discriminate.
@@ -896,24 +830,10 @@ Module Type NLUSTRECAUSALITYBRIDGE
       simpl in Hdep.
       destruct Hdep as [Hx Hfree]. subst x.
       eapply (eqfby_depends_trans n [x0] einit enext anns); eauto; reflexivity.
-    - destruct xs as [|x0 xs']; simpl in Htoeq; try discriminate.
-      destruct xs'; simpl in Htoeq; try discriminate.
-      monadInv Htoeq.
-    - destruct xs as [|x0 xs']; try discriminate.
-      destruct xs'; try discriminate.
-      monadInv Htoeq.
-      destruct Hdep as [Hx Hfree]. subst x.
-      eapply (eqdef_depends_trans n [x0] (L.Ewhen es0 z b ann)); eauto; reflexivity.
-    - destruct xs as [|x0 xs']; try discriminate.
-      destruct xs'; try discriminate.
-      monadInv Htoeq.
-      destruct Hdep as [Hx Hfree]. subst x.
-      eapply (eqdef_depends_trans n [x0] (L.Emerge z ets efs ann)); eauto; reflexivity.
-    - destruct xs as [|x0 xs']; try discriminate.
-      destruct xs'; try discriminate.
-      monadInv Htoeq.
-      destruct Hdep as [Hx Hfree]. subst x.
-      eapply (eqdef_depends_trans n [x0] (L.Eite econd ets efs ann)); eauto; reflexivity.
+    - destruct xs as [|? [|]]; simpl in Htoeq; try discriminate; monadInv Htoeq.
+    - eqdef_trans n (L.Ewhen es0 z b ann).
+    - eqdef_trans n (L.Emerge z ets efs ann).
+    - eqdef_trans n (L.Eite econd ets efs ann).
     - destruct ro as [r|].
       + destruct r as [rc|r annr|rop re annr|rop re1 re2 annr
                       |re0s res0 ranns|re0s res0 ranns|res0 rz rb rann
@@ -951,21 +871,9 @@ Module Type NLUSTRECAUSALITYBRIDGE
             | exact Hk ].
         * destruct (In_nth_error_ex _ _ Hinx) as (k & Hnth).
           pose proof (nth_error_lt_anns _ _ _ _ Hlhsncks Hnth) as Hk.
-          inversion Hwr; subst; clear Hwr.
-          -- eapply (eqapp_reset_clock_trans n xs f es0 r ty ckr _ anns x y k g);
-               [ exact Heqin
-               | exact Harc
-               | exact Hnth
-               | exact Hk
-               | exact H0
-               | exact Hclockr ].
-          -- eapply (eqapp_reset_clock_trans n xs f es0 r ty ckr _ anns x y k g);
-               [ exact Heqin
-               | exact Harc
-               | exact Hnth
-               | exact Hk
-               | exact H0
-               | exact Hclockr ].
+          inversion Hwr; subst; clear Hwr;
+            eapply (eqapp_reset_clock_trans n xs f es0 r ty ckr _ anns x y k g);
+              eauto.
       + destruct (mmap to_lexp es0) as [les|err] eqn:Hmap; try discriminate.
         inversion Htoeq; subst.
         inversion HwcEs as [|? ? Happ Hnil]; subst; clear HwcEs Hnil.
