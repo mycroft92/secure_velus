@@ -1163,7 +1163,7 @@ Module Type NLUSTRECAUSALITYBRIDGE
       inversion HwcG as [|? ? Hwctl HwcN]; subst.
       constructor.
       + eapply to_node_causal; eauto.
-      + apply IH; auto.
+      + eapply IH; [exact Hwctl | exact EQ1 | exact Hcaus_tl].
   Qed.
 
 End NLUSTRECAUSALITYBRIDGE.
