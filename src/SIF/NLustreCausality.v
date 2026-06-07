@@ -209,9 +209,9 @@ Module Type NLUSTRECAUSALITYBRIDGE
       In x xs ->
       exists y, In y ys /\ P x y.
   Proof.
-    intros A B P xs ys x Hfor; induction Hfor; intros [<-|Hin].
-    - exists y; auto.
-    - destruct (IHHfor Hin) as (y' & Hin' & HP); exists y'; auto.
+    intros A B P xs ys x Hfor; induction Hfor; intros Hin; [contradiction|].
+    destruct Hin as [<-|Hin]; [exists y; auto |
+      destruct (IHHfor Hin) as (y' & Hin' & HP); exists y'; auto].
   Qed.
 
   Lemma Forall2_in_right_ex :
@@ -220,9 +220,9 @@ Module Type NLUSTRECAUSALITYBRIDGE
       In y ys ->
       exists x, In x xs /\ P x y.
   Proof.
-    intros A B P xs ys y Hfor; induction Hfor; intros [<-|Hin].
-    - exists x; auto.
-    - destruct (IHHfor Hin) as (x' & Hin' & HP); exists x'; auto.
+    intros A B P xs ys y Hfor; induction Hfor; intros Hin; [contradiction|].
+    destruct Hin as [<-|Hin]; [exists x; auto |
+      destruct (IHHfor Hin) as (x' & Hin' & HP); exists x'; auto].
   Qed.
 
   Lemma source_arc_of_singleton {v a} :
