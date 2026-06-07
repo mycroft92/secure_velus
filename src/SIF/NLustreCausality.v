@@ -1037,6 +1037,135 @@ Module Type NLUSTRECAUSALITYBRIDGE
           eapply Hz; eauto.
   Qed.
 
+  (* ------------------------------------------------------------------ *)
+  (* Bridge theorems: Lustre causality transfers to NLustre causality   *)
+  (* ------------------------------------------------------------------ *)
+
+  (** x is always the defined variable in an NLustre equation that depends. *)
+  Lemma nl_depends_on_eq_var_defined :
+    forall eq x y,
+      NLCaus.nl_depends_on_eq eq x y ->
+      In x (var_defined eq).
+  Proof.
+    intros eq x y Hdep.
+    destruct eq as [z ck ce | xs ck f es ro | z ck v0 ck0]; simpl in Hdep |- *.
+    - destruct Hdep as [Hx _]. subst. now left.
+    - destruct ro as [[r ckr]|]; destruct Hdep as [Hinx _]; exact Hinx.
+    - destruct Hdep as [Hx _]. subst. now left.
+  Qed.
+
+  (** Extract the mmap proof from a successful to_node call. *)
+  Lemma to_node_eqs :
+    forall n n' Hpref,
+      to_node n Hpref = OK n' ->
+      mmap (to_equation (node_env n) (node_not_out n)) n.(L.n_eqs) = OK n'.(n_eqs).
+  Proof.
+    intros n n' Hpref Htr.
+    unfold to_node in Htr.
+    destruct (mmap_to_equation
+                (Env.adds' (L.n_vars n) (Env.adds' (L.n_in n) (Env.from_list (L.n_out n))))
+                (fun x : Env.key =>
+                   if Env.mem x (Env.from_list (L.n_out n))
+                   then Error (msg "output variable defined as a fby")
+                   else OK tt) n)
+      as [[neqs Hmmap]|err]; [|discriminate].
+    inv Htr. unfold node_env, node_envo, node_not_out. exact Hmmap.
+  Qed.
+
+  (** If a Lustre node is causal, its translated NLustre node is causal. *)
+  Lemma to_node_causal :
+    forall G n n' Hpref,
+      LC.wc_global G ->
+      LC.wc_node G n ->
+      to_node n Hpref = OK n' ->
+      LCA.node_causal n ->
+      NLCaus.nl_node_causal n'.
+  Proof.
+    intros G n n' Hpref HwcG HwcN Htr Hcaus.
+    (* Unpack the source causal graph. *)
+    destruct Hcaus as (v & a & g_src & Hgraph_src).
+    destruct Hgraph_src as [Hv_src Harc_src].
+    (* Obtain a topological order for the source graph. *)
+    destruct (has_TopoOrder g_src) as (xs & Heq_xs & Htopo).
+    (* Build a complete linear-order NLustre graph over the same vertex set. *)
+    destruct (complete_order_graph xs (TopoOrder_NoDup g_src xs Htopo))
+      as (v' & a' & g' & Hv' & Htail').
+    (* Extract the equation mmap and wc_equation facts. *)
+    assert (Hmmap : mmap (to_equation (node_env n) (node_not_out n)) n.(L.n_eqs) = OK n'.(n_eqs))
+      by (apply to_node_eqs; exact Htr).
+    destruct HwcN as (_ & _ & _ & HwcEqs).
+    (* Record that in/vars/out are preserved by translation. *)
+    assert (Hin_eq  : L.n_in   n = n'.(n_in))   by (apply to_node_in;   exact Htr).
+    assert (Hvars_eq: L.n_vars n = n'.(n_vars))  by (apply to_node_vars; exact Htr).
+    assert (Hout_eq : L.n_out  n = n'.(n_out))   by (apply to_node_out;  exact Htr).
+    (* Exhibit the NLustre graph. *)
+    exists v', a', g'.
+    unfold NLCaus.nl_graph_of_node, NLCaus.nl_graph_of_eqs.
+    split.
+    - (* Vertices of g' equal the NLustre node variable set. *)
+      rewrite <- Hin_eq, <- Hvars_eq, <- Hout_eq.
+      transitivity (PSP.of_list xs).
+      + exact Hv'.
+      + transitivity (vertices g_src).
+        * symmetry. exact Heq_xs.
+        * exact Hv_src.
+    - (* Every NLustre dependency yields an arc in g'. *)
+      intros x y Hdep.
+      unfold NLCaus.nl_depends_on in Hdep.
+      apply Exists_exists in Hdep as [eq' [Heq'in Hdep']].
+      (* Recover the source equation corresponding to eq'. *)
+      destruct (mmap_in_exists
+                  (to_equation (node_env n) (node_not_out n))
+                  n.(L.n_eqs) n'.(n_eqs)
+                  (LC.wc_equation G (idck (L.n_in n ++ L.n_vars n ++ L.n_out n)))
+                  eq' Hmmap HwcEqs Heq'in)
+        as (eq & Heqin & Heqto & Hwceq).
+      (* Lift the NLustre dependency to a transitive arc in g_src. *)
+      assert (Htrans : is_trans_arc g_src y x).
+      { eapply to_equation_depends_trans; eauto. }
+      (* Show x ∈ xs using the vertex-set equalities. *)
+      assert (Hinx : In x xs).
+      { assert (Hxvar : In x (var_defined eq')).
+        { apply nl_depends_on_eq_var_defined. exact Hdep'. }
+        apply ok_fst_defined in Heqto.
+        rewrite <- Heqto in Hxvar.
+        assert (Hvd : In x (L.vars_defined n.(L.n_eqs))).
+        { unfold L.vars_defined. apply in_flat_map. exists eq. split; auto. }
+        apply source_defined_in_node_vars in Hvd.
+        rewrite <- ps_of_list_In.
+        rewrite <- Heq_xs.
+        rewrite Hv_src.
+        rewrite ps_of_list_In, map_fst_idck.
+        exact Hvd. }
+      (* Split xs at x to apply the ForallTail properties. *)
+      apply in_split in Hinx as (xs1 & xs2 & Hxsplit). subst xs.
+      (* y lands in xs2 by the TopoOrder invariant. *)
+      assert (Hy_in : In y xs2).
+      { destruct (ForallTail_middle _ x xs1 xs2 Htopo) as (_ & _ & Ha).
+        exact (Ha y Htrans). }
+      (* An arc g' y x exists by the complete-order-graph invariant. *)
+      exact (ForallTail_middle _ x xs1 xs2 Htail' y Hy_in).
+  Qed.
+
+  (** If a Lustre global is causal, its translated NLustre global is causal. *)
+  Theorem to_global_causal :
+    forall G P Hprefs,
+      LC.wc_global G ->
+      to_global G Hprefs = OK P ->
+      Forall LCA.node_causal G ->
+      NLCaus.nl_global_causal P.
+  Proof.
+    unfold NLCaus.nl_global_causal.
+    induction G as [|n Gtl IH]; intros P Hprefs HwcG Htrans Hcaus.
+    - inv Htrans. constructor.
+    - monadInv Htrans.
+      inversion Hcaus as [|? ? Hcaus_n Hcaus_tl]; subst.
+      inversion HwcG as [|? ? Hwctl HwcN]; subst.
+      constructor.
+      + eapply to_node_causal; eauto.
+      + apply IH; auto.
+  Qed.
+
 End NLUSTRECAUSALITYBRIDGE.
 
 Module NLustreCausalityBridge
