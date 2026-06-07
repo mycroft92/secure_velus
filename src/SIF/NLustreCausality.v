@@ -1095,9 +1095,9 @@ Module Type NLUSTRECAUSALITYBRIDGE
       by exact (to_node_eqs n n' Hpref Htr).
     destruct HwcN as (_ & _ & _ & HwcEqs).
     (* Record that in/vars/out are preserved by translation. *)
-    assert (Hin_eq  : L.n_in   n = n'.(n_in))   by (apply to_node_in;   exact Htr).
-    assert (Hvars_eq: L.n_vars n = n'.(n_vars))  by (apply to_node_vars; exact Htr).
-    assert (Hout_eq : L.n_out  n = n'.(n_out))   by (apply to_node_out;  exact Htr).
+    assert (Hin_eq  : L.n_in   n = n'.(n_in))   by exact (to_node_in   n n' Hpref Htr).
+    assert (Hvars_eq: L.n_vars n = n'.(n_vars))  by exact (to_node_vars n n' Hpref Htr).
+    assert (Hout_eq : L.n_out  n = n'.(n_out))   by exact (to_node_out  n n' Hpref Htr).
     (* Exhibit the NLustre graph. *)
     exists v', a', g'.
     unfold NLCaus.nl_graph_of_node, NLCaus.nl_graph_of_eqs.
