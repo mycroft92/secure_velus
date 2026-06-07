@@ -771,13 +771,6 @@ Module Type NLUSTRECAUSALITYBRIDGE
     intros n xs anns Hlhscks; now rewrite map_stripname_map_snd_clock_of_nclock.
   Qed.
 
-  Local Ltac eqdef_trans n Expr :=
-    let x0 := fresh "x0" in
-    destruct xs as [|x0 [|]]; try discriminate;
-    monadInv Htoeq;
-    destruct Hdep as [-> ?];
-    eapply (eqdef_depends_trans n [x0] Expr); eauto; reflexivity.
-
   Lemma to_equation_depends_trans {v a} :
     forall G n eq eq' (g : AcyGraph v a) x y,
       LC.wc_global G ->
@@ -799,10 +792,14 @@ Module Type NLUSTRECAUSALITYBRIDGE
     destruct e as [c|z ann|op e ann|op e1 e2 ann|e0s es0 anns
                   |e0s es0 anns|es0 z b ann|z ets efs ann|econd ets efs ann|f es0 ro anns];
       simpl in Htoeq.
-    - eqdef_trans n (L.Econst c).
-    - eqdef_trans n (L.Evar z ann).
-    - eqdef_trans n (L.Eunop op e ann).
-    - eqdef_trans n (L.Ebinop op e1 e2 ann).
+    - destruct xs as [|x0 [|]]; try discriminate; monadInv Htoeq;
+      destruct Hdep as [-> ?]; eapply (eqdef_depends_trans n [x0] (L.Econst c)); eauto; reflexivity.
+    - destruct xs as [|x0 [|]]; try discriminate; monadInv Htoeq;
+      destruct Hdep as [-> ?]; eapply (eqdef_depends_trans n [x0] (L.Evar z ann)); eauto; reflexivity.
+    - destruct xs as [|x0 [|]]; try discriminate; monadInv Htoeq;
+      destruct Hdep as [-> ?]; eapply (eqdef_depends_trans n [x0] (L.Eunop op e ann)); eauto; reflexivity.
+    - destruct xs as [|x0 [|]]; try discriminate; monadInv Htoeq;
+      destruct Hdep as [-> ?]; eapply (eqdef_depends_trans n [x0] (L.Ebinop op e1 e2 ann)); eauto; reflexivity.
     - destruct e0s as [|einit e0s'].
       { destruct xs as [|xbad xs']; simpl in Htoeq; try discriminate.
         destruct xs'; simpl in Htoeq; try discriminate.
@@ -833,9 +830,12 @@ Module Type NLUSTRECAUSALITYBRIDGE
       destruct Hdep as [Hx Hfree]. subst x.
       eapply (eqfby_depends_trans n [x0] einit enext anns); eauto; reflexivity.
     - destruct xs as [|? [|]]; simpl in Htoeq; try discriminate; monadInv Htoeq.
-    - eqdef_trans n (L.Ewhen es0 z b ann).
-    - eqdef_trans n (L.Emerge z ets efs ann).
-    - eqdef_trans n (L.Eite econd ets efs ann).
+    - destruct xs as [|x0 [|]]; try discriminate; monadInv Htoeq;
+      destruct Hdep as [-> ?]; eapply (eqdef_depends_trans n [x0] (L.Ewhen es0 z b ann)); eauto; reflexivity.
+    - destruct xs as [|x0 [|]]; try discriminate; monadInv Htoeq;
+      destruct Hdep as [-> ?]; eapply (eqdef_depends_trans n [x0] (L.Emerge z ets efs ann)); eauto; reflexivity.
+    - destruct xs as [|x0 [|]]; try discriminate; monadInv Htoeq;
+      destruct Hdep as [-> ?]; eapply (eqdef_depends_trans n [x0] (L.Eite econd ets efs ann)); eauto; reflexivity.
     - destruct ro as [r|].
       + destruct r as [rc|r annr|rop re annr|rop re1 re2 annr
                       |re0s res0 ranns|re0s res0 ranns|res0 rz rb rann
