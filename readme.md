@@ -21,12 +21,6 @@ Work-map notes:
 - [`src/SIF/docs/proof_outline.md`](src/SIF/docs/proof_outline.md)
 - [`src/SIF/docs/call_metatheory.md`](src/SIF/docs/call_metatheory.md)
 
-For the current simplification split:
-
-- `SymTypes.v` is the single symbolic source of truth for `simplify` and its
-  structural facts.
-- `SecTypes.v` contains the lattice-valued correctness/completeness layer for
-  that simplifier.
 
 The main proof entry points and core interfaces are:
 
