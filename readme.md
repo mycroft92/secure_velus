@@ -100,6 +100,78 @@ Related executable constraint-export code is also in `src/SIF/`, especially:
   `generate_stc_constraint_dump`
 - [`src/SIF/siflib.ml`](src/SIF/siflib.ml)
 
+## Quick Start (Docker — recommended)
+
+The supplied `Dockerfile` builds a fully self-contained Ubuntu 22.04 image
+with OCaml 4.09.1, Coq 8.9.1, Menhir, and CompCert already configured.
+
+### 1 · Clone (with submodule)
+
+```sh
+git clone https://github.com/mycroft92/secure_velus.git
+cd secure_velus
+git submodule update --init --recursive   # populates CompCert/
+```
+
+### 2 · Build the image
+
+On Apple Silicon (linux/amd64 emulation via Rosetta):
+
+```sh
+docker buildx build --platform linux/amd64 -t secure-velus-dev .
+```
+
+On a native x86-64 Linux host:
+
+```sh
+docker build -t secure-velus-dev .
+```
+
+This step takes ~10–15 minutes the first time (compiling Coq 8.9.1).
+Subsequent builds are fast because Docker caches the opam layers.
+
+### 3 · Enter the container
+
+```sh
+docker run --platform linux/amd64 -it --rm secure-velus-dev
+```
+
+The source tree is already at `/workspace` and configure has already run.
+
+### 4 · Compile the proofs
+
+Inside the container:
+
+```sh
+make -j$(nproc)
+```
+
+This type-checks all Coq proofs and builds the `velus` binary.
+A successful run ends without errors and leaves `velus` in `/workspace`.
+
+### 5 · Smoke-test the compiler
+
+```sh
+./velus examples/count.lus          # produces examples/count.s
+./velus -dsif examples/count.lus    # produces count.n.sif and count.s.sif
+```
+
+### Development: mount your local checkout
+
+If you want edits on the host to be visible inside the container, bind-mount
+the repo (CompCert must already be initialized on the host via step 1):
+
+```sh
+docker run --platform linux/amd64 -it --rm \
+  -v "$(pwd)":/workspace \
+  secure-velus-dev
+```
+
+The entrypoint detects the fresh mount and re-runs `./configure` automatically
+before dropping you into a shell.
+
+---
+
 ## Building
 
 Velus has been implemented in Coq 8.9.1. The original artifact also depends on

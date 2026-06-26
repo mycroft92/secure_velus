@@ -36,7 +36,9 @@ SHELL ["/bin/bash", "-lc"]
 ENV OPAMROOT=/home/velus/.opam
 
 RUN opam init --disable-sandboxing -a --bare && \
-    opam switch create default ocaml-base-compiler.4.09.1
+    opam switch create default \
+      --repos=default,archive=git+https://github.com/ocaml/opam-repository-archive.git \
+      --packages=ocaml-base-compiler.4.09.1
 
 ENV PATH=/home/velus/.opam/default/bin:${PATH}
 
@@ -52,7 +54,17 @@ RUN opam repo add coq-released https://coq.inria.fr/opam/released && \
 WORKDIR /workspace
 COPY --chown=velus:velus . /workspace
 
+# Populate CompCert submodule (public repo, pinned commit matches .gitmodules)
+RUN git clone https://github.com/inria-parkas/CompCert.git CompCert && \
+    git -C CompCert checkout e19f81cecf4a7cca67d8491fcb4c0a259c232bfb
+
 # Generate the repository build files for the current toolchain.
 RUN ./configure -clightgen x86_64-linux
 
+# Entrypoint re-runs configure when /workspace is bind-mounted over the
+# baked copy (the mount replaces CompCert with the host's submodule).
+COPY --chown=velus:velus docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/bin/bash"]
