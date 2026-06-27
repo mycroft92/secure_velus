@@ -14,4 +14,7 @@ if ! grep -q '^ARCH=.\+' /workspace/Makefile.config 2>/dev/null; then
     cd /workspace && ./configure -clightgen x86_64-linux
 fi
 
+echo "[entrypoint] Running make -j8 ..."
+cd /workspace && make -j8
+
 exec "$@"

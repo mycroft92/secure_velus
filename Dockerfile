@@ -1,11 +1,19 @@
 # Reproducible Velus/SIF development environment.
 #
-# On Apple Silicon hosts, build and run this image as linux/amd64:
+# Build the image (once, or after Dockerfile changes):
 #   docker buildx build --platform linux/amd64 -t secure-velus-dev .
-#   docker run --platform linux/amd64 -it --rm secure-velus-dev
 #
-# If you bind-mount a fresh checkout into /workspace, rerun:
-#   ./configure -clightgen x86_64-linux
+# Day-to-day use — VS Code devcontainer (recommended):
+#   Open the repo in VS Code and choose "Reopen in Container".
+#   VS Code will start a named container (secure-velus-dev) and reconnect to
+#   it on subsequent opens without creating a new one.
+#
+# Manual use (without VS Code):
+#   docker compose -f .devcontainer/docker-compose.yml up -d
+#   docker exec -it secure-velus-dev bash
+#
+# If you bind-mount a fresh checkout into /workspace, the entrypoint will
+# automatically run ./configure and make -j8 before giving you a shell.
 #
 FROM --platform=linux/amd64 ubuntu:22.04
 

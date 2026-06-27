@@ -1,0 +1,22 @@
+{
+  "name": "secure-velus-dev",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "velus-dev",
+  "workspaceFolder": "/workspace",
+  "remoteUser": "velus",
+
+  // Stop (not remove) the container when the VS Code window closes so it can
+  // be restarted and reused on the next "Reopen in Container".
+  "shutdownAction": "stopCompose",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "maximedenes.vscoq"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}

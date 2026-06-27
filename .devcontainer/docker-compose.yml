@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  velus-dev:
+    image: secure-velus-dev:latest
+    container_name: secure-velus-dev
+    platform: linux/amd64
+    volumes:
+      - ..:/workspace:cached
+    # VS Code attaches after the entrypoint finishes (configure + make).
+    # sleep infinity keeps the container alive so VS Code can reconnect.
+    command: sleep infinity
+    # Keep stdin open so `docker exec` sessions work cleanly.
+    stdin_open: true
+    tty: true
