@@ -104,8 +104,14 @@ Related executable constraint-export code is also in `src/SIF/`, especially:
 
 The supplied `Dockerfile` builds a fully self-contained Ubuntu 22.04 image
 with OCaml 4.09.1, Coq 8.9.1, Menhir, and CompCert already configured.
+A `.devcontainer` setup is included so VS Code connects to a single
+persistent container rather than creating a new one on each session.
 
-### 1 · Clone (with submodule)
+---
+
+### First-time setup
+
+#### 1 · Clone (with submodule)
 
 ```sh
 git clone https://github.com/mycroft92/secure_velus.git
@@ -113,7 +119,7 @@ cd secure_velus
 git submodule update --init --recursive   # populates CompCert/
 ```
 
-### 2 · Build the image
+#### 2 · Build the Docker image
 
 On Apple Silicon (linux/amd64 emulation via Rosetta):
 
@@ -129,46 +135,73 @@ docker build -t secure-velus-dev .
 
 This step takes ~10–15 minutes the first time (compiling Coq 8.9.1).
 Subsequent builds are fast because Docker caches the opam layers.
+You only need to rebuild after changes to the `Dockerfile`.
 
-### 3 · Enter the container
+#### 3 · Open in VS Code
 
-```sh
-docker run --platform linux/amd64 -it --rm secure-velus-dev
+Open the repo folder in VS Code, then:
+
+```
+Cmd+Shift+P → "Dev Containers: Reopen in Container"
 ```
 
-The source tree is already at `/workspace` and configure has already run.
+VS Code will start the named container `secure-velus-dev`, bind-mount
+the repo into `/workspace`, run `./configure` and `make -j8`, then
+attach a shell. Build artefacts (`.vo`, `.glob`, binaries) land on your
+host filesystem via the bind-mount, so they persist across sessions.
 
-### 4 · Compile the proofs
+**Without VS Code** — use the terminal instead:
+
+```sh
+docker compose -f .devcontainer/docker-compose.yml up -d
+docker exec -it secure-velus-dev bash
+```
+
+---
+
+### Day-to-day use (after first-time setup)
+
+#### VS Code
+
+Open the repo in VS Code — if the devcontainer was previously stopped it
+restarts automatically and reconnects. You are always working inside the
+same `secure-velus-dev` container.
+
+#### Terminal
+
+```sh
+# Start the container (no-op if already running)
+docker compose -f .devcontainer/docker-compose.yml up -d
+
+# Get a shell
+docker exec -it secure-velus-dev bash
+```
+
+To stop the container without removing it:
+
+```sh
+docker compose -f .devcontainer/docker-compose.yml stop
+```
+
+#### What happens on (re)start
+
+Each time the container starts the entrypoint:
+
+1. Checks the CompCert submodule is present (exits with a clear message if not).
+2. Runs `./configure -clightgen x86_64-linux` if `Makefile.config` is missing.
+3. Runs `make -j8` (fast no-op if nothing changed since last build).
+4. Hands control to VS Code / your shell.
+
+---
+
+### Smoke-test the compiler
 
 Inside the container:
-
-```sh
-make -j$(nproc)
-```
-
-This type-checks all Coq proofs and builds the `velus` binary.
-A successful run ends without errors and leaves `velus` in `/workspace`.
-
-### 5 · Smoke-test the compiler
 
 ```sh
 ./velus examples/count.lus          # produces examples/count.s
 ./velus -dsif examples/count.lus    # produces count.n.sif and count.s.sif
 ```
-
-### Development: mount your local checkout
-
-If you want edits on the host to be visible inside the container, bind-mount
-the repo (CompCert must already be initialized on the host via step 1):
-
-```sh
-docker run --platform linux/amd64 -it --rm \
-  -v "$(pwd)":/workspace \
-  secure-velus-dev
-```
-
-The entrypoint detects the fresh mount and re-runs `./configure` automatically
-before dropping you into a shell.
 
 ---
 
