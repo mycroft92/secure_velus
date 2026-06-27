@@ -150,11 +150,23 @@ the repo into `/workspace`, run `./configure` and `make -j8`, then
 attach a shell. Build artefacts (`.vo`, `.glob`, binaries) land on your
 host filesystem via the bind-mount, so they persist across sessions.
 
-**Without VS Code** — use the terminal instead:
+**Without VS Code — terminal only:**
 
 ```sh
-docker compose -f .devcontainer/docker-compose.yml up -d
-docker exec -it secure-velus-dev bash
+# One-shot: start a throwaway shell (uses the baked-in /workspace):
+docker run -it --platform linux/amd64 secure-velus-dev bash
+
+# Or bind-mount your repo so edits and build artefacts are visible on the host:
+git submodule update --init --recursive   # only needed if CompCert/ is empty
+docker run -it --platform linux/amd64 -v "$(pwd)":/workspace secure-velus-dev bash
+```
+
+**Persistent container (reconnect without rebuilding each time):**
+
+```sh
+docker compose -f .devcontainer/docker-compose.yml up -d   # start once
+docker exec -it secure-velus-dev bash                       # shell any time
+docker compose -f .devcontainer/docker-compose.yml stop     # pause, keep state
 ```
 
 ---
