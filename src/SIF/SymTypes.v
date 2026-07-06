@@ -295,9 +295,25 @@ Module MergeFacts.
                    destruct (Pos.compare a0 a1) eqn:E01'; repeat pos_handler. auto.
     Qed.
 
-    Lemma merge_comm2: forall a ls1 ls2, merge (a::ls1) ls2 = merge [a] (merge ls1 ls2).
+    Lemma merge_singleton_cons_sorted: forall a ls,
+      sortedNoDup (a::ls) ->
+      merge [a] ls = a::ls.
     Proof.
-    Admitted.
+      intros a ls Hsorted.
+      destruct ls as [|b bs].
+      - simpl. destruct (Pos.compare a a) eqn:E; pos_handler. auto.
+      - simpl. inversion Hsorted; subst.
+        destruct (Pos.compare a b) eqn:E; repeat pos_handler; auto.
+    Qed.
+
+    Lemma merge_comm2: forall a ls1 ls2,
+      sortedNoDup (a::ls1) ->
+      merge (a::ls1) ls2 = merge [a] (merge ls1 ls2).
+    Proof.
+      intros a ls1 ls2 Hsorted.
+      rewrite <- (merge_singleton_cons_sorted a ls1 Hsorted).
+      apply merge_assoc.
+    Qed.
 
 End MergeFacts.
 

@@ -999,10 +999,20 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
     - fold SymTypes.my_set_mem. apply ident_eqb_neq in Hax. simpl. destruct (ident_eq_dec x a) eqn:Hxa; try congruence.
     unfold SIG.subst_ident_in_type in IHty. apply IHty in H as Hih.
     destruct (SymTypes.my_set_mem x ty) eqn:Hmem; auto.
-    rewrite merge_comm2. assert (hm_ext dlt ([a] ⊔ (SymTypes.st_remove x ty ⊔ SymTypes.st_remove x st)) ⊑ join (hm_ext dlt [a]) (hm_ext dlt (SymTypes.st_remove x ty ⊔ SymTypes.st_remove x st))) as Htrans. { apply hm_ext_distributive2. }
-    apply order_trans with (y:=join (hm_ext dlt [a])
-               (hm_ext dlt (SymTypes.st_remove x ty ⊔ SymTypes.st_remove x st))); auto.
-    simpl. rewrite <- join_bottom_eq1.  apply join_least_upper_bound; auto. eapply order_trans; eauto.
+    apply (hm_ext_distributive dlt (SymTypes.st_remove x st) (a :: SymTypes.st_remove x ty)
+             (join (dlt a) (hm_ext dlt ty))).
+    + assert (hm_ext dlt (SymTypes.st_remove x st) ⊑ hm_ext dlt st) as Hrmst. { apply st_remove_correct. }
+      apply order_trans with (y:=hm_ext dlt st); [exact Hrmst|].
+      apply order_trans with (y:=dlt x); [exact H|].
+      apply SymTypes.my_set_mem_correct in Hmem.
+      apply order_trans with (y:=hm_ext dlt ty).
+      * apply hm_ext_list_in1. exact Hmem.
+      * apply join_bound2.
+    + simpl. apply join_least_upper_bound.
+      * apply join_bound1.
+      * assert (hm_ext dlt (SymTypes.st_remove x ty) ⊑ hm_ext dlt ty) as Hrmty. { apply st_remove_correct. }
+        apply order_trans with (y:=hm_ext dlt ty); [exact Hrmty|].
+        apply join_bound2.
   Qed.
 
     Lemma sig_scope_in_raw_scope:
