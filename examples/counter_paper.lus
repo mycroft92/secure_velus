@@ -1,0 +1,16 @@
+node counter(init, incr: int) returns (n:int);
+var fst: bool; 
+var pre_n:int;
+let
+    fst = true fby false;
+    pre_n = 0 fby n;
+    n = if fst then init else (pre_n+incr);
+tel
+
+node odometer(acc:int; r: bool) returns (spd, dist:int);
+    var mod_spd: int;
+let
+    spd = counter(0, acc);
+    mod_spd = if spd > 0 then spd else -1*spd;
+    dist = (restart counter every r)(0, mod_spd);
+tel
