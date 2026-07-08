@@ -215,6 +215,34 @@ Inside the container:
 ./velus -dsif examples/count.lus    # produces count.n.sif and count.s.sif
 ```
 
+### Paper Counter/Odometer Example
+
+The example used in the paper is `examples/counter_paper.lus`. After the
+container has built the compiler, run the following commands from the
+repository root inside the container:
+
+```sh
+./velus examples/counter_paper.lus
+./velus -dsif examples/counter_paper.lus
+```
+
+The first command compiles the Lustre program and produces
+`examples/counter_paper.s`. The second command runs the SIF constraint export
+path and produces:
+
+- `examples/counter_paper.n.sif`
+  The generated NLustre security-signature/constraint dump.
+- `examples/counter_paper.s.sif`
+  The generated STC security-signature/constraint dump.
+
+To remove the generated files for this example:
+
+```sh
+rm -f examples/counter_paper.s \
+      examples/counter_paper.n.sif \
+      examples/counter_paper.s.sif
+```
+
 ---
 
 ## Building
