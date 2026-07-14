@@ -138,7 +138,7 @@ Module Type SECNLUSNONINTERFERENCE
                  ckty rty rstty inptyp outtyp st_clk st_rst st_inp
                  Heqin Hfindcallee Hfindsigc Hck0 Hr0 Hrst0 Hinp0 Hout0
                  k_reset Hreset_ctrl.
-          rewrite Hsig_eq in Hck0, Hrst0.
+          rewrite Hsig_eq in Hck0, Hrst0 |- *.
           match goal with
           | Hrec :
               forall (xs : list ident) (ck : clock) (f : ident)
@@ -154,7 +154,7 @@ Module Type SECNLUSNONINTERFERENCE
                 option_to_sec (assign_clk_type ty_env (s_clk sig) ck)
                   SC.init_state = OK (ckty, st_clk) ->
                 Env.find r ty_env = Some rty ->
-                option_to_sec (assign_clk_type ty_env (s_reset sig) ckr)
+                option_to_sec (assign_clk_type ty_env (s_clk sig) ckr)
                   st_clk = OK (rstty, st_rst) ->
                 SC.mmap
                   (fun e : exp => option_to_sec (assign_exp_type ty_env e))
@@ -163,9 +163,9 @@ Module Type SECNLUSNONINTERFERENCE
                 node_outputs_raw_spec_clocked all_nodes G envs aux_names
                   callee
                   (lat_valuation dlt_sig callee_sig inptyp ckty
-                     ([rty] ⊔ rstty) outtyp)
+                     ([s_reset sig] ⊔ ([rty] ⊔ rstty)) outtyp)
                   (lat_valuation dlt_raw callee_sig inptyp ckty
-                     ([rty] ⊔ rstty) outtyp) |- _ =>
+                     ([s_reset sig] ⊔ ([rty] ⊔ rstty)) outtyp) |- _ =>
               eapply Hrec; eauto
           end.
     Qed.

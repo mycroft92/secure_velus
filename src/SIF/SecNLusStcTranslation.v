@@ -862,25 +862,27 @@ Module Type SECNLUSSTCTRANSLATION
             { unfold option_to_sec in Hck_nl.
               destruct (assign_clk_type env base_ty ck) eqn:Hckopt; try discriminate.
               inversion Hck_nl; subst. reflexivity. }
-            assert (Hrstopt : assign_clk_type env rst_ty ckr = Some rstty_nl).
+            assert (Hrstopt : assign_clk_type env base_ty ckr = Some rstty_nl).
             { unfold option_to_sec in Hrst_nl.
-              destruct (assign_clk_type env rst_ty ckr) eqn:Hrstopt; try discriminate.
+              destruct (assign_clk_type env base_ty ckr) eqn:Hrstopt; try discriminate.
               inversion Hrst_nl; subst. reflexivity. }
             assert (Hckscope : st_scoped scope ckty_nl).
             { eapply (SECCETYPING.assign_clk_type_scoped env base_ty scope ck ckty_nl); eauto.
               intros z Hz.
               destruct (Hvars z) as (ty & Hfind & Hscopez); eauto using SECNLUSTYPING.wc_call_clock_free_in_vars. }
-            assert (Hrstscope : st_scoped scope ((rty_nl :: nil) ⊔ rstty_nl)).
+            assert (Hrstscope : st_scoped scope ((rst_ty :: nil) ⊔ ((rty_nl :: nil) ⊔ rstty_nl))).
             { assert (Hinr : In (r, ckr) vars).
               { eapply Hreset. reflexivity. }
               assert (Hwc_ckr : wc_clock vars ckr).
               { eapply wc_env_var; eauto. }
               eapply st_scoped_merge.
+              { apply st_scoped_singleton. exact Hrst. }
+              eapply st_scoped_merge.
               { apply st_scoped_singleton.
                 destruct (Hvars r (In_InMembers r ckr vars Hinr)) as (ty & Hfind & Hscope_r).
                 unfold SC.find_env in Hr_nl.
                 rewrite Hfind in Hr_nl. inversion Hr_nl; subst. exact Hscope_r. }
-              { eapply (SECCETYPING.assign_clk_type_scoped env rst_ty scope ckr rstty_nl); eauto.
+              { eapply (SECCETYPING.assign_clk_type_scoped env base_ty scope ckr rstty_nl); eauto.
                 intros z Hz.
                 destruct (Hvars z) as (ty & Hfind & Hscopez).
                 { eapply SECCETYPING.wc_clock_free_in_vars; eauto. }
@@ -906,7 +908,7 @@ Module Type SECNLUSSTCTRANSLATION
                   * exact Hscopey.
                 + exact Houttl_nl. }
             assert (Hfresh_nl :
-                      call_subst_fresh snl inptyp_nl ckty_nl ((rty_nl :: nil) ⊔ rstty_nl) (outhd_nl :: outtl_nl)).
+                      call_subst_fresh snl inptyp_nl ckty_nl ((rst_ty :: nil) ⊔ ((rty_nl :: nil) ⊔ rstty_nl)) (outhd_nl :: outtl_nl)).
             { eapply call_subst_fresh_from_scope_fresh; eauto. }
             subst ckty_stc inptyp_stc outhd_stc outtl_stc rst_inst_call.
             assert (Hrstinst_gensym : exists n, rst_inst_reset = Ids.gensym Ids.sec_reset n).
@@ -918,23 +920,9 @@ Module Type SECNLUSSTCTRANSLATION
                          Hsstcfresh Hsstcsec HinpScope Hckscope Hrstinst_gensym HoutScope). }
               assert (Hnin : ~ In rst_inst_reset scope).
               { exact (Hfresh x rst_inst_reset st_rstty_stc st_rstinst_reset Hrstinst_reset). }
-              set (srcrst_call :=
-                                  ((fix merge' (c2 : SymTypes.ST) : SymTypes.ST :=
-                                      match c2 with
-                         | nil => rty_nl :: nil
-                         | y :: ys =>
-                             match (rty_nl ?= y)%positive with
-                             | Eq =>
-                                 rty_nl
-                                 :: (fix merge'0 (c0 : SymTypes.ST) : SymTypes.ST := c0) ys
-                             | Lt =>
-                                 rty_nl
-                                 :: (fix merge'0 (c0 : SymTypes.ST) : SymTypes.ST := c0) c2
-                             | Gt => y :: merge' ys
-                             end
-                         end) rstty_nl)).
+              set (srcrst_call := ((rst_ty :: nil) ⊔ ((rty_nl :: nil) ⊔ rstty_nl))).
               assert (Hsrcrstscope_call : st_scoped scope srcrst_call).
-              { unfold srcrst_call. change (st_scoped scope ((rty_nl :: nil) ⊔ rstty_nl)). exact Hrstscope. }
+              { exact Hrstscope. }
               change
                 (generate_constraints snl inptyp_nl ckty_nl srcrst_call
                    (outhd_nl :: outtl_nl) st_outtl_nl = OK (nconst, st1))

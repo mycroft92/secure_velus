@@ -79,10 +79,10 @@ Module Type SECNLUSTYPING
           | Some n =>
               do ckty   <- option_to_sec (assign_clk_type env base_ty ck);
               do rty    <- find_env r env;
-              do rstty  <- option_to_sec (assign_clk_type env rst_ty ckr);
+              do rstty  <- option_to_sec (assign_clk_type env base_ty ckr);
               do inptyp <- mmap (fun x => option_to_sec (assign_exp_type env x)) exps;
               do outtyp <- mmap (fun x => find_env x env) xs;
-              generate_constraints n inptyp ckty ([rty] ⊔ rstty) outtyp
+              generate_constraints n inptyp ckty ([rst_ty] ⊔ ([rty] ⊔ rstty)) outtyp
           | None   => error (MSG "Signature not found for: ":: [CTX f])
           end)
       end.
@@ -301,7 +301,7 @@ Module Type SECNLUSTYPING
           destruct (Env.find rx env) as [rty'|] eqn:Hrfind; try discriminate.
           unfold ret in Hr0. inversion Hr0; subst rty' st2.
           unfold option_to_sec in Hrst0.
-          destruct (assign_clk_type env rst_ty rck) as [rstty'|] eqn:Hrstck; try discriminate.
+          destruct (assign_clk_type env base_ty rck) as [rstty'|] eqn:Hrstck; try discriminate.
           inversion Hrst0; subst rstty' st3.
           eapply generate_constraints_scoped.
           -- exact (Hscoped f sig Hfindsig').
@@ -314,17 +314,19 @@ Module Type SECNLUSTYPING
                 destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_call_clock_free_in_vars.
              ++ exact Hck.
           -- apply st_scoped_merge.
-             ++ apply st_scoped_singleton.
-                destruct (Hvars rx) as (ty & Henv' & Hscope).
-                ** eapply In_InMembers. specialize (Hreset (rx, rck) eq_refl). exact Hreset.
-                ** rewrite Hrfind in Henv'. inversion Henv'. subst. exact Hscope.
-             ++ eapply (assign_clk_type_scoped env rst_ty scope rck rstty).
-                ** exact Hrst.
-                ** intros z Hz.
-                   assert (Hinr : In (rx, rck) vars) by (specialize (Hreset (rx, rck) eq_refl); exact Hreset).
-                   assert (Hwr : wc_clock vars rck) by (eapply wc_env_var; eauto).
-                   destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_clock_free_in_vars, In_InMembers.
-                ** exact Hrstck.
+             ++ apply st_scoped_singleton. exact Hrst.
+             ++ apply st_scoped_merge.
+                ** apply st_scoped_singleton.
+                   destruct (Hvars rx) as (ty & Henv' & Hscope).
+                   --- eapply In_InMembers. specialize (Hreset (rx, rck) eq_refl). exact Hreset.
+                   --- rewrite Hrfind in Henv'. inversion Henv'. subst. exact Hscope.
+                ** eapply (assign_clk_type_scoped env base_ty scope rck rstty).
+                   --- exact Hbase.
+                   --- intros z Hz.
+                       assert (Hinr : In (rx, rck) vars) by (specialize (Hreset (rx, rck) eq_refl); exact Hreset).
+                       assert (Hwr : wc_clock vars rck) by (eapply wc_env_var; eauto).
+                       destruct (Hvars z) as (ty & Henv' & Hscope); eauto using wc_clock_free_in_vars, In_InMembers.
+                   --- exact Hrstck.
           -- eapply SC.mmap_find_env_scoped.
              ++ intros y Hy. eapply wc_call_outs_scoped; eauto.
              ++ exact Hout0.
@@ -576,14 +578,14 @@ Module Type SECNLUSTYPING
           destruct (Env.find rx env) as [rty'|] eqn:Hrfind; try discriminate.
           unfold ret in Hr0. inversion Hr0; subst rty st2.
           unfold option_to_sec in Hrst0.
-          destruct (assign_clk_type env rst_ty rck) as [rstty'|] eqn:Hrstck; try discriminate.
+          destruct (assign_clk_type env base_ty rck) as [rstty'|] eqn:Hrstck; try discriminate.
           inversion Hrst0; subst rstty st3.
           assert (Houts : st5 = st4 /\ get_mappings (x0 :: xs0) env = Some outtyp).
           { eapply mmap_find_env_inv; eauto. }
           destruct Houts as [Hstouts Hmapouts]. subst st5.
           assert (Hndout : NoDup outtyp).
           { eapply get_mappings_nodup; eauto. }
-          destruct (generate_constraints_shape sig inptyp ckty' ([rty'] ⊔ rstty') outtyp cns st4 st'
+          destruct (generate_constraints_shape sig inptyp ckty' ([rst_ty] ⊔ ([rty'] ⊔ rstty')) outtyp cns st4 st'
                     Hndout Hgc) as [Hwf Hsnd].
           exists outtyp. split; [exact Hmapouts|].
           split; [exact Hsnd|exact Hwf].

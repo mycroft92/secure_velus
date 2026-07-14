@@ -475,9 +475,9 @@ Module Type SECSTCTYPING
           end
       | TcReset x (Con ckr r true) f =>
           do rty      <- find_env r env;
-          do rstckty  <- option_to_sec (assign_clk_type env rst_ty ckr);
+          do rstckty  <- option_to_sec (assign_clk_type env base_ty ckr);
           do rst_inst <- find_env x reset_env;
-          ret [(([rty] ⊔ rstckty), [rst_inst])]
+          ret [(([rst_ty] ⊔ ([rty] ⊔ rstckty)), [rst_inst])]
       | TcReset x rck f =>
           do rckty    <- option_to_sec (assign_clk_type env base_ty rck);
           do rst_inst <- find_env x reset_env;
@@ -648,9 +648,9 @@ Module Type SECSTCTYPING
             unfold find_env in Hr.
             destruct (Env.find r0 env) as [rty'|] eqn:Hrfind; try discriminate.
             unfold ret in Hr. inversion Hr; subst rty st1.
-            assert (Hrstckopt : assign_clk_type env rst_ty ck0 = Some rstckty).
+            assert (Hrstckopt : assign_clk_type env base_ty ck0 = Some rstckty).
             { unfold option_to_sec in Hck.
-              destruct (assign_clk_type env rst_ty ck0) eqn:Hck'; try discriminate.
+              destruct (assign_clk_type env base_ty ck0) eqn:Hck'; try discriminate.
               inversion Hck; subst. reflexivity. }
             assert (Hrscope : st_scoped scope [rty']).
             { apply st_scoped_singleton.
@@ -658,12 +658,14 @@ Module Type SECSTCTYPING
               destruct (Hvars r0 Hinm) as (ty & Hfind & Hinscope).
               rewrite Hrfind in Hfind. inversion Hfind; subst. exact Hinscope. }
             assert (Hrstckscope : st_scoped scope rstckty).
-            { eapply (assign_clk_type_scoped env rst_ty scope ck0 rstckty); [exact Hrst| |exact Hrstckopt].
+            { eapply (assign_clk_type_scoped env base_ty scope ck0 rstckty); [exact Hbase| |exact Hrstckopt].
               intros z Hz.
               assert (Hinm : InMembers z vars) by (eapply wc_clock_free_in_vars; eauto).
               exact (Hvars z Hinm). }
-            assert (Hlhsscope : st_scoped scope ([rty'] ⊔ rstckty)).
-            { eapply st_scoped_merge; eauto. }
+            assert (Hlhsscope : st_scoped scope ([rst_ty] ⊔ ([rty'] ⊔ rstckty))).
+            { eapply st_scoped_merge.
+              - apply st_scoped_singleton. exact Hrst.
+              - eapply st_scoped_merge; eauto. }
             constructor.
             -- intros y Hin.
                unfold constraint_scope in Hin. simpl in Hin.

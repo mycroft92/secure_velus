@@ -1979,13 +1979,13 @@ Module Type SECNLUSTYPINGCORRECTNESS
              (SECCETYPING.assign_clk_type ty_env base_ty ck) st = OK (ckty, st_clk)
         /\ Env.find r ty_env = Some rty
         /\ SC.option_to_sec
-             (SECCETYPING.assign_clk_type ty_env rst_ty ckr) st_clk =
+             (SECCETYPING.assign_clk_type ty_env base_ty ckr) st_clk =
              OK (rstty, st_rst)
         /\ SC.mmap
              (fun e => SC.option_to_sec (SECCETYPING.assign_exp_type ty_env e))
              exps st_rst = OK (inptyp, st_inp)
         /\ get_mappings (x :: xs) ty_env = Some outtyp
-        /\ SIG.generate_constraints callee_sig inptyp ckty ([rty] ⊔ rstty) outtyp st_inp =
+        /\ SIG.generate_constraints callee_sig inptyp ckty ([rst_ty] ⊔ ([rty] ⊔ rstty)) outtyp st_inp =
              OK (cns, st').
   Proof.
     intros G ty_env base_ty rst_ty x xs ck f exps r ckr cns st st' Hgen.
@@ -2112,7 +2112,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
                    unfold node_scope_fresh_in_env in Hscopefresh.
                    eapply Hscopefresh; eauto.
                  }
-                 assert (Hrst_scope : st_scoped scope ((rty :: nil) ⊔ rstty_call)).
+                 assert (Hrst_scope : st_scoped scope ((rst_type :: nil) ⊔ ((rty :: nil) ⊔ rstty_call))).
                  {
                   inversion Hweq as [|xs0 ck0 f0 les0 r0 callee sub Hfindn Hins Houts Hreset|];
                     subst; try contradiction.
@@ -2122,24 +2122,28 @@ Module Type SECNLUSTYPINGCORRECTNESS
                    { eapply wc_env_var; eauto. }
                    eapply st_scoped_merge.
                    - apply st_scoped_singleton.
-                     destruct (Hvars rx (In_InMembers _ _ _ Hinr)) as (ty & Hfind & Hscope_r).
-                     rewrite Hfind in Hrty. inversion Hrty; subst. exact Hscope_r.
-                   - unfold SC.option_to_sec in Hrstc.
-                     destruct (SECCETYPING.assign_clk_type env rst_type rck) as [rstty'|]
-                       eqn:Hrstopt; try discriminate.
-                     unfold SC.ret in Hrstc. inversion Hrstc; subst rstty_call st_rst.
-                     eapply (SECCETYPING.assign_clk_type_scoped env rst_type scope rck rstty').
-                     + unfold scope. repeat rewrite in_app_iff. right. right. right.
-                       simpl. right. left. reflexivity.
-                     + intros z Hz.
-                       assert (Hinz : InMembers z (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
-                       { eapply SECCETYPING.wc_clock_free_in_vars; eauto. }
-                       destruct (Hvars z Hinz) as (ty & Hfind & Hscopez).
-                       exists ty. split; [exact Hfind|exact Hscopez].
-                     + exact Hrstopt.
+                     unfold scope. repeat rewrite in_app_iff. right. right. right.
+                     simpl. right. left. reflexivity.
+                   - eapply st_scoped_merge.
+                     + apply st_scoped_singleton.
+                       destruct (Hvars rx (In_InMembers _ _ _ Hinr)) as (ty & Hfind & Hscope_r).
+                       rewrite Hfind in Hrty. inversion Hrty; subst. exact Hscope_r.
+                     + unfold SC.option_to_sec in Hrstc.
+                       destruct (SECCETYPING.assign_clk_type env clk_type rck) as [rstty'|]
+                         eqn:Hrstopt; try discriminate.
+                       unfold SC.ret in Hrstc. inversion Hrstc; subst rstty_call st_rst.
+                       eapply (SECCETYPING.assign_clk_type_scoped env clk_type scope rck rstty').
+                       * unfold scope. repeat rewrite in_app_iff. right. right. right.
+                         simpl. left. reflexivity.
+                       * intros z Hz.
+                         assert (Hinz : InMembers z (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
+                         { eapply SECCETYPING.wc_clock_free_in_vars; eauto. }
+                         destruct (Hvars z Hinz) as (ty & Hfind & Hscopez).
+                         exists ty. split; [exact Hfind|exact Hscopez].
+                       * exact Hrstopt.
                  }
                  assert (Hrstfresh_c :
-                           type_fresh (signature_scope callee_sig) ((rty :: nil) ⊔ rstty_call)).
+                           type_fresh (signature_scope callee_sig) ((rst_type :: nil) ⊔ ((rty :: nil) ⊔ rstty_call))).
                  {
                    eapply SIG.type_fresh_from_scope_fresh; eauto.
                  }
@@ -2150,21 +2154,12 @@ Module Type SECNLUSTYPINGCORRECTNESS
                    intros lhs0 y0 Hin0.
                    eapply Hmentionacc; eauto.
                  }
-                 assert (Hrstin : In rst_type ((rty :: nil) ⊔ rstty_call)).
+                 assert (Hrstin : In rst_type ((rst_type :: nil) ⊔ ((rty :: nil) ⊔ rstty_call))).
                  {
-                   assert (Hrstassign : SECCETYPING.assign_clk_type env rst_type rck = Some rstty_call).
-                   {
-                     unfold SC.option_to_sec in Hrstc.
-                     destruct (SECCETYPING.assign_clk_type env rst_type rck) as [rstty'|] eqn:Hrstopt;
-                       try discriminate.
-                     inversion Hrstc; subst rstty_call st_rst. reflexivity.
-                   }
-                   apply in_merge_right.
-                   eapply assign_clk_type_contains_base.
-                   exact Hrstassign.
+                   apply in_merge_left. simpl. auto.
                  }
                  eapply (generate_constraints_mentions_reset
-                           callee_sig inptyp ckty ((rty :: nil) ⊔ rstty_call) outtyp
+                           callee_sig inptyp ckty ((rst_type :: nil) ⊔ ((rty :: nil) ⊔ rstty_call)) outtyp
                            c1 st_inp st1 rst_type); eauto.
               -- destruct (generate_eqapp_constraint_inv _ _ _ _ _ _ _ _ _ _ _ _ Hc1)
                    as (callee_sig & ckty & inptyp & outtyp & st_clk & st_inp
@@ -2675,7 +2670,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
                    eapply assign_clk_type_contains_base; eauto.
                  }
                  eapply (generate_constraints_mentions_clock
-                           callee_sig inptyp ckty ((rty :: nil) ⊔ rstty_call) outtyp
+                           callee_sig inptyp ckty ((rst_type :: nil) ⊔ ((rty :: nil) ⊔ rstty_call)) outtyp
                            c1 st_inp st1 clk_type); eauto.
               -- destruct (generate_eqapp_constraint_inv _ _ _ _ _ _ _ _ _ _ _ _ Hc1)
                    as (callee_sig & ckty & inptyp & outtyp & st_clk & st_inp

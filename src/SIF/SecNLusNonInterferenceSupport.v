@@ -1941,7 +1941,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
                 SC.init_state = OK (ckty, st_clk) ->
               Env.find r ty_env = Some rty ->
               SC.option_to_sec
-                (SECCETYPING.assign_clk_type ty_env sig.(s_reset) ckr)
+                (SECCETYPING.assign_clk_type ty_env sig.(s_clk) ckr)
                 st_clk = OK (rstty, st_rst) ->
               SC.mmap
                 (fun e => SC.option_to_sec (SECCETYPING.assign_exp_type ty_env e))
@@ -1949,9 +1949,9 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
               get_mappings xs ty_env = Some outtyp ->
               node_security callee
                 (SIGPROOFS.lat_valuation dlt_sig callee_sig inptyp ckty
-                   ([rty] ⊔ rstty) outtyp)
+                   ([sig.(s_reset)] ⊔ ([rty] ⊔ rstty)) outtyp)
                 (SIGPROOFS.lat_valuation dlt_raw callee_sig inptyp ckty
-                   ([rty] ⊔ rstty) outtyp)) ->
+                   ([sig.(s_reset)] ⊔ ([rty] ⊔ rstty)) outtyp)) ->
           node_security nd dlt_sig dlt_raw.
 
   End GENERATED_NODE_SECURITY.

@@ -1671,13 +1671,13 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                (SECCETYPING.assign_clk_type ty_env base_ty ck) st = OK (ckty, st_clk)
           /\ Env.find r ty_env = Some rty
           /\ SC.option_to_sec
-               (SECCETYPING.assign_clk_type ty_env rst_ty ckr) st_clk =
+               (SECCETYPING.assign_clk_type ty_env base_ty ckr) st_clk =
                OK (rstty, st_rst)
           /\ SC.mmap
                (fun e => SC.option_to_sec (SECCETYPING.assign_exp_type ty_env e))
                exps st_rst = OK (inptyp, st_inp)
           /\ get_mappings (x :: xs) ty_env = Some outtyp
-          /\ SIG.generate_constraints callee_sig inptyp ckty ([rty] ⊔ rstty) outtyp st_inp =
+          /\ SIG.generate_constraints callee_sig inptyp ckty ([rst_ty] ⊔ ([rty] ⊔ rstty)) outtyp st_inp =
                OK (cns, st').
     Proof.
       intros ty_env base_ty rst_ty x xs ck f exps r ckr cns st st' Hgen.
@@ -3097,7 +3097,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
               SC.init_state = OK (ckty, st_clk) ->
             Env.find r ty_env = Some rty ->
             SC.option_to_sec
-              (SECCETYPING.assign_clk_type ty_env sig.(s_reset) ckr)
+              (SECCETYPING.assign_clk_type ty_env sig.(s_clk) ckr)
               st_clk = OK (rstty, st_rst) ->
             SC.mmap
               (fun e => SC.option_to_sec (SECCETYPING.assign_exp_type ty_env e))
@@ -3107,9 +3107,9 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
               reset_control_low_eq_upto ty_env dlt_raw t r H H' k_reset ->
             node_outputs_raw_spec_clocked callee
               (SIGPROOFS.lat_valuation dlt_sig callee_sig inptyp ckty
-                 ([rty] ⊔ rstty) outtyp)
+                 ([sig.(s_reset)] ⊔ ([rty] ⊔ rstty)) outtyp)
               (SIGPROOFS.lat_valuation dlt_raw callee_sig inptyp ckty
-                 ([rty] ⊔ rstty) outtyp)) ->
+                 ([sig.(s_reset)] ⊔ ([rty] ⊔ rstty)) outtyp)) ->
         SecT.listSatisfiable dlt_raw raw ->
         Forall (Indexed.sem_equation all_nodes bk H) n.(n_eqs) ->
         Forall (Indexed.sem_equation all_nodes bk' H') n.(n_eqs) ->
@@ -3836,7 +3836,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                }
                assert (Hrst0_init :
                          SC.option_to_sec
-                           (SECCETYPING.assign_clk_type ty_env rst_type ckr)
+                           (SECCETYPING.assign_clk_type ty_env clk_type ckr)
                            SC.init_state = OK (rstty0, SC.init_state)).
                {
                  eapply option_to_sec_assign_clk_state_irrel.
@@ -3884,10 +3884,10 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                set (caller_scope := inp ++ out ++ locals ++ clk_type :: rst_type :: nil).
                set (dlt_sig_c :=
                       SIGPROOFS.lat_valuation dlt_sig callee_sig_cur inptyp0 ckty0
-                        ([rty0] ⊔ rstty0) outtyp0).
+                        ([rst_type] ⊔ ([rty0] ⊔ rstty0)) outtyp0).
                set (dlt_raw_c :=
                       SIGPROOFS.lat_valuation dlt_raw callee_sig_cur inptyp0 ckty0
-                        ([rty0] ⊔ rstty0) outtyp0).
+                        ([rst_type] ⊔ ([rty0] ⊔ rstty0)) outtyp0).
                destruct (wc_global_find_node all_nodes n Hwcglob Hfindnode)
                  as [P Hwcnode].
                destruct Hwcnode as [_ [_ [Hwcenv Hwc_eqs]]].
@@ -3982,24 +3982,28 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                }
                assert
                  (Hassign_rst :
-                    SECCETYPING.assign_clk_type ty_env rst_type ckr = Some rstty0).
+                    SECCETYPING.assign_clk_type ty_env clk_type ckr = Some rstty0).
                {
                  unfold SC.option_to_sec in Hrst0_init.
-                 destruct (SECCETYPING.assign_clk_type ty_env rst_type ckr) as [rstty'|]
+                 destruct (SECCETYPING.assign_clk_type ty_env clk_type ckr) as [rstty'|]
                    eqn:Hassign; simpl in Hrst0_init; try discriminate.
                  inversion Hrst0_init; now subst rstty'.
                }
                assert (Hrst_scope : SecT.st_scoped caller_scope rstty0).
                {
-                 eapply (SECCETYPING.assign_clk_type_scoped ty_env rst_type caller_scope ckr rstty0).
+                 eapply (SECCETYPING.assign_clk_type_scoped ty_env clk_type caller_scope ckr rstty0).
                  - simpl. repeat (apply in_or_app; right).
-                   simpl. now right; left.
+                   simpl. now left.
                  - exact Hfree_rclock_scope.
                  - exact Hassign_rst.
                }
-               assert (Hrst_join_scope : SecT.st_scoped caller_scope ([rty0] ⊔ rstty0)).
+               assert (Hrst_join_scope : SecT.st_scoped caller_scope ([rst_type] ⊔ ([rty0] ⊔ rstty0))).
                {
-                 eapply SecT.st_scoped_merge; eauto.
+                 eapply SecT.st_scoped_merge.
+                 - apply SecT.st_scoped_singleton.
+                   simpl. repeat (apply in_or_app; right).
+                   simpl. now right; left.
+                 - eapply SecT.st_scoped_merge; eauto.
                }
                assert (Hout_scope : Forall (fun ty => In ty caller_scope) outtyp0).
                {
@@ -4049,13 +4053,13 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                }
                assert (Hfresh_call :
                          SIG.call_subst_fresh callee_sig_cur inptyp0 ckty0
-                           ([rty0] ⊔ rstty0) outtyp0).
+                           ([rst_type] ⊔ ([rty0] ⊔ rstty0)) outtyp0).
                {
                  eapply SIG.call_subst_fresh_from_scope_fresh; eauto.
                }
                pose proof
                  (generate_constraints_lengths
-                    callee_sig_cur inptyp0 ckty0 ([rty0] ⊔ rstty0) outtyp0
+                    callee_sig_cur inptyp0 ckty0 ([rst_type] ⊔ ([rty0] ⊔ rstty0)) outtyp0
                     ceq st_inp0 stceq Hcallc)
                  as [Hlen_in_c Hlen_out_c].
                destruct
@@ -4063,12 +4067,12 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  as [_ Hforinp0].
                pose proof
                  (SIGPROOFS.lat_valuation_inputs_eq
-                    dlt_raw callee_sig_cur inptyp0 ckty0 ([rty0] ⊔ rstty0) outtyp0
+                    dlt_raw callee_sig_cur inptyp0 ckty0 ([rst_type] ⊔ ([rty0] ⊔ rstty0)) outtyp0
                     Hfresh_call Hndscope_c Hlen_in_c)
                  as Hinst_in_eq.
                pose proof
                  (SIGPROOFS.lat_valuation_outputs_eq
-                    dlt_raw callee_sig_cur inptyp0 ckty0 ([rty0] ⊔ rstty0) outtyp0
+                    dlt_raw callee_sig_cur inptyp0 ckty0 ([rst_type] ⊔ ([rty0] ⊔ rstty0)) outtyp0
                     Hfresh_call Hndscope_c Hlen_out_c)
                  as Hinst_out_eq.
                assert (Hlowin_c :
@@ -4119,7 +4123,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                         _ _
                         (fun x0 ty =>
                            SIGPROOFS.lat_valuation dlt_raw callee_sig_cur inptyp0 ckty0
-                             ([rty0] ⊔ rstty0) outtyp0 x0 = SecT.hm_ext dlt_raw ty)
+                             ([rst_type] ⊔ ([rty0] ⊔ rstty0)) outtyp0 x0 = SecT.hm_ext dlt_raw ty)
                         (s_in callee_sig_cur) inptyp0 ii ity
                         Hinst_in_eq Hnthity)
                      as (ety' & Hnthety' & Hinsteq).
@@ -4155,7 +4159,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  eapply
                    (eqapp_reset_input_var_low_eq_pointwise_clocked
                       ty_env ty_env_c callee callee_sig_cur
-                      inptyp0 outtyp0 dlt_raw ([rty0] ⊔ rstty0) ckty0 t
+                      inptyp0 outtyp0 dlt_raw ([rst_type] ⊔ ([rty0] ⊔ rstty0)) ckty0 t
                       bk bk' H H' Hc Hc' exps rs rs' kr kr' ls ls' 0 ii y ity e ety); eauto.
                }
                assert (Hreset_ctrl0 :
@@ -4242,11 +4246,11 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  specialize (Hmid Hsatraw).
                  exact Hmid.
                }
-               assert (Hlow_rst_join : SecT.hm_ext dlt_raw ([rty0] ⊔ rstty0) ⊑ t).
+               assert (Hlow_rst_join : SecT.hm_ext dlt_raw ([rst_type] ⊔ ([rty0] ⊔ rstty0)) ⊑ t).
                {
                  eapply
                    (SECNLUSTYPINGCORRECTNESS.call_output_low_implies_reset_low
-                      callee_sig_cur inptyp0 ckty0 ([rty0] ⊔ rstty0) outtyp0 ceq st_inp0 stceq
+                      callee_sig_cur inptyp0 ckty0 ([rst_type] ⊔ ([rty0] ⊔ rstty0)) outtyp0 ceq st_inp0 stceq
                       dlt_raw t i yty xty0).
                  - exact Hsiggood_c.
                  - exact Hresetlhs_c.
@@ -4268,13 +4272,15 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  - apply singleton_type_bound.
                  - apply order_trans with (y := SecT.hm_ext dlt_raw ([rty0] ⊔ rstty0)).
                    + apply SecT.hm_ext_concat_l.
-                   + exact Hlow_rst_join.
+                   + apply order_trans with (y := SecT.hm_ext dlt_raw ([rst_type] ⊔ ([rty0] ⊔ rstty0))).
+                     * apply SecT.hm_ext_concat_r.
+                     * exact Hlow_rst_join.
                }
                assert (Hlow_ck0 : SecT.hm_ext dlt_raw ckty0 ⊑ t).
                {
                  eapply
                    (SECNLUSTYPINGCORRECTNESS.call_output_low_implies_clock_low
-                      callee_sig_cur inptyp0 ckty0 ([rty0] ⊔ rstty0) outtyp0 ceq st_inp0 stceq
+                      callee_sig_cur inptyp0 ckty0 ([rst_type] ⊔ ([rty0] ⊔ rstty0)) outtyp0 ceq st_inp0 stceq
                       dlt_raw t i yty xty0).
                  - exact Hsiggood_c.
                  - exact Hclocklhs_c.
@@ -4422,9 +4428,9 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                       _ _
                       (fun x0 v =>
                          SIGPROOFS.lat_valuation dlt_raw callee_sig_cur inptyp0 ckty0
-                           ([rty0] ⊔ rstty0) outtyp0 v =
+                           ([rst_type] ⊔ ([rty0] ⊔ rstty0)) outtyp0 v =
                          SIGPROOFS.lat_valuation dlt_raw callee_sig_cur inptyp0 ckty0
-                           ([rty0] ⊔ rstty0) outtyp0 x0)
+                           ([rst_type] ⊔ ([rty0] ⊔ rstty0)) outtyp0 x0)
                       (s_out callee_sig_cur) outtyp0 i yty_out0
                       Hinst_out_eq Hnthyty0)
                    as (xty' & Hnthxty' & Hinsteq).
@@ -4434,7 +4440,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  rewrite <- Hinsteq.
                  destruct Hfresh_call as [_ [_ [_ Houtfresh]]].
                  rewrite (SIGPROOFS.lat_valuation_outside_sig_scope
-                            dlt_raw callee_sig_cur inptyp0 ckty0 ([rty0] ⊔ rstty0) outtyp0 xty0).
+                            dlt_raw callee_sig_cur inptyp0 ckty0 ([rst_type] ⊔ ([rty0] ⊔ rstty0)) outtyp0 xty0).
                  - exact Halpha_low.
                  - unfold SIG.outputs_fresh in Houtfresh.
                    rewrite Forall_forall in Houtfresh.
