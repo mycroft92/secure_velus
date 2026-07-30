@@ -37,8 +37,8 @@ resume the work cold (with any model/person).
 |---|---|---|
 | 1 | `src/SIF/SecObcTyping.v` | **DONE, compiles** |
 | 2 | `src/SIF/SecObcConstraintExport.v` | not started |
-| 3 | `src/SIF/SecObcTypingCorrectness.v` | **first slice DONE, compiles** — see §3 for what remains |
-| 4 | `src/SIF/SecStcObcTranslation.v` (bridge) | not started |
+| 3 | `src/SIF/SecObcTypingCorrectness.v` | **mostly DONE, compiles** — remaining: scope_key/scope_sec (need NAMEGEN; may live in bridge instead) |
+| 4 | `src/SIF/SecStcObcTranslation.v` (bridge) | **started, compiles** — Control/pc lemmas done (§4 item 1); per-tc correspondence next |
 | 5 | scheduling equivalence (in 4 or separate) | not started |
 | 6 | `src/SIF/SecObcNonInterference.v` | not started |
 
@@ -155,16 +155,20 @@ Mirror `SecNLusStcTranslation.v`. Relates `SECSTCTYPING.generate_sys_signature
 s` to `SECOBCTYPING.generate_class_signature (translate_system s)` over the
 same `node_scoped_env`/`aux_names`. Checklist (in order):
 
-1. **Control/pc lemma (B3, do first)**:
-   `generate_stmt_constraints G env stenv pc (Control mems clkvars ck s) st =
-   generate_stmt_constraints G env stenv (pc ⊔ clkty) s st` where
-   `assign_clk_type env b ck = Some ckty0` and `clkty` relates by merge-ACI
-   (`MergeFacts`: `merge_comm/assoc/refl`). Watch out: `Control` compiles
-   `bool_var x` via `tovar` = `State x`/`Var x` depending on `mems` — both
-   type to `[τ x]` under the same env, so the lemma is insensitive to the
-   memories set. Also the false-branch: `Ifte c Skip s` generates the same
-   constraints as `Ifte c s Skip` (append of `[]`, modulo `++ []` — use
-   `app_nil_r`).
+1. ~~**Control/pc lemma (B3)**~~ **DONE** in `SecStcObcTranslation.v`
+   (CONTROLPC section): `clock_pc` (assign_clk_type with the seed replaced
+   by the incoming pc), `clock_pc_from_assign`
+   (`assign_clk_type env b ck = Some ckty -> clock_pc (pc0 ⊔ [b]) ck =
+   Some (pc0 ⊔ ckty)` — one `merge_assoc` per Con), and
+   `generate_stmt_constraints_Control` /
+   `generate_stmt_constraints_Control_assign`: generating under
+   `Control memset ck s` at pc equals generating for bare `s` at the
+   clock-extended pc, as a plain equality of `Sec` results (the Skip
+   branches contribute `[]` and no state change; one `app_nil_r`).
+   Note the statement is insensitive to the memories set (`bool_var` is
+   `Var`/`State`, both type via the same env lookup). Instantiate with
+   `pc0 := [rst_type]` and `b := clk_type` to line the step-body
+   constraints up with the STC `([rst_ty] ⊔ ckty) ⊔ ...` shapes.
 2. `translate_cexp` vs `assign_cexp_type`: per-leaf constraints are each
    ⊑ the STC single constraint; after `collapse` on the class side the
    joined LHS EQUALS the STC LHS (as ST sets — prove as ST equality via
