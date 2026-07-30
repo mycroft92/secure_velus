@@ -302,9 +302,9 @@ the 2026-07-30 pc refinement `clk` and `out` agree exactly.
 | # | Obc item | NL→STC analogue | status / notes |
 |---|---|---|---|
 | 1 | `translate_arg` monotonicity | — (NL→STC shares CE syntax) | **DONE**: `translate_exp_type_incl`, `translate_arg_type_incl`, `translate_args_type_incl` (obligation B, tccall doc §3) |
-| 2 | generalized reset-call preservation | `:2105` `signatures_preserved_reset_underlying_calls_from_good` | obligation C (§4); Route B (§5) in reserve |
-| 3 | TcCall case | part of `eqn_preserv :752` | consumes 1+2 |
-| 4 | `tc_preserv` (all four cases) | `eqn_preserv :752` | **three of four DONE**: `tcdef_preserv`, `tcnext_preserv`, `tcreset_preserv` in `SecStcObcTranslation.v` section `TCPRESERV`, stated against the real `SECSTCTYPING.generate_trconstr_constraint` and discharged with `dlt' = dlt` (via `collapse_satisfaction` / `preserves_on_refl`). TcCall outstanding. |
+| 2 | generalized reset-call preservation | `:2105` `signatures_preserved_reset_underlying_calls_from_good` | **THE remaining gap**: prove `Signature_call_preserves_obc n1 n2` for *generated* signature pairs (obligation C, tccall doc §4; Route B §5 in reserve). Everything else is now expressed in terms of it. |
+| 3 | TcCall case | part of `eqn_preserv :752` | **DONE**: `tccall_preserv` — inverts both generators, matches clk/outputs, feeds `translate_args_type_incl` and the assumed `Signature_call_preserves_obc`, exactly as `eqn_preserv` consumes `Signature_consistent` |
+| 4 | `tc_preserv` (all four cases) | `eqn_preserv :752` | **all four cases DONE individually**; combining them into a single `tc_preserv` is trivial plumbing. Three via equalities: `tcdef_preserv`, `tcnext_preserv`, `tcreset_preserv` in `SecStcObcTranslation.v` section `TCPRESERV`, stated against the real `SECSTCTYPING.generate_trconstr_constraint` and discharged with `dlt' = dlt` (via `collapse_satisfaction` / `preserves_on_refl`). TcCall outstanding. |
 | 5 | tcs-list assembly | `eqns_preserv_scoped :1080` | `preserves_on_concat_scoped` with extras = `stids`; needs an `eqns_reset_extras` analogue (state-env lemmas already done) |
 | 6 | reset-method constraints | — (none) | `[rst_ty] ⊑ [sty]` from the `dlt'` choice; `[rst_ty] ⊑ [mem]` from the STC TcNext source (every last has a TcNext by `s_lasts_in_tcs`) |
 | 7 | class-level raw `preserves_on` | `node_preserv_scoped :1341`, `:1418`, `:1496` | scope = `inp ++ out ++ locals ++ [clk; rst]` |
@@ -327,9 +327,18 @@ the 2026-07-30 pc refinement `clk` and `out` agree exactly.
   fold.
 - *Scheduling* (phase 5) and the *NI transport* (phase 6) — pending.
 
-**Where the work actually is:** items 1–3 are the real proofs; 4–7 are
-assembly largely dictated by existing lemmas; 8–10 are ports of proofs that
-already exist.
+**Where the work actually is (updated 2026-07-31):** items 1, 3, 4 are
+**done**. The single remaining *proof* obligation is item 2 — the
+call-preservation property for generated signature pairs
+(`Signature_call_preserves_obc`, defined in `SecStcObcTranslation.v`).
+Items 5–7 are assembly largely dictated by existing lemmas; 8–10 are ports
+of proofs that already exist. Nothing else in the chain is blocked on new
+ideas.
+
+**Definitions now in place** (`SecStcObcTranslation.v`, section
+`TCPRESERV`): `call_side_conditions`, `Signature_call_preserves_obc`
+(one clause — Obc routes *every* call's reset actual through `sty`, and
+`inp` is weaker), `Signature_consistent_obc`.
 
 ## 5. Phase 5 — scheduling (B4)
 
