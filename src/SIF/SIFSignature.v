@@ -2860,6 +2860,280 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
     eapply subst_constraints_inp_map_complete; eauto.
   Qed.
 
+  (** * Monotonicity of [generate_constraints] in its input actuals
+
+      Weakening the actual input types weakens the generated constraints:
+      the targets are unchanged and every source shrinks.  Together with
+      [constraints_src_le_satisfaction] this transfers satisfaction from
+      the stronger instantiation to the weaker one, which is what the
+      Stc-to-Obc bridge needs (the compiled arguments drop the [when]
+      guards that the source-level arguments carry). *)
+
+  Lemma st_remove_mono:
+    forall d a b,
+      (forall z, In z a -> In z b) ->
+      forall z, In z (SymTypes.st_remove d a) -> In z (SymTypes.st_remove d b).
+  Proof.
+    intros d a b Hab z Hz.
+    apply SymTypes.st_remove_in_inv in Hz as [Hin Hne].
+    apply SymTypes.st_remove_preserves_other_in; auto.
+  Qed.
+
+  Lemma subst_ident_in_type_mono:
+    forall ty1 ty2 x v1 v2,
+      (forall z, In z ty2 -> In z ty1) ->
+      (forall z, In z v2 -> In z v1) ->
+      forall z,
+        In z (SIG.subst_ident_in_type ty2 x v2) ->
+        In z (SIG.subst_ident_in_type ty1 x v1).
+  Proof.
+    intros ty1 ty2 x v1 v2 Hty Hv z Hz.
+    unfold SIG.subst_ident_in_type in *.
+    destruct (SymTypes.my_set_mem x ty2) eqn:M2.
+    - (* x occurs in the smaller source, hence in the bigger one too *)
+      assert (M1 : SymTypes.my_set_mem x ty1 = true).
+      { apply SymTypes.my_set_mem_correct.
+        apply Hty. apply SymTypes.my_set_mem_correct. exact M2. }
+      rewrite M1.
+      apply SymTypes.in_merge_inv in Hz.
+      destruct Hz as [Hz|Hz].
+      + apply SymTypes.in_merge_left. eapply st_remove_mono; eauto.
+      + apply SymTypes.in_merge_right. eapply st_remove_mono; eauto.
+    - (* x does not occur in the smaller source: it is returned unchanged *)
+      destruct (SymTypes.my_set_mem x ty1) eqn:M1.
+      + apply SymTypes.in_merge_left.
+        apply SymTypes.st_remove_preserves_other_in.
+        * intro Heq. subst z.
+          assert (SymTypes.my_set_mem x ty2 = true)
+            by (apply SymTypes.my_set_mem_correct; exact Hz).
+          congruence.
+        * apply Hty, Hz.
+      + apply Hty, Hz.
+  Qed.
+
+  Lemma subst_inp_ident_in_constraint_mono:
+    forall c1 c2 x v1 v2 d1 d2 sa sa' sb sb',
+      snd c1 = snd c2 ->
+      (forall z, In z (fst c2) -> In z (fst c1)) ->
+      (forall z, In z v2 -> In z v1) ->
+      subst_inp_ident_in_constraint c1 x v1 sa = OK (d1, sa') ->
+      subst_inp_ident_in_constraint c2 x v2 sb = OK (d2, sb') ->
+      snd d1 = snd d2 /\ (forall z, In z (fst d2) -> In z (fst d1)).
+  Proof.
+    intros [l1 r1] [l2 r2] x v1 v2 d1 d2 sa sa' sb sb' Hr Hl Hv H1 H2.
+    simpl in Hr, Hl. subst r2.
+    unfold subst_inp_ident_in_constraint in H1, H2.
+    destruct r1 as [|y ys]; try discriminate.
+    destruct ys as [|y' ys']; try discriminate.
+    destruct (ident_eqb x y) eqn:Hxy; try discriminate.
+    unfold ret in H1, H2.
+    inversion H1; inversion H2; subst.
+    split; [reflexivity|].
+    simpl. intros z Hz.
+    eapply subst_ident_in_type_mono; eauto.
+  Qed.
+
+  Lemma subst_ident_in_constraints_mono:
+    forall cs1 cs2 x v1 v2 d1 d2 sa sa' sb sb',
+      constraints_src_le cs1 cs2 ->
+      (forall z, In z v2 -> In z v1) ->
+      subst_ident_in_constraints cs1 x v1 sa = OK (d1, sa') ->
+      subst_ident_in_constraints cs2 x v2 sb = OK (d2, sb') ->
+      constraints_src_le d1 d2.
+  Proof.
+    unfold subst_ident_in_constraints.
+    intros cs1 cs2 x v1 v2 d1 d2 sa sa' sb sb' Hle Hv.
+    revert d1 d2 sa sa' sb sb'.
+    induction Hle as [|c1 c2 cs1 cs2 Hc Hle IH];
+      intros d1 d2 sa sa' sb sb' H1 H2.
+    - simpl in H1, H2. unfold ret in H1, H2.
+      inversion H1; inversion H2; subst. constructor.
+    - simpl in H1, H2.
+      eapply sec_bind_inv in H1 as (e1 & s1 & He1 & H1).
+      eapply sec_bind_inv in H1 as (t1 & s1' & Ht1 & R1).
+      unfold ret in R1. inversion R1; subst d1 sa'.
+      eapply sec_bind_inv in H2 as (e2 & s2 & He2 & H2).
+      eapply sec_bind_inv in H2 as (t2 & s2' & Ht2 & R2).
+      unfold ret in R2. inversion R2; subst d2 sb'.
+      destruct Hc as [Hcr Hcl].
+      constructor.
+      + eapply subst_inp_ident_in_constraint_mono; eauto.
+      + eapply IH; eauto.
+  Qed.
+
+  Lemma constraints_src_le_refl:
+    forall cs, constraints_src_le cs cs.
+  Proof.
+    induction cs as [|c cs IH].
+    - constructor.
+    - constructor; [split; [reflexivity|auto]|exact IH].
+  Qed.
+
+  Lemma subst_constraints_inp_map_mono:
+    forall xs vs1 vs2 cs1 cs2 d1 d2 sa sa' sb sb',
+      constraints_src_le cs1 cs2 ->
+      Forall2 (fun t1 t2 => forall z, In z t2 -> In z t1) vs1 vs2 ->
+      subst_constraints_inp_map cs1 xs vs1 sa = OK (d1, sa') ->
+      subst_constraints_inp_map cs2 xs vs2 sb = OK (d2, sb') ->
+      constraints_src_le d1 d2.
+  Proof.
+    induction xs as [|x xs IH];
+      intros vs1 vs2 cs1 cs2 d1 d2 sa sa' sb sb' Hle Hvs H1 H2.
+    - destruct vs1; destruct vs2; simpl in H1, H2; try discriminate.
+      unfold ret in H1, H2. inversion H1; inversion H2; subst. exact Hle.
+    - destruct vs1 as [|v1 vs1']; destruct vs2 as [|v2 vs2'];
+        simpl in H1, H2; try discriminate.
+      inversion Hvs as [|? ? ? ? Hv Hvs']; subst.
+      eapply sec_bind_inv in H1 as (c1' & s1 & Hs1 & H1).
+      eapply sec_bind_inv in H2 as (c2' & s2 & Hs2 & H2).
+      eapply IH; [|exact Hvs'|exact H1|exact H2].
+      eapply subst_ident_in_constraints_mono; eauto.
+  Qed.
+
+  Lemma subst_ident_constraint_mono:
+    forall c1 c2 x v d1 d2 sa sa' sb sb',
+      snd c1 = snd c2 ->
+      (forall z, In z (fst c2) -> In z (fst c1)) ->
+      subst_ident_constraint c1 x v sa = OK (d1, sa') ->
+      subst_ident_constraint c2 x v sb = OK (d2, sb') ->
+      snd d1 = snd d2 /\ (forall z, In z (fst d2) -> In z (fst d1)).
+  Proof.
+    intros [l1 r1] [l2 r2] x v d1 d2 sa sa' sb sb' Hr Hl H1 H2.
+    simpl in Hr, Hl. subst r2.
+    unfold subst_ident_constraint in H1, H2.
+    destruct (ident_eqb x v) eqn:Hxv; try discriminate.
+    destruct r1 as [|y ys]; try discriminate.
+    destruct ys as [|y' ys']; try discriminate.
+    destruct (ident_eqb x y) eqn:Hxy;
+      unfold ret in H1, H2; inversion H1; inversion H2; subst;
+      (split; [reflexivity|]);
+      simpl; intros z Hz;
+      eapply subst_ident_in_type_mono; eauto.
+  Qed.
+
+  Lemma subst_ident_constraints_mono:
+    forall cs1 cs2 x v d1 d2 sa sa' sb sb',
+      constraints_src_le cs1 cs2 ->
+      subst_ident_constraints cs1 x v sa = OK (d1, sa') ->
+      subst_ident_constraints cs2 x v sb = OK (d2, sb') ->
+      constraints_src_le d1 d2.
+  Proof.
+    unfold subst_ident_constraints.
+    intros cs1 cs2 x v d1 d2 sa sa' sb sb' Hle.
+    revert d1 d2 sa sa' sb sb'.
+    induction Hle as [|c1 c2 cs1 cs2 Hc Hle IH];
+      intros d1 d2 sa sa' sb sb' H1 H2.
+    - simpl in H1, H2. unfold ret in H1, H2.
+      inversion H1; inversion H2; subst. constructor.
+    - simpl in H1, H2.
+      eapply sec_bind_inv in H1 as (e1 & s1 & He1 & H1).
+      eapply sec_bind_inv in H1 as (t1 & s1' & Ht1 & R1).
+      unfold ret in R1. inversion R1; subst d1 sa'.
+      eapply sec_bind_inv in H2 as (e2 & s2 & He2 & H2).
+      eapply sec_bind_inv in H2 as (t2 & s2' & Ht2 & R2).
+      unfold ret in R2. inversion R2; subst d2 sb'.
+      destruct Hc as [Hcr Hcl].
+      constructor.
+      + eapply subst_ident_constraint_mono; eauto.
+      + eapply IH; eauto.
+  Qed.
+
+  Lemma constraints_src_le_findST:
+    forall cs1 cs2 d s1 s2,
+      constraints_src_le cs1 cs2 ->
+      SymTypes.findST cs1 d = Some s1 ->
+      SymTypes.findST cs2 d = Some s2 ->
+      forall z, In z s2 -> In z s1.
+  Proof.
+    intros cs1 cs2 d s1 s2 Hle.
+    revert s1 s2.
+    induction Hle as [|[l1 r1] [l2 r2] cs1 cs2 [Hr Hl] Hle IH];
+      intros s1 s2 H1 H2.
+    - simpl in H1. discriminate.
+    - simpl in Hr, Hl. subst r2.
+      simpl in H1, H2.
+      destruct r1 as [|y ys].
+      + eapply IH; eauto.
+      + destruct ys as [|y' ys'].
+        * destruct (ident_eqb y d) eqn:Hyd.
+          -- inversion H1; inversion H2; subst. exact Hl.
+          -- eapply IH; eauto.
+        * eapply IH; eauto.
+  Qed.
+
+  Lemma subst_constraints_out_map_mono:
+    forall xs vs cs1 cs2 d1 d2 sa sa' sb sb',
+      constraints_src_le cs1 cs2 ->
+      subst_constraints_out_map cs1 xs vs sa = OK (d1, sa') ->
+      subst_constraints_out_map cs2 xs vs sb = OK (d2, sb') ->
+      constraints_src_le d1 d2.
+  Proof.
+    induction xs as [|x xs IH];
+      intros vs cs1 cs2 d1 d2 sa sa' sb sb' Hle H1 H2.
+    - destruct vs; simpl in H1, H2; try discriminate.
+      unfold ret in H1, H2. inversion H1; inversion H2; subst. exact Hle.
+    - destruct vs as [|v vs']; simpl in H1, H2; try discriminate.
+      destruct (SymTypes.findST cs1 v) eqn:F1; try discriminate.
+      destruct (SymTypes.findST cs2 v) eqn:F2; try discriminate.
+      eapply sec_bind_inv in H1 as (c1' & s1 & Hs1 & H1).
+      eapply sec_bind_inv in H2 as (c2' & s2 & Hs2 & H2).
+      eapply IH; [|exact H1|exact H2].
+      eapply subst_ident_constraints_mono; eauto.
+  Qed.
+
+  Lemma generate_constraints_mono_inp:
+    forall sig inp1 inp2 clk rst out cns1 cns2 sa sa' sb sb',
+      Forall2 (fun t1 t2 => forall z, In z t2 -> In z t1) inp1 inp2 ->
+      generate_constraints sig inp1 clk rst out sa = OK (cns1, sa') ->
+      generate_constraints sig inp2 clk rst out sb = OK (cns2, sb') ->
+      constraints_src_le cns1 cns2.
+  Proof.
+    intros sig inp1 inp2 clk rst out cns1 cns2 sa sa' sb sb' Hinp H1 H2.
+    unfold generate_constraints in H1, H2.
+    eapply sec_bind_inv in H1 as (a1 & s1 & Ha1 & H1).
+    eapply sec_bind_inv in H1 as (b1 & t1 & Hb1 & H1).
+    eapply sec_bind_inv in H1 as (c1 & u1 & Hc1 & H1).
+    eapply sec_bind_inv in H1 as (e1 & w1 & He1 & H1).
+    eapply sec_bind_inv in H2 as (a2 & s2 & Ha2 & H2).
+    eapply sec_bind_inv in H2 as (b2 & t2 & Hb2 & H2).
+    eapply sec_bind_inv in H2 as (c2 & u2 & Hc2 & H2).
+    eapply sec_bind_inv in H2 as (e2 & w2 & He2 & H2).
+    assert (Hle1 : constraints_src_le a1 a2).
+    { eapply subst_constraints_inp_map_mono;
+        [apply constraints_src_le_refl|exact Hinp|exact Ha1|exact Ha2]. }
+    assert (Hle2 : constraints_src_le b1 b2).
+    { eapply subst_ident_in_constraints_mono; [exact Hle1| |exact Hb1|exact Hb2]. auto. }
+    assert (Hle3 : constraints_src_le c1 c2).
+    { eapply subst_ident_in_constraints_mono; [exact Hle2| |exact Hc1|exact Hc2]. auto. }
+    assert (Hle4 : constraints_src_le e1 e2).
+    { eapply subst_constraints_out_map_mono; [exact Hle3|exact He1|exact He2]. }
+    (* the final lookup pass: same outputs, ordered sources *)
+    clear - Hle4 H1 H2.
+    revert cns1 cns2 w1 sa' w2 sb' H1 H2.
+    induction out as [|y ys IH]; intros cns1 cns2 w1 sa' w2 sb' H1 H2.
+    - simpl in H1, H2. unfold ret in H1, H2.
+      inversion H1; inversion H2; subst. constructor.
+    - simpl in H1, H2.
+      eapply sec_bind_inv in H1 as (h1 & p1 & Hh1 & H1).
+      eapply sec_bind_inv in H1 as (q1 & p1' & Hq1 & R1).
+      unfold ret in R1. inversion R1; subst cns1 sa'.
+      eapply sec_bind_inv in H2 as (h2 & p2 & Hh2 & H2).
+      eapply sec_bind_inv in H2 as (q2 & p2' & Hq2 & R2).
+      unfold ret in R2. inversion R2; subst cns2 sb'.
+      eapply sec_bind_inv in Hh1 as (g1 & k1 & Hg1 & Hr1).
+      unfold ret in Hr1. inversion Hr1; subst h1 p1.
+      eapply sec_bind_inv in Hh2 as (g2 & k2 & Hg2 & Hr2).
+      unfold ret in Hr2. inversion Hr2; subst h2 p2.
+      unfold option_to_sec in Hg1, Hg2.
+      destruct (SymTypes.findST e1 y) as [f1|] eqn:F1; try discriminate.
+      destruct (SymTypes.findST e2 y) as [f2|] eqn:F2; try discriminate.
+      unfold ret in Hg1, Hg2. inversion Hg1; inversion Hg2; subst g1 g2 k1 k2.
+      constructor.
+      + simpl. split; [reflexivity|].
+        intros z Hz. eapply constraints_src_le_findST; eauto.
+      + eapply IH; eauto.
+  Qed.
+
   (** * Signature preservation and call preservation
 
       Generic over signatures (no NLustre or STC syntax), hoisted here

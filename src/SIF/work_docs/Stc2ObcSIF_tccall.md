@@ -396,8 +396,40 @@ Then satisfaction descends by `constraints_src_le_satisfaction`.
   targets, smaller sources" and the fact that satisfaction descends
   along it. **This is the semantic core of the whole argument.**
 
-**Still to do** — thread `constraints_src_le` through the five stages of
-`generate_constraints` (each a short induction, ~40 lines apiece):
+**DONE 2026-07-31** — `constraints_src_le` is now threaded through all
+five stages, in `SIGNATURE_PROOFS`: `st_remove_mono`,
+`subst_ident_in_type_mono` (monotone in *both* source and actual —
+the delicate case `x ∈ ty1, x ∉ ty2` is handled),
+`subst_inp_ident_in_constraint_mono`, `subst_ident_in_constraints_mono`,
+`constraints_src_le_refl`, `subst_constraints_inp_map_mono`,
+`subst_ident_constraint_mono`, `subst_ident_constraints_mono`,
+`constraints_src_le_findST`, `subst_constraints_out_map_mono`, and the
+top-level **`generate_constraints_mono_inp`**. All compiling.
+
+**A′ — success transfer (the one piece left in sub-task A).** To apply
+the hoisted theorem at `inp1` on both sides we must know the *Obc*
+signature also generates at `inp1`, given that it generated at `inp2`:
+
+```coq
+Lemma generate_constraints_ok_change_inp:
+  length inp = length inp' ->
+  generate_constraints sig inp  clk rst out st = OK (cns, st') ->
+  exists cns' sa', generate_constraints sig inp' clk rst out sa = OK (cns', sa').
+```
+
+It holds because every error case in the chain inspects only a
+right-hand side (malformed target, formal captured by a target,
+`findST` hitting an existing target) — never an actual type. Drafted and
+mostly proved; the pieces already written are `findST_none_targets`,
+`subst_ident_in_constraints_ok_change`,
+`subst_constraints_inp_map_ok_change`. **Remaining: the out-map stage**
+— a `subst_ident_constraints_ok_change` twin (~40 lines, same shape as
+`subst_ident_in_constraints_ok_change`, using
+`subst_ident_constraints_rhs` for the target bookkeeping) and then the
+final `mmap` lookup pass. Nothing was committed for A′: the draft had
+`admit`s and was discarded rather than merged.
+
+*(historical: the original five-stage plan)*
 1. `subst_ident_in_type` monotone in the *actual*: `v2 ⊆ v1` ⇒
    `subst ty x v2 ⊆ subst ty x v1` (the `st_mem` branch is
    `(st_remove x ty) ⊔ v`, so `merge_incl_mono` applies).
