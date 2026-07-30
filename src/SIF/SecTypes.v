@@ -463,6 +463,44 @@ Module Type SECTYPES(Import Lat: Lattice).
         apply Hbound. right; exact Hin.
   Qed.
 
+  Lemma hm_ext_incl:
+    forall dlt a b,
+      (forall z, In z a -> In z b) ->
+      hm_ext dlt a ⊑ hm_ext dlt b.
+  Proof.
+    intros dlt a b Hincl.
+    apply hm_ext_bound_from_members.
+    intros x Hx.
+    apply hm_ext_list_in1, Hincl, Hx.
+  Qed.
+
+  (** Source-inclusion ordering on constraint lists: same targets,
+      smaller sources.  A constraint list below another in this ordering
+      is weaker, so satisfaction descends. *)
+
+  Definition constraints_src_le (cs1 cs2: list constraint) : Prop :=
+    Forall2 (fun c1 c2 =>
+               snd c1 = snd c2 /\ (forall z, In z (fst c2) -> In z (fst c1)))
+            cs1 cs2.
+
+  Lemma constraints_src_le_satisfaction:
+    forall dlt cs1 cs2,
+      constraints_src_le cs1 cs2 ->
+      listSatisfiable dlt cs1 ->
+      listSatisfiable dlt cs2.
+  Proof.
+    intros dlt cs1 cs2 Hle.
+    induction Hle as [|[l1 r1] [l2 r2] cs1 cs2 [Hr Hl] Hle IH]; intros Hsat.
+    - constructor.
+    - inversion Hsat as [|? ? Hc Hcs]; subst.
+      simpl in Hr, Hl. subst r2.
+      constructor.
+      + unfold constraintSatisfiable, satisfiable in *.
+        eapply order_trans; [|exact Hc].
+        apply hm_ext_incl. exact Hl.
+      + apply IH. exact Hcs.
+  Qed.
+
   Definition subST := SymTypes.subST.
 
   Lemma subST_complete_bound:

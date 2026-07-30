@@ -357,6 +357,92 @@ obtained. Document this as an explicit assumption if used.
 
 ---
 
+## 5b. The remaining gap, decomposed (2026-07-31)
+
+After the pc refinement (§2) and `tccall_preserv`, the *only* open proof
+obligation of the translation is:
+
+```coq
+Theorem signatures_preserved_obc_calls_from_good:
+  forall nsig ssig,          (* nsig = STC callee, ssig = Obc callee *)
+    signature_good nsig -> NoDup (sig_scope nsig) ->
+    signature_scoped ssig -> signatures_preserved nsig ssig ->
+    Signature_call_preserves_obc nsig ssig.
+```
+
+It decomposes into three independent sub-tasks. **Sub-task A is the new
+mathematical content; B and C are refactoring/porting.**
+
+### A. Monotonicity of `generate_constraints` in the inputs
+
+The one thing the existing machinery cannot express. Needed:
+
+```coq
+Lemma generate_constraints_mono_inp:
+  Forall2 (fun t1 t2 => forall z, In z t2 -> In z t1) inp1 inp2 ->
+  generate_constraints sig inp1 clk rst out st1 = OK (cns1, _) ->
+  generate_constraints sig inp2 clk rst out st2 = OK (cns2, _) ->
+  constraints_src_le cns1 cns2.
+```
+
+Then satisfaction descends by `constraints_src_le_satisfaction`.
+
+**Already in place** (added 2026-07-31, all compiling):
+- `SymTypes.merge_incl_mono` — `⊔` is monotone w.r.t. inclusion;
+- `SecTypes.hm_ext_incl` — `hm_ext` is monotone w.r.t. inclusion
+  (from `hm_ext_bound_from_members` + `hm_ext_list_in1`);
+- `SecTypes.constraints_src_le` and
+  `SecTypes.constraints_src_le_satisfaction` — the ordering "same
+  targets, smaller sources" and the fact that satisfaction descends
+  along it. **This is the semantic core of the whole argument.**
+
+**Still to do** — thread `constraints_src_le` through the five stages of
+`generate_constraints` (each a short induction, ~40 lines apiece):
+1. `subst_ident_in_type` monotone in the *actual*: `v2 ⊆ v1` ⇒
+   `subst ty x v2 ⊆ subst ty x v1` (the `st_mem` branch is
+   `(st_remove x ty) ⊔ v`, so `merge_incl_mono` applies).
+2. `subst_ident_in_type` monotone in the *source*: `ty2 ⊆ ty1` ⇒
+   `subst ty2 x v ⊆ subst ty1 x v`. Case `x ∈ ty1`, `x ∉ ty2`: LHS is
+   `ty2 ⊆ st_remove x ty1 ⊆ (st_remove x ty1) ⊔ v`, using `x ∉ ty2`.
+3. lift 1–2 to `subst_constraints_inp_map` (Forall2 induction);
+4. lift 2 to the `clk` / `reset` / out-map stages (same actuals on both
+   sides, so only source-monotonicity is used);
+5. `findST` and the final `mmap`: targets are equal pointwise, so the
+   looked-up sources stay ordered.
+
+### B. Hoist the existing call-preservation theorem
+
+With A, the theorem follows from
+`signatures_preserved_reset_underlying_calls_from_good`
+(`SecNLusStcTranslation.v:2105`) applied at `inp1` on *both* sides, then
+A to descend to `inp2`. Note its conclusion prepends the reset-defining
+constraint; ours does not, and `preserves_on scope c (x :: cs) ->
+preserves_on scope c cs` discards it.
+
+That theorem is **generic over signatures** — it mentions only
+`signature`, `generate_constraints`, `preserves_on` — and sits in the
+NLustre→STC file only by historical accident. Per the project rule
+(§2c(2) of the progress doc) it should be **hoisted into
+`SIGNATURE_PROOFS`** (`SIFSignature.v`), together with
+`signatures_preserved` (`:84`), and `SecNLusStcTranslation.v` edited to
+use the hoisted versions. Mechanical but touches a 2900-line file, so do
+it as its own commit with a full rebuild.
+
+### C. `signature_good` for generated STC signatures
+
+Sub-task B's hypothesis `signature_good nsig` exists for NLustre
+signatures (`generate_node_sig_good_from_local_env`) but **has no STC
+analogue** — `SecStcTypingCorrectness.v` does not prove it. Needed:
+`wf_constraints` plus `Permutation (map snd constraints) (map (fun ty =>
+[ty]) s_out)` for `generate_sys_signature` output. The ingredients exist
+(`generate_trconstrs_constraints_targets`, `simplify` shape lemmas); this
+is a port of the NLustre proof.
+
+**Estimated total: A ≈ 200–250 lines, B ≈ mechanical move + fixups,
+C ≈ 150 lines.** None requires a new idea; A is the only part where the
+existing lemma set is genuinely insufficient, and its semantic core is
+now proved.
+
 ## 6. Empirical evidence
 
 `velus -dsif examples/counter_paper.lus` → `counter_paper.o.sif` vs

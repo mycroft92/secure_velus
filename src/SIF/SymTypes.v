@@ -547,6 +547,20 @@ Proof.
         { now right; right. }
 Qed.
 
+Lemma merge_incl_mono:
+  forall a a' b b',
+    (forall z, In z a -> In z a') ->
+    (forall z, In z b -> In z b') ->
+    forall z, In z (a ⊔ b) -> In z (a' ⊔ b').
+Proof.
+  intros a a' b b' Ha Hb z Hz.
+  apply in_merge_inv in Hz.
+  destruct Hz as [Hz|Hz].
+  - apply in_merge_left. exact (Ha _ Hz).
+  - apply in_merge_right. exact (Hb _ Hz).
+Qed.
+
+
 Lemma st_remove_notin:
   forall d st,
     my_set_mem d st = false ->
