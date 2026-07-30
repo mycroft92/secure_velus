@@ -1,8 +1,12 @@
 # Stc2ObcSIF — implementation working doc (resumable)
 
-Branch: `Stc2ObcSIF`. Companion design/blocker analysis: `Stc2ObcSIF_plan.md`
-(read it first — it defines the pc-generator design, the B1–B7
-blockers/decisions, and the overall theorem chain).
+Branch: `Stc2ObcSIF`. Companion documents:
+- `Stc2ObcSIF_plan.md` — design/blocker analysis (read first: pc-generator
+  design, blockers B1–B7, overall theorem chain).
+- `Stc2ObcSIF_tccall.md` — **the TcCall case in detail**: its three proof
+  obligations, why each is sound, the `dlt'` construction, the
+  risk item (valuation surgery) and its mitigation route, sequencing, and a
+  verified lemma inventory. Read before starting phase-4 TcCall work.
 
 This document tracks implementation status and contains everything needed to
 resume the work cold (with any model/person).
@@ -45,7 +49,7 @@ resume the work cold (with any model/person).
 | 1 | `src/SIF/SecObcTyping.v` | **DONE, compiles** |
 | 2 | `src/SIF/SecObcConstraintExport.v` | **DONE, compiles** — full pipeline wired: extraction entry (`extraction/Extraction.v`), printers (`src/SIF/siflib.ml`), `osif_destination`/`print_obcsif_if` (`src/veluslib.ml`), driver call + `-dsif` writes `<file>.o.sif` (`src/velusmain.ml`); dump shows raw, collapsed, and simplified constraints per class plus name maps |
 | 3 | `src/SIF/SecObcTypingCorrectness.v` | **mostly DONE, compiles** — remaining: scope_key/scope_sec (need NAMEGEN; may live in bridge instead) |
-| 4 | `src/SIF/SecStcObcTranslation.v` (bridge) | **in progress, compiles** — done: Control/pc lemmas, merge ACI helpers (`merge_swap/merge_factor/merge_rotate`), `translate_exp_type_correspondence` (Ewhen-guard absorption via wc), `translate_cexp_constraints` (TcDef core: leaf constraints all target τx, state untouched, `lhs_join` = STC source; uses `lhs_join`/`collapse_same_target`/`lhs_join_app` from SecObcTyping.v). DONE also: per-tc lemmas `translate_tcdef_constraints` (collapsed = STC constraint), `translate_tcnext_constraints`, `translate_tcreset_constraints` (cns = `[(([rstty] ⊔ ckty), [sty])]` — for translated `Con ckr r true` clocks this is the STC source up to ACI). NEXT: **TcCall** (semantic, preserves_on-level: Obc call constraints are weaker — translate_arg drops when-guards of instantiated arg clocks — plus `[sty]` for `rst_ty`/`rst_inst`; needs dlt' construction for state ids, template at SecNLusStcTranslation.v ~2100–2330 and eqn_preserv ~800–960), then tcs-level assembly + signature lockstep. Proof-engineering note: `simpl`/`cbn` unfold `merge` on cons-headed args into fix-form; recover with `change` to the convertible folded form (three precedents in this file). |
+| 4 | `src/SIF/SecStcObcTranslation.v` (bridge) | **in progress, compiles** — done: Control/pc lemmas, merge ACI helpers (`merge_swap/merge_factor/merge_rotate`), `translate_exp_type_correspondence` (Ewhen-guard absorption via wc), `translate_cexp_constraints` (TcDef core: leaf constraints all target τx, state untouched, `lhs_join` = STC source; uses `lhs_join`/`collapse_same_target`/`lhs_join_app` from SecObcTyping.v). DONE also: per-tc lemmas `translate_tcdef_constraints` (collapsed = STC constraint), `translate_tcnext_constraints`, `translate_tcreset_constraints` (cns = `[(([rstty] ⊔ ckty), [sty])]` — for translated `Con ckr r true` clocks this is the STC source up to ACI). NEXT: **TcCall** — see `Stc2ObcSIF_tccall.md` for the full analysis (three obligations: STC `constraints_mention s_reset` port, `translate_arg` monotonicity, valuation surgery; plus the `dlt'` construction and the Route-B mitigation). Then tcs-level assembly + signature lockstep. Proof-engineering note: `simpl`/`cbn` unfold `merge` on cons-headed args into fix-form; recover with `change` to the convertible folded form (three precedents in this file). |
 | 5 | scheduling equivalence (in 4 or separate) | not started |
 | 6 | `src/SIF/SecObcNonInterference.v` | not started |
 
