@@ -49,13 +49,14 @@ the translated `Control ck (Call xs f o step (map (translate_arg ck) es))`:
 |---|---|
 | callee sig | `sig_obc = find_signature f Gobc` |
 | inp | `inptyp_obc` = `assign_exp_type` of `translate_arg`-ed args |
-| **clk** | `pc = [rst_ty] ⊔ ckty` (by `generate_stmt_constraints_Control_assign`) |
+| **clk** | `pc = ckty` — identical to STC since the 2026-07-30 refinement (§2); was `[rst_ty] ⊔ ckty` before |
 | **rst** | `[sty]` (`state_env` lookup for instance `o`) |
 | out | `outtyp` (same idents, same env) |
 
-So there are **four deltas**: callee signature (handled by the induction
-hypothesis / `Signature_consistent`, exactly as in the NLustre→STC bridge),
-plus the three below.
+So after the §2 refinement there are **three deltas**: callee signature
+(handled by the induction hypothesis / `Signature_consistent`, exactly as in
+the NLustre→STC bridge), the weaker `inp` (§3), and the reset actual (§4).
+The clock slot now agrees exactly.
 
 ---
 
