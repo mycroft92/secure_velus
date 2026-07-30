@@ -406,6 +406,112 @@ Module Type SECSTCOBCTRANSLATION
 
   End TCDEFCORR.
 
+  (** * Per-trconstr correspondence
+
+      For the three local trconstrs the collapsed Obc constraints are
+      exactly the STC ones: [TcDef] via [translate_cexp_constraints],
+      [TcNext] directly, [TcReset] as the pc at the compiled call site
+      (which, for the translated [Con ckr r true] clocks, is the
+      [[rst_ty] ⊔ ([rty] ⊔ rstckty)] source of the STC rule up to merge
+      ACI).  [TcCall] is semantic (preserves_on) and handled at the
+      assembly level. *)
+
+  Section TCCORR.
+    Variable G: secglobal.
+    Variable env: Env.t ident.
+    Variable state_env: Env.t ident.
+
+    Lemma translate_tcdef_constraints:
+      forall memset clkvars vars x ce ck rstty b ckty cety xty cns st st',
+        CEClo.wc_cexp vars ce ck ->
+        SECCETYPING.assign_clk_type env b ck = Some ckty ->
+        SECCETYPING.assign_cexp_type env ce = Some cety ->
+        Env.find x env = Some xty ->
+        generate_stmt_constraints G env state_env ([rstty] ⊔ [b])
+          (translate_tc memset clkvars (SynStc.TcDef x ck ce)) st = OK (cns, st') ->
+        st' = st
+        /\ collapse cns = [((([rstty] ⊔ ckty) ⊔ cety), [xty])].
+    Proof.
+      intros memset clkvars vars x ce ck rstty b ckty cety xty cns st st'
+             Hwc Hck Hcety Hx Hgen.
+      unfold translate_tc in Hgen.
+      rewrite (generate_stmt_constraints_Control_assign
+                 G env state_env memset ck (translate_cexp memset x ce)
+                 b ckty [rstty] st Hck) in Hgen.
+      destruct (translate_cexp_constraints G env state_env memset vars x ce ck b
+                  [rstty] ckty cety xty cns st st' Hwc Hck Hcety Hx Hgen)
+        as (Hst & Hne & Hall & Hjoin).
+      split; [exact Hst|].
+      rewrite (collapse_same_target cns [xty] Hne Hall).
+      rewrite Hjoin. reflexivity.
+    Qed.
+
+    Lemma translate_tcnext_constraints:
+      forall memset clkvars vars x e ck rstty b ckty ety xty cns st st',
+        CEClo.wc_exp vars e ck ->
+        SECCETYPING.assign_clk_type env b ck = Some ckty ->
+        SECCETYPING.assign_exp_type env e = Some ety ->
+        Env.find x env = Some xty ->
+        generate_stmt_constraints G env state_env ([rstty] ⊔ [b])
+          (translate_tc memset clkvars (SynStc.TcNext x ck e)) st = OK (cns, st') ->
+        st' = st
+        /\ cns = [((([rstty] ⊔ ckty) ⊔ ety), [xty])].
+    Proof.
+      intros memset clkvars vars x e ck rstty b ckty ety xty cns st st'
+             Hwc Hck Hety Hx Hgen.
+      unfold translate_tc in Hgen.
+      rewrite (generate_stmt_constraints_Control_assign
+                 G env state_env memset ck (AssignSt x (translate_exp memset e))
+                 b ckty [rstty] st Hck) in Hgen.
+      destruct (translate_exp_type_correspondence env memset vars e ck b ckty ety
+                  Hwc Hck Hety) as (oty & Hoty & Hoeq).
+      cbn [generate_stmt_constraints] in Hgen.
+      rewrite Hoty in Hgen.
+      unfold option_to_sec in Hgen.
+      eapply sec_bind_inv in Hgen as (ety0 & st0 & Hety0 & Hgen).
+      unfold ret in Hety0. inversion Hety0; subst ety0 st0.
+      eapply sec_bind_inv in Hgen as (xty0 & st1 & Hfind & Hret).
+      unfold find_env in Hfind.
+      rewrite Hx in Hfind.
+      unfold ret in Hfind. inversion Hfind; subst xty0 st1.
+      unfold ret in Hret. inversion Hret; subst cns st'.
+      split; [reflexivity|].
+      assert (HAB : ([rstty] ⊔ ckty) ⊔ oty = ([rstty] ⊔ ckty) ⊔ ety).
+      { rewrite (MergeFacts.merge_assoc [rstty] ckty oty).
+        rewrite (MergeFacts.merge_assoc [rstty] ckty ety).
+        f_equal. exact (eq_sym Hoeq). }
+      change ([((([rstty] ⊔ ckty) ⊔ oty), [xty])]
+              = [((([rstty] ⊔ ckty) ⊔ ety), [xty])]).
+      rewrite HAB. reflexivity.
+    Qed.
+
+    Lemma translate_tcreset_constraints:
+      forall memset clkvars s ck f rstty b ckty sty cns st st',
+        SECCETYPING.assign_clk_type env b ck = Some ckty ->
+        Env.find s state_env = Some sty ->
+        generate_stmt_constraints G env state_env ([rstty] ⊔ [b])
+          (translate_tc memset clkvars (SynStc.TcReset s ck f)) st = OK (cns, st') ->
+        st' = st
+        /\ cns = [(([rstty] ⊔ ckty), [sty])].
+    Proof.
+      intros memset clkvars s ck f rstty b ckty sty cns st st'
+             Hck Hsty Hgen.
+      unfold translate_tc in Hgen.
+      rewrite (generate_stmt_constraints_Control_assign
+                 G env state_env memset ck (Call [] f s reset [])
+                 b ckty [rstty] st Hck) in Hgen.
+      cbn [generate_stmt_constraints] in Hgen.
+      rewrite ident_eqb_refl in Hgen.
+      eapply sec_bind_inv in Hgen as (sty0 & st1 & Hfind & Hret).
+      unfold find_env in Hfind.
+      rewrite Hsty in Hfind.
+      unfold ret in Hfind. inversion Hfind; subst sty0 st1.
+      unfold ret in Hret. inversion Hret; subst cns st'.
+      split; reflexivity.
+    Qed.
+
+  End TCCORR.
+
 End SECSTCOBCTRANSLATION.
 
 Module SecStcObcTranslation
