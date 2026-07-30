@@ -241,6 +241,54 @@ same `node_scoped_env`/`aux_names`. Checklist (in order):
    level of `Permutation` or set-satisfaction, never syntactic list equality
    across the fold.
 
+## 4b. Pending work mapped onto the NL→STC chain
+
+Line numbers refer to `SecNLusStcTranslation.v`. Keep the Obc bridge as
+close to this chain as possible; deviations are flagged at the end.
+
+**Layer 0 — definitions (`:84`–`:113`).** `signatures_preserved`,
+`Signature_call_preserves`, `Signature_head_consistent`,
+`Signature_consistent` are all generic over signatures (no NLustre/STC
+syntax). Restate them in the Obc bridge (~30 lines) rather than importing
+`SECNLUSSTCTRANSLATION`, which would drag the NLustre module stack in.
+Note `Signature_call_preserves` has two conjuncts (simple calls / reset
+calls); **Obc uses the reset-call shape for every call**, since all calls
+route their reset actual through `sty`. So the Obc version needs one clause
+only — generalized in a single dimension: `inp` is weaker (item 1). After
+the 2026-07-30 pc refinement `clk` and `out` agree exactly.
+
+| # | Obc item | NL→STC analogue | status / notes |
+|---|---|---|---|
+| 1 | `translate_arg` monotonicity | — (NL→STC shares CE syntax) | obligation B (tccall doc §3) |
+| 2 | generalized reset-call preservation | `:2105` `signatures_preserved_reset_underlying_calls_from_good` | obligation C (§4); Route B (§5) in reserve |
+| 3 | TcCall case | part of `eqn_preserv :752` | consumes 1+2 |
+| 4 | `tc_preserv` (all four cases) | `eqn_preserv :752` | TcDef/TcNext/TcReset **already proved as equalities** ⇒ `preserves_on` via `collapse_satisfaction` with `dlt' = dlt` |
+| 5 | tcs-list assembly | `eqns_preserv_scoped :1080` | `preserves_on_concat_scoped` with extras = `stids`; needs an `eqns_reset_extras` analogue (state-env lemmas already done) |
+| 6 | reset-method constraints | — (none) | `[rst_ty] ⊑ [sty]` from the `dlt'` choice; `[rst_ty] ⊑ [mem]` from the STC TcNext source (every last has a TcNext by `s_lasts_in_tcs`) |
+| 7 | class-level raw `preserves_on` | `node_preserv_scoped :1341`, `:1418`, `:1496` | scope = `inp ++ out ++ locals ++ [clk; rst]` |
+| 8 | simplify bridge | `:1685` / `:1806` / `:1938` | needs "every hidden var has a definer" for `locals`/`lasts`/`stids` — only derivable **with the translation in hand**; this is the class-scopedness deferred from phase 1. Most likely place for a surprise. |
+| 9 | lockstep induction | `:2503` + `:2382` + `:2342` | yields `Signature_consistent Gstc Gobc` + scopedness + scope_sec of Gobc; needs the phase-3 scope_sec port |
+| 10 | global corollary | `:2785` `generated_program_signatures_preserved_global` | the export the NI transport (phase 6) consumes |
+
+**Structural deviations from NL→STC (no analogue there):**
+- *Expression / cexp correspondence* — NL→STC keeps CE expressions unchanged;
+  Obc compiles them. **Done** (`translate_exp_type_correspondence`,
+  `translate_cexp_constraints`).
+- *`Control`/pc* — STC keeps clocks; Obc compiles them to `Ifte`. **Done.**
+- *`collapse`* — Obc can emit several constraints per target. **Done**
+  (incl. `collapse_satisfaction`).
+- *Reset-method constraints* (item 6) — pending.
+- *Fold order* — `translate_tcs` is `fold_left Comp` in **reverse**
+  execution order, so the Obc constraint list is permuted w.r.t. the tc
+  order. State item 5 permutation-tolerantly (satisfaction is `Forall`,
+  hence permutation-stable); never as syntactic list equality across the
+  fold.
+- *Scheduling* (phase 5) and the *NI transport* (phase 6) — pending.
+
+**Where the work actually is:** items 1–3 are the real proofs; 4–7 are
+assembly largely dictated by existing lemmas; 8–10 are ports of proofs that
+already exist.
+
 ## 5. Phase 5 — scheduling (B4)
 
 `StcToObc/Correctness.correctness_loop_call` needs `Well_defined P`
