@@ -500,6 +500,7 @@ Module Type SECOBCTYPING
     Variable G: secglobal.
     Variable env: Env.t ident.
     Variable state_env: Env.t ident.
+    Variable rst_ty: ident.
 
     Definition vars_env_scoped {A: Type} (vars: list (ident * A)) (scope: list ident) : Prop :=
       forall x,
@@ -518,11 +519,11 @@ Module Type SECOBCTYPING
       | Assign x e =>
           do ety <- option_to_sec (assign_exp_type env e);
           do xty <- find_env x env;
-          ret [((pc ⊔ ety), [xty])]
+          ret [(((([rst_ty] ⊔ pc) ⊔ ety)), [xty])]
       | AssignSt x e =>
           do ety <- option_to_sec (assign_exp_type env e);
           do xty <- find_env x env;
-          ret [((pc ⊔ ety), [xty])]
+          ret [(((([rst_ty] ⊔ pc) ⊔ ety)), [xty])]
       | Ifte e s1 s2 =>
           do ety <- option_to_sec (assign_exp_type env e);
           do c1 <- generate_stmt_constraints (pc ⊔ ety) s1;
@@ -535,7 +536,7 @@ Module Type SECOBCTYPING
       | Call [] _ o m _ =>
           if ident_eqb m Ids.reset then
             do sty <- find_env o state_env;
-            ret [(pc, [sty])]
+            ret [(([rst_ty] ⊔ pc), [sty])]
           else ret []
       | Call ys cls o m es =>
           if ident_eqb m Ids.step then
@@ -590,6 +591,7 @@ Module Type SECOBCTYPING
         vars_env_scoped mems scope ->
         TypObc.wt_stmt p insts mems vars s ->
         st_scoped scope pc ->
+        In rst_ty scope ->
         (forall o sty st0 st1,
             In o (stmt_state_keys s) ->
             find_env o state_env st0 = OK (sty, st1) ->
@@ -599,7 +601,7 @@ Module Type SECOBCTYPING
     Proof.
       intros p insts mems vars scope s.
       induction s as [x e|x e|e s1 IH1 s2 IH2|s1 IH1 s2 IH2|ys cls o m es|];
-        intros pc cns st st' Hglob Hv Hm Hwt Hpc Hkeys Hgen.
+        intros pc cns st st' Hglob Hv Hm Hwt Hpc Hrst Hkeys Hgen.
       - (* Assign *)
         simpl in Hgen.
         eapply sec_bind_inv in Hgen as (ety & st1 & Hexp & Hgen).
@@ -618,13 +620,18 @@ Module Type SECOBCTYPING
         assert (Hxscope : In xty' scope).
         { destruct (Hv x) as (ty & Hfind' & Hscope); eauto using In_InMembers.
           rewrite Hfindx in Hfind'. inversion Hfind'; subst. exact Hscope. }
+        assert (Hsrc : st_scoped scope ((([rst_ty] ⊔ pc) ⊔ ety'))).
+        { apply st_scoped_merge;
+            [apply st_scoped_merge;
+              [apply st_scoped_singleton; exact Hrst|exact Hpc]
+            |exact Hety]. }
+        change (constraints_scoped scope [((([rst_ty] ⊔ pc) ⊔ ety'), [xty'])]).
         constructor; [|constructor].
         intros y Hy.
-        unfold constraint_scope in Hy. simpl in Hy.
+        unfold constraint_scope in Hy. cbn [fst snd] in Hy.
         apply in_app_iff in Hy.
         destruct Hy as [Hy|Hy].
-        + apply in_merge_inv in Hy.
-          destruct Hy as [Hy|Hy]; [exact (Hpc _ Hy)|exact (Hety _ Hy)].
+        + exact (Hsrc _ Hy).
         + simpl in Hy. destruct Hy as [Heq|[]]. subst y. exact Hxscope.
       - (* AssignSt *)
         simpl in Hgen.
@@ -644,13 +651,18 @@ Module Type SECOBCTYPING
         assert (Hxscope : In xty' scope).
         { destruct (Hm x) as (ty & Hfind' & Hscope); eauto using In_InMembers.
           rewrite Hfindx in Hfind'. inversion Hfind'; subst. exact Hscope. }
+        assert (Hsrc : st_scoped scope ((([rst_ty] ⊔ pc) ⊔ ety'))).
+        { apply st_scoped_merge;
+            [apply st_scoped_merge;
+              [apply st_scoped_singleton; exact Hrst|exact Hpc]
+            |exact Hety]. }
+        change (constraints_scoped scope [((([rst_ty] ⊔ pc) ⊔ ety'), [xty'])]).
         constructor; [|constructor].
         intros y Hy.
-        unfold constraint_scope in Hy. simpl in Hy.
+        unfold constraint_scope in Hy. cbn [fst snd] in Hy.
         apply in_app_iff in Hy.
         destruct Hy as [Hy|Hy].
-        + apply in_merge_inv in Hy.
-          destruct Hy as [Hy|Hy]; [exact (Hpc _ Hy)|exact (Hety _ Hy)].
+        + exact (Hsrc _ Hy).
         + simpl in Hy. destruct Hy as [Heq|[]]. subst y. exact Hxscope.
       - (* Ifte *)
         simpl in Hgen.
@@ -697,12 +709,16 @@ Module Type SECOBCTYPING
           destruct (ident_eqb m Ids.reset) eqn:Hreset.
           * eapply sec_bind_inv in Hgen as (sty & st1 & Hfind & Hret).
             unfold ret in Hret. inversion Hret; subst cns st'.
+            assert (Hsrc : st_scoped scope ([rst_ty] ⊔ pc)).
+            { apply st_scoped_merge;
+                [apply st_scoped_singleton; exact Hrst|exact Hpc]. }
+            change (constraints_scoped scope [(([rst_ty] ⊔ pc), [sty])]).
             constructor; [|constructor].
             intros z Hz.
-            unfold constraint_scope in Hz. simpl in Hz.
+            unfold constraint_scope in Hz. cbn [fst snd] in Hz.
             apply in_app_iff in Hz.
             destruct Hz as [Hz|Hz].
-            -- exact (Hpc _ Hz).
+            -- exact (Hsrc _ Hz).
             -- simpl in Hz. destruct Hz as [Heq|[]]. subst z.
                eapply Hkeys; eauto.
                simpl. now left.
@@ -749,6 +765,7 @@ Module Type SECOBCTYPING
         vars_env_scoped mems scope ->
         TypObc.wt_stmt p insts mems vars s ->
         st_scoped scope pc ->
+        In rst_ty scope ->
         (forall o sty st0 st1,
             find_env o state_env st0 = OK (sty, st1) ->
             In sty scope) ->
@@ -756,9 +773,9 @@ Module Type SECOBCTYPING
         constraints_scoped scope cns.
     Proof.
       intros p insts mems vars scope s pc cns st st'
-             Hglob Hv Hm Hwt Hpc Hkeys Hgen.
+             Hglob Hv Hm Hwt Hpc Hrst Hkeys Hgen.
       eapply (generate_stmt_constraints_scoped_on_keys p insts mems vars scope s pc cns st st');
-        [exact Hglob|exact Hv|exact Hm|exact Hwt|exact Hpc| |exact Hgen].
+        [exact Hglob|exact Hv|exact Hm|exact Hwt|exact Hpc|exact Hrst| |exact Hgen].
       intros o sty st0 st1 Hin Hfind.
       eapply Hkeys; eauto.
     Qed.
@@ -781,10 +798,10 @@ Module Type SECOBCTYPING
              do locals <- option_to_sec (get_mappings_from_node stepm.(m_vars) env);
              do lasts  <- option_to_sec (get_mappings_from_node c.(c_mems) env);
              do (state_env, stids) <- generate_state_env c.(c_objs);
-             do craw_step <- generate_stmt_constraints G env state_env
-                              ([rst_type] ⊔ [clk_type]) stepm.(m_body);
-             do craw_reset <- generate_stmt_constraints G env state_env
-                              [rst_type] resetm.(m_body);
+             do craw_step <- generate_stmt_constraints G env state_env rst_type
+                              [clk_type] stepm.(m_body);
+             do craw_reset <- generate_stmt_constraints G env state_env rst_type
+                              [] resetm.(m_body);
              ret (inp, out, rst_type, clk_type,
                   simplify (collapse (craw_step ++ craw_reset))
                            (hidden_class_vars locals lasts stids), env)) init_state with
@@ -824,9 +841,9 @@ Module Type SECOBCTYPING
           /\ get_mappings_from_node stepm.(m_vars) env = Some locals
           /\ get_mappings_from_node c.(c_mems) env = Some lasts
           /\ generate_state_env c.(c_objs) init_state = OK ((state_env, stids), st_state)
-          /\ generate_stmt_constraints G env state_env ([rst_type] ⊔ [clk_type])
+          /\ generate_stmt_constraints G env state_env rst_type [clk_type]
                stepm.(m_body) st_state = OK (craw_step, st_step)
-          /\ generate_stmt_constraints G env state_env [rst_type]
+          /\ generate_stmt_constraints G env state_env rst_type []
                resetm.(m_body) st_step = OK (craw_reset, st_raw)
           /\ sig = {| s_name  := c.(c_name);
                       s_in    := inp;

@@ -59,7 +59,76 @@ plus the three below.
 
 ---
 
-## 2. Obligation A — the extra `rst_ty` in the clock slot (pc-as-clk)
+## 2. Obligation A — RESOLVED by a generator refinement (2026-07-30)
+
+**Status: eliminated. No longer an obligation.** The analysis below is kept
+because it explains *why* the refinement was necessary.
+
+**What we found when attempting Route A.** The domination argument needs
+`constraints_mention s_reset` for **STC** signatures. That port turned out
+NOT to be mechanical: STC's reset'd `TcCall` uses `[rst_inst]` as its reset
+actual (`SecSTCTyping.v:466-474`), which contains no `rst_ty` at raw level.
+So `constraints_mention rst_ty raw` is **false** for any system with a
+reset'd call — the mention only materialises *after* `simplify` substitutes
+the hidden `rst_inst` away. Proving it would have required a new
+"substitution creates mention" lemma family over `subAll`/`simplify`
+(roughly: if `findST cns d = Some st` and `In ty st`, then constraints
+mentioning `d` mention `ty` after substitution), which is a genuinely new
+~150-line development. That was the real blocker on the straightforward
+route — not the valuation surgery.
+
+**The refinement (implemented).** The root cause was a design choice, not a
+mathematical necessity: the step method's entry pc was `[rst_ty] ⊔
+[clk_type]`, so the reset dependence rode along inside the pc and leaked
+into the callee's **clock** formal at every call. Instead, `rst_ty` is now a
+section variable of `generate_stmt_constraints`, added explicitly at the
+places that genuinely depend on it, and the pc carries control dependence
+only:
+
+| construct | source |
+|---|---|
+| `Assign x e` / `AssignSt x e` | `([rst_ty] ⊔ pc) ⊔ ty(e)` |
+| `Call [] c o reset []` | `([rst_ty] ⊔ pc, [state_ty o])` |
+| `Call ys c o step es` | `generate_constraints (sig c) inp **pc** [state_ty o] out` |
+| entry pc | step method `[clk_type]`, reset method `[]` |
+
+Since `assign_clk_type env clk_type Cbase = [clk_type]`, the pc at a site
+under clock `ck` is now exactly the STC clock type `ckty`
+(`clock_pc_from_assign` with `pc0 := []`), so:
+
+- TcDef/TcNext/TcReset sources are **unchanged** (`[rst_ty] ⊔ pc` reproduces
+  the old pc), and their per-tc correspondence lemmas still hold — only the
+  internal ACI bookkeeping shifted.
+- **Call clk actuals now coincide exactly with STC's `ckty`.** The extra
+  `rst_ty` is gone, so no mention invariant is needed at all.
+
+This is also the more faithful design: the pc models *control* dependence;
+the caller's reset dependence reaches call outputs transitively through the
+instance state type (which the reset method constrains with
+`[rst_ty] ⊑ [state_ty]`), not by being conflated into the callee's clock.
+
+**Empirical confirmation** (`counter_paper.o.sif`, class `odometer`):
+
+```
+before:  [sec$12, sec$13, sec$14, sec_reset$1] <= [sec$17]
+after:   [sec$12,          sec$14, sec_reset$1] <= [sec$17]
+STC:     [sec$12, sec$13, sec$14]              <= [sec$17]
+```
+
+The only remaining difference at a call site is the **reset actual's name**
+(`sec_reset$k` vs `rst_ty`/`rst_inst`) — precisely the shape that
+`signatures_preserved_reset_underlying_calls_from_good` already handles.
+Post-simplify signatures still match STC exactly.
+
+**Consequence for the roadmap.** §3 (weaker args) and §4/§5 (valuation
+surgery) stand as written, but §4 is now much closer to the existing proof:
+identical `clk`, identical `out`, weaker `inp`, reset actual replaced by a
+fresh id with a defining constraint. Route A is correspondingly more likely
+to close, and the §7 sequencing loses its first item.
+
+---
+
+## 2b. (historical) Obligation A — the extra `rst_ty` in the clock slot
 
 **The delta.** Obc passes `[rst_ty] ⊔ ckty` where STC passes `ckty`. After
 substitution, every generated constraint whose formal source mentions the
@@ -311,12 +380,14 @@ actually forces, and B5 (never-reset instances) behaves as predicted.
 
 ## 7. Recommended sequencing
 
-1. **STC `constraints_mention s_reset`** (§2). Low risk, mechanical port,
-   unblocks §4/§5 and is independently useful. Do this first — it is the
-   only obligation that is a prerequisite for the others.
-2. **`translate_arg` monotonicity** (§3). Independent of 1; can be done in
-   parallel or by a second person.
+1. ~~STC `constraints_mention s_reset`~~ **no longer needed** — removed by
+   the generator refinement of §2 (already implemented and compiling).
+2. **`translate_arg` monotonicity** (§3). Start here.
 3. **Valuation surgery** (§4) via Route A, falling back to Route B (§5).
+   With the refinement, the two sides now differ only in `inp` (weaker) and
+   the reset actual, so the existing
+   `signatures_preserved_reset_underlying_calls_from_good` is a much closer
+   template than originally estimated.
 4. Then: tcs-level assembly (whole-body `collapse` with reset-method
    constraints interleaved — B5 bookkeeping), signature-level lockstep
    (`Signature_consistent Gstc Gobc`), then phases 5 (scheduling) and 6 (NI

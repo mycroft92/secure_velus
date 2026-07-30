@@ -112,15 +112,15 @@ Definition build_class_constraint_dump
                 Some sig,
                 OK ((state_env, _), st_state) =>
                   match SECOBCTYPING.generate_stmt_constraints
-                          G env state_env
-                          (SymTypes.merge [sig.(SIG.s_reset)] [sig.(SIG.s_clk)])
+                          G env state_env sig.(SIG.s_reset)
+                          [sig.(SIG.s_clk)]
                           stepm.(m_body) st_state
                   with
                   | Error e => Error e
                   | OK (craw_step, st_step) =>
                       match SECOBCTYPING.generate_stmt_constraints
-                              G env state_env
-                              [sig.(SIG.s_reset)]
+                              G env state_env sig.(SIG.s_reset)
+                              []
                               resetm.(m_body) st_step
                       with
                       | Error e => Error e

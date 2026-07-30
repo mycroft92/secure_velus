@@ -133,11 +133,11 @@ Module Type SECOBCTYPINGCORRECTNESS
   Qed.
 
   Lemma generate_stmt_constraints_rhs_singleton:
-    forall G env state_env s pc cns st st',
-      generate_stmt_constraints G env state_env pc s st = OK (cns, st') ->
+    forall G env state_env rst_ty s pc cns st st',
+      generate_stmt_constraints G env state_env rst_ty pc s st = OK (cns, st') ->
       Forall (fun c => length (snd c) = 1%nat) cns.
   Proof.
-    intros G env state_env s.
+    intros G env state_env rst_ty s.
     induction s as [x e|x e|e s1 IH1 s2 IH2|s1 IH1 s2 IH2|ys cls o m es|];
       intros pc cns st st' Hgen.
     - simpl in Hgen.
@@ -179,12 +179,12 @@ Module Type SECOBCTYPINGCORRECTNESS
   Qed.
 
   Corollary generate_stmt_constraints_collapse_wf:
-    forall G env state_env s1 s2 pc1 pc2 c1 c2 st st1 st',
-      generate_stmt_constraints G env state_env pc1 s1 st = OK (c1, st1) ->
-      generate_stmt_constraints G env state_env pc2 s2 st1 = OK (c2, st') ->
+    forall G env state_env rst_ty s1 s2 pc1 pc2 c1 c2 st st1 st',
+      generate_stmt_constraints G env state_env rst_ty pc1 s1 st = OK (c1, st1) ->
+      generate_stmt_constraints G env state_env rst_ty pc2 s2 st1 = OK (c2, st') ->
       wf_constraints (collapse (c1 ++ c2)).
   Proof.
-    intros G env state_env s1 s2 pc1 pc2 c1 c2 st st1 st' H1 H2.
+    intros G env state_env rst_ty s1 s2 pc1 pc2 c1 c2 st st1 st' H1 H2.
     apply collapse_wf.
     apply Forall_app.
     split; eapply generate_stmt_constraints_rhs_singleton; eauto.
@@ -409,6 +409,7 @@ Module Type SECOBCTYPINGCORRECTNESS
     Variable G: secglobal.
     Variable env: Env.t ident.
     Variable state_env: Env.t ident.
+    Variable rst_ty: ident.
 
     Lemma mmap_find_env_inv:
       forall xs tys st st',
@@ -492,7 +493,7 @@ Module Type SECOBCTYPINGCORRECTNESS
 
     Lemma generate_stmt_constraints_targets:
       forall s pc cns st st',
-        generate_stmt_constraints G env state_env pc s st = OK (cns, st') ->
+        generate_stmt_constraints G env state_env rst_ty pc s st = OK (cns, st') ->
         exists tys,
           stmt_targets s = Some tys
           /\ map snd cns = map (fun ty => [ty]) tys.
@@ -573,7 +574,7 @@ Module Type SECOBCTYPINGCORRECTNESS
 
     Lemma stmt_targets_defining:
       forall s pc cns st st' tys d,
-        generate_stmt_constraints G env state_env pc s st = OK (cns, st') ->
+        generate_stmt_constraints G env state_env rst_ty pc s st = OK (cns, st') ->
         stmt_targets s = Some tys ->
         In d tys ->
         In [d] (map snd cns).
