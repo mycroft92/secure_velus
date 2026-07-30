@@ -40,6 +40,14 @@ resume the work cold (with any model/person).
   missing: `cd /workspace && coqc <the -R lines of _CoqProject> <file>`).
   Always finish with configure+make to validate for real.
 - Keep local and container file hashes in sync (`md5 -q` vs `md5sum`).
+- **`/workspace` is NOT a git checkout** (`git rev-parse` there fails): the
+  host repo is the source of truth, the container is only a build sandbox.
+  Nothing appears in `/workspace` except via `docker cp`, so non-build files
+  (these `work_docs/*.md`, notes, examples) must be copied explicitly and
+  re-copied after every edit, or the container copy goes stale:
+  `docker cp src/SIF/work_docs funny_franklin:/workspace/src/SIF/`
+  Likewise, example `.lus` files must be copied in before running `velus` on
+  them (`examples/` in the container is the original image seed).
 - Commit messages: plain text, no AI attribution, ever.
 
 ## 1. Status
