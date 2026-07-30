@@ -30,14 +30,24 @@ resume the work cold (with any model/person).
 
 | Phase | File | Status |
 |---|---|---|
-| 1 | `src/SIF/SecObcTyping.v` | **DONE, compiles** (commit on this branch) |
+| 1 | `src/SIF/SecObcTyping.v` | **DONE, compiles** |
 | 2 | `src/SIF/SecObcConstraintExport.v` | not started |
-| 3 | `src/SIF/SecObcTypingCorrectness.v` | not started |
+| 3 | `src/SIF/SecObcTypingCorrectness.v` | **first slice DONE, compiles** — see §3 for what remains |
 | 4 | `src/SIF/SecStcObcTranslation.v` (bridge) | not started |
 | 5 | scheduling equivalence (in 4 or separate) | not started |
 | 6 | `src/SIF/SecObcNonInterference.v` | not started |
 
-Recommended order: 3 → 4 → 5 → 6 (2 whenever the exporter is wanted).
+Recommended order: finish 3 → 4 → 5 → 6 (2 whenever the exporter is wanted).
+
+Phase-3 slice already proved (in `SecObcTypingCorrectness.v`):
+`constraint_satisfiable_merge_split`, `join_into_satisfaction`,
+`collapse_satisfaction` (listSatisfiable dlt (collapse cns) ↔ ... cns —
+so collapse is precision-neutral, closing the soundness question of
+design decision B1a), `generate_constraints_rhs_singleton` (no NoDup
+needed — direct induction on the final mmap of
+`SIG.generate_constraints`), `generate_stmt_constraints_rhs_singleton`,
+`generate_stmt_constraints_collapse_wf` (wf_constraints of the collapsed
+step+reset raw constraints).
 
 ## 2. What phase 1 contains (`SecObcTyping.v`)
 
@@ -108,15 +118,12 @@ hand (or in phase 3 with explicit defining-targets hypotheses).
 
 ## 3. Phase 3 — `SecObcTypingCorrectness.v` (next up)
 
-Mirror `SecStcTypingCorrectness.v`. Module params: add `Lat : Lattice`,
-`SecTypes : SECTYPES Lat`, `SIGPROOFS : SIGNATURE_PROOFS`. Checklist:
+Mirror `SecStcTypingCorrectness.v`. Module params used: `Lat : Lattice`,
+`SecT : SECTYPES Lat`, `SIGPROOFS : SIGNATURE_PROOFS` (NAMEGEN to be added
+when the freshness ports need it — note NAMEGEN's functor params drag in
+CESyn/SynNL). Checklist:
 
-1. `collapse_satisfaction`: `listSatisfiable dlt cns <-> listSatisfiable dlt
-   (collapse cns)`. Key fact: `hm_ext dlt (a ⊔ b) = join (hm_ext dlt a)
-   (hm_ext dlt b)` (exists in SecTypes as `hm_ext_distributive`-family —
-   check exact name) + `satisfiable` is `hm_ext lhs ⊑ hm_ext rhs`;
-   join-least-upper-bound both ways. Induction over cns with a helper for
-   `join_into`.
+1. ~~`collapse_satisfaction` + rhs-singleton/shape lemmas~~ **DONE** (see §1).
 2. `generate_state_env` freshness/range lemmas — port
    `fresh_reset_insert_sec_range`, `generate_reset_env_range`,
    `reset_env_sec_bounded`, `generate_reset_env_injective`,
