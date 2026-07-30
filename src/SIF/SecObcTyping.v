@@ -6,16 +6,16 @@
     the [Ifte] conditions guarding each statement, so the pc plays the
     role that [assign_clk_type] played at the STC level.
 
-    Note: [Obc.ObcTyping] (wt_exp/wt_stmt) is the ordinary data-type
-    system; we use it only to bound the free variables of expressions
-    and statements in the scopedness proofs. *)
+    This file is purely syntactic: it depends on [Obc.ObcSyntax] only,
+    never on the Obc semantics or on the ordinary Obc data-type system,
+    mirroring how [SecSTCTyping.v] depends on clocking rather than
+    semantics.  Scopedness is stated over the syntactic free names
+    ([exp_free] / [stmt_free]). *)
 
 From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import Operators.
 From Velus Require Import Obc.ObcSyntax.
-From Velus Require Import Obc.ObcSemantics.
-From Velus Require Import Obc.ObcTyping.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SIFSignature.
@@ -34,8 +34,6 @@ Module Type SECOBCTYPING
   (Import OpAux : OPERATORS_AUX Op)
   (Import SC    : SECMONAD Ids)
   (Import SynObc: OBCSYNTAX Ids Op OpAux)
-  (Import SemObc: OBCSEMANTICS Ids Op OpAux SynObc)
-  (Import TypObc: OBCTYPING Ids Op OpAux SynObc SemObc)
   (Import SIG   : SIGNATURE Ids SC).
   Import SECMONADNotations.
 
@@ -193,6 +191,44 @@ Module Type SECOBCTYPING
 
   End STATEHANDLER.
 
+  (** * Free names of Obc expressions and statements
+
+      Purely syntactic.  The security scopedness proofs need only that
+      every name a construct reads or writes has a scoped type in the
+      security environment.  We deliberately do NOT use the ordinary Obc
+      data-type system ([Obc.ObcTyping]) for this: it is parameterised by
+      the Obc semantics, and this file is syntax-level, mirroring
+      [SecSTCTyping.v] (which uses clocking, not semantics). *)
+
+  Fixpoint exp_free (e: exp) : list ident :=
+    match e with
+    | Var x _ | State x _ | Valid x _ => [x]
+    | Const _ => []
+    | Unop _ e' _ => exp_free e'
+    | Binop _ e1 e2 _ => exp_free e1 ++ exp_free e2
+    end.
+
+  Fixpoint stmt_free (s: stmt) : list ident :=
+    match s with
+    | Assign x e | AssignSt x e => x :: exp_free e
+    | Ifte e s1 s2 => exp_free e ++ (stmt_free s1 ++ stmt_free s2)
+    | Comp s1 s2 => stmt_free s1 ++ stmt_free s2
+    | Call ys _ _ _ es => ys ++ flat_map exp_free es
+    | Skip => []
+    end.
+
+  Definition names_scoped (env: Env.t ident) (scope: list ident) (xs: list ident) : Prop :=
+    forall x, In x xs -> exists ty, Env.find x env = Some ty /\ In ty scope.
+
+  Lemma names_scoped_app:
+    forall env scope xs ys,
+      names_scoped env scope (xs ++ ys) ->
+      names_scoped env scope xs /\ names_scoped env scope ys.
+  Proof.
+    intros env scope xs ys H.
+    split; intros z Hz; apply H, in_or_app; auto.
+  Qed.
+
   (** * Expression security typing *)
 
   Section SECEXPTYPING.
@@ -225,43 +261,36 @@ Module Type SECOBCTYPING
       end.
 
     Lemma assign_exp_type_scoped:
-      forall mems vars scope e st,
-        (forall x, InMembers x vars ->
-                   exists ty, Env.find x ctxt = Some ty /\ In ty scope) ->
-        (forall x, InMembers x mems ->
-                   exists ty, Env.find x ctxt = Some ty /\ In ty scope) ->
-        TypObc.wt_exp mems vars e ->
+      forall scope e st,
+        names_scoped ctxt scope (exp_free e) ->
         assign_exp_type e = Some st ->
         st_scoped scope st.
     Proof.
-      intros mems vars scope e.
+      intros scope e.
       induction e as [x tyx|x tyx|c|op e IHe tye|op e1 IHe1 e2 IHe2 tye|x tyx];
-        intros st Hv Hm Hwt Hassign; simpl in Hassign.
+        intros st Hfree Hassign; simpl in Hassign.
       - (* Var *)
-        inversion Hwt as [? ? Hin| | | | |]; subst.
-        destruct (Hv x) as (ty & Hfind & Hscope); eauto using In_InMembers.
+        destruct (Hfree x) as (ty & Hfind & Hscope); [simpl; now left|].
         rewrite Hfind in Hassign. inversion Hassign; subst st.
         apply st_scoped_singleton. exact Hscope.
       - (* State *)
-        inversion Hwt as [|? ? Hin| | | |]; subst.
-        destruct (Hm x) as (ty & Hfind & Hscope); eauto using In_InMembers.
+        destruct (Hfree x) as (ty & Hfind & Hscope); [simpl; now left|].
         rewrite Hfind in Hassign. inversion Hassign; subst st.
         apply st_scoped_singleton. exact Hscope.
       - (* Const *)
         inversion Hassign; subst st.
-        intros x Hx. inversion Hx.
+        intros z Hz. inversion Hz.
       - (* Unop *)
-        inversion Hwt; subst.
         eapply IHe; eauto.
       - (* Binop *)
-        inversion Hwt; subst.
+        simpl in Hfree.
+        destruct (names_scoped_app _ _ _ _ Hfree) as [Hf1 Hf2].
         destruct (assign_exp_type e1) as [t1|] eqn:Ht1; try discriminate.
         destruct (assign_exp_type e2) as [t2|] eqn:Ht2; try discriminate.
         inversion Hassign; subst st.
         apply st_scoped_merge; eauto.
       - (* Valid *)
-        inversion Hwt as [| | | | |? ? Hin]; subst.
-        destruct (Hv x) as (ty & Hfind & Hscope); eauto using In_InMembers.
+        destruct (Hfree x) as (ty & Hfind & Hscope); [simpl; now left|].
         rewrite Hfind in Hassign. inversion Hassign; subst st.
         apply st_scoped_singleton. exact Hscope.
     Qed.
@@ -560,17 +589,16 @@ Module Type SECOBCTYPING
       end.
 
     Lemma mmap_assign_exp_type_scoped:
-      forall mems vars scope es tys st st',
-        vars_env_scoped vars scope ->
-        vars_env_scoped mems scope ->
-        Forall (TypObc.wt_exp mems vars) es ->
+      forall scope es tys st st',
+        names_scoped env scope (flat_map exp_free es) ->
         mmap (fun e => option_to_sec (assign_exp_type env e)) es st = OK (tys, st') ->
         Forall (st_scoped scope) tys.
     Proof.
-      intros mems vars scope es.
-      induction es as [|e es IH]; intros tys st st' Hv Hm Hwt Hmap.
+      intros scope es.
+      induction es as [|e es IH]; intros tys st st' Hfree Hmap.
       - simpl in Hmap. inversion Hmap; subst. constructor.
-      - inversion Hwt as [|e0 es0 He Hes]; subst e0 es0.
+      - simpl in Hfree.
+        destruct (names_scoped_app _ _ _ _ Hfree) as [Hfe Hfes].
         simpl in Hmap.
         eapply sec_bind_inv in Hmap as (ety & st1 & Hhd & Hmap).
         eapply sec_bind_inv in Hmap as (tys' & st2 & Htl & Hret).
@@ -579,17 +607,14 @@ Module Type SECOBCTYPING
         inversion Hhd; subst ety st1.
         unfold ret in Hret. inversion Hret; subst tys st'.
         constructor.
-        + eapply (assign_exp_type_scoped env mems vars scope e ety');
-            [exact Hv|exact Hm|exact He|exact Heq].
+        + eapply (assign_exp_type_scoped env scope e ety'); [exact Hfe|exact Heq].
         + eapply IH; eauto.
     Qed.
 
     Theorem generate_stmt_constraints_scoped_on_keys:
-      forall p insts mems vars scope s pc cns st st',
+      forall scope s pc cns st st',
         secglobal_scoped G ->
-        vars_env_scoped vars scope ->
-        vars_env_scoped mems scope ->
-        TypObc.wt_stmt p insts mems vars s ->
+        names_scoped env scope (stmt_free s) ->
         st_scoped scope pc ->
         In rst_ty scope ->
         (forall o sty st0 st1,
@@ -599,27 +624,31 @@ Module Type SECOBCTYPING
         generate_stmt_constraints pc s st = OK (cns, st') ->
         constraints_scoped scope cns.
     Proof.
-      intros p insts mems vars scope s.
+      intros scope s.
       induction s as [x e|x e|e s1 IH1 s2 IH2|s1 IH1 s2 IH2|ys cls o m es|];
-        intros pc cns st st' Hglob Hv Hm Hwt Hpc Hrst Hkeys Hgen.
+        intros pc cns st st' Hglob Hfree Hpc Hrst Hkeys Hgen.
       - (* Assign *)
         simpl in Hgen.
         eapply sec_bind_inv in Hgen as (ety & st1 & Hexp & Hgen).
         eapply sec_bind_inv in Hgen as (xty & st2 & Hfind & Hret).
         unfold ret in Hret. inversion Hret; subst cns st'.
-        inversion Hwt as [? ? Hinx Hwte| | | | |]; subst.
+        simpl in Hfree.
+        assert (Hfx : exists ty, Env.find x env = Some ty /\ In ty scope)
+          by (apply Hfree; now left).
+        assert (Hfe : names_scoped env scope (exp_free e))
+          by (intros z Hz; apply Hfree; now right).
         unfold option_to_sec in Hexp.
         destruct (assign_exp_type env e) as [ety'|] eqn:Hexp'; try discriminate.
         inversion Hexp; subst ety st1.
         assert (Hety : st_scoped scope ety').
-        { eapply (assign_exp_type_scoped env mems vars scope e ety');
-            [exact Hv|exact Hm|exact Hwte|exact Hexp']. }
+        { eapply (assign_exp_type_scoped env scope e ety'); [exact Hfe|exact Hexp']. }
         unfold find_env in Hfind.
         destruct (Env.find x env) as [xty'|] eqn:Hfindx; try discriminate.
         unfold ret in Hfind. inversion Hfind; subst xty st2.
         assert (Hxscope : In xty' scope).
-        { destruct (Hv x) as (ty & Hfind' & Hscope); eauto using In_InMembers.
-          rewrite Hfindx in Hfind'. inversion Hfind'; subst. exact Hscope. }
+        { destruct Hfx as (ty & Hf & Hs).
+          assert (Hteq : ty = xty') by congruence.
+          subst ty. exact Hs. }
         assert (Hsrc : st_scoped scope ((([rst_ty] ⊔ pc) ⊔ ety'))).
         { apply st_scoped_merge;
             [apply st_scoped_merge;
@@ -638,19 +667,23 @@ Module Type SECOBCTYPING
         eapply sec_bind_inv in Hgen as (ety & st1 & Hexp & Hgen).
         eapply sec_bind_inv in Hgen as (xty & st2 & Hfind & Hret).
         unfold ret in Hret. inversion Hret; subst cns st'.
-        inversion Hwt as [|? ? Hinx Hwte| | | |]; subst.
+        simpl in Hfree.
+        assert (Hfx : exists ty, Env.find x env = Some ty /\ In ty scope)
+          by (apply Hfree; now left).
+        assert (Hfe : names_scoped env scope (exp_free e))
+          by (intros z Hz; apply Hfree; now right).
         unfold option_to_sec in Hexp.
         destruct (assign_exp_type env e) as [ety'|] eqn:Hexp'; try discriminate.
         inversion Hexp; subst ety st1.
         assert (Hety : st_scoped scope ety').
-        { eapply (assign_exp_type_scoped env mems vars scope e ety');
-            [exact Hv|exact Hm|exact Hwte|exact Hexp']. }
+        { eapply (assign_exp_type_scoped env scope e ety'); [exact Hfe|exact Hexp']. }
         unfold find_env in Hfind.
         destruct (Env.find x env) as [xty'|] eqn:Hfindx; try discriminate.
         unfold ret in Hfind. inversion Hfind; subst xty st2.
         assert (Hxscope : In xty' scope).
-        { destruct (Hm x) as (ty & Hfind' & Hscope); eauto using In_InMembers.
-          rewrite Hfindx in Hfind'. inversion Hfind'; subst. exact Hscope. }
+        { destruct Hfx as (ty & Hf & Hs).
+          assert (Hteq : ty = xty') by congruence.
+          subst ty. exact Hs. }
         assert (Hsrc : st_scoped scope ((([rst_ty] ⊔ pc) ⊔ ety'))).
         { apply st_scoped_merge;
             [apply st_scoped_merge;
@@ -670,21 +703,24 @@ Module Type SECOBCTYPING
         eapply sec_bind_inv in Hgen as (c1 & st2 & Hgen1 & Hgen).
         eapply sec_bind_inv in Hgen as (c2 & st3 & Hgen2 & Hret).
         unfold ret in Hret. inversion Hret; subst cns st'.
-        inversion Hwt as [| |? ? ? Hwte Hty Hwt1 Hwt2| | |]; subst.
+        simpl in Hfree.
+        destruct (names_scoped_app _ _ _ _ Hfree) as [Hfe Hfs].
+        destruct (names_scoped_app _ _ _ _ Hfs) as [Hf1 Hf2].
         unfold option_to_sec in Hexp.
         destruct (assign_exp_type env e) as [ety'|] eqn:Hexp'; try discriminate.
         inversion Hexp; subst ety st1.
         assert (Hety : st_scoped scope ety').
-        { eapply (assign_exp_type_scoped env mems vars scope e ety');
-            [exact Hv|exact Hm|exact Hwte|exact Hexp']. }
+        { eapply (assign_exp_type_scoped env scope e ety'); [exact Hfe|exact Hexp']. }
         assert (Hpc' : st_scoped scope (pc ⊔ ety')).
         { apply st_scoped_merge; assumption. }
         apply Forall_app. split.
-        + eapply IH1; eauto.
+        + eapply (IH1 (pc ⊔ ety') c1 st st2);
+            [exact Hglob|exact Hf1|exact Hpc'|exact Hrst| |exact Hgen1].
           intros o' sty st0 st1' Hin Hfind.
           eapply Hkeys; eauto.
           simpl. apply in_or_app. now left.
-        + eapply IH2; eauto.
+        + eapply (IH2 (pc ⊔ ety') c2 st2 st3);
+            [exact Hglob|exact Hf2|exact Hpc'|exact Hrst| |exact Hgen2].
           intros o' sty st0 st1' Hin Hfind.
           eapply Hkeys; eauto.
           simpl. apply in_or_app. now right.
@@ -693,17 +729,22 @@ Module Type SECOBCTYPING
         eapply sec_bind_inv in Hgen as (c1 & st1 & Hgen1 & Hgen).
         eapply sec_bind_inv in Hgen as (c2 & st2 & Hgen2 & Hret).
         unfold ret in Hret. inversion Hret; subst cns st'.
-        inversion Hwt as [| | |? ? Hwt1 Hwt2| |]; subst.
+        simpl in Hfree.
+        destruct (names_scoped_app _ _ _ _ Hfree) as [Hf1 Hf2].
         apply Forall_app. split.
-        + eapply IH1; eauto.
+        + eapply (IH1 pc c1 st st1);
+            [exact Hglob|exact Hf1|exact Hpc|exact Hrst| |exact Hgen1].
           intros o' sty st0 st1' Hin Hfind.
           eapply Hkeys; eauto.
           simpl. apply in_or_app. now left.
-        + eapply IH2; eauto.
+        + eapply (IH2 pc c2 st1 st2);
+            [exact Hglob|exact Hf2|exact Hpc|exact Hrst| |exact Hgen2].
           intros o' sty st0 st1' Hin Hfind.
           eapply Hkeys; eauto.
           simpl. apply in_or_app. now right.
       - (* Call *)
+        simpl in Hfree.
+        destruct (names_scoped_app _ _ _ _ Hfree) as [Hfys Hfes].
         destruct ys as [|y ys'].
         + simpl in Hgen.
           destruct (ident_eqb m Ids.reset) eqn:Hreset.
@@ -729,21 +770,12 @@ Module Type SECOBCTYPING
           eapply sec_bind_inv in Hgen as (inptyp & st1 & Hinp & Hgen).
           eapply sec_bind_inv in Hgen as (outtyp & st2 & Hout & Hgen).
           eapply sec_bind_inv in Hgen as (sty & st3 & Hsty & Hgen).
-          inversion Hwt as
-              [| | | |clsid cls0 p' o0 f0 fm ys0 es0 Hino Hfindcls Hfindm Hndys Houts Hins Hwtes|];
-            subst.
           assert (HinpScope : Forall (st_scoped scope) inptyp).
-          { eapply (mmap_assign_exp_type_scoped mems vars scope es inptyp st st1);
-              [exact Hv|exact Hm|exact Hwtes|exact Hinp]. }
+          { eapply (mmap_assign_exp_type_scoped scope es inptyp st st1);
+              [exact Hfes|exact Hinp]. }
           assert (HoutScope : Forall (fun x => In x scope) outtyp).
-          { eapply (SC.mmap_find_env_scoped env scope (y :: ys') outtyp st1 st2).
-            - intros z Hz.
-              assert (Hinz : InMembers z vars).
-              { destruct (Forall2_in_left _ _ _ _ Houts Hz) as (xt & Hinxt & Hinvar).
-                eapply In_InMembers; eauto. }
-              destruct (Hv z Hinz) as (ty & Hfind & Hscope).
-              exists ty. split; assumption.
-            - exact Hout. }
+          { eapply (SC.mmap_find_env_scoped env scope (y :: ys') outtyp st1 st2);
+              [exact Hfys|exact Hout]. }
           assert (Hstyscope : In sty scope).
           { eapply Hkeys; eauto.
             simpl. now left. }
@@ -759,11 +791,9 @@ Module Type SECOBCTYPING
     Qed.
 
     Corollary generate_stmt_constraints_scoped:
-      forall p insts mems vars scope s pc cns st st',
+      forall scope s pc cns st st',
         secglobal_scoped G ->
-        vars_env_scoped vars scope ->
-        vars_env_scoped mems scope ->
-        TypObc.wt_stmt p insts mems vars s ->
+        names_scoped env scope (stmt_free s) ->
         st_scoped scope pc ->
         In rst_ty scope ->
         (forall o sty st0 st1,
@@ -772,10 +802,9 @@ Module Type SECOBCTYPING
         generate_stmt_constraints pc s st = OK (cns, st') ->
         constraints_scoped scope cns.
     Proof.
-      intros p insts mems vars scope s pc cns st st'
-             Hglob Hv Hm Hwt Hpc Hrst Hkeys Hgen.
-      eapply (generate_stmt_constraints_scoped_on_keys p insts mems vars scope s pc cns st st');
-        [exact Hglob|exact Hv|exact Hm|exact Hwt|exact Hpc|exact Hrst| |exact Hgen].
+      intros scope s pc cns st st' Hglob Hfree Hpc Hrst Hkeys Hgen.
+      eapply (generate_stmt_constraints_scoped_on_keys scope s pc cns st st');
+        [exact Hglob|exact Hfree|exact Hpc|exact Hrst| |exact Hgen].
       intros o sty st0 st1 Hin Hfind.
       eapply Hkeys; eauto.
     Qed.
@@ -960,11 +989,9 @@ Module SecObcTyping
   (Import OpAux : OPERATORS_AUX Op)
   (Import SC    : SECMONAD Ids)
   (Import SynObc: OBCSYNTAX Ids Op OpAux)
-  (Import SemObc: OBCSEMANTICS Ids Op OpAux SynObc)
-  (Import TypObc: OBCTYPING Ids Op OpAux SynObc SemObc)
   (Import SIG   : SIGNATURE Ids SC)
-  <: SECOBCTYPING Ids Op OpAux SC SynObc SemObc TypObc SIG.
+  <: SECOBCTYPING Ids Op OpAux SC SynObc SIG.
 
-Include SECOBCTYPING Ids Op OpAux SC SynObc SemObc TypObc SIG.
+Include SECOBCTYPING Ids Op OpAux SC SynObc SIG.
 
 End SecObcTyping.

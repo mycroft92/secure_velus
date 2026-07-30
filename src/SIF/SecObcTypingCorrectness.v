@@ -9,8 +9,6 @@ From Velus Require Import Common.
 From Velus Require Import Environment.
 From Velus Require Import Operators.
 From Velus Require Import Obc.ObcSyntax.
-From Velus Require Import Obc.ObcSemantics.
-From Velus Require Import Obc.ObcTyping.
 From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF.SecTypes.
@@ -31,13 +29,11 @@ Module Type SECOBCTYPINGCORRECTNESS
   (Import OpAux : OPERATORS_AUX Op)
   (Import SC    : SECMONAD Ids)
   (Import SynObc: OBCSYNTAX Ids Op OpAux)
-  (Import SemObc: OBCSEMANTICS Ids Op OpAux SynObc)
-  (Import TypObc: OBCTYPING Ids Op OpAux SynObc SemObc)
   (Import Lat   : Lattice)
   (Import SecT  : SECTYPES Lat)
   (Import SIG   : SIGNATURE Ids SC)
   (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
-  (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SemObc TypObc SIG).
+  (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SIG).
 
   (** * Collapse is satisfaction-neutral *)
 
@@ -638,15 +634,13 @@ Module SecObcTypingCorrectness
   (Import OpAux : OPERATORS_AUX Op)
   (Import SC    : SECMONAD Ids)
   (Import SynObc: OBCSYNTAX Ids Op OpAux)
-  (Import SemObc: OBCSEMANTICS Ids Op OpAux SynObc)
-  (Import TypObc: OBCTYPING Ids Op OpAux SynObc SemObc)
   (Import Lat   : Lattice)
   (Import SecT  : SECTYPES Lat)
   (Import SIG   : SIGNATURE Ids SC)
   (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
-  (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SemObc TypObc SIG)
-  <: SECOBCTYPINGCORRECTNESS Ids Op OpAux SC SynObc SemObc TypObc Lat SecT SIG SIGPROOFS SECOBCTYPING.
+  (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SIG)
+  <: SECOBCTYPINGCORRECTNESS Ids Op OpAux SC SynObc Lat SecT SIG SIGPROOFS SECOBCTYPING.
 
-Include SECOBCTYPINGCORRECTNESS Ids Op OpAux SC SynObc SemObc TypObc Lat SecT SIG SIGPROOFS SECOBCTYPING.
+Include SECOBCTYPINGCORRECTNESS Ids Op OpAux SC SynObc Lat SecT SIG SIGPROOFS SECOBCTYPING.
 
 End SecObcTypingCorrectness.

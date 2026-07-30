@@ -31,7 +31,7 @@ Include NAMEGEN Ids Op CE.Syn NL.Syn.
 End ConcreteNameGen.
 Module NAMEGEN := ConcreteNameGen.
 Module SECOBCTYPING :=
-  SecObcTyping Ids Op OpAux SC Obc.Syn Obc.Sem Obc.Typ SIG.
+  SecObcTyping Ids Op OpAux SC Obc.Syn SIG.
 
 Record class_constraint_dump := mkClassConstraintDump {
   obc_dump_name : ident;

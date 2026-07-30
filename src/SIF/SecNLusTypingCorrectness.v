@@ -1481,39 +1481,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
       In (lhs, [y]) cns ->
       In ty lhs.
 
-  Lemma in_merge_left:
-    forall x a b,
-      In x a ->
-      In x (a ⊔ b).
-  Proof.
-    intros x a.
-    induction a as [|a0 a IHa]; intros b Hin.
-    - contradiction.
-    - revert Hin.
-      induction b as [|b0 b IHb]; intro Hin.
-      + simpl. exact Hin.
-      + simpl.
-        destruct Hin as [Heq|Hin].
-        * subst x.
-          destruct (Pos.compare a0 b0) eqn:Hcmp; simpl.
-          -- left; reflexivity.
-          -- left; reflexivity.
-          -- right. apply IHb. left; reflexivity.
-        * destruct (Pos.compare a0 b0) eqn:Hcmp; simpl.
-          -- right. eapply IHa. exact Hin.
-          -- right. eapply IHa. exact Hin.
-          -- right. apply IHb. right; exact Hin.
-  Qed.
-
-  Lemma in_merge_right:
-    forall x a b,
-      In x b ->
-      In x (a ⊔ b).
-  Proof.
-    intros x a b Hin.
-    rewrite MergeFacts.merge_comm.
-    now apply in_merge_left.
-  Qed.
+  (* in_merge_left / in_merge_right now live in SymTypes.v *)
 
   Lemma subST_preserves_other_in:
     forall lhs d st x,

@@ -155,6 +155,42 @@ the class record (no `s_vars_out_in_tcs` analogue) — it holds only for
 *translated* classes and will be proved in phase 4 with the translation in
 hand (or in phase 3 with explicit defining-targets hypotheses).
 
+## 2c. Architectural rules for this development (2026-07-30)
+
+Two corrections applied after review; treat them as standing rules.
+
+**(1) The Obc security typing is syntax-level only.** `SecObcTyping.v`
+depends on `Obc.ObcSyntax` and nothing else from Obc — **not**
+`ObcSemantics`, **not** `ObcTyping`. The first draft used `wt_exp`/`wt_stmt`
+as the scoping premise, which was wrong: `OBCTYPING` is parameterised by
+`OBCSEMANTICS`, so it dragged the Obc *semantics* into a purely syntactic
+constraint generator. `SecSTCTyping.v` never does this — it uses clocking,
+which is syntactic. Scopedness is now stated over syntactic free names:
+
+```coq
+Fixpoint exp_free  (e: exp)  : list ident   (* Var/State/Valid → [x], ... *)
+Fixpoint stmt_free (s: stmt) : list ident   (* writes ++ reads *)
+Definition names_scoped env scope xs :=
+  forall x, In x xs -> exists ty, Env.find x env = Some ty /\ In ty scope.
+```
+
+`generate_stmt_constraints_scoped(_on_keys)` now takes
+`names_scoped env scope (stmt_free s)` in place of
+`wt_stmt p insts mems vars s`, and lost the `p`/`insts`/`mems`/`vars`
+parameters entirely — shorter statements and shorter proofs. When the
+bridge needs these premises for a *translated* statement, derive them from
+the STC-side `wc_trconstr` plus the translation, not from Obc typing.
+
+**(2) Reuse, don't duplicate.** `in_merge_left` / `in_merge_right` were
+defined inside `SecNLusTypingCorrectness.v` although they are pure
+`SymTypes` facts (`in_merge_inv`, their elimination counterpart, already
+lived in `SymTypes.v`). They are now **in `SymTypes.v`**, and the copies in
+`SecNLusTypingCorrectness.v` were deleted — both that file and
+`SecNLusNonInterferenceSupport.v` `Require Import SIF.SymTypes` directly, so
+their unqualified uses resolve to the shared ones. General rule: if a needed
+lemma is missing, add it to the module where it belongs and let dependents
+pick it up; never make a local copy.
+
 ## 3. Phase 3 — `SecObcTypingCorrectness.v` (next up)
 
 Mirror `SecStcTypingCorrectness.v`. Module params used: `Lat : Lattice`,

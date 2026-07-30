@@ -16,8 +16,6 @@ From Velus Require Import CoreExpr.CEIsFree.
 From Velus Require Import CoreExpr.CEClocking.
 From Velus Require Import Stc.StcSyntax.
 From Velus Require Import Obc.ObcSyntax.
-From Velus Require Import Obc.ObcSemantics.
-From Velus Require Import Obc.ObcTyping.
 From Velus Require Import StcToObc.Translation.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF.SecContext.
@@ -39,14 +37,12 @@ Module Type SECSTCOBCTRANSLATION
   (Import CESyn : CESYNTAX Op)
   (Import SynStc: STCSYNTAX Ids Op CESyn)
   (Import SynObc: OBCSYNTAX Ids Op OpAux)
-  (Import SemObc: OBCSEMANTICS Ids Op OpAux SynObc)
-  (Import TypObc: OBCTYPING Ids Op OpAux SynObc SemObc)
   (Import SIG   : SIGNATURE Ids SC)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn CEIsF CEClo)
   (Import Trans : TRANSLATION Ids Op OpAux CESyn SynStc SynObc)
-  (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SemObc TypObc SIG).
+  (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SIG).
   Import SECMONADNotations.
 
   Section CONTROLPC.
@@ -239,6 +235,119 @@ Module Type SECSTCOBCTRANSLATION
           rewrite MergeFacts.merge_assoc.
           rewrite (MergeFacts.merge_comm O2 O1).
           reflexivity.
+    Qed.
+
+    (** * Argument monotonicity (TcCall obligation B)
+
+        [translate_arg] emits either [Valid x ty] (same security type as
+        the variable) or [translate_exp e], which drops [Ewhen] guards.
+        The Obc argument type is therefore always a *subset* of the CE
+        one: call constraints on the Obc side are weaker, which is the
+        direction signature preservation needs. *)
+
+    Lemma translate_exp_type_incl:
+      forall memset e ety,
+        SECCETYPING.assign_exp_type env e = Some ety ->
+        exists oty,
+          SECOBCTYPING.assign_exp_type env (translate_exp memset e) = Some oty
+          /\ (forall z, In z oty -> In z ety).
+    Proof.
+      intros memset e.
+      induction e as [c|x ty|e IH x b|op e IH ty|op e1 IH1 e2 IH2 ty];
+        intros ety Hety; simpl in Hety.
+      - (* Econst *)
+        inversion Hety; subst ety.
+        exists []. split; [reflexivity|intros z Hz; inversion Hz].
+      - (* Evar *)
+        destruct (Env.find x env) as [xty|] eqn:Hx; simpl in Hety; try discriminate.
+        inversion Hety; subst ety.
+        exists [xty]. split; [|auto].
+        simpl. unfold tovar.
+        destruct (PS.mem x memset); simpl; rewrite Hx; reflexivity.
+      - (* Ewhen: the guard is dropped *)
+        destruct (SECCETYPING.assign_exp_type env e) as [ee|] eqn:He;
+          simpl in Hety; try discriminate.
+        destruct (Env.find x env) as [xty|] eqn:Hx; simpl in Hety; try discriminate.
+        inversion Hety; subst ety.
+        destruct (IH ee eq_refl) as (oty & Hoty & Hincl).
+        exists oty. split; [exact Hoty|].
+        intros z Hz. apply in_merge_left. exact (Hincl _ Hz).
+      - (* Eunop *)
+        destruct (IH ety Hety) as (oty & Hoty & Hincl).
+        exists oty. split; [exact Hoty|exact Hincl].
+      - (* Ebinop *)
+        destruct (SECCETYPING.assign_exp_type env e1) as [e1t|] eqn:H1;
+          simpl in Hety; try discriminate.
+        destruct (SECCETYPING.assign_exp_type env e2) as [e2t|] eqn:H2;
+          simpl in Hety; try discriminate.
+        inversion Hety; subst ety.
+        destruct (IH1 e1t eq_refl) as (o1 & Ho1 & Hi1).
+        destruct (IH2 e2t eq_refl) as (o2 & Ho2 & Hi2).
+        exists (o1 ⊔ o2). split.
+        + simpl. rewrite Ho1, Ho2. reflexivity.
+        + intros z Hz.
+          apply in_merge_inv in Hz.
+          destruct Hz as [Hz|Hz].
+          * apply in_merge_left. exact (Hi1 _ Hz).
+          * apply in_merge_right. exact (Hi2 _ Hz).
+    Qed.
+
+    Lemma translate_arg_type_incl:
+      forall memset clkvars ck e ety,
+        SECCETYPING.assign_exp_type env e = Some ety ->
+        exists oty,
+          SECOBCTYPING.assign_exp_type env (translate_arg memset clkvars ck e) = Some oty
+          /\ (forall z, In z oty -> In z ety).
+    Proof.
+      intros memset clkvars ck e ety Hety.
+      destruct e as [c|x ty|e x b|op e ty|op e1 e2 ty];
+        try (eapply translate_exp_type_incl; eauto).
+      (* Evar: either Valid x ty or the compiled variable; same type *)
+      simpl in Hety.
+      destruct (Env.find x env) as [xty|] eqn:Hx; simpl in Hety; try discriminate.
+      inversion Hety; subst ety.
+      exists [xty]. split; [|auto].
+      simpl.
+      destruct (var_on_base_clock memset clkvars ck x); simpl.
+      - rewrite Hx. reflexivity.
+      - unfold tovar. destruct (PS.mem x memset); simpl; rewrite Hx; reflexivity.
+    Qed.
+
+    Lemma translate_args_type_incl:
+      forall memset clkvars ck es tys otys st1 st1' st2 st2',
+        SC.mmap (fun e => option_to_sec (SECCETYPING.assign_exp_type env e))
+          es st1 = OK (tys, st1') ->
+        SC.mmap (fun e => option_to_sec (SECOBCTYPING.assign_exp_type env e))
+          (map (translate_arg memset clkvars ck) es) st2 = OK (otys, st2') ->
+        Forall2 (fun ety oty => forall z, In z oty -> In z ety) tys otys.
+    Proof.
+      intros memset clkvars ck es.
+      induction es as [|e es IH]; intros tys otys st1 st1' st2 st2' Hce Hobc.
+      - simpl in Hce, Hobc.
+        unfold ret in Hce, Hobc.
+        inversion Hce; inversion Hobc; subst. constructor.
+      - simpl in Hce, Hobc.
+        eapply sec_bind_inv in Hce as (ety & sta & Hhd & Hce).
+        eapply sec_bind_inv in Hce as (tys' & stb & Htl & Hret).
+        unfold ret in Hret. inversion Hret; subst tys st1'.
+        eapply sec_bind_inv in Hobc as (oty & stc & Hohd & Hobc).
+        eapply sec_bind_inv in Hobc as (otys' & std & Hotl & Horet).
+        unfold ret in Horet. inversion Horet; subst otys st2'.
+        unfold option_to_sec in Hhd.
+        destruct (SECCETYPING.assign_exp_type env e) as [ety'|] eqn:He;
+          try discriminate.
+        inversion Hhd; subst ety sta.
+        unfold option_to_sec in Hohd.
+        destruct (SECOBCTYPING.assign_exp_type env
+                    (translate_arg memset clkvars ck e)) as [oty'|] eqn:Ho;
+          try discriminate.
+        inversion Hohd; subst oty stc.
+        constructor.
+        + destruct (translate_arg_type_incl memset clkvars ck e ety' He)
+            as (oty'' & Ho'' & Hincl).
+          rewrite Ho in Ho''. inversion Ho''; subst oty''.
+          exact Hincl.
+        + eapply IH; eauto.
     Qed.
 
   End EXPRCORR.
@@ -541,16 +650,14 @@ Module SecStcObcTranslation
   (Import CESyn : CESYNTAX Op)
   (Import SynStc: STCSYNTAX Ids Op CESyn)
   (Import SynObc: OBCSYNTAX Ids Op OpAux)
-  (Import SemObc: OBCSEMANTICS Ids Op OpAux SynObc)
-  (Import TypObc: OBCTYPING Ids Op OpAux SynObc SemObc)
   (Import SIG   : SIGNATURE Ids SC)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn CEIsF CEClo)
   (Import Trans : TRANSLATION Ids Op OpAux CESyn SynStc SynObc)
-  (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SemObc TypObc SIG)
-  <: SECSTCOBCTRANSLATION Ids Op OpAux SC CESyn SynStc SynObc SemObc TypObc SIG CEIsF CEClo SECCETYPING Trans SECOBCTYPING.
+  (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SIG)
+  <: SECSTCOBCTRANSLATION Ids Op OpAux SC CESyn SynStc SynObc SIG CEIsF CEClo SECCETYPING Trans SECOBCTYPING.
 
-Include SECSTCOBCTRANSLATION Ids Op OpAux SC CESyn SynStc SynObc SemObc TypObc SIG CEIsF CEClo SECCETYPING Trans SECOBCTYPING.
+Include SECSTCOBCTRANSLATION Ids Op OpAux SC CESyn SynStc SynObc SIG CEIsF CEClo SECCETYPING Trans SECOBCTYPING.
 
 End SecStcObcTranslation.
