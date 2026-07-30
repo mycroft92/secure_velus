@@ -442,6 +442,58 @@ Module Type SECOBCTYPING
         intros [? ?] Hlen. exact Hlen.
   Qed.
 
+  (** [lhs_join] is the right-nested join of the sources of a
+      constraint list; on a list whose constraints all share one target
+      it is exactly what [collapse] produces. *)
+
+  Fixpoint lhs_join (cns : list constraint) : ST :=
+    match cns with
+    | [] => []
+    | (l, _) :: rest =>
+        match rest with
+        | [] => l
+        | _ => l ⊔ lhs_join rest
+        end
+    end.
+
+  Lemma collapse_same_target:
+    forall cns r,
+      cns <> [] ->
+      Forall (fun c => snd c = r) cns ->
+      collapse cns = [(lhs_join cns, r)].
+  Proof.
+    induction cns as [|[l r0] cns IH]; intros r Hne Hall.
+    - congruence.
+    - assert (Hc : snd (l, r0) = r) by (inversion Hall; auto).
+      assert (Hcs : Forall (fun c => snd c = r) cns) by (inversion Hall; auto).
+      simpl in Hc. subst r0.
+      destruct cns as [|c cns'].
+      + simpl. reflexivity.
+      + assert (Hne' : c :: cns' <> []) by discriminate.
+        specialize (IH r Hne' Hcs).
+        simpl. simpl in IH. rewrite IH.
+        simpl.
+        destruct (st_eq_dec r r) as [_|Habs]; [reflexivity|congruence].
+  Qed.
+
+  Lemma lhs_join_app:
+    forall a b,
+      a <> [] ->
+      b <> [] ->
+      lhs_join (a ++ b) = lhs_join a ⊔ lhs_join b.
+  Proof.
+    induction a as [|[l r] a IH]; intros b Hna Hnb.
+    - congruence.
+    - destruct a as [|c a'].
+      + simpl.
+        destruct b as [|cb b']; [congruence|reflexivity].
+      + assert (Hna' : c :: a' <> []) by discriminate.
+        specialize (IH b Hna' Hnb).
+        simpl in *.
+        rewrite IH.
+        rewrite MergeFacts.merge_assoc. reflexivity.
+  Qed.
+
   (** * Statement constraint generation *)
 
   Section SECSTMTTYPING.

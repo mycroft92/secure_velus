@@ -45,7 +45,7 @@ resume the work cold (with any model/person).
 | 1 | `src/SIF/SecObcTyping.v` | **DONE, compiles** |
 | 2 | `src/SIF/SecObcConstraintExport.v` | **DONE, compiles** — full pipeline wired: extraction entry (`extraction/Extraction.v`), printers (`src/SIF/siflib.ml`), `osif_destination`/`print_obcsif_if` (`src/veluslib.ml`), driver call + `-dsif` writes `<file>.o.sif` (`src/velusmain.ml`); dump shows raw, collapsed, and simplified constraints per class plus name maps |
 | 3 | `src/SIF/SecObcTypingCorrectness.v` | **mostly DONE, compiles** — remaining: scope_key/scope_sec (need NAMEGEN; may live in bridge instead) |
-| 4 | `src/SIF/SecStcObcTranslation.v` (bridge) | **started, compiles** — Control/pc lemmas done (§4 item 1); per-tc correspondence next |
+| 4 | `src/SIF/SecStcObcTranslation.v` (bridge) | **in progress, compiles** — done: Control/pc lemmas, merge ACI helpers (`merge_swap/merge_factor/merge_rotate`), `translate_exp_type_correspondence` (Ewhen-guard absorption via wc), `translate_cexp_constraints` (TcDef core: leaf constraints all target τx, state untouched, `lhs_join` = STC source; uses `lhs_join`/`collapse_same_target`/`lhs_join_app` from SecObcTyping.v). NEXT: per-tc assembly (TcNext/TcReset near-trivial via Control lemma; **TcCall is the hard case** — needs the pc-as-clk valuation argument, template at SecNLusStcTranslation.v ~2100–2330), then signature-level lockstep. |
 | 5 | scheduling equivalence (in 4 or separate) | not started |
 | 6 | `src/SIF/SecObcNonInterference.v` | not started |
 
@@ -60,6 +60,21 @@ needed — direct induction on the final mmap of
 `SIG.generate_constraints`), `generate_stmt_constraints_rhs_singleton`,
 `generate_stmt_constraints_collapse_wf` (wf_constraints of the collapsed
 step+reset raw constraints).
+
+## 1b. Empirical validation (2026-07-30)
+
+`velus -dsif examples/counter_paper.lus` now also writes `counter_paper.o.sif`
+(the Obc dump). On both classes of that example the **post-simplify Obc
+signature constraints are syntactically identical to the STC ones**, while
+the pre-simplify sets differ exactly as the plan predicts: merge leaves are
+split then collapsed; reset-method constraints `[rst] <= state/mem` are
+absorbed; step-call constraints carry the extra `rst` from pc-as-clk and a
+`state_ty` instead of `rst_ty`/`rst_inst`, all reconciled by `simplify`
+substitution. This is strong evidence for the bridge target
+(`signatures_preserved`, plausibly even syntactic equality post-simplify).
+Also note: the dump shows a **never-reset instance** (`spd`) getting its
+state constraint `[rst] <= state` only from the reset method — the case
+flagged as plan blocker B5 behaves as predicted.
 
 ## 2. What phase 1 contains (`SecObcTyping.v`)
 

@@ -141,6 +141,271 @@ Module Type SECSTCOBCTRANSLATION
 
   End CONTROLPC.
 
+  (** * Merge ACI helpers *)
+
+  Lemma merge_swap:
+    forall a b c, a ⊔ (b ⊔ c) = b ⊔ (a ⊔ c).
+  Proof.
+    intros a b c.
+    rewrite <- MergeFacts.merge_assoc.
+    rewrite (MergeFacts.merge_comm a b).
+    apply MergeFacts.merge_assoc.
+  Qed.
+
+  (** * Expression type correspondence
+
+      [translate_exp] drops [Ewhen] guards (the clock is compiled by
+      [Control] at the statement level).  For a well-clocked expression
+      the dropped guards are exactly clock variables of the expression's
+      clock, so joined with the clock type nothing is lost: the CE
+      security type and the Obc security type of the translation agree
+      modulo the clock type. *)
+
+  Section EXPRCORR.
+    Variable env: Env.t ident.
+
+    Lemma translate_exp_type_correspondence:
+      forall memset vars e ck b ckty ety,
+        CEClo.wc_exp vars e ck ->
+        SECCETYPING.assign_clk_type env b ck = Some ckty ->
+        SECCETYPING.assign_exp_type env e = Some ety ->
+        exists oty,
+          SECOBCTYPING.assign_exp_type env (translate_exp memset e) = Some oty
+          /\ ckty ⊔ ety = ckty ⊔ oty.
+    Proof.
+      intros memset vars e ck b ckty ety Hwc.
+      revert ckty ety.
+      induction Hwc as [c|x ck ty Hin|e x b' ck Hwc IH Hin|op e ck ty Hwc IH
+                        |op e1 e2 ck ty Hwc1 IH1 Hwc2 IH2];
+        intros ckty ety Hck Hety; simpl in Hety.
+      - (* Econst *)
+        inversion Hety; subst ety.
+        exists []. split; [reflexivity|reflexivity].
+      - (* Evar *)
+        destruct (Env.find x env) as [xty|] eqn:Hx; simpl in Hety; try discriminate.
+        inversion Hety; subst ety.
+        exists [xty]. split; [|reflexivity].
+        simpl. unfold tovar.
+        destruct (PS.mem x memset); simpl; rewrite Hx; reflexivity.
+      - (* Ewhen *)
+        destruct (SECCETYPING.assign_exp_type env e) as [Ee|] eqn:He;
+          simpl in Hety; try discriminate.
+        destruct (Env.find x env) as [xty|] eqn:Hx; simpl in Hety; try discriminate.
+        inversion Hety; subst ety.
+        simpl in Hck.
+        destruct (SECCETYPING.assign_clk_type env b ck) as [A|] eqn:HA;
+          simpl in Hck; try discriminate.
+        rewrite Hx in Hck. simpl in Hck.
+        inversion Hck; subst ckty.
+        destruct (IH A Ee eq_refl eq_refl) as (oty & Hoty & Heq).
+        exists oty. split; [simpl; exact Hoty|].
+        rewrite MergeFacts.merge_assoc.
+        rewrite (merge_swap [xty] Ee [xty]).
+        rewrite MergeFacts.merge_refl.
+        rewrite <- MergeFacts.merge_assoc.
+        rewrite Heq.
+        rewrite MergeFacts.merge_assoc.
+        rewrite (MergeFacts.merge_comm oty [xty]).
+        rewrite <- MergeFacts.merge_assoc.
+        reflexivity.
+      - (* Eunop *)
+        destruct (IH ckty ety Hck Hety) as (oty & Hoty & Heq).
+        exists oty. split; [simpl; exact Hoty|exact Heq].
+      - (* Ebinop *)
+        destruct (SECCETYPING.assign_exp_type env e1) as [E1|] eqn:He1;
+          simpl in Hety; try discriminate.
+        destruct (SECCETYPING.assign_exp_type env e2) as [E2|] eqn:He2;
+          simpl in Hety; try discriminate.
+        inversion Hety; subst ety.
+        destruct (IH1 ckty E1 Hck eq_refl) as (O1 & HO1 & Heq1).
+        destruct (IH2 ckty E2 Hck eq_refl) as (O2 & HO2 & Heq2).
+        exists (O1 ⊔ O2). split.
+        + simpl. rewrite HO1, HO2. reflexivity.
+        + rewrite <- MergeFacts.merge_assoc.
+          rewrite Heq1.
+          rewrite MergeFacts.merge_assoc.
+          rewrite (MergeFacts.merge_comm O1 E2).
+          rewrite <- MergeFacts.merge_assoc.
+          rewrite Heq2.
+          rewrite MergeFacts.merge_assoc.
+          rewrite (MergeFacts.merge_comm O2 O1).
+          reflexivity.
+    Qed.
+
+  End EXPRCORR.
+
+  Lemma merge_factor:
+    forall p a b, (p ⊔ a) ⊔ (p ⊔ b) = p ⊔ (a ⊔ b).
+  Proof.
+    intros p a b.
+    rewrite MergeFacts.merge_assoc.
+    rewrite (merge_swap a p b).
+    rewrite <- MergeFacts.merge_assoc.
+    rewrite MergeFacts.merge_refl.
+    reflexivity.
+  Qed.
+
+  Lemma merge_rotate:
+    forall a b c, (a ⊔ b) ⊔ c = (a ⊔ c) ⊔ b.
+  Proof.
+    intros a b c.
+    rewrite MergeFacts.merge_assoc.
+    rewrite (MergeFacts.merge_comm b c).
+    rewrite <- MergeFacts.merge_assoc.
+    reflexivity.
+  Qed.
+
+  (** * Compiled control expressions
+
+      [translate_cexp x ce] compiles a control expression into nested
+      [Ifte]s with [Assign x] leaves.  Under the clock-extended pc every
+      generated constraint targets [τ x], the state is untouched, and
+      the join of all leaf sources is exactly the STC constraint source
+      [(pc0 ⊔ ckty) ⊔ cety]: merge/ite conditions re-appear as pc
+      extensions, and dropped [Ewhen] guards are absorbed by the clock
+      type ([translate_exp_type_correspondence]). *)
+
+  Section TCDEFCORR.
+    Variable G: secglobal.
+    Variable env: Env.t ident.
+    Variable state_env: Env.t ident.
+
+    Lemma translate_cexp_constraints:
+      forall memset vars x ce ck b pc0 ckty cety xty cns st st',
+        CEClo.wc_cexp vars ce ck ->
+        SECCETYPING.assign_clk_type env b ck = Some ckty ->
+        SECCETYPING.assign_cexp_type env ce = Some cety ->
+        Env.find x env = Some xty ->
+        generate_stmt_constraints G env state_env (pc0 ⊔ ckty)
+          (translate_cexp memset x ce) st = OK (cns, st') ->
+        st' = st
+        /\ cns <> []
+        /\ Forall (fun c => snd c = [xty]) cns
+        /\ lhs_join cns = (pc0 ⊔ ckty) ⊔ cety.
+    Proof.
+      intros memset vars x ce.
+      induction ce as [y cet IHt cef IHf|e cet IHt cef IHf|le];
+        intros ck b pc0 ckty cety xty cns st st' Hwc Hck Hcety Hx Hgen;
+        inversion Hwc as [y' t' f' ck' Hiny Hwct Hwcf
+                         |e' t' f' ck' Hwce Hwct Hwcf
+                         |le' ck' Hwce]; subst.
+      - (* Emerge *)
+        simpl in Hcety.
+        destruct (Env.find y env) as [yty|] eqn:Hy; simpl in Hcety; try discriminate.
+        destruct (SECCETYPING.assign_cexp_type env cet) as [tty|] eqn:Htty;
+          simpl in Hcety; try discriminate.
+        destruct (SECCETYPING.assign_cexp_type env cef) as [fty|] eqn:Hfty;
+          simpl in Hcety; try discriminate.
+        inversion Hcety; subst cety.
+        simpl in Hgen.
+        unfold bool_var, tovar in Hgen.
+        assert (Hcond :
+                  SECOBCTYPING.assign_exp_type env
+                    (if PS.mem y memset then State y bool_type else Var y bool_type)
+                  = Some [yty]).
+        { destruct (PS.mem y memset); simpl; rewrite Hy; reflexivity. }
+        rewrite Hcond in Hgen.
+        unfold option_to_sec in Hgen.
+        eapply sec_bind_inv in Hgen as (ety0 & st0 & Hety0 & Hgen).
+        unfold ret in Hety0. inversion Hety0; subst ety0 st0.
+        eapply sec_bind_inv in Hgen as (c1 & st1 & Hgen1 & Hgen).
+        eapply sec_bind_inv in Hgen as (c2 & st2 & Hgen2 & Hret).
+        unfold ret in Hret. inversion Hret; subst cns st'.
+        assert (Hckt : SECCETYPING.assign_clk_type env b (Con ck y true)
+                       = Some (ckty ⊔ [yty])).
+        { simpl. rewrite Hck. simpl. rewrite Hy. reflexivity. }
+        assert (Hckf : SECCETYPING.assign_clk_type env b (Con ck y false)
+                       = Some (ckty ⊔ [yty])).
+        { simpl. rewrite Hck. simpl. rewrite Hy. reflexivity. }
+        rewrite MergeFacts.merge_assoc in Hgen1.
+        rewrite MergeFacts.merge_assoc in Hgen2.
+        destruct (IHt _ b pc0 (ckty ⊔ [yty]) tty xty c1 st st1
+                    Hwct Hckt eq_refl Hx Hgen1) as (Hst1 & Hne1 & Hall1 & Hjoin1).
+        subst st1.
+        destruct (IHf _ b pc0 (ckty ⊔ [yty]) fty xty c2 st st2
+                    Hwcf Hckf eq_refl Hx Hgen2) as (Hst2 & Hne2 & Hall2 & Hjoin2).
+        subst st2.
+        split; [reflexivity|].
+        split; [destruct c1; [congruence|discriminate]|].
+        split; [apply Forall_app; split; assumption|].
+        rewrite (lhs_join_app c1 c2 Hne1 Hne2).
+        rewrite Hjoin1, Hjoin2.
+        rewrite merge_factor.
+        change ((pc0 ⊔ (ckty ⊔ [yty])) ⊔ (tty ⊔ fty)
+                = (pc0 ⊔ ckty) ⊔ (([yty] ⊔ tty) ⊔ fty)).
+        rewrite <- (MergeFacts.merge_assoc pc0 ckty [yty]).
+        rewrite (MergeFacts.merge_assoc (pc0 ⊔ ckty) [yty] (tty ⊔ fty)).
+        rewrite (MergeFacts.merge_assoc [yty] tty fty).
+        reflexivity.
+      - (* Eite *)
+        simpl in Hcety.
+        destruct (SECCETYPING.assign_exp_type env e) as [ety|] eqn:Hety;
+          simpl in Hcety; try discriminate.
+        destruct (SECCETYPING.assign_cexp_type env cet) as [tty|] eqn:Htty;
+          simpl in Hcety; try discriminate.
+        destruct (SECCETYPING.assign_cexp_type env cef) as [fty|] eqn:Hfty;
+          simpl in Hcety; try discriminate.
+        inversion Hcety; subst cety.
+        destruct (translate_exp_type_correspondence env memset vars e ck b ckty ety
+                    Hwce Hck Hety) as (oty & Hoty & Hoeq).
+        simpl in Hgen.
+        rewrite Hoty in Hgen.
+        unfold option_to_sec in Hgen.
+        eapply sec_bind_inv in Hgen as (ety0 & st0 & Hety0 & Hgen).
+        unfold ret in Hety0. inversion Hety0; subst ety0 st0.
+        eapply sec_bind_inv in Hgen as (c1 & st1 & Hgen1 & Hgen).
+        eapply sec_bind_inv in Hgen as (c2 & st2 & Hgen2 & Hret).
+        unfold ret in Hret. inversion Hret; subst cns st'.
+        rewrite merge_rotate in Hgen1.
+        rewrite merge_rotate in Hgen2.
+        destruct (IHt _ b (pc0 ⊔ oty) ckty tty xty c1 st st1
+                    Hwct Hck eq_refl Hx Hgen1) as (Hst1 & Hne1 & Hall1 & Hjoin1).
+        subst st1.
+        destruct (IHf _ b (pc0 ⊔ oty) ckty fty xty c2 st st2
+                    Hwcf Hck eq_refl Hx Hgen2) as (Hst2 & Hne2 & Hall2 & Hjoin2).
+        subst st2.
+        split; [reflexivity|].
+        split; [destruct c1; [congruence|discriminate]|].
+        split; [apply Forall_app; split; assumption|].
+        rewrite (lhs_join_app c1 c2 Hne1 Hne2).
+        rewrite Hjoin1, Hjoin2.
+        rewrite (merge_rotate pc0 oty ckty).
+        rewrite merge_factor.
+        rewrite (MergeFacts.merge_assoc pc0 ckty oty).
+        rewrite (MergeFacts.merge_assoc pc0 (ckty ⊔ oty) (tty ⊔ fty)).
+        rewrite (MergeFacts.merge_assoc pc0 ckty ((ety ⊔ tty) ⊔ fty)).
+        f_equal.
+        rewrite <- (MergeFacts.merge_assoc (ckty ⊔ oty) tty fty).
+        rewrite <- Hoeq.
+        rewrite (MergeFacts.merge_assoc ckty ety tty).
+        rewrite (MergeFacts.merge_assoc ckty (ety ⊔ tty) fty).
+        reflexivity.
+      - (* Eexp *)
+        simpl in Hcety.
+        destruct (translate_exp_type_correspondence env memset vars le ck b ckty cety
+                    Hwce Hck Hcety) as (oty & Hoty & Hoeq).
+        simpl in Hgen.
+        rewrite Hoty in Hgen.
+        unfold option_to_sec in Hgen.
+        eapply sec_bind_inv in Hgen as (ety0 & st0 & Hety0 & Hgen).
+        unfold ret in Hety0. inversion Hety0; subst ety0 st0.
+        eapply sec_bind_inv in Hgen as (xty0 & st1 & Hfind & Hret).
+        unfold find_env in Hfind.
+        rewrite Hx in Hfind.
+        unfold ret in Hfind. inversion Hfind; subst xty0 st1.
+        unfold ret in Hret. inversion Hret; subst cns st'.
+        split; [reflexivity|].
+        split; [discriminate|].
+        split; [constructor; [reflexivity|constructor]|].
+        simpl.
+        rewrite MergeFacts.merge_assoc.
+        rewrite MergeFacts.merge_assoc.
+        f_equal.
+        exact (eq_sym Hoeq).
+    Qed.
+
+  End TCDEFCORR.
+
 End SECSTCOBCTRANSLATION.
 
 Module SecStcObcTranslation
