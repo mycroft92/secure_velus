@@ -15,14 +15,25 @@ From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import CoreExpr.CEIsFree.
 From Velus Require Import CoreExpr.CEClocking.
 From Velus Require Import Stc.StcSyntax.
+From Velus Require Import Stc.StcIsLast.
+From Velus Require Import Stc.StcIsVariable.
+From Velus Require Import Stc.StcIsDefined.
+From Velus Require Import Stc.StcIsSystem.
+From Velus Require Import Stc.StcOrdered.
+From Velus Require Import Stc.StcIsFree.
+From Velus Require Import Stc.StcClocking.
 From Velus Require Import Obc.ObcSyntax.
 From Velus Require Import StcToObc.Translation.
+From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SymTypes.
+From Velus Require Import SIF.SecTypes.
 From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF.NameInterface.
 From Velus Require Import SIF.SecCETyping.
+From Velus Require Import SIF.SecSTCTyping.
 From Velus Require Import SIF.SecObcTyping.
+From Velus Require Import SIF.SecObcTypingCorrectness.
 
 From Coq Require Import String.
 From Coq Require Import List.
@@ -37,12 +48,26 @@ Module Type SECSTCOBCTRANSLATION
   (Import CESyn : CESYNTAX Op)
   (Import SynStc: STCSYNTAX Ids Op CESyn)
   (Import SynObc: OBCSYNTAX Ids Op OpAux)
+  (Import Lat   : Lattice)
+  (Import SecT  : SECTYPES Lat)
   (Import SIG   : SIGNATURE Ids SC)
+  (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn CEIsF CEClo)
+  (Import LastStc  : STCISLAST Ids Op CESyn SynStc)
+  (Import VarStc   : STCISVARIABLE Ids Op CESyn SynStc)
+  (Import DefStc   : STCISDEFINED Ids Op CESyn SynStc VarStc LastStc)
+  (Import SystStc  : STCISSYSTEM Ids Op CESyn SynStc)
+  (Import OrdStc   : STCORDERED Ids Op CESyn SynStc SystStc)
+  (Import IsFStc   : STCISFREE Ids Op CESyn SynStc CEIsF)
+  (Import CloStc   : STCCLOCKING Ids Op CESyn SynStc LastStc VarStc DefStc SystStc OrdStc CEClo)
+  (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo
+                           SECCETYPING LastStc VarStc DefStc SystStc OrdStc IsFStc CloStc)
   (Import Trans : TRANSLATION Ids Op OpAux CESyn SynStc SynObc)
-  (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SIG).
+  (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SIG)
+  (Import SECOBCTYPINGCORRECTNESS :
+     SECOBCTYPINGCORRECTNESS Ids Op OpAux SC SynObc Lat SecT SIG SIGPROOFS SECOBCTYPING).
   Import SECMONADNotations.
 
   Section CONTROLPC.
@@ -81,7 +106,7 @@ Module Type SECSTCOBCTRANSLATION
         destruct (Env.find x env) as [ty|] eqn:Hx; simpl in Hassign;
           try discriminate.
         inversion Hassign; subst ckty.
-        rewrite (IH ckty' pc0 eq_refl).
+        rewrite (IH ckty' pc0 Logic.eq_refl).
         f_equal.
         apply MergeFacts.merge_assoc.
     Qed.
@@ -202,7 +227,7 @@ Module Type SECSTCOBCTRANSLATION
           simpl in Hck; try discriminate.
         rewrite Hx in Hck. simpl in Hck.
         inversion Hck; subst ckty.
-        destruct (IH A Ee eq_refl eq_refl) as (oty & Hoty & Heq).
+        destruct (IH A Ee Logic.eq_refl Logic.eq_refl) as (oty & Hoty & Heq).
         exists oty. split; [simpl; exact Hoty|].
         rewrite MergeFacts.merge_assoc.
         rewrite (merge_swap [xty] Ee [xty]).
@@ -222,8 +247,8 @@ Module Type SECSTCOBCTRANSLATION
         destruct (SECCETYPING.assign_exp_type env e2) as [E2|] eqn:He2;
           simpl in Hety; try discriminate.
         inversion Hety; subst ety.
-        destruct (IH1 ckty E1 Hck eq_refl) as (O1 & HO1 & Heq1).
-        destruct (IH2 ckty E2 Hck eq_refl) as (O2 & HO2 & Heq2).
+        destruct (IH1 ckty E1 Hck Logic.eq_refl) as (O1 & HO1 & Heq1).
+        destruct (IH2 ckty E2 Hck Logic.eq_refl) as (O2 & HO2 & Heq2).
         exists (O1 ⊔ O2). split.
         + simpl. rewrite HO1, HO2. reflexivity.
         + rewrite <- MergeFacts.merge_assoc.
@@ -269,7 +294,7 @@ Module Type SECSTCOBCTRANSLATION
           simpl in Hety; try discriminate.
         destruct (Env.find x env) as [xty|] eqn:Hx; simpl in Hety; try discriminate.
         inversion Hety; subst ety.
-        destruct (IH ee eq_refl) as (oty & Hoty & Hincl).
+        destruct (IH ee Logic.eq_refl) as (oty & Hoty & Hincl).
         exists oty. split; [exact Hoty|].
         intros z Hz. apply in_merge_left. exact (Hincl _ Hz).
       - (* Eunop *)
@@ -281,8 +306,8 @@ Module Type SECSTCOBCTRANSLATION
         destruct (SECCETYPING.assign_exp_type env e2) as [e2t|] eqn:H2;
           simpl in Hety; try discriminate.
         inversion Hety; subst ety.
-        destruct (IH1 e1t eq_refl) as (o1 & Ho1 & Hi1).
-        destruct (IH2 e2t eq_refl) as (o2 & Ho2 & Hi2).
+        destruct (IH1 e1t Logic.eq_refl) as (o1 & Ho1 & Hi1).
+        destruct (IH2 e2t Logic.eq_refl) as (o2 & Ho2 & Hi2).
         exists (o1 ⊔ o2). split.
         + simpl. rewrite Ho1, Ho2. reflexivity.
         + intros z Hz.
@@ -427,7 +452,7 @@ Module Type SECSTCOBCTRANSLATION
         unfold bool_var, tovar in Hgen.
         assert (Hcond :
                   SECOBCTYPING.assign_exp_type env
-                    (if PS.mem y memset then State y bool_type else Var y bool_type)
+                    (if PS.mem y memset then SynObc.State y bool_type else SynObc.Var y bool_type)
                   = Some [yty]).
         { destruct (PS.mem y memset); simpl; rewrite Hy; reflexivity. }
         rewrite Hcond in Hgen.
@@ -446,10 +471,10 @@ Module Type SECSTCOBCTRANSLATION
         rewrite MergeFacts.merge_assoc in Hgen1.
         rewrite MergeFacts.merge_assoc in Hgen2.
         destruct (IHt _ b pc0 (ckty ⊔ [yty]) tty xty c1 st st1
-                    Hwct Hckt eq_refl Hx Hgen1) as (Hst1 & Hne1 & Hall1 & Hjoin1).
+                    Hwct Hckt Logic.eq_refl Hx Hgen1) as (Hst1 & Hne1 & Hall1 & Hjoin1).
         subst st1.
         destruct (IHf _ b pc0 (ckty ⊔ [yty]) fty xty c2 st st2
-                    Hwcf Hckf eq_refl Hx Hgen2) as (Hst2 & Hne2 & Hall2 & Hjoin2).
+                    Hwcf Hckf Logic.eq_refl Hx Hgen2) as (Hst2 & Hne2 & Hall2 & Hjoin2).
         subst st2.
         split; [reflexivity|].
         split; [destruct c1; [congruence|discriminate]|].
@@ -486,10 +511,10 @@ Module Type SECSTCOBCTRANSLATION
         rewrite merge_rotate in Hgen1.
         rewrite merge_rotate in Hgen2.
         destruct (IHt _ b (pc0 ⊔ oty) ckty tty xty c1 st st1
-                    Hwct Hck eq_refl Hx Hgen1) as (Hst1 & Hne1 & Hall1 & Hjoin1).
+                    Hwct Hck Logic.eq_refl Hx Hgen1) as (Hst1 & Hne1 & Hall1 & Hjoin1).
         subst st1.
         destruct (IHf _ b (pc0 ⊔ oty) ckty fty xty c2 st st2
-                    Hwcf Hck eq_refl Hx Hgen2) as (Hst2 & Hne2 & Hall2 & Hjoin2).
+                    Hwcf Hck Logic.eq_refl Hx Hgen2) as (Hst2 & Hne2 & Hall2 & Hjoin2).
         subst st2.
         split; [reflexivity|].
         split; [destruct c1; [congruence|discriminate]|].
@@ -506,7 +531,7 @@ Module Type SECSTCOBCTRANSLATION
         f_equal.
         rewrite <- (MergeFacts.merge_assoc [rst_ty] pc0 ckty).
         apply merge_cong_under.
-        exact (eq_sym Hoeq).
+        exact (Logic.eq_sym Hoeq).
       - (* Eexp *)
         simpl in Hcety.
         destruct (translate_exp_type_correspondence env memset vars le ck b ckty cety
@@ -529,7 +554,7 @@ Module Type SECSTCOBCTRANSLATION
         cbn [lhs_join].
         rewrite <- (MergeFacts.merge_assoc [rst_ty] pc0 ckty).
         apply merge_cong_under.
-        exact (eq_sym Hoeq).
+        exact (Logic.eq_sym Hoeq).
     Qed.
 
   End TCDEFCORR.
@@ -590,7 +615,7 @@ Module Type SECSTCOBCTRANSLATION
              Hwc Hck Hety Hx Hgen.
       unfold translate_tc in Hgen.
       rewrite (generate_stmt_constraints_Control_assign
-                 G env state_env rst_ty memset ck (AssignSt x (translate_exp memset e))
+                 G env state_env rst_ty memset ck (SynObc.AssignSt x (translate_exp memset e))
                  b ckty pc0 st Hck) in Hgen.
       destruct (translate_exp_type_correspondence env memset vars e ck b ckty ety
                   Hwc Hck Hety) as (oty & Hoty & Hoeq).
@@ -610,7 +635,7 @@ Module Type SECSTCOBCTRANSLATION
       do 2 f_equal.
       rewrite <- (MergeFacts.merge_assoc [rst_ty] pc0 ckty).
       apply merge_cong_under.
-      exact (eq_sym Hoeq).
+      exact (Logic.eq_sym Hoeq).
     Qed.
 
     Lemma translate_tcreset_constraints:
@@ -626,7 +651,7 @@ Module Type SECSTCOBCTRANSLATION
              Hck Hsty Hgen.
       unfold translate_tc in Hgen.
       rewrite (generate_stmt_constraints_Control_assign
-                 G env state_env rst_ty memset ck (Call [] f s reset [])
+                 G env state_env rst_ty memset ck (SynObc.Call [] f s reset [])
                  b ckty pc0 st Hck) in Hgen.
       cbn [generate_stmt_constraints] in Hgen.
       rewrite ident_eqb_refl in Hgen.
@@ -640,6 +665,195 @@ Module Type SECSTCOBCTRANSLATION
 
   End TCCORR.
 
+  (** * Per-trconstr security preservation
+
+      With the entry pc of the step method seeded at [[clk_ty]], the pc at
+      a site guarded by clock [ck] is exactly the STC clock type, so for
+      the three local trconstrs the Obc constraints are (after [collapse],
+      which is satisfaction-neutral) *the same constraints* the STC
+      generator produces.  [preserves_on] then holds with [dlt' = dlt].
+
+      [TcCall] is the remaining case; it is genuinely semantic (the two
+      sides instantiate different callee signatures) and is treated in
+      `Stc2ObcSIF_tccall.md`. *)
+
+  Section TCPRESERV.
+    Variable G1: SIG.secglobal.        (* STC signatures *)
+    Variable G2: SIG.secglobal.        (* Obc signatures *)
+    Variable env: Env.t ident.
+    Variable reset_env: Env.t ident.
+    Variable state_env: Env.t ident.
+    Variable clk_ty rst_ty: ident.
+
+    Lemma tcdef_preserv:
+      forall scope memset clkvars vars x ck ce nconst sconst st1 st1' st2 st2',
+        CEClo.wc_cexp vars ce ck ->
+        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
+          (SynStc.TcDef x ck ce) st1 = OK (nconst, st1') ->
+        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+          (translate_tc memset clkvars (SynStc.TcDef x ck ce)) st2 = OK (sconst, st2') ->
+        preserves_on scope nconst sconst.
+    Proof.
+      intros scope memset clkvars vars x ck ce nconst sconst st1 st1' st2 st2'
+             Hwc Hstc Hobc.
+      (* invert the STC generator *)
+      simpl in Hstc.
+      eapply sec_bind_inv in Hstc as (ckty & sta & Hck & Hstc).
+      eapply sec_bind_inv in Hstc as (cety & stb & Hce & Hstc).
+      eapply sec_bind_inv in Hstc as (xty & stc & Hx & Hret).
+      unfold ret in Hret. inversion Hret; subst nconst st1'.
+      unfold option_to_sec in Hck.
+      destruct (SECCETYPING.assign_clk_type env clk_ty ck) as [ckty'|] eqn:Hckopt;
+        try discriminate.
+      inversion Hck; subst ckty sta.
+      unfold option_to_sec in Hce.
+      destruct (SECCETYPING.assign_cexp_type env ce) as [cety'|] eqn:Hceopt;
+        try discriminate.
+      inversion Hce; subst cety stb.
+      unfold SC.find_env in Hx.
+      destruct (Env.find x env) as [xty'|] eqn:Hxopt; try discriminate.
+      unfold ret in Hx. inversion Hx; subst xty stc.
+      (* the Obc side, at entry pc [clk_ty] = [] ⊔ [clk_ty] *)
+      rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
+      destruct (translate_tcdef_constraints G2 env state_env rst_ty
+                  memset clkvars vars x ce ck [] clk_ty ckty' cety' xty'
+                  sconst st2 st2' Hwc Hckopt Hceopt Hxopt Hobc)
+        as (Hst & Hcoll).
+      rewrite (MergeFacts.merge_nil2 ckty') in Hcoll.
+      (* satisfaction transfers: collapse is neutral *)
+      apply preserves_on_from_entailment.
+      intros dlt Hsat.
+      apply collapse_satisfaction.
+      rewrite Hcoll. exact Hsat.
+    Qed.
+
+    Lemma tcnext_preserv:
+      forall scope memset clkvars vars x ck e nconst sconst st1 st1' st2 st2',
+        CEClo.wc_exp vars e ck ->
+        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
+          (SynStc.TcNext x ck e) st1 = OK (nconst, st1') ->
+        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+          (translate_tc memset clkvars (SynStc.TcNext x ck e)) st2 = OK (sconst, st2') ->
+        preserves_on scope nconst sconst.
+    Proof.
+      intros scope memset clkvars vars x ck e nconst sconst st1 st1' st2 st2'
+             Hwc Hstc Hobc.
+      simpl in Hstc.
+      eapply sec_bind_inv in Hstc as (ckty & sta & Hck & Hstc).
+      eapply sec_bind_inv in Hstc as (ety & stb & He & Hstc).
+      eapply sec_bind_inv in Hstc as (xty & stc & Hx & Hret).
+      unfold ret in Hret. inversion Hret; subst nconst st1'.
+      unfold option_to_sec in Hck.
+      destruct (SECCETYPING.assign_clk_type env clk_ty ck) as [ckty'|] eqn:Hckopt;
+        try discriminate.
+      inversion Hck; subst ckty sta.
+      unfold option_to_sec in He.
+      destruct (SECCETYPING.assign_exp_type env e) as [ety'|] eqn:Heopt;
+        try discriminate.
+      inversion He; subst ety stb.
+      unfold SC.find_env in Hx.
+      destruct (Env.find x env) as [xty'|] eqn:Hxopt; try discriminate.
+      unfold ret in Hx. inversion Hx; subst xty stc.
+      rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
+      destruct (translate_tcnext_constraints G2 env state_env rst_ty
+                  memset clkvars vars x e ck [] clk_ty ckty' ety' xty'
+                  sconst st2 st2' Hwc Hckopt Heopt Hxopt Hobc)
+        as (Hst & Hcns).
+      rewrite (MergeFacts.merge_nil2 ckty') in Hcns.
+      subst sconst.
+      apply preserves_on_refl.
+    Qed.
+
+    Lemma tcreset_preserv:
+      forall scope memset clkvars s ck f nconst sconst st1 st1' st2 st2',
+        (* the reset instance and the state instance carry the same value *)
+        Env.find s reset_env = Env.find s state_env ->
+        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
+          (SynStc.TcReset s ck f) st1 = OK (nconst, st1') ->
+        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+          (translate_tc memset clkvars (SynStc.TcReset s ck f)) st2 = OK (sconst, st2') ->
+        preserves_on scope nconst sconst.
+    Proof.
+      intros scope memset clkvars s ck f nconst sconst st1 st1' st2 st2'
+             Heq Hstc Hobc.
+      rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
+      destruct ck as [|ck0 r0 b0].
+      - (* Cbase *)
+        simpl in Hstc.
+        eapply sec_bind_inv in Hstc as (rckty & sta & Hck & Hstc).
+        eapply sec_bind_inv in Hstc as (rinst & stb & Hr & Hret).
+        unfold ret in Hret. inversion Hret; subst nconst st1'.
+        unfold option_to_sec in Hck. simpl in Hck.
+        inversion Hck; subst rckty sta.
+        unfold SC.find_env in Hr.
+        destruct (Env.find s reset_env) as [rinst'|] eqn:Hrfind; try discriminate.
+        unfold ret in Hr. inversion Hr; subst rinst stb.
+        destruct (translate_tcreset_constraints G2 env state_env rst_ty
+                    memset clkvars s Cbase f [] clk_ty [clk_ty] rinst'
+                    sconst st2 st2' Logic.eq_refl ltac:(congruence) Hobc)
+          as (Hst & Hcns).
+        rewrite (MergeFacts.merge_nil2 [clk_ty]) in Hcns.
+        subst sconst.
+        apply preserves_on_refl.
+      - (* Con: both branches of the boolean *)
+        destruct b0.
+        + simpl in Hstc.
+          eapply sec_bind_inv in Hstc as (rty & sta & Hrty & Hstc).
+          eapply sec_bind_inv in Hstc as (rstckty & stb & Hck & Hstc).
+          eapply sec_bind_inv in Hstc as (rinst & stc & Hr & Hret).
+          unfold ret in Hret. inversion Hret; subst nconst st1'.
+          unfold SC.find_env in Hrty.
+          destruct (Env.find r0 env) as [rty'|] eqn:Hr0; try discriminate.
+          unfold ret in Hrty. inversion Hrty; subst rty sta.
+          unfold option_to_sec in Hck.
+          destruct (SECCETYPING.assign_clk_type env clk_ty ck0) as [rstckty'|] eqn:Hckopt;
+            try discriminate.
+          inversion Hck; subst rstckty stb.
+          unfold SC.find_env in Hr.
+          destruct (Env.find s reset_env) as [rinst'|] eqn:Hrfind; try discriminate.
+          unfold ret in Hr. inversion Hr; subst rinst stc.
+          assert (Hckcon : SECCETYPING.assign_clk_type env clk_ty (Con ck0 r0 true)
+                           = Some (rstckty' ⊔ [rty'])).
+          { simpl. rewrite Hckopt. simpl. rewrite Hr0. reflexivity. }
+          destruct (translate_tcreset_constraints G2 env state_env rst_ty
+                      memset clkvars s (Con ck0 r0 true) f [] clk_ty
+                      (rstckty' ⊔ [rty']) rinst'
+                      sconst st2 st2' Hckcon ltac:(congruence) Hobc)
+            as (Hst & Hcns).
+          rewrite (MergeFacts.merge_nil2 (rstckty' ⊔ [rty'])) in Hcns.
+          subst sconst.
+          apply preserves_on_from_entailment.
+          intros dlt Hsat.
+          rewrite (MergeFacts.merge_comm rstckty' [rty']).
+          exact Hsat.
+        + simpl in Hstc.
+          eapply sec_bind_inv in Hstc as (rckty & sta & Hck & Hstc).
+          eapply sec_bind_inv in Hstc as (rinst & stb & Hr & Hret).
+          unfold ret in Hret. inversion Hret; subst nconst st1'.
+          unfold option_to_sec in Hck.
+          destruct (SECCETYPING.assign_clk_type env clk_ty ck0) as [ckty0|] eqn:Eck;
+            cbv beta in Hck; simpl in Hck; try discriminate.
+          destruct (Env.find r0 env) as [rty0|] eqn:Er0;
+            cbv beta in Hck; simpl in Hck; try discriminate.
+          unfold ret in Hck. inversion Hck; subst rckty sta.
+          assert (Hckopt : SECCETYPING.assign_clk_type env clk_ty (Con ck0 r0 false)
+                           = Some (ckty0 ⊔ [rty0])).
+          { simpl. rewrite Eck. simpl. rewrite Er0. reflexivity. }
+          unfold SC.find_env in Hr.
+          destruct (Env.find s reset_env) as [rinst'|] eqn:Hrfind; try discriminate.
+          unfold ret in Hr. inversion Hr; subst rinst stb.
+          destruct (translate_tcreset_constraints G2 env state_env rst_ty
+                      memset clkvars s (Con ck0 r0 false) f [] clk_ty
+                      (ckty0 ⊔ [rty0]) rinst'
+                      sconst st2 st2' Hckopt ltac:(congruence) Hobc)
+            as (Hst & Hcns).
+          rewrite (MergeFacts.merge_nil2 (ckty0 ⊔ [rty0])) in Hcns.
+          subst sconst.
+          apply preserves_on_refl.
+    Qed.
+
+  End TCPRESERV.
+
 End SECSTCOBCTRANSLATION.
 
 Module SecStcObcTranslation
@@ -650,14 +864,32 @@ Module SecStcObcTranslation
   (Import CESyn : CESYNTAX Op)
   (Import SynStc: STCSYNTAX Ids Op CESyn)
   (Import SynObc: OBCSYNTAX Ids Op OpAux)
+  (Import Lat   : Lattice)
+  (Import SecT  : SECTYPES Lat)
   (Import SIG   : SIGNATURE Ids SC)
+  (Import SIGPROOFS : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import CEIsF : CEISFREE Ids Op CESyn)
   (Import CEClo : CECLOCKING Ids Op CESyn)
   (Import SECCETYPING: SECCETYPING Ids Op CESyn CEIsF CEClo)
+  (Import LastStc  : STCISLAST Ids Op CESyn SynStc)
+  (Import VarStc   : STCISVARIABLE Ids Op CESyn SynStc)
+  (Import DefStc   : STCISDEFINED Ids Op CESyn SynStc VarStc LastStc)
+  (Import SystStc  : STCISSYSTEM Ids Op CESyn SynStc)
+  (Import OrdStc   : STCORDERED Ids Op CESyn SynStc SystStc)
+  (Import IsFStc   : STCISFREE Ids Op CESyn SynStc CEIsF)
+  (Import CloStc   : STCCLOCKING Ids Op CESyn SynStc LastStc VarStc DefStc SystStc OrdStc CEClo)
+  (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo
+                           SECCETYPING LastStc VarStc DefStc SystStc OrdStc IsFStc CloStc)
   (Import Trans : TRANSLATION Ids Op OpAux CESyn SynStc SynObc)
   (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SIG)
-  <: SECSTCOBCTRANSLATION Ids Op OpAux SC CESyn SynStc SynObc SIG CEIsF CEClo SECCETYPING Trans SECOBCTYPING.
+  (Import SECOBCTYPINGCORRECTNESS :
+     SECOBCTYPINGCORRECTNESS Ids Op OpAux SC SynObc Lat SecT SIG SIGPROOFS SECOBCTYPING)
+  <: SECSTCOBCTRANSLATION Ids Op OpAux SC CESyn SynStc SynObc Lat SecT SIG SIGPROOFS
+       CEIsF CEClo SECCETYPING LastStc VarStc DefStc SystStc OrdStc IsFStc CloStc SECSTCTYPING Trans
+       SECOBCTYPING SECOBCTYPINGCORRECTNESS.
 
-Include SECSTCOBCTRANSLATION Ids Op OpAux SC CESyn SynStc SynObc SIG CEIsF CEClo SECCETYPING Trans SECOBCTYPING.
+Include SECSTCOBCTRANSLATION Ids Op OpAux SC CESyn SynStc SynObc Lat SecT SIG SIGPROOFS
+  CEIsF CEClo SECCETYPING LastStc VarStc DefStc SystStc OrdStc IsFStc CloStc SECSTCTYPING Trans
+  SECOBCTYPING SECOBCTYPINGCORRECTNESS.
 
 End SecStcObcTranslation.

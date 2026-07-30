@@ -1080,6 +1080,25 @@ Module Type SECTYPES(Import Lat: Lattice).
     - exact Hsat.
   Qed.
 
+  Lemma preserves_on_from_entailment:
+    forall scope c1 c2,
+      (forall dlt, listSatisfiable dlt c1 -> listSatisfiable dlt c2) ->
+      preserves_on scope c1 c2.
+  Proof.
+    intros scope c1 c2 Hent dlt Hsat.
+    exists dlt. split.
+    - apply agree_on_refl.
+    - apply Hent, Hsat.
+  Qed.
+
+  Lemma preserves_on_refl:
+    forall scope cns,
+      preserves_on scope cns cns.
+  Proof.
+    intros scope cns.
+    apply preserves_on_from_entailment; auto.
+  Qed.
+
   Lemma preserves_on_weaken:
     forall scope1 scope2 c1 c2,
       incl scope1 scope2 ->

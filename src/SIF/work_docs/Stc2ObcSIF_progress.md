@@ -181,6 +181,12 @@ parameters entirely — shorter statements and shorter proofs. When the
 bridge needs these premises for a *translated* statement, derive them from
 the STC-side `wc_trconstr` plus the translation, not from Obc typing.
 
+**(1b) General lemmas go in the general module.** Added to `SecTypes.v`:
+`preserves_on_from_entailment` (if every `dlt` satisfying `c1` satisfies
+`c2`, then `preserves_on scope c1 c2` — the `dlt' = dlt` case) and
+`preserves_on_refl`. Both are signature-agnostic and belong next to
+`preserves_on_nil` / `preserves_on_weaken`.
+
 **(2) Reuse, don't duplicate.** `in_merge_left` / `in_merge_right` were
 defined inside `SecNLusTypingCorrectness.v` although they are pure
 `SymTypes` facts (`in_merge_inv`, their elimination counterpart, already
@@ -295,10 +301,10 @@ the 2026-07-30 pc refinement `clk` and `out` agree exactly.
 
 | # | Obc item | NL→STC analogue | status / notes |
 |---|---|---|---|
-| 1 | `translate_arg` monotonicity | — (NL→STC shares CE syntax) | obligation B (tccall doc §3) |
+| 1 | `translate_arg` monotonicity | — (NL→STC shares CE syntax) | **DONE**: `translate_exp_type_incl`, `translate_arg_type_incl`, `translate_args_type_incl` (obligation B, tccall doc §3) |
 | 2 | generalized reset-call preservation | `:2105` `signatures_preserved_reset_underlying_calls_from_good` | obligation C (§4); Route B (§5) in reserve |
 | 3 | TcCall case | part of `eqn_preserv :752` | consumes 1+2 |
-| 4 | `tc_preserv` (all four cases) | `eqn_preserv :752` | TcDef/TcNext/TcReset **already proved as equalities** ⇒ `preserves_on` via `collapse_satisfaction` with `dlt' = dlt` |
+| 4 | `tc_preserv` (all four cases) | `eqn_preserv :752` | **three of four DONE**: `tcdef_preserv`, `tcnext_preserv`, `tcreset_preserv` in `SecStcObcTranslation.v` section `TCPRESERV`, stated against the real `SECSTCTYPING.generate_trconstr_constraint` and discharged with `dlt' = dlt` (via `collapse_satisfaction` / `preserves_on_refl`). TcCall outstanding. |
 | 5 | tcs-list assembly | `eqns_preserv_scoped :1080` | `preserves_on_concat_scoped` with extras = `stids`; needs an `eqns_reset_extras` analogue (state-env lemmas already done) |
 | 6 | reset-method constraints | — (none) | `[rst_ty] ⊑ [sty]` from the `dlt'` choice; `[rst_ty] ⊑ [mem]` from the STC TcNext source (every last has a TcNext by `s_lasts_in_tcs`) |
 | 7 | class-level raw `preserves_on` | `node_preserv_scoped :1341`, `:1418`, `:1496` | scope = `inp ++ out ++ locals ++ [clk; rst]` |
