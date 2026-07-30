@@ -17,13 +17,20 @@ resume the work cold (with any model/person).
 - **Adding a NEW .v file — the canonical flow:**
   1. add it to `vfiles` (tracked in git; keep dependency order),
   2. `docker cp` both the file and `vfiles` into `/workspace`,
-  3. in the container: `./configure -clightgen x86_64-linux` (regenerates
-     `_CoqProject` from `vfiles`; `_CoqProject` is GENERATED and gitignored —
-     never rely on hand-edits to it),
-  4. `make -j4`.
-  A `make` run without the configure step is a **vacuous pass** for new
-  files: make's dependency graph comes from the configure-generated project
+  3. regenerate `/workspace/_CoqProject` from `vfiles` (the `-R` header
+     lines + `cat vfiles`, exactly what `configure` does — `_CoqProject`
+     is GENERATED and gitignored; never rely on hand-edits alone),
+  4. `make -j4` (its `proof` target regenerates `Makefile.auto` from
+     `_CoqProject`).
+  A `make` run without refreshing `_CoqProject` is a **vacuous pass** for
+  new files: make's dependency graph comes from the generated project
   file, so it silently ignores files it doesn't know about.
+  **WARNING — do NOT re-run `./configure` in the container**: it also
+  re-runs CompCert's configure, which regenerated/clobbered
+  `CompCert/x86_64/Archi.vo` on 2026-07-30 and broke `.vo` digest
+  consistency ("inconsistent assumptions over Velus.Common.CompCertLib"),
+  forcing a full `make clean` + CompCert-cascade rebuild. Only step 3 is
+  needed to register files.
 - For fast iteration on a single file (after it is in the generated
   project): helper `/tmp/coqc_cmd.sh` in the container (recreate if
   missing: `cd /workspace && coqc <the -R lines of _CoqProject> <file>`).
@@ -36,7 +43,7 @@ resume the work cold (with any model/person).
 | Phase | File | Status |
 |---|---|---|
 | 1 | `src/SIF/SecObcTyping.v` | **DONE, compiles** |
-| 2 | `src/SIF/SecObcConstraintExport.v` | not started |
+| 2 | `src/SIF/SecObcConstraintExport.v` | **DONE, compiles** — full pipeline wired: extraction entry (`extraction/Extraction.v`), printers (`src/SIF/siflib.ml`), `osif_destination`/`print_obcsif_if` (`src/veluslib.ml`), driver call + `-dsif` writes `<file>.o.sif` (`src/velusmain.ml`); dump shows raw, collapsed, and simplified constraints per class plus name maps |
 | 3 | `src/SIF/SecObcTypingCorrectness.v` | **mostly DONE, compiles** — remaining: scope_key/scope_sec (need NAMEGEN; may live in bridge instead) |
 | 4 | `src/SIF/SecStcObcTranslation.v` (bridge) | **started, compiles** — Control/pc lemmas done (§4 item 1); per-tc correspondence next |
 | 5 | scheduling equivalence (in 4 or separate) | not started |

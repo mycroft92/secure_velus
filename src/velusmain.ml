@@ -105,7 +105,14 @@ let dump_sif_if ast =
             | Error errmsg ->
               Format.eprintf "%a@." Driveraux.print_error errmsg; exit 1
             | OK stc_dump ->
-              Veluslib.print_stcsif_if stc_dump
+              begin
+                Veluslib.print_stcsif_if stc_dump;
+                match SecObcConstraintExport.generate_obc_constraint_dump nl with
+                | Error errmsg ->
+                  Format.eprintf "%a@." Driveraux.print_error errmsg; exit 1
+                | OK obc_dump ->
+                  Veluslib.print_obcsif_if obc_dump
+              end
           end
 
 let compile source_name filename =
@@ -117,6 +124,8 @@ let compile source_name filename =
   then Veluslib.nsif_destination := Some (filename ^ ".n.sif");
   if !write_sif
   then Veluslib.ssif_destination := Some (filename ^ ".s.sif");
+  if !write_sif
+  then Veluslib.osif_destination := Some (filename ^ ".o.sif");
   if !write_stc
   then Veluslib.stc_destination := Some (filename ^ ".stc");
   if !write_sch

@@ -98,6 +98,58 @@ let pp_system_constraint_dump fmt dump =
           constraints
   end
 
+let pp_class_constraint_dump fmt dump =
+  fprintf fmt "class %a@." pp_ident dump.SecObcConstraintExport.obc_dump_name;
+  fprintf fmt "  clock: %a@." pp_ident dump.SecObcConstraintExport.obc_dump_clk;
+  fprintf fmt "  reset: %a@." pp_ident dump.SecObcConstraintExport.obc_dump_rst;
+  pp_mapping_block fmt "inputs" dump.SecObcConstraintExport.obc_dump_inputs;
+  pp_mapping_block fmt "outputs" dump.SecObcConstraintExport.obc_dump_outputs;
+  pp_mapping_block fmt "locals" dump.SecObcConstraintExport.obc_dump_locals;
+  pp_mapping_block fmt "mems" dump.SecObcConstraintExport.obc_dump_mems;
+  pp_mapping_block fmt "state-instances" dump.SecObcConstraintExport.obc_dump_state_instances;
+  fprintf fmt "  raw constraints:@.";
+  begin
+    match dump.SecObcConstraintExport.obc_dump_raw_constraints with
+    | [] ->
+        fprintf fmt "    (none)@."
+    | constraints ->
+        List.iter
+          (fun c -> fprintf fmt "%a@." pp_constraint c)
+          constraints
+  end;
+  fprintf fmt "  collapsed constraints:@.";
+  begin
+    match dump.SecObcConstraintExport.obc_dump_collapsed_constraints with
+    | [] ->
+        fprintf fmt "    (none)@."
+    | constraints ->
+        List.iter
+          (fun c -> fprintf fmt "%a@." pp_constraint c)
+          constraints
+  end;
+  fprintf fmt "  simplified constraints:@.";
+  begin
+    match dump.SecObcConstraintExport.obc_dump_constraints with
+    | [] ->
+        fprintf fmt "    (none)@."
+    | constraints ->
+        List.iter
+          (fun c -> fprintf fmt "%a@." pp_constraint c)
+          constraints
+  end
+
+let print_obc_constraint_dump fmt dumps =
+  match dumps with
+  | [] ->
+      fprintf fmt "(no generated Obc security constraints)@."
+  | first :: rest ->
+      pp_class_constraint_dump fmt first;
+      List.iter
+        (fun dump ->
+          fprintf fmt "@.";
+          pp_class_constraint_dump fmt dump)
+        rest
+
 let print_stc_constraint_dump fmt dumps =
   match dumps with
   | [] ->
