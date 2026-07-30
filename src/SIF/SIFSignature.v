@@ -2860,4 +2860,195 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
     eapply subst_constraints_inp_map_complete; eauto.
   Qed.
 
+  (** * Signature preservation and call preservation
+
+      Generic over signatures (no NLustre or STC syntax), hoisted here
+      from the NLustre-to-Stc bridge so that every translation layer can
+      use them. *)
+
+  Definition signatures_preserved (n1 n2: signature) : Prop :=
+    signature_fields_agree n1 n2
+    /\ preserves_on (sig_scope n1) n1.(s_constraints) n2.(s_constraints).
+
+  Theorem signatures_preserved_reset_underlying_calls_from_good:
+    forall nsig ssig,
+      signature_good nsig ->
+      NoDup (sig_scope nsig) ->
+      signature_scoped ssig ->
+      signatures_preserved nsig ssig ->
+      forall scope inptyp ckty srcrst outtyp rst_inst
+             nconst sconst st_init1 st_init2 st1 st2,
+        scope_fresh scope nsig ->
+        call_subst_scoped scope inptyp ckty srcrst outtyp ->
+        ~ In rst_inst scope ->
+        call_subst_fresh nsig inptyp ckty srcrst outtyp ->
+        call_subst_fresh ssig inptyp ckty (rst_inst :: nil) outtyp ->
+        generate_constraints nsig inptyp ckty srcrst outtyp st_init1 = OK (nconst, st1) ->
+        generate_constraints ssig inptyp ckty (rst_inst :: nil) outtyp st_init2 = OK (sconst, st2) ->
+        preserves_on scope nconst ((srcrst, (rst_inst :: nil)) :: sconst).
+    Proof.
+    intros nsig ssig Hgood Hndscope Hssigscoped [Hfields Hpres]
+           scope inptyp ckty srcrst outtyp rst_inst
+           nconst sconst st_init1 st_init2 st1 st2
+           Hscopefresh Hcallscoped Hrstinst_outside
+           Hfresh_nsig Hfresh_ssig Hgen_nsig Hgen_ssig.
+    unfold preserves_on.
+    intros dlt Hsat_nconst.
+    destruct Hcallscoped as [Hactualscoped Hsrcrstscope].
+    pose proof Hgen_nsig as Hgen_nsig_len.
+    unfold generate_constraints in Hgen_nsig_len.
+    eapply sec_bind_inv in Hgen_nsig_len as (c1 & st1' & HinpSub & Hgen_nsig_len).
+    eapply sec_bind_inv in Hgen_nsig_len as (c2 & st2' & HclkSub & Hgen_nsig_len).
+    eapply sec_bind_inv in Hgen_nsig_len as (c3 & st3' & HrstSub & Hgen_nsig_len).
+    eapply sec_bind_inv in Hgen_nsig_len as (c4 & st4' & HoutSub & Hreorder).
+    pose proof (subst_constraints_inp_map_length _ _ _ _ _ _ HinpSub) as HlenIn.
+    pose proof (subst_constraints_out_map_length _ _ _ _ _ _ HoutSub) as HlenOut.
+    assert (Hinfresh_pairs :
+              Forall2 (fun x ty => ~ In x ty) nsig.(s_in) inptyp).
+    {
+      eapply call_subst_fresh_inputs_notin_pairs; eauto.
+    }
+    destruct Hfresh_nsig as [Hinfresh [Hclkfresh [Hrstfresh Houtfresh]]].
+    assert (Hfresh_nsig_all : call_subst_fresh nsig inptyp ckty srcrst outtyp).
+    { repeat split; assumption. }
+    assert (Hclknotin : ~ In nsig.(s_clk) ckty).
+    {
+      eapply type_fresh_notin_sig_scope; eauto.
+      unfold sig_scope. apply in_or_app. right.
+      apply in_or_app. right. simpl. now left.
+    }
+    assert (Hrstnotin : ~ In nsig.(s_reset) srcrst).
+    {
+      eapply type_fresh_notin_sig_scope; eauto.
+      unfold sig_scope. apply in_or_app. right.
+      apply in_or_app. right. simpl. now right; left.
+    }
+    pose proof
+      (generate_constraints_complete_good
+         nsig inptyp ckty srcrst outtyp nconst st_init1 st1
+         Hgood Hgen_nsig dlt Hsat_nconst
+         Hinfresh_pairs Hclknotin Hrstnotin)
+      as Hsat_nsig.
+    destruct (Hpres _ Hsat_nsig)
+      as (dlt_mid & Hagree_mid & Hsat_ssig).
+    set (dlt_ov := overlay_scope scope dlt dlt_mid).
+    set (dlt_rst := overlay_scope [rst_inst] (fun _ => hm_ext dlt srcrst) dlt_ov).
+    assert (Hscopefresh_ssig : scope_fresh scope ssig).
+    { eapply scope_fresh_fields_agree; eauto. }
+    assert (Hndscope_ssig : NoDup (sig_scope ssig)).
+    { rewrite <- (signature_fields_agree_scope_eq _ _ Hfields). exact Hndscope. }
+    assert (Hagree_rst_scope : agree_on scope dlt dlt_rst).
+    {
+      intros x Hin.
+      unfold dlt_rst, dlt_ov, overlay_scope.
+      destruct (in_dec ident_eq_dec x [rst_inst]) as [Hinrst|Hninrst].
+      - simpl in Hinrst. destruct Hinrst as [Heq|[]]. subst x.
+        exfalso. exact (Hrstinst_outside Hin).
+      - destruct (in_dec ident_eq_dec x scope) as [Hin'|Hnin']; [reflexivity|contradiction].
+    }
+    assert (Hrstinst_eq :
+              dlt_rst rst_inst = hm_ext dlt srcrst).
+    {
+      unfold dlt_rst, overlay_scope.
+      destruct (in_dec ident_eq_dec rst_inst [rst_inst]) as [Hin|Hnin].
+      - reflexivity.
+      - exfalso. apply Hnin. simpl. now left.
+    }
+    assert (Hinst_agree :
+              agree_on (sig_scope ssig)
+                       (lat_valuation dlt nsig inptyp ckty srcrst outtyp)
+                       (lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)).
+    {
+      eapply lat_valuation_fields_agree_on_sig_scope_reset; eauto.
+    }
+    assert (Hmid_src :
+              agree_on (sig_scope ssig)
+                       dlt_mid
+                       (lat_valuation dlt nsig inptyp ckty srcrst outtyp)).
+    {
+      intros x Hin.
+      symmetry.
+      pose proof (signature_fields_agree_scope_eq _ _ Hfields) as Hscopeeq.
+      rewrite <- Hscopeeq in Hin.
+      eapply Hagree_mid; exact Hin.
+    }
+    assert (Hmid_tgt_inst :
+              agree_on (sig_scope ssig)
+                       dlt_mid
+                       (lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)).
+    {
+      eapply agree_on_trans; eauto.
+    }
+    assert (Hsat_ssig_inst :
+              listSatisfiable
+                (lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
+                ssig.(s_constraints)).
+    {
+      eapply listSatisfiable_ext; eauto.
+    }
+    assert (Hsat_sconst :
+              listSatisfiable
+                (lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
+                sconst).
+    {
+      eapply generate_constraints_correct_inst; eauto.
+    }
+    assert (Hrstfresh_ssig : type_fresh (sig_scope ssig) [rst_inst]).
+    {
+      destruct Hfresh_ssig as [_ [_ [Hrstfresh0 _]]].
+      exact Hrstfresh0.
+    }
+    assert (Hrstinst_notin_sig : ~ In rst_inst (sig_scope ssig)).
+    {
+      inversion Hrstfresh_ssig as [|? ? Hrstinst_notin' _]; subst.
+      exact Hrstinst_notin'.
+    }
+    assert (Hagree_scope_final :
+              agree_on scope dlt
+                       (lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)).
+    {
+      eapply agree_on_trans.
+      + exact Hagree_rst_scope.
+      + eapply lat_valuation_agree_on_scope; eauto.
+    }
+    assert (Hagree_scope_final_sym :
+              agree_on scope
+                (lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
+                dlt).
+    {
+      intros x Hin.
+      symmetry.
+      apply Hagree_scope_final.
+      exact Hin.
+    }
+    assert (Hsat_reset :
+              constraintSatisfiable
+                (lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
+                (srcrst, [rst_inst])).
+    {
+      unfold constraintSatisfiable, satisfiable.
+      rewrite (hm_ext_agree_on_scoped_type
+                 scope srcrst
+                 (lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp)
+                 dlt
+                 Hsrcrstscope
+                 Hagree_scope_final_sym).
+      simpl.
+      rewrite lat_valuation_outside_sig_scope by exact Hrstinst_notin_sig.
+      rewrite Hrstinst_eq.
+      apply join_bound1.
+    }
+    exists (lat_valuation dlt_rst ssig inptyp ckty (rst_inst :: nil) outtyp).
+    split.
+    - intros x Hin.
+      transitivity (dlt_rst x).
+      + exact (Hagree_rst_scope x Hin).
+      + symmetry.
+        apply lat_valuation_outside_sig_scope.
+        exact (Hscopefresh_ssig x Hin).
+    - constructor; [exact Hsat_reset|exact Hsat_sconst].
+    Qed.
+
+
+
 End SIGNATURE_PROOFS.
