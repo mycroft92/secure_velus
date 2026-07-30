@@ -14,15 +14,20 @@ resume the work cold (with any model/person).
 - Coq compilation works ONLY inside docker container `funny_franklin`
   (Coq 8.9.1). `/workspace` there is a **copy** of this repo, not a mount.
 - Edit locally, then: `docker cp <file> funny_franklin:/workspace/<file>`.
-- Single file: helper script `/tmp/coqc_cmd.sh` in the container
-  (recreate if missing:
-  `cd /workspace && coqc -R /workspace/src Velus -R /workspace/CompCert/lib
-  compcert.lib ... <file>` — flags are the `-R` lines of
-  `/workspace/_CoqProject`).
-- Full build: `docker exec funny_franklin bash -lc 'cd /workspace && make -j4'`.
-- New files must be added to THREE lists: local `_CoqProject`, local `vfiles`,
-  and the container's `/workspace/_CoqProject` + `/workspace/vfiles`
-  (container copies are separate files!).
+- **Adding a NEW .v file — the canonical flow:**
+  1. add it to `vfiles` (tracked in git; keep dependency order),
+  2. `docker cp` both the file and `vfiles` into `/workspace`,
+  3. in the container: `./configure -clightgen x86_64-linux` (regenerates
+     `_CoqProject` from `vfiles`; `_CoqProject` is GENERATED and gitignored —
+     never rely on hand-edits to it),
+  4. `make -j4`.
+  A `make` run without the configure step is a **vacuous pass** for new
+  files: make's dependency graph comes from the configure-generated project
+  file, so it silently ignores files it doesn't know about.
+- For fast iteration on a single file (after it is in the generated
+  project): helper `/tmp/coqc_cmd.sh` in the container (recreate if
+  missing: `cd /workspace && coqc <the -R lines of _CoqProject> <file>`).
+  Always finish with configure+make to validate for real.
 - Keep local and container file hashes in sync (`md5 -q` vs `md5sum`).
 - Commit messages: plain text, no AI attribution, ever.
 
