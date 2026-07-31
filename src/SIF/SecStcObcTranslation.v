@@ -683,8 +683,10 @@ Module Type SECSTCOBCTRANSLATION
     Variable G1: SIG.secglobal.        (* STC signatures *)
     Variable G2: SIG.secglobal.        (* Obc signatures *)
     Variable env: Env.t ident.
+    (** One instance environment, shared by both languages: the name
+        generator mints these names once, so the STC reset instance and
+        the Obc instance state are the same identifier. *)
     Variable reset_env: Env.t ident.
-    Variable state_env: Env.t ident.
     Variable clk_ty rst_ty: ident.
 
     Lemma tcdef_preserv:
@@ -692,7 +694,7 @@ Module Type SECSTCOBCTRANSLATION
         CEClo.wc_cexp vars ce ck ->
         SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
           (SynStc.TcDef x ck ce) st1 = OK (nconst, st1') ->
-        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
           (translate_tc memset clkvars (SynStc.TcDef x ck ce)) st2 = OK (sconst, st2') ->
         preserves_on scope nconst sconst.
     Proof.
@@ -717,7 +719,7 @@ Module Type SECSTCOBCTRANSLATION
       unfold ret in Hx. inversion Hx; subst xty stc.
       (* the Obc side, at entry pc [clk_ty] = [] ⊔ [clk_ty] *)
       rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
-      destruct (translate_tcdef_constraints G2 env state_env rst_ty
+      destruct (translate_tcdef_constraints G2 env reset_env rst_ty
                   memset clkvars vars x ce ck [] clk_ty ckty' cety' xty'
                   sconst st2 st2' Hwc Hckopt Hceopt Hxopt Hobc)
         as (Hst & Hcoll).
@@ -734,7 +736,7 @@ Module Type SECSTCOBCTRANSLATION
         CEClo.wc_exp vars e ck ->
         SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
           (SynStc.TcNext x ck e) st1 = OK (nconst, st1') ->
-        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
           (translate_tc memset clkvars (SynStc.TcNext x ck e)) st2 = OK (sconst, st2') ->
         preserves_on scope nconst sconst.
     Proof.
@@ -757,7 +759,7 @@ Module Type SECSTCOBCTRANSLATION
       destruct (Env.find x env) as [xty'|] eqn:Hxopt; try discriminate.
       unfold ret in Hx. inversion Hx; subst xty stc.
       rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
-      destruct (translate_tcnext_constraints G2 env state_env rst_ty
+      destruct (translate_tcnext_constraints G2 env reset_env rst_ty
                   memset clkvars vars x e ck [] clk_ty ckty' ety' xty'
                   sconst st2 st2' Hwc Hckopt Heopt Hxopt Hobc)
         as (Hst & Hcns).
@@ -769,15 +771,14 @@ Module Type SECSTCOBCTRANSLATION
     Lemma tcreset_preserv:
       forall scope memset clkvars s ck f nconst sconst st1 st1' st2 st2',
         (* the reset instance and the state instance carry the same value *)
-        Env.find s reset_env = Env.find s state_env ->
         SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
           (SynStc.TcReset s ck f) st1 = OK (nconst, st1') ->
-        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
           (translate_tc memset clkvars (SynStc.TcReset s ck f)) st2 = OK (sconst, st2') ->
         preserves_on scope nconst sconst.
     Proof.
       intros scope memset clkvars s ck f nconst sconst st1 st1' st2 st2'
-             Heq Hstc Hobc.
+             Hstc Hobc.
       rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
       destruct ck as [|ck0 r0 b0].
       - (* Cbase *)
@@ -790,7 +791,7 @@ Module Type SECSTCOBCTRANSLATION
         unfold SC.find_env in Hr.
         destruct (Env.find s reset_env) as [rinst'|] eqn:Hrfind; try discriminate.
         unfold ret in Hr. inversion Hr; subst rinst stb.
-        destruct (translate_tcreset_constraints G2 env state_env rst_ty
+        destruct (translate_tcreset_constraints G2 env reset_env rst_ty
                     memset clkvars s Cbase f [] clk_ty [clk_ty] rinst'
                     sconst st2 st2' Logic.eq_refl ltac:(congruence) Hobc)
           as (Hst & Hcns).
@@ -817,7 +818,7 @@ Module Type SECSTCOBCTRANSLATION
           assert (Hckcon : SECCETYPING.assign_clk_type env clk_ty (Con ck0 r0 true)
                            = Some (rstckty' ⊔ [rty'])).
           { simpl. rewrite Hckopt. simpl. rewrite Hr0. reflexivity. }
-          destruct (translate_tcreset_constraints G2 env state_env rst_ty
+          destruct (translate_tcreset_constraints G2 env reset_env rst_ty
                       memset clkvars s (Con ck0 r0 true) f [] clk_ty
                       (rstckty' ⊔ [rty']) rinst'
                       sconst st2 st2' Hckcon ltac:(congruence) Hobc)
@@ -844,7 +845,7 @@ Module Type SECSTCOBCTRANSLATION
           unfold SC.find_env in Hr.
           destruct (Env.find s reset_env) as [rinst'|] eqn:Hrfind; try discriminate.
           unfold ret in Hr. inversion Hr; subst rinst stb.
-          destruct (translate_tcreset_constraints G2 env state_env rst_ty
+          destruct (translate_tcreset_constraints G2 env reset_env rst_ty
                       memset clkvars s (Con ck0 r0 false) f [] clk_ty
                       (ckty0 ⊔ [rty0]) rinst'
                       sconst st2 st2' Hckopt ltac:(congruence) Hobc)
@@ -907,7 +908,7 @@ Module Type SECSTCOBCTRANSLATION
             call_side_conditions scope n1 n2 inptyp1 inptyp2 ckty srcrst sty outtyp) ->
         SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
           (SynStc.TcCall i xs ck rst f es) st1 = OK (nconst, st1') ->
-        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
           (translate_tc memset clkvars (SynStc.TcCall i xs ck rst f es)) st2
           = OK (sconst, st2') ->
         preserves_on scope nconst sconst.
@@ -918,7 +919,7 @@ Module Type SECSTCOBCTRANSLATION
       unfold translate_tc in Hobc.
       rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
       rewrite (generate_stmt_constraints_Control_assign
-                 G2 env state_env rst_ty memset ck
+                 G2 env reset_env rst_ty memset ck
                  (SynObc.Call xs f i step (map (translate_arg memset clkvars ck) es))
                  clk_ty ckty [] st2 Hckopt) in Hobc.
       rewrite (MergeFacts.merge_nil2 ckty) in Hobc.
@@ -1214,7 +1215,6 @@ Module Type SECSTCOBCTRANSLATION
       forall scope memset clkvars i xs ck f es ckty
              nconst sconst st1 st1' st2 st2',
         SECCETYPING.assign_clk_type env clk_ty ck = Some ckty ->
-        Env.find i reset_env = Env.find i state_env ->
         Signature_consistent_obc_eq G1 G2 ->
         (forall n1 inptyp1 rinst outtyp,
             SIG.find_signature f G1 = Some n1 ->
@@ -1223,17 +1223,17 @@ Module Type SECSTCOBCTRANSLATION
             /\ SIG.call_subst_fresh n1 inptyp1 ckty [rinst] outtyp) ->
         SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
           (SynStc.TcCall i xs ck true f es) st1 = OK (nconst, st1') ->
-        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
           (translate_tc memset clkvars (SynStc.TcCall i xs ck true f es)) st2
           = OK (sconst, st2') ->
         preserves_on scope nconst sconst.
     Proof.
       intros scope memset clkvars i xs ck f es ckty
-             nconst sconst st1 st1' st2 st2' Hckopt Henveq Hcons Hside Hstc Hobc.
+             nconst sconst st1 st1' st2 st2' Hckopt Hcons Hside Hstc Hobc.
       unfold translate_tc in Hobc.
       rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
       rewrite (generate_stmt_constraints_Control_assign
-                 G2 env state_env rst_ty memset ck
+                 G2 env reset_env rst_ty memset ck
                  (SynObc.Call xs f i step (map (translate_arg memset clkvars ck) es))
                  clk_ty ckty [] st2 Hckopt) in Hobc.
       rewrite (MergeFacts.merge_nil2 ckty) in Hobc.
@@ -1271,8 +1271,7 @@ Module Type SECSTCOBCTRANSLATION
         subst outtyp2.
         assert (Hrsteq : rinst = sty).
         { unfold SC.find_env in Hrinst, Hsty.
-          rewrite Henveq in Hrinst.
-          destruct (Env.find i state_env) as [v|]; try discriminate.
+          destruct (Env.find i reset_env) as [v|]; try discriminate.
           unfold ret in Hrinst, Hsty. congruence. }
         subst sty.
         destruct (Hcons f n1 Hf1) as (n2' & Hf2' & Hpres).
@@ -1311,14 +1310,14 @@ Module Type SECSTCOBCTRANSLATION
 
     Lemma generate_fold_right_Comp:
       forall memset clkvars pc tcs cns st st',
-        generate_stmt_constraints G2 env state_env rst_ty pc
+        generate_stmt_constraints G2 env reset_env rst_ty pc
           (fold_right (fun tc i => SynObc.Comp (translate_tc memset clkvars tc) i)
              SynObc.Skip tcs) st = OK (cns, st') ->
         exists blocks,
           cns = concat blocks
           /\ Forall2 (fun tc blk =>
                         exists sa sb,
-                          generate_stmt_constraints G2 env state_env rst_ty pc
+                          generate_stmt_constraints G2 env reset_env rst_ty pc
                             (translate_tc memset clkvars tc) sa = OK (blk, sb))
                      tcs blocks.
     Proof.
@@ -1347,7 +1346,7 @@ Module Type SECSTCOBCTRANSLATION
       match tc with
       | SynStc.TcDef _ ck ce => CEClo.wc_cexp vars ce ck
       | SynStc.TcNext _ ck e => CEClo.wc_exp vars e ck
-      | SynStc.TcReset s _ _ => Env.find s reset_env = Env.find s state_env
+      | SynStc.TcReset _ _ _ => True
       | SynStc.TcCall _ _ ck _ f _ =>
           exists ckty,
             SECCETYPING.assign_clk_type env clk_ty ck = Some ckty
@@ -1363,7 +1362,7 @@ Module Type SECSTCOBCTRANSLATION
         tc_preserv_hyps scope vars tc ->
         SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty tc st1
           = OK (nconst, st1') ->
-        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
           (translate_tc memset clkvars tc) st2 = OK (sconst, st2') ->
         preserves_on scope nconst sconst.
     Proof.
@@ -1391,13 +1390,13 @@ Module Type SECSTCOBCTRANSLATION
         (forall x, In x (List.concat extras) -> ~ In x scope) ->
         Forall2 (fun tc e =>
                    forall blk sa sb,
-                     generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+                     generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
                        (translate_tc memset clkvars tc) sa = OK (blk, sb) ->
                      constraints_scoped (scope ++ e) blk)
                 tcs extras ->
         SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty tcs st1
           = OK (nconst, st1') ->
-        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
           (translate_tcs memset clkvars tcs) st2 = OK (sconst, st2') ->
         preserves_on scope nconst sconst.
     Proof.
@@ -1494,7 +1493,7 @@ Module Type SECSTCOBCTRANSLATION
 
     Lemma generate_reset_mems_blocks:
       forall (mems: list (ident * (const * clock))) cns st st',
-        generate_stmt_constraints G2 env state_env rst_ty []
+        generate_stmt_constraints G2 env reset_env rst_ty []
           (reset_mems mems) st = OK (cns, st') ->
         exists tys,
           Forall2 (fun xc ty => Env.find (fst xc) env = Some ty) mems tys
@@ -1502,7 +1501,7 @@ Module Type SECSTCOBCTRANSLATION
     Proof.
       intros mems cns st st' Hgen.
       unfold reset_mems in Hgen.
-      destruct (generate_fold_left_Comp G2 env state_env rst_ty
+      destruct (generate_fold_left_Comp G2 env reset_env rst_ty
                   (fun xc => SynObc.AssignSt (fst xc) (SynObc.Const (fst (snd xc))))
                   mems SynObc.Skip [] cns st st' Hgen)
         as (cacc & blocks & sa & Hacc & Hcns & Hall).
@@ -1532,15 +1531,15 @@ Module Type SECSTCOBCTRANSLATION
 
     Lemma generate_reset_insts_blocks:
       forall (insts: list (ident * ident)) cns st st',
-        generate_stmt_constraints G2 env state_env rst_ty []
+        generate_stmt_constraints G2 env reset_env rst_ty []
           (reset_insts insts) st = OK (cns, st') ->
         exists tys,
-          Forall2 (fun oc ty => Env.find (fst oc) state_env = Some ty) insts tys
+          Forall2 (fun oc ty => Env.find (fst oc) reset_env = Some ty) insts tys
           /\ cns = map (fun ty => ([rst_ty], [ty])) tys.
     Proof.
       intros insts cns st st' Hgen.
       unfold reset_insts in Hgen.
-      destruct (generate_fold_left_Comp G2 env state_env rst_ty
+      destruct (generate_fold_left_Comp G2 env reset_env rst_ty
                   (fun oc => SynObc.Call [] (snd oc) (fst oc) reset [])
                   insts SynObc.Skip [] cns st st' Hgen)
         as (cacc & blocks & sa & Hacc & Hcns & Hall).
@@ -1553,9 +1552,9 @@ Module Type SECSTCOBCTRANSLATION
         simpl in Hblk.
         rewrite ident_eqb_refl in Hblk.
         eapply sec_bind_inv in Hblk as (sty & sa & Hsty & Hret).
-        assert (Hfind : Env.find (fst oc) state_env = Some sty).
+        assert (Hfind : Env.find (fst oc) reset_env = Some sty).
         { unfold SC.find_env in Hsty.
-          destruct (Env.find (fst oc) state_env) as [v|] eqn:Hf; try discriminate.
+          destruct (Env.find (fst oc) reset_env) as [v|] eqn:Hf; try discriminate.
           unfold ret in Hsty. congruence. }
         unfold ret in Hret. inversion Hret; subst blk.
         destruct IH as (tys & Htys & Hcns).
@@ -1568,11 +1567,11 @@ Module Type SECSTCOBCTRANSLATION
 
     Lemma generate_translate_reset_blocks:
       forall s cns st st',
-        generate_stmt_constraints G2 env state_env rst_ty []
+        generate_stmt_constraints G2 env reset_env rst_ty []
           (translate_reset s) st = OK (cns, st') ->
         exists mtys itys,
           Forall2 (fun xc ty => Env.find (fst xc) env = Some ty) s.(SynStc.s_lasts) mtys
-          /\ Forall2 (fun oc ty => Env.find (fst oc) state_env = Some ty) s.(SynStc.s_subs) itys
+          /\ Forall2 (fun oc ty => Env.find (fst oc) reset_env = Some ty) s.(SynStc.s_subs) itys
           /\ cns = map (fun ty => ([rst_ty], [ty])) (mtys ++ itys).
     Proof.
       intros s cns st st' Hgen.
