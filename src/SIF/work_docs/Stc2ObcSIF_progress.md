@@ -373,7 +373,7 @@ the 2026-07-30 pc refinement `clk` and `out` agree exactly.
 | 4 | `tc_preserv` (all four cases) | `eqn_preserv :752` | **DONE** — `tc_preserv` dispatches on the four cases; the side conditions each case needs are collected in `tc_preserv_hyps`. Three cases go via equalities (`tcdef_preserv`, `tcnext_preserv`, `tcreset_preserv`, discharged with `dlt' = dlt` through `collapse_satisfaction` / `preserves_on_refl`); `tccall_preserv` supplies the fourth. |
 | 5 | tcs-list assembly | `eqns_preserv_scoped :1080` | **DONE** — `tcs_preserv` in `SecStcObcTranslation.v`. Both sides are decomposed into per-trconstr blocks (`generate_trconstrs_constraints_blocks` in `SecSTCTyping.v`; `translate_tcs_fold_right` + `generate_fold_right_Comp` on the Obc side, which pairs blocks with `rev tcs`). The pairing is reversed with `Forall2_rev`, combined via `Forall2_combine{,_with}`, fed to `preserves_on_concat_list`, and the residual order difference is closed by `preserves_on_Permutation` + `concat_rev_Permutation`. `extras` (the Obc-only names, i.e. callee instance state types) and their scopedness stay **hypotheses** of `tcs_preserv`; discharging them at system level is part of item 7. |
 | 6 | reset-method constraints | — (none) | **DONE bar the assembly.** Both halves of `translate_reset` emit exactly one constraint `([rst_ty], [ty])` per memory and per instance (`generate_reset_mems_blocks`, `generate_reset_insts_blocks`, `generate_translate_reset_blocks`, on top of `generate_fold_left_Comp` in `SecObcTyping.v` — note the reset method folds `Comp acc new`, so unlike `translate_tcs` it comes out *in order*). Each is entailed under the *same* valuation by an STC constraint with the same target and `rst_ty` in its source (`reset_constraint_entailed`), and the STC side supplies exactly those: `generate_trconstrs_constraints_last_source` (every last has a `TcNext`) and `..._reset_source` (every reset instance has a `TcReset`, on either shape of reset clock). What is left is attaching each reset constraint to the right block — part of item 7. |
-| 7 | class-level raw `preserves_on` | `node_preserv_scoped :1341`, `:1418`, `:1496` | scope = `inp ++ out ++ locals ++ [clk; rst]` |
+| 7 | class-level raw `preserves_on` | `node_preserv_scoped :1341`, `:1418`, `:1496` | **in progress.** Combinators done: `preserves_on_collapse` and `preserves_on_incl` (`SecTypes.v`), `preserves_on_app_scope_entailed`, `preserves_on_app_reset_shared`. Reset method done: `generate_translate_reset_blocks` gives its shape, `reset_mems_targets` / `reset_insts_targets` supply the STC constraints backing its shared targets, `reset_targets_satisfied` discharges them with no witness. Extras done: `tc_obc_extras` / `tcs_obc_extras` with `tcs_obc_extras_Forall2`, `tc_obc_extras_spec`, `tcs_obc_extras_concat`, `tcs_obc_extras_nodup`. **Remaining:** fix the raw scope (`inp ++ out ++ locals ++ lasts ++ rids ++ [clk; rst]`), prove the extras fresh w.r.t. it, per-block target scopedness, then assemble. |
 | 8 | simplify bridge | `:1685` / `:1806` / `:1938` | needs "every hidden var has a definer" for `locals`/`lasts`/`stids` — only derivable **with the translation in hand**; this is the class-scopedness deferred from phase 1. Most likely place for a surprise. |
 | 9 | lockstep induction | `:2503` + `:2382` + `:2342` | yields `Signature_consistent Gstc Gobc` + scopedness + scope_sec of Gobc; needs the phase-3 scope_sec port |
 | 10 | global corollary | `:2785` `generated_program_signatures_preserved_global` | the export the NI transport (phase 6) consumes |
@@ -441,6 +441,27 @@ Two general rules the Obc side relies on, both already proved:
   `collapse_same_target` and the *equivalence* `collapse_satisfaction`;
 - names local to one language are hidden and simplified away —
   `hidden_sys_vars` on the STC side, `hidden_class_vars` on the Obc side.
+
+### How the reset method's constraints get owned (2026-08-01)
+
+`craw_reset` emits one constraint `rst_ty ⊑ ty` per memory and per
+instance.  They are discharged three ways, and none of it needs the
+transition-constraint list to be partitioned:
+
+- **memories** and **reset instances** — their targets are shared with
+  the STC side, so any valuation agreeing with the source one on the
+  scope already satisfies them (`preserves_on_app_reset_shared`); the
+  backing STC constraints come from `reset_mems_targets` and
+  `reset_insts_targets`.
+- **non-reset instances** — the call block already *produces* that
+  constraint: `signatures_preserved_reset_underlying_calls_from_good`
+  concludes with `(srcrst, [sty]) :: sconst`, which
+  `Signature_call_preserves_obc_rst` now keeps instead of discarding.
+  `preserves_on_incl` then cuts the proved target list down to the
+  generated one.
+
+So the class bridge proves preservation against a target mentioning
+each Obc constraint at least once, and narrows afterwards.
 
 **Structural deviations from NL→STC (no analogue there):**
 - *Expression / cexp correspondence* — NL→STC keeps CE expressions unchanged;
