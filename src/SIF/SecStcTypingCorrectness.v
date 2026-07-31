@@ -726,19 +726,15 @@ Module Type SECSTCTYPINGCORRECTNESS
       generate_node_env all_nodes = OK (env, aux_names) ->
       secglobal_scoped G ->
       Clo.wc_system P s ->
-      (** Properties of the shared instance environment, discharged at
-          the lockstep from the name generator: its values are
-          [sec_reset] gensyms, distinct instances get distinct types,
-          and a system resets each instance at most once. *)
-      (forall ie, get_node_inst s.(SynStc.s_name) aux_names = Some ie ->
-                  (forall x ty, Env.find x ie = Some ty ->
-                                exists n, ty = Ids.gensym Ids.sec_reset n)
-                  /\ env_injective ie) ->
+      (** A system resets each instance at most once.  This is genuinely
+          needed rather than bookkeeping: two [TcReset]s for one instance
+          would emit two constraints on the same target, and the
+          signature would not be good. *)
       NoDup (map fst (resets_of s.(SynStc.s_tcs))) ->
       SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
       signature_good sig.
   Proof.
-    intros all_nodes G P s env aux_names sig Henv Hglobsc Hwc Hinstprops Hndkeys Hsig.
+    intros all_nodes G P s env aux_names sig Henv Hglobsc Hwc Hndkeys Hsig.
     assert (Hinj : env_injective env)
       by (eapply NAMEGEN.generate_node_env_injective; eauto).
     pose proof (SECSTCTYPING.generate_sys_signature_scoped
@@ -761,7 +757,9 @@ Module Type SECSTCTYPINGCORRECTNESS
     assert (Hdisj : forall ty, In ty hid -> ~ In ty (signature_scope nsig)).
     { intros ty Hinty. subst nsig. unfold signature_scope; cbn.
       subst hid. eapply generated_sys_hidden_disjoint; eauto.
-      intros z tz Hz. eapply (proj1 (Hinstprops _ Hresetenv)); eauto. }
+      intros z tz Hz.
+      eapply (proj2 (NAMEGEN.generate_node_env_inst_props
+                       _ _ _ _ _ Henv Hresetenv)); eauto. }
 
     (* Name-level distinctness, transported to the transition constraints. *)
     assert (Hndvl : NoDup (variables s.(SynStc.s_tcs) ++ lasts_of s.(SynStc.s_tcs))).
@@ -802,7 +800,8 @@ Module Type SECSTCTYPINGCORRECTNESS
     pose proof Hrids as Hrs.
     assert (Hndrids : NoDup rids).
     { eapply get_mappings_nodup_gen; [exact Hndkeys| |exact Hrs].
-      exact (proj2 (Hinstprops _ Hresetenv)). }
+      exact (proj1 (NAMEGEN.generate_node_env_inst_props
+                      _ _ _ _ _ Henv Hresetenv)). }
 
     (* Shape and well-formedness of the raw constraints. *)
     destruct (SECSTCTYPING.generate_trconstrs_constraints_targets
@@ -813,7 +812,8 @@ Module Type SECSTCTYPINGCORRECTNESS
     { intros x ty Hf. eapply NAMEGEN.generate_node_env_sec_range; eauto. }
     assert (Hrstrange : forall x ty, Env.find x reset_env = Some ty ->
                                      exists n, ty = Ids.gensym Ids.sec_reset n).
-    { exact (proj1 (Hinstprops _ Hresetenv)). }
+    { exact (proj2 (NAMEGEN.generate_node_env_inst_props
+                      _ _ _ _ _ Henv Hresetenv)). }
     assert (Hndtys : NoDup tys)
       by exact (targets_nodup env reset_env s.(SynStc.s_tcs) tys vs ls rids
                   Hinj Hsecrange Hrstrange Htys Hvs Hls Hrs Hndvl Hndrids).
