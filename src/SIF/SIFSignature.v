@@ -3524,4 +3524,115 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
 
 
 
+  (** The companion to
+      [signatures_preserved_reset_underlying_calls_from_good] for calls
+      whose actuals coincide on both sides.  The reset-underlying version
+      exists to bridge two *different* reset actuals, and pays for it
+      with the side condition [~ In rst_inst scope]; when the two calls
+      pass the same reset actual there is nothing to bridge, no overlay
+      on that name, and hence no such side condition.  The Stc→Obc
+      translation needs exactly this for instances the system resets:
+      there the Obc instance state type and the STC reset instance are
+      the same identifier. *)
+
+  Theorem signatures_preserved_equal_calls_from_good:
+    forall nsig ssig,
+      signature_good nsig ->
+      NoDup (sig_scope nsig) ->
+      signature_scoped ssig ->
+      signatures_preserved nsig ssig ->
+      forall scope inptyp ckty srcrst outtyp
+             nconst sconst st_init1 st_init2 st1 st2,
+        scope_fresh scope nsig ->
+        call_subst_scoped scope inptyp ckty srcrst outtyp ->
+        call_subst_fresh nsig inptyp ckty srcrst outtyp ->
+        generate_constraints nsig inptyp ckty srcrst outtyp st_init1 = OK (nconst, st1) ->
+        generate_constraints ssig inptyp ckty srcrst outtyp st_init2 = OK (sconst, st2) ->
+        preserves_on scope nconst sconst.
+  Proof.
+    intros nsig ssig Hgood Hndscope Hssigscoped [Hfields Hpres]
+           scope inptyp ckty srcrst outtyp
+           nconst sconst st_init1 st_init2 st1 st2
+           Hscopefresh Hcallscoped Hfresh_nsig Hgen_nsig Hgen_ssig.
+    unfold preserves_on.
+    intros dlt Hsat_nconst.
+    destruct Hcallscoped as [Hactualscoped Hsrcrstscope].
+    pose proof Hgen_nsig as Hgen_nsig_len.
+    unfold generate_constraints in Hgen_nsig_len.
+    eapply sec_bind_inv in Hgen_nsig_len as (c1 & sa1 & HinpSub & Hgen_nsig_len).
+    eapply sec_bind_inv in Hgen_nsig_len as (c2 & sa2 & HclkSub & Hgen_nsig_len).
+    eapply sec_bind_inv in Hgen_nsig_len as (c3 & sa3 & HrstSub & Hgen_nsig_len).
+    eapply sec_bind_inv in Hgen_nsig_len as (c4 & sa4 & HoutSub & Hreorder).
+    pose proof (subst_constraints_inp_map_length _ _ _ _ _ _ HinpSub) as HlenIn.
+    pose proof (subst_constraints_out_map_length _ _ _ _ _ _ HoutSub) as HlenOut.
+    assert (Hinfresh_pairs : Forall2 (fun x ty => ~ In x ty) nsig.(s_in) inptyp).
+    { eapply call_subst_fresh_inputs_notin_pairs; eauto. }
+    pose proof Hfresh_nsig as Hfresh_nsig_all.
+    destruct Hfresh_nsig as [Hinfresh [Hclkfresh [Hrstfresh Houtfresh]]].
+    assert (Hclknotin : ~ In nsig.(s_clk) ckty).
+    { eapply type_fresh_notin_sig_scope; eauto.
+      unfold sig_scope. apply in_or_app. right.
+      apply in_or_app. right. simpl. now left. }
+    assert (Hrstnotin : ~ In nsig.(s_reset) srcrst).
+    { eapply type_fresh_notin_sig_scope; eauto.
+      unfold sig_scope. apply in_or_app. right.
+      apply in_or_app. right. simpl. now right; left. }
+    pose proof
+      (generate_constraints_complete_good
+         nsig inptyp ckty srcrst outtyp nconst st_init1 st1
+         Hgood Hgen_nsig dlt Hsat_nconst
+         Hinfresh_pairs Hclknotin Hrstnotin)
+      as Hsat_nsig.
+    destruct (Hpres _ Hsat_nsig) as (dlt_mid & Hagree_mid & Hsat_ssig).
+    set (dlt_ov := overlay_scope scope dlt dlt_mid).
+    assert (Hagree_ov_scope : agree_on scope dlt dlt_ov)
+      by (apply overlay_scope_agree_on).
+    assert (Hscopefresh_ssig : scope_fresh scope ssig).
+    { eapply scope_fresh_fields_agree; eauto. }
+    assert (Hinst_agree :
+              agree_on (sig_scope ssig)
+                       (lat_valuation dlt nsig inptyp ckty srcrst outtyp)
+                       (lat_valuation dlt_ov ssig inptyp ckty srcrst outtyp)).
+    { exact (lat_valuation_fields_agree_on_sig_scope
+               nsig ssig scope dlt dlt_ov inptyp ckty srcrst outtyp
+               Hfields Hndscope Hscopefresh
+               (conj Hactualscoped Hsrcrstscope)
+               Hfresh_nsig_all Hagree_ov_scope HlenIn HlenOut). }
+    assert (Hmid_src :
+              agree_on (sig_scope ssig) dlt_mid
+                       (lat_valuation dlt nsig inptyp ckty srcrst outtyp)).
+    { intros x Hin. symmetry.
+      pose proof (signature_fields_agree_scope_eq _ _ Hfields) as Hscopeeq.
+      rewrite <- Hscopeeq in Hin.
+      eapply Hagree_mid; exact Hin. }
+    assert (Hmid_tgt :
+              agree_on (sig_scope ssig) dlt_mid
+                       (lat_valuation dlt_ov ssig inptyp ckty srcrst outtyp)).
+    { eapply agree_on_trans; eauto. }
+    assert (Hsat_ssig' :
+              listSatisfiable
+                (lat_valuation dlt_ov ssig inptyp ckty srcrst outtyp)
+                ssig.(s_constraints)).
+    { eapply listSatisfiable_ext; eauto. }
+    assert (Hsat_sconst :
+              listSatisfiable
+                (lat_valuation dlt_ov ssig inptyp ckty srcrst outtyp) sconst).
+    { pose proof (signature_fields_agree_scope_eq _ _ Hfields) as Hscopeeq.
+      assert (Hndscope_ssig : NoDup (sig_scope ssig))
+        by (rewrite <- Hscopeeq; exact Hndscope).
+      assert (Hfresh_ssig : call_subst_fresh ssig inptyp ckty srcrst outtyp).
+      { unfold call_subst_fresh. rewrite <- Hscopeeq. exact Hfresh_nsig_all. }
+      exact (generate_constraints_correct_inst
+               ssig inptyp ckty srcrst outtyp sconst st_init2 st2 dlt_ov
+               Hndscope_ssig Hfresh_ssig Hgen_ssig Hsat_ssig'). }
+    exists (lat_valuation dlt_ov ssig inptyp ckty srcrst outtyp).
+    split; [|exact Hsat_sconst].
+    intros x Hin.
+    transitivity (dlt_ov x).
+    - exact (Hagree_ov_scope x Hin).
+    - symmetry.
+      apply lat_valuation_outside_sig_scope.
+      exact (Hscopefresh_ssig x Hin).
+  Qed.
+
 End SIGNATURE_PROOFS.

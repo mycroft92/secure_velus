@@ -1061,6 +1061,59 @@ Module Type SECSTCOBCTRANSLATION
     Qed.
 
 
+
+    (** For an instance the system *resets*, the STC call passes the
+        reset instance type and the Obc call passes the instance's state
+        type — and those are the same identifier.  The two calls then
+        differ only in their input actuals, so the equal-actuals
+        preservation applies and no freshness side condition on that
+        identifier is needed.  This is what lets the reset instance stay
+        inside the shared scope, where the [TcReset] constraint also
+        mentions it. *)
+
+    Definition Signature_call_preserves_obc_eq (n1 n2: SIG.signature) : Prop :=
+      forall scope inptyp1 inptyp2 ckty rstty outtyp
+             nconst sconst st_init1 st_init2 stA stB,
+        SIG.scope_fresh scope n1 ->
+        SIG.call_subst_scoped scope inptyp1 ckty rstty outtyp ->
+        SIG.call_subst_fresh n1 inptyp1 ckty rstty outtyp ->
+        Forall2 (fun t1 t2 => forall z, In z t2 -> In z t1) inptyp1 inptyp2 ->
+        SIG.generate_constraints n1 inptyp1 ckty rstty outtyp st_init1 = OK (nconst, stA) ->
+        SIG.generate_constraints n2 inptyp2 ckty rstty outtyp st_init2 = OK (sconst, stB) ->
+        preserves_on scope nconst sconst.
+
+    Theorem signatures_preserved_obc_equal_calls_from_good:
+      forall nsig ssig,
+        SIG.signature_good nsig ->
+        NoDup (SIG.signature_scope nsig) ->
+        SIG.signature_scoped ssig ->
+        SIGPROOFS.signatures_preserved nsig ssig ->
+        Signature_call_preserves_obc_eq nsig ssig.
+    Proof.
+      intros nsig ssig Hgood Hnd Hssc Hpres.
+      intros scope inptyp1 inptyp2 ckty rstty outtyp
+             nconst sconst si1 si2 stA stB Hsf Hcss Hfr1 Hincl Hgen1 Hgen2.
+      assert (Hlen : List.length inptyp2 = List.length inptyp1).
+      { symmetry. eapply Forall2_length; eauto. }
+      destruct (SIGPROOFS.generate_constraints_ok_change_inp
+                  ssig inptyp2 inptyp1 ckty rstty outtyp sconst si2 stB si2
+                  Hlen Hgen2)
+        as (sconst1 & sB1 & Hgen2').
+      pose proof (SIGPROOFS.signatures_preserved_equal_calls_from_good
+                    nsig ssig Hgood Hnd Hssc Hpres
+                    scope inptyp1 ckty rstty outtyp
+                    nconst sconst1 si1 si2 stA sB1
+                    Hsf Hcss Hfr1 Hgen1 Hgen2')
+        as Hpres1.
+      assert (Hle : constraints_src_le sconst1 sconst).
+      { eapply SIGPROOFS.generate_constraints_mono_inp;
+          [exact Hincl|exact Hgen2'|exact Hgen2]. }
+      intros dlt Hsat.
+      destruct (Hpres1 dlt Hsat) as (dlt' & Hagree & Hsat').
+      exists dlt'. split; [exact Hagree|].
+      eapply constraints_src_le_satisfaction; eauto.
+    Qed.
+
     (** ** From the [translate_tcs] fold to a per-trconstr concatenation
 
         [translate_tcs] is a *left* fold that nests [Comp] in reverse
