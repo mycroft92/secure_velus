@@ -11,8 +11,7 @@ mathematical blocker**: every gap below closes on paper, and every inequality
 points in the direction preservation needs. The cost is concentrated in one
 proof-engineering item (§4), which has a documented fallback (§5).
 
-All file:line references below were checked against the tree at commit
-`9dc31e0`.
+References below are by lemma name and file (§8 explains why not by line).
 
 ---
 
@@ -21,7 +20,7 @@ All file:line references below were checked against the tree at commit
 The bridge's per-tc obligation is *semantic*, not syntactic — unlike TcDef /
 TcNext / TcReset, which are already proved as constraint-list equalities
 (`translate_tcdef_constraints` etc. in `SecStcObcTranslation.v`). For TcCall
-the target is `preserves_on` (`SecTypes.v:869`):
+the target is `preserves_on` (`SecTypes.v`):
 
 ```coq
 preserves_on (xs: list ident) (cns1 cns2: list constraint) : Prop :=
@@ -34,7 +33,7 @@ i.e. *any* valuation satisfying the STC call constraints can be extended
 
 ### The two sides, side by side
 
-STC (`SecSTCTyping.v:456–474`), for `TcCall i xs ck rst f es`:
+STC (`SecSTCTyping.v`), for `TcCall i xs ck rst f es`:
 
 | | unreset (`rst = false`) | reset (`rst = true`) |
 |---|---|---|
@@ -70,7 +69,7 @@ because it explains *why* the refinement was necessary.
 **What we found when attempting Route A.** The domination argument needs
 `constraints_mention s_reset` for **STC** signatures. That port turned out
 NOT to be mechanical: STC's reset'd `TcCall` uses `[rst_inst]` as its reset
-actual (`SecSTCTyping.v:466-474`), which contains no `rst_ty` at raw level.
+actual (`SecSTCTyping.v`, reset branch of `generate_trconstr_constraint`), which contains no `rst_ty` at raw level.
 So `constraints_mention rst_ty raw` is **false** for any system with a
 reset'd call — the mention only materialises *after* `simplify` substitutes
 the hidden `rst_inst` away. Proving it would have required a new
@@ -164,19 +163,19 @@ and the extra `rst_ty` is dominated:
 constraints_mention ty cns := forall lhs y, In (lhs, [y]) cns -> In ty lhs
 ```
 
-(`SecNLusTypingCorrectness.v:1479`) instantiated at `ty := sig.(s_reset)`
+(`SecNLusTypingCorrectness.v`) instantiated at `ty := sig.(s_reset)`
 for every generated STC signature. That theorem does not exist yet for STC —
 but its NLustre twin does, fully proved, and every ingredient is
 signature-generic (i.e. does not mention NLustre syntax):
 
 | lemma | location | reusable as-is? |
 |---|---|---|
-| `constraints_mention` (def) | `SecNLusTypingCorrectness.v:1479` | yes (move or re-state) |
-| `simplify_mentions_other` | `:1618` | yes — pure `SymTypes.simplify` fact |
-| `generate_constraints_mentions_reset` | `:1808` | yes — pure `SIG.generate_constraints` fact |
-| `generate_constraints_mentions_clock` | `:2473` | yes |
-| `generated_signature_constraints_mention_reset_scoped_env'` | `:2252` | **no** — NLustre-specific; port per-trconstr |
-| `generated_signature_constraints_mention_reset_scoped_env` | `:2434` | ditto |
+| `constraints_mention` (def) | `SecNLusTypingCorrectness.v` | yes (move or re-state) |
+| `simplify_mentions_other` |  | yes — pure `SymTypes.simplify` fact |
+| `generate_constraints_mentions_reset` |  | yes — pure `SIG.generate_constraints` fact |
+| `generate_constraints_mentions_clock` |  | yes |
+| `generated_signature_constraints_mention_reset_scoped_env'` |  | **no** — NLustre-specific; port per-trconstr |
+| `generated_signature_constraints_mention_reset_scoped_env` |  | ditto |
 
 So the port is: replay the `..._scoped_env'` induction over `s_tcs` instead
 of `n_eqs`, discharging four cases instead of three. Each case is a
@@ -193,9 +192,14 @@ needed anyway if the NI transport is ever run on the Obc side.
 
 ---
 
-## 3. Obligation B — weaker arguments (`translate_arg`)
+## 3. Obligation B — weaker arguments (`translate_arg`). **DONE**
 
-**The delta.** `translate_arg ck e` (StcToObc `Translation.v:70–77`) either
+Proved as `translate_exp_type_incl`, `translate_arg_type_incl` and
+`translate_args_type_incl` in `SecStcObcTranslation.v`: the Obc argument
+type is always a *subset* of the CoreExpr one, delivered as the `Forall2`
+inclusion `tccall_preserv` consumes.
+
+**The delta.** `translate_arg ck e` (StcToObc `Translation.v`) either
 emits `Valid x ty` (when `var_on_base_clock ck x`) or `translate_exp e`,
 and `translate_exp` **drops `Ewhen` guards**. Those guards are variables of
 the *instantiated* argument clock `instck ck sub xck`, which are not all in
@@ -233,23 +237,34 @@ have the same security type — both are `Env.find x env`).
 
 ---
 
-## 4. Obligation C — the valuation surgery (the real risk)
+## 4. Obligation C — the valuation surgery. **DONE, and the risk never materialised**
+
+Closed by `signatures_preserved_obc_calls_from_good`. The feared step —
+generalising `generate_constraints_complete_good` to unequal actuals — was
+*avoided entirely*: `generate_constraints_ok_change_inp` produces an Obc run
+at the STC input types, the hoisted equal-actuals theorem applies there
+unchanged, and `generate_constraints_mono_inp` with
+`constraints_src_le_satisfaction` descends to the weaker run. Completeness is
+therefore only ever invoked with equal actuals. The analysis below records
+why it looked risky.
+
+
 
 **The delta.** The existing call-preservation machinery,
-`Signature_call_preserves` (`SecNLusStcTranslation.v:88–106`) and its proof
+`Signature_call_preserves` (`SecNLusStcTranslation.v`) and its proof
 `signatures_preserved_reset_underlying_calls_from_good`
-(`SecNLusStcTranslation.v:2117–2294`), assumes the two sides share
+(since hoisted into `SIFSignature.v`), assumes the two sides share
 **identical `inp`, `clk`, and `out`**, differing only in the reset actual
 (`srcrst` vs `rst_inst`). Its proof works by exact agreement of the two
-`lat_valuation`s (`SIFSignature.v:1238`) on `sig_scope`, via
-`lat_valuation_fields_agree_on_sig_scope_reset` (`:2044`).
+`lat_valuation`s (`SIFSignature.v`) on `sig_scope`, via
+`lat_valuation_fields_agree_on_sig_scope_reset` ().
 
 Here `inp` is weaker (§3) and `clk` is larger (§2), so those *equalities*
 become **⊑-monotonicity** obligations, and the ~180-line proof must be
 generalized.
 
 **The specific risk.** That proof pivots on
-`generate_constraints_complete_good` (`SIFSignature.v:2801`), the
+`generate_constraints_complete_good` (`SIFSignature.v`), the
 *backward* (completeness) direction: from satisfaction of the generated
 constraints, reconstruct satisfaction of the callee signature's own
 constraints under `upd_types_rev (upd_type (upd_type (upd_idents_rev …)))`.
@@ -279,7 +294,14 @@ domination of §2. The never-reset branch is plan blocker **B5**, and the
 
 ---
 
-## 5. Mitigation for §4 — the substitution-level route
+## 5. Mitigation for §4 — not needed in the end
+
+Retained for the record. The route actually taken (§4) reduces to the
+equal-actuals case, so the substitution-level fallback below was never
+required — though its key observation, that the forward substitution lemmas
+are already stated with `⊑` rather than `=`, is what made the reduction work.
+
+### The fallback as originally planned
 
 If the generalization of `generate_constraints_complete_good` stalls, there
 is a route that **never invokes the backward direction at all**.
@@ -288,25 +310,25 @@ is a route that **never invokes the backward direction at all**.
 substitution chain is already stated with `⊑`, not `=`:
 
 ```coq
-(* SIFSignature.v:1085 *)
+(* SIFSignature.v *)
 Definition inp_replace_cond dlt (x: ident) (v: ST) : Prop := hm_ext dlt v ⊑ dlt x.
 
-(* SIFSignature.v:1087 *)
+(* SIFSignature.v *)
 Lemma subst_constraints_inp_map_correct:
   subst_constraints_inp_map cs xs vs st = OK (cs', st') ->
   forall dlt, listSatisfiable dlt cs -> Forall2 (inp_replace_cond dlt) xs vs ->
               listSatisfiable dlt cs'.
 
-(* SIFSignature.v:1074 *)
+(* SIFSignature.v *)
 Lemma subst_ident_in_constraints_correct:
   subst_ident_in_constraints cs x v st = OK (cs', st') ->
   forall dlt, listSatisfiable dlt cs -> hm_ext dlt v ⊑ dlt x -> listSatisfiable dlt cs'.
 ```
 
 Both take an **inequality** as the substitution side condition. So does the
-type-level core, `subst_ident_in_type_correct1` (`:983`). This means the
+type-level core, `subst_ident_in_type_correct1` (). This means the
 whole forward pipeline — and therefore `generate_constraints_correct_inst`
-(`:2464`), which chains exactly these lemmas — is *already* monotone-friendly
+(), which chains exactly these lemmas — is *already* monotone-friendly
 in the actuals.
 
 **Route B, concretely:**
@@ -456,7 +478,7 @@ final `mmap` lookup pass. Nothing was committed for A′: the draft had
 
 With A, the theorem follows from
 `signatures_preserved_reset_underlying_calls_from_good`
-(`SecNLusStcTranslation.v:2105`) applied at `inp1` on *both* sides, then
+(hoisted into `SIFSignature.v`) applied at `inp1` on *both* sides, then
 A to descend to `inp2`. Note its conclusion prepends the reset-defining
 constraint; ours does not, and `preserves_on scope c (x :: cs) ->
 preserves_on scope c cs` discards it.
@@ -466,7 +488,7 @@ That theorem is **generic over signatures** — it mentions only
 NLustre→STC file only by historical accident. Per the project rule
 (§2c(2) of the progress doc) it should be **hoisted into
 `SIGNATURE_PROOFS`** (`SIFSignature.v`), together with
-`signatures_preserved` (`:84`), and `SecNLusStcTranslation.v` edited to
+`signatures_preserved` (), and `SecNLusStcTranslation.v` edited to
 use the hoisted versions. Mechanical but touches a 2900-line file, so do
 it as its own commit with a full rebuild.
 
@@ -522,32 +544,59 @@ actually forces, and B5 (never-reset instances) behaves as predicted.
    (`Signature_consistent Gstc Gobc`), then phases 5 (scheduling) and 6 (NI
    transport) per `Stc2ObcSIF_progress.md`.
 
-## 8. Verified lemma inventory (file:line at `9dc31e0`)
+## 8. Lemma inventory
 
-Mention machinery — `SecNLusTypingCorrectness.v`: `constraints_mention` 1479,
-`simplify_mentions_other` 1618, `generate_constraints_mentions_reset` 1808,
-`generate_constraints_mentions_clock` 2473, `…_mention_reset_scoped_env'`
-2252, `…_mention_reset_scoped_env` 2434.
+**References are by name and file only.** Line numbers were tried first and
+proved worthless: between commits `9dc31e0` and `290bfd4` they drifted by up to
+150 lines, and two entries changed file outright (see below). Names are stable;
+`grep -n` is cheap.
 
-Substitution / valuation — `SIFSignature.v`: `subst_ident_in_type_correct1`
-983, `subst_ident_in_constraints_correct` 1074, `inp_replace_cond` 1085,
-`subst_constraints_inp_map_correct` 1087, `hm_ext_upd_type_subst` 1213,
-`lat_valuation` 1238, `lat_valuation_agree_on_scope` 1250,
-`lat_valuation_fields_agree_on_sig_scope_reset` 2044,
-`generate_constraints_correct_inst` 2464, `generate_constraints_complete_good`
-2801.
+Mention machinery — `SecNLusTypingCorrectness.v`: `constraints_mention`,
+`simplify_mentions_other`, `generate_constraints_mentions_reset`,
+`generate_constraints_mentions_clock`,
+`generated_signature_constraints_mention_reset_scoped_env(')`.
+*(Only of historical interest: the STC port these would have fed was made
+unnecessary by the pc refinement — §2.)*
 
-Bridge templates — `SecNLusStcTranslation.v`: `Signature_call_preserves` 88,
-`eqn_preserv` 752 (reset-call case ~800–960),
-`signatures_preserved_reset_underlying_calls_from_good` 2117,
-`signatures_preserved_reset_calls_from_good` 2296, lockstep induction
-`generate_all_signatures_consistent_scoped'` 2513.
+Substitution / valuation — `SIFSignature.v` (`SIGNATURE_PROOFS`):
+`subst_ident_in_type_correct1`, `subst_ident_in_constraints_correct`,
+`inp_replace_cond`, `subst_constraints_inp_map_correct`,
+`hm_ext_upd_type_subst`, `lat_valuation`, `lat_valuation_agree_on_scope`,
+`lat_valuation_fields_agree_on_sig_scope_reset`,
+`generate_constraints_correct_inst`, `generate_constraints_complete_good`.
 
-Obc side — `SecObcTypingCorrectness.v`: `collapse_satisfaction`,
-`generate_stmt_constraints_targets`, `generate_state_env_range`,
-`generate_state_env_injective`, `generate_state_env_key_from_objs`.
+Input monotonicity and success transfer (added for this bridge) —
+`SIFSignature.v`: `generate_constraints_mono_inp`,
+`generate_constraints_ok_change_inp`, and their stage lemmas
+(`subst_ident_in_type_mono`, `subst_*_mono`, `findST_none_targets`,
+`subst_*_ok_change`, `final_lookup_ok_change`).
+
+**Moved since the first draft** — both were generic over signatures and sat in
+the NLustre bridge by historical accident; they are now in `SIFSignature.v`:
+`signatures_preserved`, `signatures_preserved_reset_underlying_calls_from_good`.
+
+Bridge templates still in `SecNLusStcTranslation.v`: `Signature_call_preserves`,
+`eqn_preserv` (its reset-call case is the closest model),
+`signatures_preserved_reset_calls_from_good`,
+`generate_all_signatures_consistent_scoped'` (the lockstep).
+
+Obc side — `SecObcTypingCorrectness.v`: `generate_stmt_constraints_targets`,
+`generate_state_env_range`, `generate_state_env_injective`,
+`generate_state_env_key_from_objs`, `generate_class_signature_inv`.
 `SecStcObcTranslation.v`: `generate_stmt_constraints_Control(_assign)`,
-`translate_exp_type_correspondence`, `translate_cexp_constraints`,
-`translate_tc{def,next,reset}_constraints`.
+`clock_pc_from_assign`, `translate_exp_type_correspondence`,
+`translate_exp_type_incl` / `translate_arg_type_incl` /
+`translate_args_type_incl`, `translate_cexp_constraints`,
+`translate_tc{def,next,reset}_constraints`, `tccall_preserv`,
+`signatures_preserved_obc_calls_from_good`, `translate_tcs_fold_right`,
+`generate_fold_right_Comp`.
 
-`preserves_on` — `SecTypes.v:869`.
+Generic, in their owning modules after the refactors — `SecTypes.v`:
+`preserves_on`, `preserves_on_from_entailment`, `preserves_on_refl`,
+`preserves_on_Permutation`, `preserves_on_concat_list`, `hm_ext_incl`,
+`constraints_src_le(_satisfaction)`, **`collapse_satisfaction`** (was listed
+under the Obc side; it is generic and lives here).
+`SymTypes.v`: `collapse`, `lhs_join`, `collapse_same_target`, `lhs_join_app`,
+`merge_incl_mono`, `in_merge_left/right`.
+`SecContext.v`: `fresh_reset_insert*`, `env_reset_bounded*`, `mmap_cons_ok`.
+`SIF/Helpers.v`: `env_injective`, `env_values(+2)`.
