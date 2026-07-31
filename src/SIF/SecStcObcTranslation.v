@@ -1613,6 +1613,249 @@ Module Type SECSTCOBCTRANSLATION
       now apply tcs_obc_extras_concat.
     Qed.
 
+    Lemma Signature_consistent_obc_eq_from_full:
+      forall H1 H2,
+        Signature_consistent_obc_full H1 H2 ->
+        Signature_consistent_obc_eq H1 H2.
+    Proof.
+      intros H1 H2 Hfull f n1 Hf.
+      destruct (Hfull f n1 Hf) as (n2 & Hf2 & _ & Heq).
+      exists n2. split; assumption.
+    Qed.
+
+    (** ** Per-trconstr preservation, with the block owning its extras
+
+        The target of a block is its own Obc constraints together with
+        the reset-method constraint of any instance it owns. *)
+
+    Definition tc_preserv_hyps_aug (scope: list ident) vars (tc: SynStc.trconstr) : Prop :=
+      match tc with
+      | SynStc.TcDef _ ck ce => CEClo.wc_cexp vars ce ck
+      | SynStc.TcNext _ ck e => CEClo.wc_exp vars e ck
+      | SynStc.TcReset _ _ _ => True
+      | SynStc.TcCall _ _ ck true f _ =>
+          exists ckty,
+            SECCETYPING.assign_clk_type env clk_ty ck = Some ckty
+            /\ (forall n1 inptyp1 rinst outtyp,
+                    SIG.find_signature f G1 = Some n1 ->
+                    SIG.scope_fresh scope n1
+                    /\ SIG.call_subst_scoped scope inptyp1 ckty [rinst] outtyp
+                    /\ SIG.call_subst_fresh n1 inptyp1 ckty [rinst] outtyp)
+      | SynStc.TcCall i _ ck false f _ =>
+          List.In rst_ty scope
+          /\ exists ckty sty,
+               SECCETYPING.assign_clk_type env clk_ty ck = Some ckty
+               /\ Env.find i reset_env = Some sty
+               /\ ~ List.In sty scope
+               /\ (forall n1 n2 inptyp1 inptyp2 outtyp,
+                       SIG.find_signature f G1 = Some n1 ->
+                       SIG.find_signature f G2 = Some n2 ->
+                       call_side_conditions scope n1 n2 inptyp1 inptyp2 ckty
+                         [rst_ty] sty outtyp)
+      end.
+
+    Lemma tc_preserv_aug:
+      forall scope vars memset clkvars tc e nconst sconst st1 st1' st2 st2',
+        Signature_consistent_obc_full G1 G2 ->
+        tc_preserv_hyps_aug scope vars tc ->
+        tc_obc_extras tc = Some e ->
+        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty tc st1
+          = OK (nconst, st1') ->
+        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
+          (translate_tc memset clkvars tc) st2 = OK (sconst, st2') ->
+        preserves_on scope nconst (sconst ++ map (fun ty => ([rst_ty], [ty])) e).
+    Proof.
+      intros scope vars memset clkvars tc e nconst sconst st1 st1' st2 st2'
+             Hcons Hhyps Hextras Hstc Hobc.
+      destruct tc as [x ck ce|x ck ex|i ck f|i xs ck [|] f es];
+        simpl in Hhyps, Hextras.
+      - inversion Hextras; subst e. simpl. rewrite app_nil_r.
+        eapply tcdef_preserv; eauto.
+      - inversion Hextras; subst e. simpl. rewrite app_nil_r.
+        eapply tcnext_preserv; eauto.
+      - inversion Hextras; subst e. simpl. rewrite app_nil_r.
+        eapply tcreset_preserv; eauto.
+      - (* a reset'd call: both sides pass the same actual, no extras *)
+        inversion Hextras; subst e. simpl. rewrite app_nil_r.
+        destruct Hhyps as (ckty & Hckty & Hside).
+        eapply tccall_reset_preserv_eq; eauto.
+        eapply Signature_consistent_obc_eq_from_full; eauto.
+      - (* an unreset call: the block owns the instance's state type *)
+        destruct Hhyps as (Hrstin & ckty & sty & Hckty & Hsty & Hstynotin & Hside).
+        rewrite Hsty in Hextras. inversion Hextras; subst e. simpl.
+        destruct xs as [|x xs'].
+        + (* no outputs: both generators emit nothing *)
+          simpl in Hstc. unfold ret in Hstc. inversion Hstc; subst nconst st1'.
+          unfold translate_tc in Hobc.
+          rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
+          rewrite (generate_stmt_constraints_Control_assign
+                     G2 env reset_env rst_ty memset ck
+                     (SynObc.Call [] f i step (map (translate_arg memset clkvars ck) es))
+                     clk_ty ckty [] st2 Hckty) in Hobc.
+          rewrite (MergeFacts.merge_nil2 ckty) in Hobc.
+          simpl in Hobc.
+          assert (Hne : ident_eqb step reset = false).
+          { apply ident_eqb_neq. intro Heq. symmetry in Heq.
+            revert Heq. apply reset_not_step. }
+          rewrite Hne in Hobc.
+          unfold ret in Hobc. inversion Hobc; subst sconst st2'.
+          simpl. now apply preserves_on_reset_only_extra.
+        + eapply tccall_unreset_preserv_rst; eauto. discriminate.
+    Qed.
+
+    (** Pointwise augmentation of the Obc blocks with the reset-method
+        constraints of the instances they own. *)
+
+    Fixpoint zip_app (bs: list (list constraint)) (es: list (list ident))
+      : list (list constraint) :=
+      match bs, es with
+      | b :: bs', e :: es' =>
+          (b ++ map (fun ty => ([rst_ty], [ty])) e) :: zip_app bs' es'
+      | _, _ => []
+      end.
+
+    Lemma zip_app_covers_blocks:
+      forall bs es c,
+        List.length bs = List.length es ->
+        List.In c (List.concat bs) ->
+        List.In c (List.concat (zip_app bs es)).
+    Proof.
+      induction bs as [|b bs IH]; intros es c Hlen Hin; simpl in *.
+      - contradiction.
+      - destruct es as [|e es]; [discriminate|].
+        simpl in Hlen. simpl.
+        apply in_app_iff in Hin as [Hin|Hin]; apply in_or_app.
+        + left. apply in_or_app. now left.
+        + right. eapply IH; eauto.
+    Qed.
+
+    Lemma zip_app_covers_extras:
+      forall bs es ty,
+        List.length bs = List.length es ->
+        List.In ty (List.concat es) ->
+        List.In ([rst_ty], [ty]) (List.concat (zip_app bs es)).
+    Proof.
+      induction bs as [|b bs IH]; intros es ty Hlen Hin; simpl in *.
+      - destruct es; [contradiction|discriminate].
+      - destruct es as [|e es]; [discriminate|].
+        simpl in Hlen, Hin. simpl.
+        apply in_app_iff in Hin as [Hin|Hin]; apply in_or_app.
+        + left. apply in_or_app. right.
+          apply in_map_iff. exists ty. split; [reflexivity|exact Hin].
+        + right. eapply IH; eauto.
+    Qed.
+
+    Lemma zip_app_Forall2_scoped:
+      forall scope bs es,
+        Forall2 (fun b e => constraints_scoped (scope ++ e)
+                              (b ++ map (fun ty => ([rst_ty], [ty])) e)) bs es ->
+        Forall2 (fun t e => constraints_scoped (scope ++ e) t) (zip_app bs es) es.
+    Proof.
+      intros scope bs es Hall.
+      induction Hall as [|b e bs es Hbe Hall IH]; simpl; constructor; auto.
+    Qed.
+
+    Lemma tcs_blocks_preserv_aug:
+      forall scope vars memset clkvars tcs nblocks sblocks extras,
+        Signature_consistent_obc_full G1 G2 ->
+        Forall (tc_preserv_hyps_aug scope vars) tcs ->
+        Forall2 (fun tc nblk =>
+                   exists sa sb,
+                     SECSTCTYPING.generate_trconstr_constraint G1 env reset_env
+                       clk_ty rst_ty tc sa = OK (nblk, sb)) tcs nblocks ->
+        Forall2 (fun tc sblk =>
+                   exists sa sb,
+                     generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
+                       (translate_tc memset clkvars tc) sa = OK (sblk, sb)) tcs sblocks ->
+        Forall2 (fun tc e => tc_obc_extras tc = Some e) tcs extras ->
+        Forall2 (preserves_on scope) nblocks (zip_app sblocks extras).
+    Proof.
+      intros scope vars memset clkvars tcs nblocks sblocks extras Hcons Hhyps Hn Hs He.
+      revert nblocks sblocks extras Hn Hs He.
+      induction tcs as [|tc tcs IH]; intros nblocks sblocks extras Hn Hs He.
+      - inversion Hn; inversion Hs; inversion He; subst. simpl. constructor.
+      - inversion Hn as [|tc1 nblk tcs1 nbs Hnb Hn']; subst.
+        inversion Hs as [|tc2 sblk tcs2 sbs Hsb Hs']; subst.
+        inversion He as [|tc3 e tcs3 es Hee He']; subst.
+        inversion Hhyps as [|tc4 tcs4 Hh Hhyps']; subst.
+        simpl. constructor.
+        + destruct Hnb as (sa & sb & Hnb). destruct Hsb as (sc & sd & Hsb).
+          eapply tc_preserv_aug; eauto.
+        + eapply IH; eauto.
+    Qed.
+
+    (** Whole-body preservation against a target that also carries the
+        reset-method constraints of every instance the body owns. *)
+
+    Lemma tcs_preserv_aug:
+      forall scope vars memset clkvars tcs extras nconst sconst st1 st1' st2 st2',
+        Signature_consistent_obc_full G1 G2 ->
+        Forall (tc_preserv_hyps_aug scope vars) tcs ->
+        tcs_obc_extras tcs = Some extras ->
+        NoDup (List.concat extras) ->
+        (forall x, List.In x (List.concat extras) -> ~ List.In x scope) ->
+        Forall2 (fun tc e =>
+                   forall blk sa sb,
+                     generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
+                       (translate_tc memset clkvars tc) sa = OK (blk, sb) ->
+                     constraints_scoped (scope ++ e)
+                       (blk ++ map (fun ty => ([rst_ty], [ty])) e))
+                tcs extras ->
+        SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty tcs st1
+          = OK (nconst, st1') ->
+        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
+          (translate_tcs memset clkvars tcs) st2 = OK (sconst, st2') ->
+        exists tgt,
+          (forall c, List.In c sconst -> List.In c tgt)
+          /\ (forall ty, List.In ty (List.concat extras) ->
+                         List.In ([rst_ty], [ty]) tgt)
+          /\ preserves_on scope nconst tgt.
+    Proof.
+      intros scope vars memset clkvars tcs extras nconst sconst st1 st1' st2 st2'
+             Hcons Hhyps Hextras Hnd Hfresh Hsc Hstc Hobc.
+      destruct (SECSTCTYPING.generate_trconstrs_constraints_blocks
+                  G1 env reset_env clk_ty rst_ty tcs nconst st1 st1' Hstc)
+        as (nblocks & Hnconst & Hnall).
+      rewrite translate_tcs_fold_right in Hobc.
+      destruct (generate_fold_right_Comp memset clkvars [clk_ty] (rev tcs)
+                  sconst st2 st2' Hobc)
+        as (sblocks & Hsconst & Hsall).
+      subst nconst sconst.
+      pose proof (tcs_obc_extras_Forall2 _ _ Hextras) as Hextall.
+      apply Forall2_rev in Hnall.
+      apply Forall2_rev in Hextall.
+      apply Forall2_rev in Hsc.
+      assert (Hhypsrev : Forall (tc_preserv_hyps_aug scope vars) (rev tcs))
+        by (apply Forall_rev; exact Hhyps).
+      assert (Hpres : Forall2 (preserves_on scope) (rev nblocks)
+                        (zip_app sblocks (rev extras))).
+      { eapply tcs_blocks_preserv_aug; eauto. }
+      assert (Hscoped : Forall2 (fun t e => constraints_scoped (scope ++ e) t)
+                          (zip_app sblocks (rev extras)) (rev extras)).
+      { apply zip_app_Forall2_scoped.
+        eapply (Forall2_combine _ _ _ (rev tcs) sblocks (rev extras) Hsall Hsc).
+        intros tc sblk e (sa & sb & Hs) He. eapply He; eauto. }
+      assert (Hndrev : NoDup (List.concat (rev extras))).
+      { eapply Permutation_NoDup;
+          [symmetry; apply concat_rev_Permutation|exact Hnd]. }
+      assert (Hfreshrev : forall x, List.In x (List.concat (rev extras)) ->
+                                    ~ List.In x scope).
+      { intros x Hin. apply Hfresh.
+        eapply Permutation_in; [apply concat_rev_Permutation|exact Hin]. }
+      assert (Hlen : List.length sblocks = List.length (rev extras)).
+      { eapply Forall2_length. eapply (Forall2_combine _ _ _ (rev tcs) sblocks (rev extras)
+                                         Hsall Hextall).
+        intros; exact I. }
+      exists (List.concat (zip_app sblocks (rev extras))).
+      repeat split.
+      - intros c Hin. eapply zip_app_covers_blocks; eauto.
+      - intros ty Hin. eapply zip_app_covers_extras; eauto.
+        eapply Permutation_in; [symmetry; apply concat_rev_Permutation|exact Hin].
+      - eapply preserves_on_Permutation;
+          [apply concat_rev_Permutation|reflexivity|].
+        eapply preserves_on_concat_list; eauto.
+    Qed.
+
     (** [translate_tcs] emits the per-trconstr blocks in reverse order,
         so the Obc constraint list is a permutation of the STC one taken
         blockwise.  [extras] names, per trconstr, the identifiers that
