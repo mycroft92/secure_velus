@@ -1207,6 +1207,56 @@ Module Type SECTYPES(Import Lat: Lattice).
     eapply listSatisfiable_Permutation; eauto.
   Qed.
 
+  (** n-ary version of [preserves_on_concat_scoped]: a list of chunks,
+      each with its own target-side-only names.  Used to assemble the
+      per-trconstr results of a translation into a whole-body one. *)
+
+  Lemma constraints_scoped_concat:
+    forall scope tgts extras,
+      Forall2 (fun t e => constraints_scoped (scope ++ e) t) tgts extras ->
+      constraints_scoped (scope ++ concat extras) (concat tgts).
+  Proof.
+    intros scope tgts extras Hall.
+    induction Hall as [|t e tgts extras Ht Hall IH]; simpl.
+    - constructor.
+    - apply Forall_app. split.
+      + eapply constraints_scoped_weaken; [|exact Ht].
+        intros z Hz. apply in_app_iff in Hz.
+        apply in_or_app.
+        destruct Hz as [Hz|Hz]; [now left|right; apply in_or_app; now left].
+      + eapply constraints_scoped_weaken; [|exact IH].
+        intros z Hz. apply in_app_iff in Hz.
+        apply in_or_app.
+        destruct Hz as [Hz|Hz]; [now left|right; apply in_or_app; now right].
+  Qed.
+
+  Lemma preserves_on_concat_list:
+    forall scope srcs tgts extras,
+      NoDup (concat extras) ->
+      (forall x, In x (concat extras) -> ~ In x scope) ->
+      Forall2 (fun t e => constraints_scoped (scope ++ e) t) tgts extras ->
+      Forall2 (preserves_on scope) srcs tgts ->
+      preserves_on scope (concat srcs) (concat tgts).
+  Proof.
+    intros scope srcs tgts extras Hnd Hfresh Hsc Hpres.
+    revert extras Hnd Hfresh Hsc.
+    induction Hpres as [|s t srcs tgts Hp Hps IH];
+      intros extras Hnd Hfresh Hsc.
+    - simpl. apply preserves_on_nil.
+    - inversion Hsc as [|t' e tgts' extras' Hsce Hsces]; subst.
+      simpl in Hnd, Hfresh |- *.
+      eapply preserves_on_concat_scoped
+        with (extras1 := e) (extras2 := concat extras').
+      + exact Hnd.
+      + exact Hfresh.
+      + exact Hsce.
+      + eapply constraints_scoped_concat; exact Hsces.
+      + exact Hp.
+      + eapply IH; [|..|exact Hsces].
+        * apply NoDup_app_r in Hnd. exact Hnd.
+        * intros x Hx. apply Hfresh. apply in_or_app. now right.
+  Qed.
+
   Lemma preserves_on_from_entailment:
     forall scope c1 c2,
       (forall dlt, listSatisfiable dlt c1 -> listSatisfiable dlt c2) ->
