@@ -2134,6 +2134,129 @@ Module Type SECSTCOBCTRANSLATION
       rewrite Hm, Hi, map_app. reflexivity.
     Qed.
 
+    (** ** Free names of a translated trconstr
+
+        The translation invents no variables: [Control] re-reads the
+        clock's variables, [translate_exp] only ever drops [Ewhen]
+        guards, and the assigned names are the trconstr's own targets.
+        So every name free in the translation is free or defined in the
+        source, which is what the Obc scopedness theorem needs. *)
+
+    Lemma translate_exp_free:
+      forall memset e x,
+        List.In x (SECOBCTYPING.exp_free (translate_exp memset e)) ->
+        CEIsF.Is_free_in_exp x e.
+    Proof.
+      intros memset e. induction e; intros y Hin; simpl in Hin.
+      - contradiction.
+      - unfold tovar in Hin. destruct (PS.mem i memset); simpl in Hin;
+          destruct Hin as [Heq|[]]; subst y; constructor.
+      - constructor. now apply IHe.
+      - constructor. now apply IHe.
+      - apply in_app_iff in Hin as [Hin|Hin]; constructor;
+          [left; now apply IHe1|right; now apply IHe2].
+    Qed.
+
+    Lemma translate_arg_free:
+      forall memset clkvars ck e x,
+        List.In x (SECOBCTYPING.exp_free (translate_arg memset clkvars ck e)) ->
+        CEIsF.Is_free_in_exp x e.
+    Proof.
+      intros memset clkvars ck e x Hin.
+      destruct e.
+      - exact (translate_exp_free memset _ x Hin).
+      - simpl in Hin.
+        destruct (var_on_base_clock memset clkvars ck i) eqn:Hb; simpl in Hin.
+        + destruct Hin as [Heq|[]]; subst x. constructor.
+        + destruct (PS.mem i memset); simpl in Hin;
+            destruct Hin as [Heq|[]]; subst x; constructor.
+      - exact (translate_exp_free memset _ x Hin).
+      - exact (translate_exp_free memset _ x Hin).
+      - exact (translate_exp_free memset _ x Hin).
+    Qed.
+
+    Lemma translate_cexp_free:
+      forall memset y ce x,
+        List.In x (SECOBCTYPING.stmt_free (translate_cexp memset y ce)) ->
+        x = y \/ CEIsF.Is_free_in_cexp x ce.
+    Proof.
+      intros memset y ce. induction ce; intros z Hin; simpl in Hin.
+      - apply in_app_iff in Hin as [Hin|Hin].
+        + right. unfold bool_var, tovar in Hin.
+          destruct (PS.mem i memset); simpl in Hin;
+            destruct Hin as [Heq|[]]; subst z; constructor.
+        + apply in_app_iff in Hin as [Hin|Hin].
+          * destruct (IHce1 _ Hin) as [Heq|Hfree]; [now left|].
+            right. now apply FreeEmerge_true.
+          * destruct (IHce2 _ Hin) as [Heq|Hfree]; [now left|].
+            right. now apply FreeEmerge_false.
+      - apply in_app_iff in Hin as [Hin|Hin].
+        + right. apply FreeEite_cond.
+          exact (translate_exp_free memset _ z Hin).
+        + apply in_app_iff in Hin as [Hin|Hin].
+          * destruct (IHce1 _ Hin) as [Heq|Hfree]; [now left|].
+            right. now apply FreeEite_true.
+          * destruct (IHce2 _ Hin) as [Heq|Hfree]; [now left|].
+            right. now apply FreeEite_false.
+      - destruct Hin as [Heq|Hin]; [now left|].
+        right. constructor. exact (translate_exp_free memset _ z Hin).
+    Qed.
+
+    Lemma stmt_free_Control:
+      forall memset ck s x,
+        List.In x (SECOBCTYPING.stmt_free (Control memset ck s)) ->
+        Is_free_in_clock x ck \/ List.In x (SECOBCTYPING.stmt_free s).
+    Proof.
+      intros memset ck. induction ck as [|ck IH i b]; intros s x Hin; simpl in Hin.
+      - now right.
+      - destruct b; simpl in Hin.
+        + destruct (IH _ _ Hin) as [Hck|Hs]; [now left; right|].
+          simpl in Hs. apply in_app_iff in Hs as [Hs|Hs].
+          * left. unfold bool_var, tovar in Hs.
+            destruct (PS.mem i memset); simpl in Hs;
+              destruct Hs as [Heq|[]]; subst x; constructor.
+          * rewrite app_nil_r in Hs. now right.
+        + destruct (IH _ _ Hin) as [Hck|Hs]; [now left; right|].
+          simpl in Hs. apply in_app_iff in Hs as [Hs|Hs].
+          * left. unfold bool_var, tovar in Hs.
+            destruct (PS.mem i memset); simpl in Hs;
+              destruct Hs as [Heq|[]]; subst x; constructor.
+          * simpl in Hs. now right.
+    Qed.
+
+    Lemma translate_tc_free:
+      forall memset clkvars tc x,
+        List.In x (SECOBCTYPING.stmt_free (translate_tc memset clkvars tc)) ->
+        IsFStc.Is_free_in_tc x tc \/ List.In x (DefStc.defined_tc tc).
+    Proof.
+      intros memset clkvars tc x Hin.
+      destruct tc as [y ck ce|y ck e|i ck f|i ys ck b f es]; simpl in Hin.
+      - destruct (stmt_free_Control _ _ _ _ Hin) as [Hck|Hs].
+        + left. constructor. now apply FreeCAexp2.
+        + destruct (translate_cexp_free _ _ _ _ Hs) as [Heq|Hfree].
+          * subst x. right. simpl. now left.
+          * left. constructor. now apply FreeCAexp1.
+      - destruct (stmt_free_Control _ _ _ _ Hin) as [Hck|Hs].
+        + left. constructor. now apply freeAexp2.
+        + simpl in Hs. destruct Hs as [Heq|Hs].
+          * subst x. right. simpl. now left.
+          * left. constructor. apply freeAexp1.
+            exact (translate_exp_free memset _ x Hs).
+      - destruct (stmt_free_Control _ _ _ _ Hin) as [Hck|Hs].
+        + left. now constructor.
+        + simpl in Hs. contradiction.
+      - destruct (stmt_free_Control _ _ _ _ Hin) as [Hck|Hs].
+        + left. constructor. now apply freeAexps2.
+        + simpl in Hs. apply in_app_iff in Hs as [Hs|Hs].
+          * right. simpl. exact Hs.
+          * left. constructor. apply freeAexps1.
+            apply in_flat_map in Hs as (oe & Hinoe & Hfree).
+            apply in_map_iff in Hinoe as (e0 & Heq & Hine0).
+            subst oe.
+            apply Exists_exists. exists e0. split; [exact Hine0|].
+            exact (translate_arg_free memset clkvars ck e0 x Hfree).
+    Qed.
+
     (** ** The raw scope
 
         Everything the two constraint sets share: the signature scope,
