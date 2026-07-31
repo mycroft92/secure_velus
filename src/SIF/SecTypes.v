@@ -1257,6 +1257,27 @@ Module Type SECTYPES(Import Lat: Lattice).
         * intros x Hx. apply Hfresh. apply in_or_app. now right.
   Qed.
 
+  (** Target constraints that any scope-agreeing valuation already
+      satisfies can be appended for free.  The Obc reset method's
+      constraints on names shared with the source are of this kind. *)
+
+  Lemma preserves_on_app_scope_entailed:
+    forall scope c t1 t2,
+      preserves_on scope c t1 ->
+      (forall dlt dlt',
+          listSatisfiable dlt c ->
+          agree_on scope dlt dlt' ->
+          listSatisfiable dlt' t2) ->
+      preserves_on scope c (t1 ++ t2).
+  Proof.
+    intros scope c t1 t2 Hp Hent dlt Hsat.
+    destruct (Hp dlt Hsat) as (dlt' & Hagree & Hsat1).
+    exists dlt'. split; [exact Hagree|].
+    unfold listSatisfiable. apply Forall_app. split.
+    - exact Hsat1.
+    - eapply Hent; eauto.
+  Qed.
+
   Lemma preserves_on_from_entailment:
     forall scope c1 c2,
       (forall dlt, listSatisfiable dlt c1 -> listSatisfiable dlt c2) ->

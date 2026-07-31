@@ -1062,6 +1062,90 @@ Module Type SECSTCOBCTRANSLATION
 
 
 
+
+    (** The reset-underlying call theorem already *produces* the
+        constraint [srcrst |- sty]; [signatures_preserved_obc_calls_from_good]
+        simply discards it.  For an instance the system never resets,
+        that discarded constraint is exactly what the Obc reset method
+        emits for it, so keeping it lets the call block own its own
+        reset-method constraint instead of leaving [sty] constrained
+        from two different blocks. *)
+
+    Definition Signature_call_preserves_obc_rst (n1 n2: SIG.signature) : Prop :=
+      forall scope inptyp1 inptyp2 ckty srcrst sty outtyp
+             nconst sconst st_init1 st_init2 stA stB,
+        call_side_conditions scope n1 n2 inptyp1 inptyp2 ckty srcrst sty outtyp ->
+        Forall2 (fun t1 t2 => forall z, In z t2 -> In z t1) inptyp1 inptyp2 ->
+        SIG.generate_constraints n1 inptyp1 ckty srcrst outtyp st_init1 = OK (nconst, stA) ->
+        SIG.generate_constraints n2 inptyp2 ckty [sty] outtyp st_init2 = OK (sconst, stB) ->
+        preserves_on scope nconst ((srcrst, [sty]) :: sconst).
+
+    Theorem signatures_preserved_obc_calls_from_good_rst:
+      forall nsig ssig,
+        SIG.signature_good nsig ->
+        NoDup (SIG.signature_scope nsig) ->
+        SIG.signature_scoped ssig ->
+        SIGPROOFS.signatures_preserved nsig ssig ->
+        Signature_call_preserves_obc_rst nsig ssig.
+    Proof.
+      intros nsig ssig Hgood Hnd Hssc Hpres.
+      intros scope inptyp1 inptyp2 ckty srcrst sty outtyp
+             nconst sconst si1 si2 stA stB Hside Hincl Hgen1 Hgen2.
+      destruct Hside as (Hsf & Hcss & Hstynotin & Hfr1 & Hfr2).
+      assert (Hlen : List.length inptyp2 = List.length inptyp1).
+      { symmetry. eapply Forall2_length; eauto. }
+      destruct (SIGPROOFS.generate_constraints_ok_change_inp
+                  ssig inptyp2 inptyp1 ckty [sty] outtyp sconst si2 stB si2
+                  Hlen Hgen2)
+        as (sconst1 & sB1 & Hgen2').
+      destruct Hpres as [Hfields Hprescns].
+      assert (Hscopeeq : SIG.signature_scope nsig = SIG.signature_scope ssig).
+      { eapply SIG.signature_fields_agree_scope_eq; eauto. }
+      destruct Hfr1 as (Hin1 & Hclk1 & Hrst1 & Hout1).
+      destruct Hfr2 as (Hin2 & Hclk2 & Hrst2 & Hout2).
+      assert (Hfr2' : SIG.call_subst_fresh ssig inptyp1 ckty [sty] outtyp).
+      { repeat split.
+        - rewrite <- Hscopeeq. exact Hin1.
+        - rewrite <- Hscopeeq. exact Hclk1.
+        - exact Hrst2.
+        - rewrite <- Hscopeeq. exact Hout1. }
+      pose proof (SIGPROOFS.signatures_preserved_reset_underlying_calls_from_good
+                    nsig ssig Hgood Hnd Hssc (conj Hfields Hprescns)
+                    scope inptyp1 ckty srcrst outtyp sty
+                    nconst sconst1 si1 si2 stA sB1
+                    Hsf Hcss Hstynotin
+                    (conj Hin1 (conj Hclk1 (conj Hrst1 Hout1)))
+                    Hfr2' Hgen1 Hgen2')
+        as Hpres1.
+      assert (Hle : constraints_src_le sconst1 sconst).
+      { eapply SIGPROOFS.generate_constraints_mono_inp;
+          [exact Hincl|exact Hgen2'|exact Hgen2]. }
+      intros dlt Hsat.
+      destruct (Hpres1 dlt Hsat) as (dlt' & Hagree & Hsat').
+      exists dlt'. split; [exact Hagree|].
+      inversion Hsat' as [|c cs Hc Hcs]; subst.
+      constructor; [exact Hc|].
+      eapply constraints_src_le_satisfaction; eauto.
+    Qed.
+
+    (** Dropping the head recovers the plain version. *)
+
+    Lemma Signature_call_preserves_obc_from_rst:
+      forall n1 n2,
+        Signature_call_preserves_obc_rst n1 n2 ->
+        Signature_call_preserves_obc n1 n2.
+    Proof.
+      intros n1 n2 Hrst.
+      intros scope inptyp1 inptyp2 ckty srcrst sty outtyp
+             nconst sconst si1 si2 stA stB Hside Hincl Hgen1 Hgen2.
+      intros dlt Hsat.
+      destruct (Hrst scope inptyp1 inptyp2 ckty srcrst sty outtyp
+                  nconst sconst si1 si2 stA stB Hside Hincl Hgen1 Hgen2 dlt Hsat)
+        as (dlt' & Hagree & Hsat').
+      exists dlt'. split; [exact Hagree|].
+      now inversion Hsat'.
+    Qed.
+
     (** For an instance the system *resets*, the STC call passes the
         reset instance type and the Obc call passes the instance's state
         type — and those are the same identifier.  The two calls then
@@ -1377,6 +1461,35 @@ Module Type SECSTCOBCTRANSLATION
       eapply Lat.order_trans; [|exact Hsat].
       apply hm_ext_incl.
       intros z Hz. simpl in Hz. destruct Hz as [Heq|[]]. subst z. exact Hin.
+    Qed.
+
+    (** The reset-method constraints whose target is shared with the STC
+        side — the memories, and the instances the system resets — are
+        satisfied by *any* valuation agreeing with the source one on the
+        scope.  They therefore need no witness of their own and can be
+        appended to the whole-body result. *)
+
+    Lemma reset_targets_satisfied:
+      forall scope dlt dlt' nconst tys,
+        listSatisfiable dlt nconst ->
+        agree_on scope dlt dlt' ->
+        List.In rst_ty scope ->
+        Forall (fun ty =>
+                  List.In ty scope
+                  /\ exists src, List.In (src, [ty]) nconst /\ List.In rst_ty src)
+               tys ->
+        listSatisfiable dlt' (map (fun ty => ([rst_ty], [ty])) tys).
+    Proof.
+      intros scope dlt dlt' nconst tys Hsat Hagree Hrstin Hall.
+      unfold listSatisfiable. apply Forall_map.
+      eapply Forall_impl; [|exact Hall].
+      intros ty (Htyin & src & Hinsrc & Hrstsrc).
+      eapply constraintSatisfiable_ext with (scope := scope) (dlt1 := dlt).
+      - unfold constraint_scoped, SymTypes.constraint_scope. simpl.
+        intros z Hz. destruct Hz as [Heq|[Heq|[]]]; subst z; assumption.
+      - exact Hagree.
+      - eapply reset_constraint_entailed; [exact Hrstsrc|].
+        eapply Forall_forall; [exact Hsat|exact Hinsrc].
     Qed.
 
     Lemma generate_reset_mems_blocks:
