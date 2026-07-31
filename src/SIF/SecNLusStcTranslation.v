@@ -1226,7 +1226,9 @@ Module Type SECNLUSSTCTRANSLATION
       unfold generate_new_names_for_node in Hgen.
       eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
       eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-      eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+      eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+      eapply name_bind_inv in Hgen
+        as (inst_env0 & st3i & Hinstgen & Hret).
       unfold NMret in Hret. inversion Hret; subst env' aux st'.
       eapply NAMEGEN.fresh_map_list_preserves_find; eauto.
     Qed.
@@ -1297,7 +1299,9 @@ Module Type SECNLUSSTCTRANSLATION
       unfold generate_new_names_for_node in Hgen.
       eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
       eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-      eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+      eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+      eapply name_bind_inv in Hgen
+        as (inst_env0 & st3i & Hinstgen & Hret).
       unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
       unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
       unfold NMret in Hret. inversion Hret. subst env' aux st'.

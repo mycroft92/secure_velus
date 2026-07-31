@@ -238,7 +238,9 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         eapply NAMEGEN.name_bind_inv in Hlocalshape
           as (rst_name & str & Hrstgen & Hlocalshape).
         eapply NAMEGEN.name_bind_inv in Hlocalshape
-          as (env0 & ste & Henvgen & Hret0).
+          as (env0 & ste & Henvgen & Hlocalshape).
+        eapply NAMEGEN.name_bind_inv in Hlocalshape
+          as (inst_env0 & stei & Hinstgen & Hret0).
         unfold NAMEGEN.NMret in Hret0.
         inversion Hret0; subst rec st_local.
         unfold get_node_aux. simpl.

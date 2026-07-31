@@ -15,10 +15,21 @@ From compcert Require Import common.Errors.
 
 Open Scope list_scope.
 
+(** The auxiliary names minted once per node and consumed by *every*
+    downstream language.  [nclk] and [nrst] are the node's clock and
+    reset security types; [ninst] maps each of the node's subsystem
+    instances to its own security type.
+
+    [ninst] lives here rather than in the per-language generators for
+    the same reason [nclk]/[nrst] do: STC and Obc must agree on these
+    names.  STC only ever looks up the instances it resets, Obc looks up
+    all of them, so if each minted its own the two would disagree. *)
+
 Record node_aux_names := mkNames {
     nname : ident;
     nclk: ident;
     nrst: ident;
+    ninst: Env.t ident;
 }.
 
 Definition local_sec_env : Type := Env.t ident.
@@ -38,6 +49,13 @@ Definition get_node_aux (n: ident) (nnames: list node_aux_names) : option (ident
     let nsearch := find_node_names n nnames in
     match nsearch with
     | Some nod => Some (nod.(nclk), nod.(nrst))
+    | None => None
+    end.
+
+Definition get_node_inst (n: ident) (nnames: list node_aux_names) : option (Env.t ident) :=
+    let nsearch := find_node_names n nnames in
+    match nsearch with
+    | Some nod => Some nod.(ninst)
     | None => None
     end.
 Section Env_helpers.
@@ -300,6 +318,15 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       let id := Ids.gensym Ids.sec n in
       OK (id, Pos.succ n).
 
+  (** Instance names carry the [sec_reset] prefix so that they never
+      collide with the [sec] names of program variables: an instance is
+      identified by one of the variables its call defines. *)
+
+  Definition fresh_inst_ident_gen : Name ident :=
+    fun n =>
+      let id := Ids.gensym Ids.sec_reset n in
+      OK (id, Pos.succ n).
+
   Definition gets : Name name_state :=
     fun st =>  OK (st, st).
 
@@ -369,6 +396,23 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       NMret e'')
     end.
 
+  Definition fresh_inst_insert (env: Env.t ident) (k: ident) : Name (Env.t ident) :=
+    if Env.mem k env then
+     error (MSG "Instance declared more than once ":: [CTX k])
+    else
+      do v <- fresh_inst_ident_gen;
+      do e <- insert_env env k v;
+      NMret e.
+
+  Fixpoint fresh_inst_map_list (ks: list ident) (env: Env.t ident): Name (Env.t ident) :=
+    match ks with
+    | nil => NMret env
+    | k::ks' => (
+      do e' <- fresh_inst_insert env k;
+      do e'' <- fresh_inst_map_list ks' e';
+      NMret e'')
+    end.
+
   Definition insert_node_env
     (envs: node_scoped_env) (name: ident) (local_env: local_sec_env)
     : Name node_scoped_env :=
@@ -389,7 +433,10 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
                  ([clk_name; rst_name]
                     ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
                  (Env.empty _);
-    NMret (env', {| nname := n.(n_name); nclk := clk_name; nrst := rst_name |}).
+    do inst_env <- fresh_inst_map_list
+                     (map fst (gather_insts n.(n_eqs))) (Env.empty _);
+    NMret (env', {| nname := n.(n_name); nclk := clk_name; nrst := rst_name;
+                    ninst := inst_env |}).
 
   Fixpoint generate_node_scoped_env'
     (ns: list node) (envs: node_scoped_env) (acc: list node_aux_names)
@@ -493,7 +540,10 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     do clk_name <- fresh_ident_gen;
     do rst_name <- fresh_ident_gen;
     do env' <- fresh_map_list ([clk_name; rst_name]  ++ (map fst  (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))) e;
-    NMret (env', {| nname:= n.(n_name) ; nclk := clk_name ; nrst := rst_name|}).
+    do inst_env <- fresh_inst_map_list
+                     (map fst (gather_insts n.(n_eqs))) (Env.empty _);
+    NMret (env', {| nname:= n.(n_name) ; nclk := clk_name ; nrst := rst_name;
+                    ninst := inst_env |}).
 
   Fixpoint generate_node_env' (ns: list node) (e: Env.t ident) (acc: list node_aux_names): Name (Env.t ident * list node_aux_names) :=
     match ns with
@@ -677,7 +727,8 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
           unfold generate_local_env_for_node in Hlocal.
           eapply name_bind_inv in Hlocal as (clk_name & stc & Hclkgen & Hlocal).
           eapply name_bind_inv in Hlocal as (rst_name & str & Hrstgen & Hlocal).
-          eapply name_bind_inv in Hlocal as (env0 & ste & Henvgen & Hret0).
+          eapply name_bind_inv in Hlocal as (env0 & ste & Henvgen & Hlocal).
+          eapply name_bind_inv in Hlocal as (inst_env0 & stei & Hinstgen & Hret0).
           unfold NMret in Hret0. inversion Hret0; subst rec st1 local_env'.
           contradiction.
         - exact Haux.
@@ -748,7 +799,8 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     unfold generate_new_names_for_node in Hgen.
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
     unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env' aux st'.
@@ -864,6 +916,40 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       eapply IH; eauto.
   Qed.
 
+  Lemma env_sec_bounded_le:
+    forall st st' env,
+      env_sec_bounded st env ->
+      (st <= st')%positive ->
+      env_sec_bounded st' env.
+  Proof.
+    intros st st' env Hbound Hle x ty Hfind.
+    destruct (Hbound x ty Hfind) as (n & Hn & Hlt).
+    exists n. split; [exact Hn|].
+    eapply Pos.lt_le_trans; eauto.
+  Qed.
+
+  Lemma fresh_inst_map_list_state_monotone:
+    forall ks env st env' st',
+      fresh_inst_map_list ks env st = OK (env', st') ->
+      (st <= st')%positive.
+  Proof.
+    induction ks as [|k ks IH]; intros env st env' st' Hmap.
+    - simpl in Hmap. inversion Hmap; subst. reflexivity.
+    - simpl in Hmap.
+      eapply name_bind_inv in Hmap as (env1 & st1 & Hstep & Hmap).
+      eapply name_bind_inv in Hmap as (env2 & st2 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst env' st'.
+      unfold fresh_inst_insert in Hstep.
+      destruct (Env.mem k env) eqn:Hmem; try discriminate.
+      eapply name_bind_inv in Hstep as (v & stv & Hfresh & Hstep).
+      eapply name_bind_inv in Hstep as (e & ste & Hins & Hret').
+      unfold fresh_inst_ident_gen in Hfresh. inversion Hfresh; subst v stv.
+      unfold insert_env, NMret in Hins. inversion Hins; subst e ste.
+      unfold NMret in Hret'. inversion Hret'; subst env1 st1.
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+      eapply IH; eauto.
+  Qed.
+
   Lemma fresh_map_list_state_monotone:
     forall ks env st env' st',
       fresh_map_list ks env st = OK (env', st') ->
@@ -951,14 +1037,17 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     unfold generate_new_names_for_node in Hgen.
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
     unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env' aux st'.
     destruct (fresh_map_list_env_props _ _ _ _ _
                 (env_sec_bounded_step _ _ (env_sec_bounded_step _ _ Hbound))
                 Hnodup Hmap) as [Hbound' Hnodup'].
-    split; [exact Hbound'|].
+    split.
+    { eapply env_sec_bounded_le; [exact Hbound'|].
+      eapply fresh_inst_map_list_state_monotone; eauto. }
     split; [exact Hnodup'|].
     exists st, (Pos.succ st). auto.
   Qed.
@@ -972,7 +1061,8 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     unfold generate_local_env_for_node in Hgen.
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
     unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env aux st'.
@@ -996,13 +1086,16 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     unfold generate_local_env_for_node in Hgen.
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
     unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env aux st'.
     eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
     eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
-    eapply fresh_map_list_state_monotone; eauto.
+    eapply Pos.le_trans;
+      [eapply fresh_map_list_state_monotone; eauto
+      |eapply fresh_inst_map_list_state_monotone; eauto].
   Qed.
 
   Lemma generate_local_env_for_node_aux_sec_names:
@@ -1015,7 +1108,8 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     unfold generate_local_env_for_node in Hgen.
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
     unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env aux st'.
@@ -1031,7 +1125,8 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     unfold generate_local_env_for_node in Hgen.
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-    eapply name_bind_inv in Hgen as (env' & st3 & Henv & Hret).
+    eapply name_bind_inv in Hgen as (env' & st3 & Henv & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
     unfold NMret in Hret. inversion Hret; subst rec st' env.
     reflexivity.
   Qed.
@@ -1046,7 +1141,8 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     unfold generate_local_env_for_node in Hgen.
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
     unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env aux st'.
@@ -1069,7 +1165,8 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     unfold generate_local_env_for_node in Hgen.
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
     unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env aux st'.
@@ -1091,7 +1188,8 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     unfold generate_local_env_for_node in Hgen.
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
     unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env aux st'.
@@ -1101,7 +1199,9 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
             ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
          (Pos.succ (Pos.succ st)) env0 st3 x ty Hmap Hfind)
       as (nsec & Hsec & [_ Hhi]).
-    exists nsec. split; auto.
+    exists nsec. split; [exact Hsec|].
+    eapply Pos.lt_le_trans; [exact Hhi|].
+    eapply fresh_inst_map_list_state_monotone; eauto.
   Qed.
 
   Lemma generate_local_env_for_node_fresh_from_bound:
@@ -1115,7 +1215,8 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     unfold generate_local_env_for_node in Hgen.
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
-    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hret).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
     unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env aux st'.
