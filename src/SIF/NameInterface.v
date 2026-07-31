@@ -103,6 +103,41 @@ Section Env_helpers.
       simpl. rewrite (IH ys env txs' tys Htail Hys). reflexivity.
   Qed.
 
+  (** [get_mappings] succeeds exactly when every name is bound, so
+      success transports along a permutation of the name list. *)
+
+  Lemma get_mappings_Some_iff:
+    forall xs env,
+      (exists tys, get_mappings xs env = Some tys) <->
+      Forall (fun x => exists ty, Env.find x env = Some ty) xs.
+  Proof.
+    induction xs as [|x xs IH]; intros env; split.
+    - intros _. constructor.
+    - intros _. exists []. reflexivity.
+    - intros (tys & Hmap). simpl in Hmap.
+      destruct (Env.find x env) as [ty|] eqn:Hx; simpl in Hmap; try discriminate.
+      destruct (get_mappings xs env) as [tys'|] eqn:Hxs; simpl in Hmap; try discriminate.
+      constructor.
+      + eauto.
+      + apply IH. eauto.
+    - intros Hall. inversion Hall as [|x' xs' Hx Hxs]; subst.
+      destruct Hx as (ty & Hx).
+      destruct (proj2 (IH env) Hxs) as (tys & Htys).
+      exists (ty :: tys). simpl. rewrite Hx, Htys. reflexivity.
+  Qed.
+
+  Lemma get_mappings_Permutation_Some:
+    forall xs ys env txs,
+      Permutation xs ys ->
+      get_mappings xs env = Some txs ->
+      exists tys, get_mappings ys env = Some tys.
+  Proof.
+    intros xs ys env txs Hperm Hxs.
+    apply get_mappings_Some_iff.
+    rewrite <- Hperm.
+    apply get_mappings_Some_iff. eauto.
+  Qed.
+
   Lemma get_mappings_in:
     forall xs env tys x,
       In x xs ->
