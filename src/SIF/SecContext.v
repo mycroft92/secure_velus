@@ -144,6 +144,24 @@ Section mmap.
     end.
 End mmap.
 
+(** Introduction rule for [mmap]: the counterpart of [sec_bind_inv],
+    used when a successful run has to be *constructed* rather than
+    inverted. *)
+Lemma mmap_cons_ok:
+  forall {A B: Type} (f: A -> Sec B) a l st y st' ys st'',
+    f a st = OK (y, st') ->
+    mmap f l st' = OK (ys, st'') ->
+    mmap f (a :: l) st = OK (y :: ys, st'').
+Proof.
+  intros A B f a l st y st' ys st'' Hh Ht.
+  simpl. unfold bind. rewrite Hh, Ht. reflexivity.
+Qed.
+
+Lemma mmap_nil_ok:
+  forall {A B: Type} (f: A -> Sec B) st,
+    mmap f nil st = OK (nil, st).
+Proof. intros. reflexivity. Qed.
+
 Lemma mmap_find_env_scoped:
   forall env scope xs tys st st',
     (forall x, In x xs -> exists ty, Env.find x env = Some ty /\ In ty scope) ->

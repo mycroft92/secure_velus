@@ -1,6 +1,8 @@
 # TcCall in the Stc→Obc security bridge: obligations, risks, mitigations
 
-Status: analysis (2026-07-30). Companion docs: `Stc2ObcSIF_plan.md` (design,
+Status: **CLOSED 2026-07-31** — `signatures_preserved_obc_calls_from_good`
+is proved in `SecStcObcTranslation.v`; no admits, full build green.
+The analysis below is retained for the record. Companion docs: `Stc2ObcSIF_plan.md` (design,
 blockers B1–B7), `Stc2ObcSIF_progress.md` (phase status, build workflow).
 
 TcCall is the last per-trconstr case of the bridge and the only one where the
@@ -406,7 +408,15 @@ the delicate case `x ∈ ty1, x ∉ ty2` is handled),
 `constraints_src_le_findST`, `subst_constraints_out_map_mono`, and the
 top-level **`generate_constraints_mono_inp`**. All compiling.
 
-**A′ — success transfer (the one piece left in sub-task A).** To apply
+**A′ — success transfer. DONE.** `generate_constraints_ok_change_inp`,
+with `findST_none_targets`, `subst_ident_in_constraints_ok_change`,
+`subst_ident_constraints_ok_change`, `subst_constraints_inp_map_ok_change`,
+`subst_constraints_out_map_ok_change`, `final_lookup_ok_change`; plus
+`mmap_cons_ok` / `mmap_nil_ok` added to `SecContext.v` (the introduction
+counterpart of `sec_bind_inv`, needed to *construct* successful runs
+rather than invert them).
+
+*(original statement of A′)* To apply
 the hoisted theorem at `inp1` on both sides we must know the *Obc*
 signature also generates at `inp1`, given that it generated at `inp2`:
 
@@ -442,7 +452,7 @@ final `mmap` lookup pass. Nothing was committed for A′: the draft had
 5. `findST` and the final `mmap`: targets are equal pointwise, so the
    looked-up sources stay ordered.
 
-### B. Hoist the existing call-preservation theorem
+### B. Hoist the existing call-preservation theorem — **DONE**
 
 With A, the theorem follows from
 `signatures_preserved_reset_underlying_calls_from_good`

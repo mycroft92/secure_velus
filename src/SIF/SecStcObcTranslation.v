@@ -988,6 +988,76 @@ Module Type SECSTCOBCTRANSLATION
           * exact Hgen2.
     Qed.
 
+
+    (** ** Closing the call obligation
+
+        The Obc side instantiates its callee at *weaker* input types (the
+        compiled arguments drop the [when] guards).  We reduce to the
+        equal-actuals case that is already proved:
+
+        - [generate_constraints_ok_change_inp] gives an Obc run at the
+          STC input types;
+        - [signatures_preserved_reset_underlying_calls_from_good] relates
+          the two runs at those inputs (its conclusion prepends the
+          reset-defining constraint, which we discard);
+        - [generate_constraints_mono_inp] plus
+          [constraints_src_le_satisfaction] descend from that run to the
+          actual, weaker one.
+
+        Note the completeness direction is only ever used with *equal*
+        actuals, so no generalisation of it is required. *)
+
+    Theorem signatures_preserved_obc_calls_from_good:
+      forall nsig ssig,
+        SIG.signature_good nsig ->
+        NoDup (SIG.signature_scope nsig) ->
+        SIG.signature_scoped ssig ->
+        SIGPROOFS.signatures_preserved nsig ssig ->
+        Signature_call_preserves_obc nsig ssig.
+    Proof.
+      intros nsig ssig Hgood Hnd Hssc Hpres.
+      intros scope inptyp1 inptyp2 ckty srcrst sty outtyp
+             nconst sconst si1 si2 stA stB Hside Hincl Hgen1 Hgen2.
+      destruct Hside as (Hsf & Hcss & Hstynotin & Hfr1 & Hfr2).
+      (* the Obc callee also generates at the STC input types *)
+      assert (Hlen : List.length inptyp2 = List.length inptyp1).
+      { symmetry. eapply Forall2_length; eauto. }
+      destruct (SIGPROOFS.generate_constraints_ok_change_inp
+                  ssig inptyp2 inptyp1 ckty [sty] outtyp sconst si2 stB si2
+                  Hlen Hgen2)
+        as (sconst1 & sB1 & Hgen2').
+      (* freshness of the STC inputs w.r.t. the Obc scope, via field agreement *)
+      destruct Hpres as [Hfields Hprescns].
+      assert (Hscopeeq : SIG.signature_scope nsig = SIG.signature_scope ssig).
+      { eapply SIG.signature_fields_agree_scope_eq; eauto. }
+      destruct Hfr1 as (Hin1 & Hclk1 & Hrst1 & Hout1).
+      destruct Hfr2 as (Hin2 & Hclk2 & Hrst2 & Hout2).
+      assert (Hfr2' : SIG.call_subst_fresh ssig inptyp1 ckty [sty] outtyp).
+      { repeat split.
+        - rewrite <- Hscopeeq. exact Hin1.
+        - rewrite <- Hscopeeq. exact Hclk1.
+        - exact Hrst2.
+        - rewrite <- Hscopeeq. exact Hout1. }
+      (* equal-actuals case *)
+      pose proof (SIGPROOFS.signatures_preserved_reset_underlying_calls_from_good
+                    nsig ssig Hgood Hnd Hssc (conj Hfields Hprescns)
+                    scope inptyp1 ckty srcrst outtyp sty
+                    nconst sconst1 si1 si2 stA sB1
+                    Hsf Hcss Hstynotin
+                    (conj Hin1 (conj Hclk1 (conj Hrst1 Hout1)))
+                    Hfr2' Hgen1 Hgen2')
+        as Hpres1.
+      (* descend to the weaker inputs *)
+      assert (Hle : constraints_src_le sconst1 sconst).
+      { eapply SIGPROOFS.generate_constraints_mono_inp;
+          [exact Hincl|exact Hgen2'|exact Hgen2]. }
+      intros dlt Hsat.
+      destruct (Hpres1 dlt Hsat) as (dlt' & Hagree & Hsat').
+      exists dlt'. split; [exact Hagree|].
+      inversion Hsat' as [|c cs Hc Hcs]; subst.
+      eapply constraints_src_le_satisfaction; eauto.
+    Qed.
+
   End TCPRESERV.
 
 End SECSTCOBCTRANSLATION.

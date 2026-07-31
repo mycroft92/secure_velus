@@ -967,6 +967,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
   (Import Lat: Lattice)
   (Import SecTypes: SECTYPES Lat).
   Import MergeFacts.
+  Import SECMONADNotations.
   Local Notation sig_scope := signature_scope.
   Lemma st_remove_correct: forall dlt ty x, hm_ext dlt (SymTypes.st_remove x ty) ⊑ hm_ext dlt ty.
   Proof.
@@ -3132,6 +3133,204 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       + simpl. split; [reflexivity|].
         intros z Hz. eapply constraints_src_le_findST; eauto.
       + eapply IH; eauto.
+  Qed.
+
+  (** ** Success transfer
+
+      Every error case in the substitution chain inspects a *right-hand
+      side* (a malformed target, a formal captured by a target, [findST]
+      hitting an existing target) — never an actual type.  So an
+      instantiation that succeeds at one input vector succeeds at any
+      other of the same length. *)
+
+  Lemma findST_none_targets:
+    forall cs1 cs2 d,
+      map snd cs1 = map snd cs2 ->
+      SymTypes.findST cs1 d = None ->
+      SymTypes.findST cs2 d = None.
+  Proof.
+    induction cs1 as [|[l1 r1] cs1 IH]; intros cs2 d Ht H1.
+    - destruct cs2; simpl in Ht; try discriminate. reflexivity.
+    - destruct cs2 as [|[l2 r2] cs2]; simpl in Ht; try discriminate.
+      inversion Ht as [[Hr Hts]]. subst r2.
+      simpl in H1 |- *.
+      destruct r1 as [|y ys]; [eapply IH; eauto|].
+      destruct ys as [|y' ys']; [|eapply IH; eauto].
+      destruct (ident_eqb y d); [discriminate|eapply IH; eauto].
+  Qed.
+
+  Lemma subst_ident_in_constraints_ok_change:
+    forall cs1 cs2 x v1 v2 d2 sb sb' sa,
+      map snd cs1 = map snd cs2 ->
+      subst_ident_in_constraints cs2 x v2 sb = OK (d2, sb') ->
+      exists d1, subst_ident_in_constraints cs1 x v1 sa = OK (d1, sa)
+                 /\ map snd d1 = map snd d2.
+  Proof.
+    unfold subst_ident_in_constraints.
+    induction cs1 as [|[l1 r1] cs1 IH]; intros cs2 x v1 v2 d2 sb sb' sa Ht H2.
+    - destruct cs2; simpl in Ht; try discriminate.
+      simpl in H2. unfold ret in H2. inversion H2; subst.
+      exists nil. split; reflexivity.
+    - destruct cs2 as [|[l2 r2] cs2]; simpl in Ht; try discriminate.
+      inversion Ht as [[Hr Hts]]. subst r2.
+      simpl in H2.
+      eapply sec_bind_inv in H2 as (e2 & s2 & He2 & H2).
+      eapply sec_bind_inv in H2 as (t2 & s2' & Ht2 & R2).
+      unfold ret in R2. inversion R2; subst d2 sb'.
+      pose proof He2 as He2'.
+      unfold subst_inp_ident_in_constraint in He2'.
+      destruct r1 as [|y ys]; try discriminate.
+      destruct ys as [|y' ys']; try discriminate.
+      destruct (ident_eqb x y) eqn:Hxy; try discriminate.
+      unfold ret in He2'. inversion He2'; subst e2 s2.
+      destruct (IH cs2 x v1 v2 t2 sb s2' sa Hts Ht2) as (t1 & Ht1 & Hsnd).
+      exists ((SIG.subst_ident_in_type l1 x v1, [y]) :: t1).
+      split.
+      + eapply mmap_cons_ok; [|exact Ht1].
+        unfold subst_inp_ident_in_constraint. rewrite Hxy. reflexivity.
+      + simpl. f_equal. exact Hsnd.
+  Qed.
+
+  Lemma subst_ident_constraints_ok_change:
+    forall cs1 cs2 x v d2 sb sb' sa,
+      map snd cs1 = map snd cs2 ->
+      subst_ident_constraints cs2 x v sb = OK (d2, sb') ->
+      exists d1, subst_ident_constraints cs1 x v sa = OK (d1, sa)
+                 /\ map snd d1 = map snd d2.
+  Proof.
+    unfold subst_ident_constraints.
+    induction cs1 as [|[l1 r1] cs1 IH]; intros cs2 x v d2 sb sb' sa Ht H2.
+    - destruct cs2; simpl in Ht; try discriminate.
+      simpl in H2. unfold ret in H2. inversion H2; subst.
+      exists nil. split; reflexivity.
+    - destruct cs2 as [|[l2 r2] cs2]; simpl in Ht; try discriminate.
+      inversion Ht as [[Hr Hts]]. subst r2.
+      simpl in H2.
+      eapply sec_bind_inv in H2 as (e2 & s2 & He2 & H2).
+      eapply sec_bind_inv in H2 as (t2 & s2' & Ht2 & R2).
+      unfold ret in R2. inversion R2; subst d2 sb'.
+      pose proof He2 as He2'.
+      unfold subst_ident_constraint in He2'.
+      destruct (ident_eqb x v) eqn:Hxv; try discriminate.
+      destruct r1 as [|y ys]; try discriminate.
+      destruct ys as [|y' ys']; try discriminate.
+      destruct (IH cs2 x v t2 s2 s2' sa Hts Ht2) as (t1 & Ht1 & Hsnd).
+      destruct (ident_eqb x y) eqn:Hxy;
+        unfold ret in He2'; inversion He2'; subst e2 s2.
+      + exists ((SIG.subst_ident_in_type l1 x [v], [v]) :: t1).
+        split.
+        * eapply mmap_cons_ok; [|exact Ht1].
+          unfold subst_ident_constraint. rewrite Hxv, Hxy. reflexivity.
+        * simpl. f_equal. exact Hsnd.
+      + exists ((SIG.subst_ident_in_type l1 x [v], [y]) :: t1).
+        split.
+        * eapply mmap_cons_ok; [|exact Ht1].
+          unfold subst_ident_constraint. rewrite Hxv, Hxy. reflexivity.
+        * simpl. f_equal. exact Hsnd.
+  Qed.
+
+  Lemma subst_constraints_inp_map_ok_change:
+    forall xs vs1 vs2 cs1 cs2 d2 sb sb' sa,
+      List.length vs1 = List.length vs2 ->
+      map snd cs1 = map snd cs2 ->
+      subst_constraints_inp_map cs2 xs vs2 sb = OK (d2, sb') ->
+      exists d1, subst_constraints_inp_map cs1 xs vs1 sa = OK (d1, sa)
+                 /\ map snd d1 = map snd d2.
+  Proof.
+    induction xs as [|x xs IH];
+      intros vs1 vs2 cs1 cs2 d2 sb sb' sa Hlen Ht H2.
+    - destruct vs1; destruct vs2; simpl in Hlen, H2; try discriminate.
+      unfold ret in H2. inversion H2; subst.
+      simpl. unfold ret. exists cs1. split; [reflexivity|exact Ht].
+    - destruct vs1 as [|v1 vs1']; destruct vs2 as [|v2 vs2'];
+        simpl in Hlen, H2; try discriminate.
+      eapply sec_bind_inv in H2 as (c2' & s2 & Hs2 & H2).
+      destruct (subst_ident_in_constraints_ok_change cs1 cs2 x v1 v2 c2' sb s2 sa Ht Hs2)
+        as (c1' & Hs1 & Ht').
+      destruct (IH vs1' vs2' c1' c2' d2 s2 sb' sa ltac:(auto) Ht' H2)
+        as (d1 & Hd1 & Hsnd).
+      exists d1. split; [|exact Hsnd].
+      cbn [subst_constraints_inp_map]. unfold bind. rewrite Hs1. exact Hd1.
+  Qed.
+
+  Lemma subst_constraints_out_map_ok_change:
+    forall xs vs cs1 cs2 d2 sb sb' sa,
+      map snd cs1 = map snd cs2 ->
+      subst_constraints_out_map cs2 xs vs sb = OK (d2, sb') ->
+      exists d1, subst_constraints_out_map cs1 xs vs sa = OK (d1, sa)
+                 /\ map snd d1 = map snd d2.
+  Proof.
+    induction xs as [|x xs IH];
+      intros vs cs1 cs2 d2 sb sb' sa Ht H2.
+    - destruct vs; simpl in H2; try discriminate.
+      unfold ret in H2. inversion H2; subst.
+      simpl. unfold ret. exists cs1. split; [reflexivity|exact Ht].
+    - destruct vs as [|v vs']; simpl in H2; try discriminate.
+      destruct (SymTypes.findST cs2 v) eqn:F2; try discriminate.
+      assert (F1 : SymTypes.findST cs1 v = None).
+      { eapply findST_none_targets; [exact (Logic.eq_sym Ht)|exact F2]. }
+      eapply sec_bind_inv in H2 as (c2' & s2 & Hs2 & H2).
+      destruct (subst_ident_constraints_ok_change cs1 cs2 x v c2' sb s2 sa Ht Hs2)
+        as (c1' & Hs1 & Ht').
+      destruct (IH vs' c1' c2' d2 s2 sb' sa Ht' H2) as (d1 & Hd1 & Hsnd).
+      exists d1. split; [|exact Hsnd].
+      cbn [subst_constraints_out_map]. rewrite F1. unfold bind.
+      rewrite Hs1. exact Hd1.
+  Qed.
+
+  Lemma final_lookup_ok_change:
+    forall (outs: list ident) (cs1 cs2: list constraint) d2 sb sb' sa,
+      map snd cs1 = map snd cs2 ->
+      mmap (fun x => do st <- option_to_sec (SymTypes.findST cs2 x); ret (st, [x]))
+        outs sb = OK (d2, sb') ->
+      exists d1 sa',
+        mmap (fun x => do st <- option_to_sec (SymTypes.findST cs1 x); ret (st, [x]))
+          outs sa = OK (d1, sa').
+  Proof.
+    induction outs as [|y ys IH]; intros cs1 cs2 d2 sb sb' sa Ht H2.
+    - simpl. unfold ret. eauto.
+    - simpl in H2.
+      eapply sec_bind_inv in H2 as (h2 & p2 & Hh2 & H2).
+      eapply sec_bind_inv in H2 as (t2 & p2' & Ht2 & R2).
+      eapply sec_bind_inv in Hh2 as (g2 & k2 & Hg2 & Hr2).
+      unfold option_to_sec in Hg2.
+      destruct (SymTypes.findST cs2 y) as [f2|] eqn:F2; try discriminate.
+      assert (F1 : SymTypes.findST cs1 y <> None).
+      { intro Hn. rewrite (findST_none_targets cs1 cs2 y Ht Hn) in F2. discriminate. }
+      destruct (SymTypes.findST cs1 y) as [f1|] eqn:F1'; [|congruence].
+      destruct (IH cs1 cs2 t2 p2 p2' sa Ht Ht2) as (t1 & sa' & Ht1).
+      eexists; eexists.
+      eapply mmap_cons_ok; [|exact Ht1].
+      unfold option_to_sec, bind. rewrite F1'. reflexivity.
+  Qed.
+
+  Lemma generate_constraints_ok_change_inp:
+    forall sig inp inp' clk rst out cns st st' sa,
+      List.length inp = List.length inp' ->
+      generate_constraints sig inp clk rst out st = OK (cns, st') ->
+      exists cns' sa', generate_constraints sig inp' clk rst out sa = OK (cns', sa').
+  Proof.
+    intros sig inp inp' clk rst out cns st st' sa Hlen Hgen.
+    unfold generate_constraints in Hgen |- *.
+    eapply sec_bind_inv in Hgen as (a & s1 & Ha & Hgen).
+    eapply sec_bind_inv in Hgen as (b & s2 & Hb & Hgen).
+    eapply sec_bind_inv in Hgen as (c & s3 & Hc & Hgen).
+    eapply sec_bind_inv in Hgen as (e & s4 & He & Hgen).
+    destruct (subst_constraints_inp_map_ok_change
+                sig.(s_in) inp' inp sig.(s_constraints) sig.(s_constraints)
+                a st s1 sa ltac:(auto) Logic.eq_refl Ha)
+      as (a' & Ha' & Hta).
+    destruct (subst_ident_in_constraints_ok_change a' a sig.(s_clk) clk clk b s1 s2 sa Hta Hb)
+      as (b' & Hb' & Htb).
+    destruct (subst_ident_in_constraints_ok_change b' b sig.(s_reset) rst rst c s2 s3 sa Htb Hc)
+      as (c' & Hc' & Htc).
+    destruct (subst_constraints_out_map_ok_change
+                sig.(s_out) out c' c e s3 s4 sa Htc He)
+      as (e' & He' & Hte).
+    destruct (final_lookup_ok_change out e' e cns s4 st' sa Hte Hgen)
+      as (cns' & sa' & Hfin).
+    exists cns', sa'.
+    unfold bind. rewrite Ha', Hb', Hc', He'. exact Hfin.
   Qed.
 
   (** * Signature preservation and call preservation

@@ -302,7 +302,7 @@ the 2026-07-30 pc refinement `clk` and `out` agree exactly.
 | # | Obc item | NL→STC analogue | status / notes |
 |---|---|---|---|
 | 1 | `translate_arg` monotonicity | — (NL→STC shares CE syntax) | **DONE**: `translate_exp_type_incl`, `translate_arg_type_incl`, `translate_args_type_incl` (obligation B, tccall doc §3) |
-| 2 | generalized reset-call preservation | `:2105` `signatures_preserved_reset_underlying_calls_from_good` | **THE remaining gap — now decomposed into A/B/C in `Stc2ObcSIF_tccall.md` §5b; its semantic core (`hm_ext_incl`, `constraints_src_le`, `constraints_src_le_satisfaction`, `merge_incl_mono`) is proved and in the shared modules**: prove `Signature_call_preserves_obc n1 n2` for *generated* signature pairs (obligation C, tccall doc §4; Route B §5 in reserve). Everything else is now expressed in terms of it. |
+| 2 | generalized reset-call preservation | `:2105` `signatures_preserved_reset_underlying_calls_from_good` (now hoisted into `SIGNATURE_PROOFS`) | **DONE** — `signatures_preserved_obc_calls_from_good` in `SecStcObcTranslation.v`. Sub-tasks A (`generate_constraints_mono_inp`) and A′ (`generate_constraints_ok_change_inp`) proved; B (hoist) done. Only sub-task **C** (`signature_good` for generated STC signatures) is still needed, and only to *discharge this theorem's hypotheses* at the lockstep (item 9). |: prove `Signature_call_preserves_obc n1 n2` for *generated* signature pairs (obligation C, tccall doc §4; Route B §5 in reserve). Everything else is now expressed in terms of it. |
 | 3 | TcCall case | part of `eqn_preserv :752` | **DONE**: `tccall_preserv` — inverts both generators, matches clk/outputs, feeds `translate_args_type_incl` and the assumed `Signature_call_preserves_obc`, exactly as `eqn_preserv` consumes `Signature_consistent` |
 | 4 | `tc_preserv` (all four cases) | `eqn_preserv :752` | **all four cases DONE individually**; combining them into a single `tc_preserv` is trivial plumbing. Three via equalities: `tcdef_preserv`, `tcnext_preserv`, `tcreset_preserv` in `SecStcObcTranslation.v` section `TCPRESERV`, stated against the real `SECSTCTYPING.generate_trconstr_constraint` and discharged with `dlt' = dlt` (via `collapse_satisfaction` / `preserves_on_refl`). TcCall outstanding. |
 | 5 | tcs-list assembly | `eqns_preserv_scoped :1080` | `preserves_on_concat_scoped` with extras = `stids`; needs an `eqns_reset_extras` analogue (state-env lemmas already done) |
@@ -327,10 +327,12 @@ the 2026-07-30 pc refinement `clk` and `out` agree exactly.
   fold.
 - *Scheduling* (phase 5) and the *NI transport* (phase 6) — pending.
 
-**Where the work actually is (updated 2026-07-31):** items 1, 3, 4 are
-**done**. The single remaining *proof* obligation is item 2 — the
-call-preservation property for generated signature pairs
-(`Signature_call_preserves_obc`, defined in `SecStcObcTranslation.v`).
+**Where the work actually is (updated 2026-07-31, later):** items 1, 2,
+3, 4 are **done** — every per-trconstr case of the bridge is proved,
+including TcCall, and the call-preservation property is established for
+signature pairs related by `signatures_preserved`. What remains is
+assembly (5–7), the simplify bridge (8), the lockstep (9–10) — plus
+sub-task C (`signature_good` for STC signatures) to feed the lockstep.
 Items 5–7 are assembly largely dictated by existing lemmas; 8–10 are ports
 of proofs that already exist. Nothing else in the chain is blocked on new
 ideas.
