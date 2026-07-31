@@ -89,6 +89,82 @@ Module Type SECSTCTYPING
      end.
 
   Definition generate_reset_env trl : Sec (Env.t ident * list ident) := generate_reset_env' trl (Env.empty _) [].
+
+  (** A successful [generate_reset_env] witnesses that the reset
+      instances are pairwise distinct: [fresh_reset_insert] refuses a key
+      that is already bound, so a repeat would have made the whole run
+      fail. *)
+
+  Lemma generate_reset_env'_key_unbound:
+    forall trs e acc reset_env rids st st' s,
+      generate_reset_env' trs e acc st = OK ((reset_env, rids), st') ->
+      In s (map fst (resets_of trs)) ->
+      Env.find s e = None.
+  Proof.
+    induction trs as [|tr trs IH]; intros e acc reset_env rids st st' s Hgen Hin.
+    - inversion Hin.
+    - destruct tr as [x ck ce|x ck ex|s0 ck f|x xs ck b f exps]; simpl in Hin, Hgen.
+      1,2,4: eapply IH; eauto.
+      eapply sec_bind2_inv in Hgen as (e1 & i & st1 & Hstep & Hrec).
+      assert (Hmem : Env.mem s0 e = false).
+      { unfold fresh_reset_insert in Hstep.
+        destruct (Env.mem s0 e); [discriminate|reflexivity]. }
+      assert (Hnone0 : Env.find s0 e = None).
+      { destruct (Env.find s0 e) as [v|] eqn:Hf; [|reflexivity].
+        assert (Env.mem s0 e = true).
+        { apply Env.mem_1. unfold Env.In. eexists; exact Hf. }
+        congruence. }
+      assert (He1 : e1 = Env.add s0 i e).
+      { unfold fresh_reset_insert in Hstep.
+        rewrite Hmem in Hstep.
+        eapply sec_bind_inv in Hstep as (v & sv & Hfresh & Hstep).
+        eapply sec_bind_inv in Hstep as (w & sw & Hins & Hret).
+        unfold fresh_reset_ident in Hfresh. inversion Hfresh; subst v sv.
+        unfold insert_env, ret in Hins. inversion Hins; subst w sw.
+        unfold ret in Hret. inversion Hret; subst e1 i st1. reflexivity. }
+      destruct Hin as [Heq|Hin].
+      + subst s0. exact Hnone0.
+      + specialize (IH _ _ _ _ _ _ _ Hrec Hin).
+        subst e1.
+        destruct (Pos.eq_dec s s0) as [Heq|Hneq].
+        * subst s0. rewrite Env.gss in IH. discriminate.
+        * rewrite Env.gso in IH by auto. exact IH.
+  Qed.
+
+  Lemma generate_reset_env'_keys_nodup:
+    forall trs e acc reset_env rids st st',
+      generate_reset_env' trs e acc st = OK ((reset_env, rids), st') ->
+      NoDup (map fst (resets_of trs)).
+  Proof.
+    induction trs as [|tr trs IH]; intros e acc reset_env rids st st' Hgen.
+    - simpl. constructor.
+    - destruct tr as [x ck ce|x ck ex|s0 ck f|x xs ck b f exps]; simpl in Hgen |- *.
+      1,2,4: eapply IH; eauto.
+      eapply sec_bind2_inv in Hgen as (e1 & i & st1 & Hstep & Hrec).
+      constructor.
+      + intro Hin.
+        pose proof (generate_reset_env'_key_unbound trs e1 _ _ _ _ _ s0 Hrec Hin) as Hnone.
+        unfold fresh_reset_insert in Hstep.
+        destruct (Env.mem s0 e) eqn:Hmem; [discriminate|].
+        eapply sec_bind_inv in Hstep as (v & sv & Hfresh & Hstep).
+        eapply sec_bind_inv in Hstep as (w & sw & Hins & Hret).
+        unfold fresh_reset_ident in Hfresh. inversion Hfresh; subst v sv.
+        unfold insert_env, ret in Hins. inversion Hins; subst w sw.
+        unfold ret in Hret. inversion Hret; subst e1 i st1.
+        rewrite Env.gss in Hnone. discriminate.
+      + eapply IH; eauto.
+  Qed.
+
+  Lemma generate_reset_env_keys_nodup:
+    forall trs reset_env rids st st',
+      generate_reset_env trs st = OK ((reset_env, rids), st') ->
+      NoDup (map fst (resets_of trs)).
+  Proof.
+    intros trs reset_env rids st st' Hgen.
+    unfold generate_reset_env in Hgen.
+    eapply generate_reset_env'_keys_nodup; eauto.
+  Qed.
+
   End RESETHANDLER.
 
   Section SECTRCONSTRTYPING.
