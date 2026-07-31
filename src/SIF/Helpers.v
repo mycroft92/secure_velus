@@ -310,3 +310,18 @@ Proof.
   apply Env.elements_correct in Hfind.
   apply in_map_iff. exists (x, ty). split; [reflexivity|exact Hfind].
 Qed.
+
+
+Lemma Forall2_in_right:
+  forall {A B} (P: A -> B -> Prop) xs ys y,
+    Forall2 P xs ys ->
+    In y ys ->
+    exists x, In x xs /\ P x y.
+Proof.
+  intros A B P xs ys y Hall.
+  induction Hall as [|x0 y0 xs ys Hxy Hall IH]; intros Hin; [inversion Hin|].
+  destruct Hin as [Heq|Hin].
+  - subst y0. exists x0. split; [now left|exact Hxy].
+  - destruct (IH Hin) as (x & Hinx & Hx).
+    exists x. split; [now right|exact Hx].
+Qed.

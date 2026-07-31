@@ -1278,6 +1278,42 @@ Module Type SECTYPES(Import Lat: Lattice).
     - eapply Hent; eauto.
   Qed.
 
+  (** Satisfaction is a [Forall], so a preservation result carries to any
+      sublist of the target.  The class-level bridge proves preservation
+      against a target that mentions each Obc constraint at least once -
+      the call blocks already produce the reset-method constraints of the
+      instances they own - and then cuts down to the generated list. *)
+
+  Lemma preserves_on_incl:
+    forall scope c t t',
+      (forall x, In x t' -> In x t) ->
+      preserves_on scope c t ->
+      preserves_on scope c t'.
+  Proof.
+    intros scope c t t' Hincl Hp dlt Hsat.
+    destruct (Hp dlt Hsat) as (dlt' & Hagree & Hsat').
+    exists dlt'. split; [exact Hagree|].
+    unfold listSatisfiable in *.
+    rewrite Forall_forall in *.
+    intros x Hin. apply Hsat'. now apply Hincl.
+  Qed.
+
+  (** [collapse] is precision-neutral, so a preservation result can be
+      moved onto the collapsed target list.  Signature generation
+      collapses before simplifying, so the class-level bridge needs
+      this. *)
+
+  Lemma preserves_on_collapse:
+    forall scope c t,
+      preserves_on scope c t ->
+      preserves_on scope c (SymTypes.collapse t).
+  Proof.
+    intros scope c t Hp dlt Hsat.
+    destruct (Hp dlt Hsat) as (dlt' & Hagree & Hsat').
+    exists dlt'. split; [exact Hagree|].
+    apply collapse_satisfaction. exact Hsat'.
+  Qed.
+
   Lemma preserves_on_from_entailment:
     forall scope c1 c2,
       (forall dlt, listSatisfiable dlt c1 -> listSatisfiable dlt c2) ->

@@ -1491,6 +1491,55 @@ Module Type SECSTCOBCTRANSLATION
         eapply Forall_forall; [exact Hsat|exact Hinsrc].
     Qed.
 
+    (** The reset method's memory initialisations target exactly the
+        system's lasts, and each of those is defined by a [TcNext] whose
+        source contains [rst_ty]. *)
+
+    Lemma reset_mems_targets:
+      forall s scope nconst st st' mtys,
+        SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty
+          s.(SynStc.s_tcs) st = OK (nconst, st') ->
+        Forall2 (fun xc ty => Env.find (fst xc) env = Some ty) s.(SynStc.s_lasts) mtys ->
+        (forall ty, List.In ty mtys -> List.In ty scope) ->
+        Forall (fun ty =>
+                  List.In ty scope
+                  /\ exists src, List.In (src, [ty]) nconst /\ List.In rst_ty src)
+               mtys.
+    Proof.
+      intros s scope nconst st st' mtys Hgen Hall Hscope.
+      apply Forall_forall. intros ty Hin.
+      split; [now apply Hscope|].
+      destruct (Forall2_in_right _ _ _ _ Hall Hin) as (xc & Hinxc & Hfind).
+      eapply SECSTCTYPING.generate_trconstrs_constraints_last_source;
+        [exact Hgen| |exact Hfind].
+      rewrite <- (SynStc.s_lasts_in_tcs s).
+      now apply in_map with (f := fst) in Hinxc.
+    Qed.
+
+    (** Likewise the instance resets, for the instances the system
+        actually resets. *)
+
+    Lemma reset_insts_targets:
+      forall s scope nconst st st' (insts: list (ident * ident)) itys,
+        SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty
+          s.(SynStc.s_tcs) st = OK (nconst, st') ->
+        Forall2 (fun oc ty => Env.find (fst oc) reset_env = Some ty) insts itys ->
+        (forall oc, List.In oc insts ->
+                    List.In (fst oc) (map fst (resets_of s.(SynStc.s_tcs)))) ->
+        (forall ty, List.In ty itys -> List.In ty scope) ->
+        Forall (fun ty =>
+                  List.In ty scope
+                  /\ exists src, List.In (src, [ty]) nconst /\ List.In rst_ty src)
+               itys.
+    Proof.
+      intros s scope nconst st st' insts itys Hgen Hall Hreset Hscope.
+      apply Forall_forall. intros ty Hin.
+      split; [now apply Hscope|].
+      destruct (Forall2_in_right _ _ _ _ Hall Hin) as (oc & Hinoc & Hfind).
+      eapply SECSTCTYPING.generate_trconstrs_constraints_reset_source;
+        [exact Hgen|apply Hreset; exact Hinoc|exact Hfind].
+    Qed.
+
     Lemma generate_reset_mems_blocks:
       forall (mems: list (ident * (const * clock))) cns st st',
         generate_stmt_constraints G2 env reset_env rst_ty []
