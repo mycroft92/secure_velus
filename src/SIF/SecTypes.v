@@ -1314,6 +1314,33 @@ Module Type SECTYPES(Import Lat: Lattice).
     apply collapse_satisfaction. exact Hsat'.
   Qed.
 
+  (** The simplify bridge: a preservation result on the raw constraint
+      lists carries to the simplified ones.  [simplify_complete] recovers
+      a raw-level valuation from a simplified one, the raw result moves
+      it across, and [simplify_is_correct] pushes it back through the
+      target's own elimination.  The two sides may hide different names -
+      here [hidden1] and [hidden2] are unrelated. *)
+
+  Lemma preserves_on_simplify_bridge:
+    forall sigscope rawscope hidden1 hidden2 c t,
+      wf_constraints c ->
+      (forall x, In x hidden1 -> ~ In x sigscope) ->
+      (forall x, In x sigscope -> In x rawscope) ->
+      preserves_on rawscope c t ->
+      preserves_on sigscope (SymTypes.simplify c hidden1) (SymTypes.simplify t hidden2).
+  Proof.
+    intros sigscope rawscope hidden1 hidden2 c t Hwf Hdisj Hincl Hpres dlt Hsat.
+    destruct (simplify_complete c hidden1 sigscope dlt Hwf Hdisj Hsat)
+      as (dlt_raw & Hagree & Hsat_raw).
+    destruct (Hpres dlt_raw Hsat_raw) as (dlt' & Hagree' & Hsat').
+    exists dlt'. split.
+    - intros x Hin.
+      transitivity (dlt_raw x); [now apply Hagree|].
+      now apply Hagree', Hincl.
+    - eapply simplify_is_correct; [exact Hsat'|].
+      eapply simplify_simplifyRel. reflexivity.
+  Qed.
+
   Lemma preserves_on_from_entailment:
     forall scope c1 c2,
       (forall dlt, listSatisfiable dlt c1 -> listSatisfiable dlt c2) ->

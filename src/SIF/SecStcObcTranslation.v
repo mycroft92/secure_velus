@@ -2193,6 +2193,53 @@ Module Type SECSTCOBCTRANSLATION
     Qed.
 
 
+    (** ** Class-level signature preservation
+
+        The signature-level statement: the STC signature's constraints
+        are [simplify nconst (hidden_sys_vars ...)] and the Obc class's
+        are [simplify (collapse (craw_step ++ craw_reset))
+        (hidden_class_vars ...)].  The two hide different name sets, and
+        the bridge does not require them to agree. *)
+
+    Corollary class_preserv_signature:
+      forall sigscope rawscope vars memset clkvars tcs extras shared
+             nconst craw_step craw_reset hidden_stc hidden_obc st1 st1' st2 st2',
+        Signature_consistent_obc_full G1 G2 ->
+        List.In rst_ty rawscope ->
+        Forall (tc_preserv_hyps_aug rawscope vars) tcs ->
+        tcs_obc_extras tcs = Some extras ->
+        NoDup (List.concat extras) ->
+        (forall x, List.In x (List.concat extras) -> ~ List.In x rawscope) ->
+        Forall2 (fun tc e =>
+                   forall blk sa sb,
+                     generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
+                       (translate_tc memset clkvars tc) sa = OK (blk, sb) ->
+                     constraints_scoped (rawscope ++ e)
+                       (blk ++ map (fun ty => ([rst_ty], [ty])) e))
+                tcs extras ->
+        Forall (fun ty =>
+                  List.In ty rawscope
+                  /\ exists src, List.In (src, [ty]) nconst /\ List.In rst_ty src)
+               shared ->
+        (forall c, List.In c craw_reset ->
+                   exists ty, c = ([rst_ty], [ty])
+                              /\ (List.In ty shared
+                                  \/ List.In ty (List.concat extras))) ->
+        SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty tcs st1
+          = OK (nconst, st1') ->
+        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
+          (translate_tcs memset clkvars tcs) st2 = OK (craw_step, st2') ->
+        wf_constraints nconst ->
+        (forall x, List.In x hidden_stc -> ~ List.In x sigscope) ->
+        (forall x, List.In x sigscope -> List.In x rawscope) ->
+        preserves_on sigscope
+          (SymTypes.simplify nconst hidden_stc)
+          (SymTypes.simplify (SymTypes.collapse (craw_step ++ craw_reset)) hidden_obc).
+    Proof.
+      intros. eapply preserves_on_simplify_bridge with (rawscope := rawscope); eauto.
+      eapply class_preserv_raw; eauto.
+    Qed.
+
   End TCPRESERV.
 
 End SECSTCOBCTRANSLATION.
