@@ -2490,6 +2490,77 @@ Module Type SECSTCOBCTRANSLATION
       exact (Hcons i true Hstep).
     Qed.
 
+    Lemma unreset_call_insts_incl_calls:
+      forall tcs i,
+        List.In i (unreset_call_insts tcs) ->
+        List.In i (map fst (calls_of tcs)).
+    Proof.
+      induction tcs as [|tc tcs IH]; intros i Hin; [inversion Hin|].
+      destruct tc as [x ck ce|x ck e|x ck f|o xs ck [|] g es]; simpl in Hin; simpl.
+      - now apply IH.
+      - now apply IH.
+      - now apply IH.
+      - right. now apply IH.
+      - destruct Hin as [Heq|Hin]; [now left|right; now apply IH].
+    Qed.
+
+    Lemma unreset_call_insts_nodup:
+      forall tcs,
+        NoDup (map fst (calls_of tcs)) ->
+        NoDup (unreset_call_insts tcs).
+    Proof.
+      induction tcs as [|tc tcs IH]; intros Hnd; simpl; [constructor|].
+      destruct tc as [x ck ce|x ck e|x ck f|o xs ck [|] g es]; simpl in Hnd; simpl.
+      - now apply IH.
+      - now apply IH.
+      - now apply IH.
+      - apply IH. now inversion Hnd.
+      - inversion Hnd as [|? ? Hnin Hnd']; subst.
+        constructor; [|now apply IH].
+        intro Hin. apply Hnin. now apply unreset_call_insts_incl_calls.
+    Qed.
+
+    Lemma get_mappings_incl_Some:
+      forall xs ys e tys,
+        (forall x, List.In x xs -> List.In x ys) ->
+        get_mappings ys e = Some tys ->
+        exists txs, get_mappings xs e = Some txs.
+    Proof.
+      intros xs ys e tys Hincl Hys.
+      apply get_mappings_Some_iff.
+      apply Forall_forall. intros x Hin.
+      assert (Hiny : List.In x ys) by now apply Hincl.
+      destruct (get_mappings_in _ _ _ _ Hiny Hys) as (ty & Hfind & _).
+      eauto.
+    Qed.
+
+    Lemma tcs_obc_extras_exists:
+      forall tcs (objs: list (ident * ident)) e tys,
+        (forall i, List.In i (unreset_call_insts tcs) -> List.In i (map fst objs)) ->
+        get_mappings (map fst objs) e = Some tys ->
+        e = reset_env ->
+        exists extras, tcs_obc_extras tcs = Some extras.
+    Proof.
+      intros tcs objs e tys Hincl Hget Heq. subst e.
+      destruct (get_mappings_incl_Some (unreset_call_insts tcs) (map fst objs)
+                  reset_env tys Hincl Hget) as (txs & Htxs).
+      clear Hincl Hget.
+      revert txs Htxs.
+      induction tcs as [|tc tcs IH]; intros txs Htxs; simpl.
+      - eauto.
+      - destruct tc as [x ck ce|x ck e|x ck f|o xs ck [|] g es]; simpl in Htxs.
+        + destruct (IH _ Htxs) as (es' & Hes'). rewrite Hes'. eexists; reflexivity.
+        + destruct (IH _ Htxs) as (es' & Hes'). rewrite Hes'. eexists; reflexivity.
+        + destruct (IH _ Htxs) as (es' & Hes'). rewrite Hes'. eexists; reflexivity.
+        + destruct (IH _ Htxs) as (es' & Hes'). rewrite Hes'. eexists; reflexivity.
+        + cbn [tc_obc_extras].
+          destruct (Env.find o reset_env) as [sty|] eqn:Ho; try discriminate.
+          destruct (get_mappings (unreset_call_insts tcs) reset_env) as [t'|] eqn:Ht';
+            try discriminate.
+          destruct (IH _ Logic.eq_refl) as (es' & Hes').
+          rewrite Hes'. eexists; reflexivity.
+    Qed.
+
     (** ** Class-level raw preservation
 
         The Obc signature's raw constraints are the step method's, the
