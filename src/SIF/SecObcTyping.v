@@ -40,13 +40,6 @@ Module Type SECOBCTYPING
   Definition hidden_class_vars (locals lasts stids: list ident) : list ident :=
     nodup ident_eq_dec (locals ++ lasts ++ stids).
 
-  Definition env_injective (env: Env.t ident) : Prop :=
-    forall x y tx ty,
-      Env.find x env = Some tx ->
-      Env.find y env = Some ty ->
-      tx = ty ->
-      x = y.
-
   (** * Per-instance state security types
 
       Every object of a class receives a fresh symbolic state type.  It
@@ -56,90 +49,17 @@ Module Type SECOBCTYPING
 
   Section STATEHANDLER.
 
-  Definition fresh_state_ident : Sec ident :=
-    fun n =>
-      let id := Ids.gensym Ids.sec_reset n in
-      OK (id, Pos.succ n).
-
-  Definition fresh_state_insert (k: ident) (env: Env.t ident): Sec (Env.t ident * ident) :=
-    if Env.mem k env then
-      error (MSG "Instance declared more than once " :: [CTX k])
-    else
-      do v <- fresh_state_ident;
-      do e <- insert_env k v env;
-      ret (e, v).
-
   Fixpoint generate_state_env' (objs: list (ident * ident)) (env: Env.t ident) (acc: list ident)
     : Sec (Env.t ident * list ident) :=
     match objs with
     | [] => ret (env, acc)
     | (o, _) :: objs' =>
-        do (env', sty) <- fresh_state_insert o env;
+        do (env', sty) <- fresh_reset_insert o env;
         generate_state_env' objs' env' (acc ++ [sty])
     end.
 
   Definition generate_state_env (objs: list (ident * ident)) : Sec (Env.t ident * list ident) :=
     generate_state_env' objs (Env.empty _) [].
-
-  Lemma fresh_state_insert_find_in_acc:
-    forall k acc st env' sty st' x ty,
-      fresh_state_insert k acc st = OK ((env', sty), st') ->
-      Env.find x env' = Some ty ->
-      ty = sty \/ Env.find x acc = Some ty.
-  Proof.
-    intros k acc st env' sty st' x ty Hins Hfind.
-    unfold fresh_state_insert in Hins.
-    destruct (Env.mem k acc) eqn:Hmem; try discriminate.
-    eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
-    eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
-    unfold fresh_state_ident in Hfresh.
-    inversion Hfresh; subst v st1.
-    unfold insert_env, ret in Hins0. inversion Hins0; subst e st2.
-    unfold ret in Hret. inversion Hret; subst env' sty st'.
-    destruct (Pos.eq_dec x k) as [Heq|Hneq].
-    - subst x. rewrite Env.gss in Hfind. inversion Hfind. auto.
-    - rewrite Env.gso in Hfind; auto.
-  Qed.
-
-  Lemma fresh_state_insert_find_self:
-    forall k acc st env' sty st',
-      fresh_state_insert k acc st = OK ((env', sty), st') ->
-      Env.find k env' = Some sty.
-  Proof.
-    intros k acc st env' sty st' Hins.
-    unfold fresh_state_insert in Hins.
-    destruct (Env.mem k acc) eqn:Hmem; try discriminate.
-    eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
-    eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
-    unfold fresh_state_ident in Hfresh.
-    inversion Hfresh; subst v st1.
-    unfold insert_env, ret in Hins0. inversion Hins0; subst e st2.
-    unfold ret in Hret. inversion Hret; subst env' sty st'.
-    now rewrite Env.gss.
-  Qed.
-
-  Lemma fresh_state_insert_preserves_find:
-    forall k acc st env' sty st' x ty,
-      fresh_state_insert k acc st = OK ((env', sty), st') ->
-      Env.find x acc = Some ty ->
-      Env.find x env' = Some ty.
-  Proof.
-    intros k acc st env' sty st' x ty Hins Hfind.
-    unfold fresh_state_insert in Hins.
-    destruct (Env.mem k acc) eqn:Hmem; try discriminate.
-    eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
-    eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
-    unfold fresh_state_ident in Hfresh.
-    inversion Hfresh; subst v st1.
-    unfold insert_env, ret in Hins0. inversion Hins0; subst e st2.
-    unfold ret in Hret. inversion Hret; subst env' sty st'.
-    assert (Hxk : x <> k).
-    { intro Heq. subst x.
-      assert (Env.mem k acc = true).
-      { apply Env.mem_1. unfold Env.In. eexists; exact Hfind. }
-      congruence. }
-    now rewrite Env.gso.
-  Qed.
 
   Lemma generate_state_env'_find_in_acc:
     forall objs env0 acc stids env' st st' x ty,
@@ -154,7 +74,7 @@ Module Type SECOBCTYPING
       eapply sec_bind2_inv in Hgen as (acc1 & sty & st1 & Hstep & Hrec).
       eapply (IH acc1 (acc ++ [sty]) stids env' st1 st' x ty).
       + intros y ty' Hyfind.
-        destruct (fresh_state_insert_find_in_acc _ _ _ _ _ _ _ _ Hstep Hyfind) as [Heq|Hold].
+        destruct (fresh_reset_insert_find_in_acc _ _ _ _ _ _ _ _ Hstep Hyfind) as [Heq|Hold].
         * subst ty'. apply in_or_app. right. simpl. auto.
         * apply in_or_app. left.
           eapply Hacc; eauto.
@@ -186,7 +106,7 @@ Module Type SECOBCTYPING
     - simpl in Hgen.
       eapply sec_bind2_inv in Hgen as (acc1 & sty & st1 & Hstep & Hrec).
       eapply IH; eauto.
-      eapply fresh_state_insert_preserves_find; eauto.
+      eapply fresh_reset_insert_preserves_find; eauto.
   Qed.
 
   End STATEHANDLER.
@@ -216,18 +136,6 @@ Module Type SECOBCTYPING
     | Call ys _ _ _ es => ys ++ flat_map exp_free es
     | Skip => []
     end.
-
-  Definition names_scoped (env: Env.t ident) (scope: list ident) (xs: list ident) : Prop :=
-    forall x, In x xs -> exists ty, Env.find x env = Some ty /\ In ty scope.
-
-  Lemma names_scoped_app:
-    forall env scope xs ys,
-      names_scoped env scope (xs ++ ys) ->
-      names_scoped env scope xs /\ names_scoped env scope ys.
-  Proof.
-    intros env scope xs ys H.
-    split; intros z Hz; apply H, in_or_app; auto.
-  Qed.
 
   (** * Expression security typing *)
 
@@ -305,223 +213,6 @@ Module Type SECOBCTYPING
       [TcReset]).  [collapse] joins their sources, which is
       satisfaction-equivalent and restores the one-constraint-per-target
       shape assumed by [simplify]. *)
-
-  Definition st_eq_dec : forall (a b: ST), {a = b} + {a <> b} :=
-    list_eq_dec ident_eq_dec.
-
-  Fixpoint join_into (lhs rhs: ST) (acc: list constraint) : list constraint :=
-    match acc with
-    | [] => [(lhs, rhs)]
-    | (lhs', rhs') :: acc' =>
-        if st_eq_dec rhs rhs'
-        then ((lhs ⊔ lhs'), rhs') :: acc'
-        else (lhs', rhs') :: join_into lhs rhs acc'
-    end.
-
-  Fixpoint collapse (cns: list constraint) : list constraint :=
-    match cns with
-    | [] => []
-    | (lhs, rhs) :: cns' => join_into lhs rhs (collapse cns')
-    end.
-
-  Lemma join_into_rhs_in:
-    forall lhs rhs acc rhs',
-      In rhs' (map snd (join_into lhs rhs acc)) <->
-      rhs' = rhs \/ In rhs' (map snd acc).
-  Proof.
-    intros lhs rhs acc.
-    induction acc as [|[l r] acc IH]; intros rhs'; simpl.
-    - split.
-      + intros [Heq|[]]. auto.
-      + intros [Heq|[]]. subst. auto.
-    - destruct (st_eq_dec rhs r) as [Heq|Hneq]; simpl.
-      + subst r. split.
-        * intros [Heq|Hin]; auto.
-        * intros [Heq|[Heq|Hin]]; subst; auto.
-      + split.
-        * intros [Heq|Hin].
-          -- subst r. auto.
-          -- apply IH in Hin. destruct Hin; auto.
-        * intros [Heq|[Heq|Hin]].
-          -- right. apply IH. auto.
-          -- subst r. auto.
-          -- right. apply IH. auto.
-  Qed.
-
-  Lemma join_into_rhs_nodup:
-    forall lhs rhs acc,
-      NoDup (map snd acc) ->
-      NoDup (map snd (join_into lhs rhs acc)).
-  Proof.
-    intros lhs rhs acc.
-    induction acc as [|[l r] acc IH]; intros Hnd; simpl.
-    - constructor; [intro Hin; inversion Hin|constructor].
-    - inversion Hnd as [|? ? Hnin Hnd']; subst.
-      destruct (st_eq_dec rhs r) as [Heq|Hneq]; simpl.
-      + constructor; assumption.
-      + constructor.
-        * intro Hin.
-          apply join_into_rhs_in in Hin.
-          destruct Hin as [Heq|Hin]; [congruence|contradiction].
-        * apply IH. exact Hnd'.
-  Qed.
-
-  Lemma collapse_rhs_nodup:
-    forall cns, NoDup (map snd (collapse cns)).
-  Proof.
-    induction cns as [|[l r] cns IH]; simpl.
-    - constructor.
-    - apply join_into_rhs_nodup. exact IH.
-  Qed.
-
-  Lemma collapse_rhs_in:
-    forall cns rhs,
-      In rhs (map snd (collapse cns)) <-> In rhs (map snd cns).
-  Proof.
-    induction cns as [|[l r] cns IH]; intros rhs; simpl.
-    - tauto.
-    - rewrite join_into_rhs_in. rewrite IH.
-      split.
-      + intros [Heq|Hin]; [left; congruence|right; assumption].
-      + intros [Heq|Hin]; [left; congruence|right; assumption].
-  Qed.
-
-  Lemma join_into_scoped:
-    forall scope lhs rhs acc,
-      st_scoped scope lhs ->
-      st_scoped scope rhs ->
-      constraints_scoped scope acc ->
-      constraints_scoped scope (join_into lhs rhs acc).
-  Proof.
-    intros scope lhs rhs acc Hlhs Hrhs.
-    induction acc as [|[l r] acc IH]; intros Hsc; simpl.
-    - constructor; [|constructor].
-      intros x Hx.
-      unfold constraint_scope in Hx. simpl in Hx.
-      apply in_app_iff in Hx.
-      destruct Hx as [Hx|Hx]; [exact (Hlhs _ Hx)|exact (Hrhs _ Hx)].
-    - inversion Hsc as [|? ? Hc Hcs]; subst.
-      destruct (st_eq_dec rhs r) as [Heq|Hneq].
-      + subst r. constructor; [|exact Hcs].
-        intros x Hx.
-        unfold constraint_scope in Hx. simpl in Hx.
-        apply in_app_iff in Hx.
-        destruct Hx as [Hx|Hx].
-        * apply in_merge_inv in Hx.
-          destruct Hx as [Hx|Hx].
-          -- exact (Hlhs _ Hx).
-          -- apply Hc. unfold constraint_scope. apply in_or_app. now left.
-        * apply Hc. unfold constraint_scope. apply in_or_app. now right.
-      + constructor; [exact Hc|].
-        apply IH. exact Hcs.
-  Qed.
-
-  Lemma collapse_scoped:
-    forall scope cns,
-      constraints_scoped scope cns ->
-      constraints_scoped scope (collapse cns).
-  Proof.
-    intros scope cns.
-    induction cns as [|[l r] cns IH]; intros Hsc; simpl.
-    - constructor.
-    - inversion Hsc as [|? ? Hc Hcs]; subst.
-      apply join_into_scoped.
-      + intros x Hx. apply Hc.
-        unfold constraint_scope. apply in_or_app. now left.
-      + intros x Hx. apply Hc.
-        unfold constraint_scope. apply in_or_app. now right.
-      + apply IH. exact Hcs.
-  Qed.
-
-  Lemma join_into_rhs_len:
-    forall lhs rhs acc,
-      length rhs = 1%nat ->
-      Forall (fun c => length (snd c) = 1%nat) acc ->
-      Forall (fun c => length (snd c) = 1%nat) (join_into lhs rhs acc).
-  Proof.
-    intros lhs rhs acc Hlen.
-    induction acc as [|[l r] acc IH]; intros Hall; simpl.
-    - constructor; [exact Hlen|constructor].
-    - inversion Hall as [|? ? Hc Hcs]; subst.
-      destruct (st_eq_dec rhs r) as [Heq|Hneq].
-      + constructor; [exact Hc|exact Hcs].
-      + constructor; [exact Hc|].
-        apply IH. exact Hcs.
-  Qed.
-
-  Lemma collapse_wf:
-    forall cns,
-      Forall (fun c => length (snd c) = 1%nat) cns ->
-      wf_constraints (collapse cns).
-  Proof.
-    intros cns Hall.
-    split.
-    - apply collapse_rhs_nodup.
-    - induction cns as [|[l r] cns IH]; simpl.
-      + constructor.
-      + inversion Hall as [|? ? Hc Hcs]; subst.
-        simpl in Hc.
-        assert (Hrec : Forall (fun '(_, rhs) => length rhs = 1%nat) (collapse cns)).
-        { apply IH. exact Hcs. }
-        assert (Hgen : Forall (fun c => length (snd c) = 1%nat) (join_into l r (collapse cns))).
-        { apply join_into_rhs_len; [exact Hc|].
-          eapply Forall_impl; [|exact Hrec].
-          intros [? ?] Hlen. exact Hlen. }
-        eapply Forall_impl; [|exact Hgen].
-        intros [? ?] Hlen. exact Hlen.
-  Qed.
-
-  (** [lhs_join] is the right-nested join of the sources of a
-      constraint list; on a list whose constraints all share one target
-      it is exactly what [collapse] produces. *)
-
-  Fixpoint lhs_join (cns : list constraint) : ST :=
-    match cns with
-    | [] => []
-    | (l, _) :: rest =>
-        match rest with
-        | [] => l
-        | _ => l ⊔ lhs_join rest
-        end
-    end.
-
-  Lemma collapse_same_target:
-    forall cns r,
-      cns <> [] ->
-      Forall (fun c => snd c = r) cns ->
-      collapse cns = [(lhs_join cns, r)].
-  Proof.
-    induction cns as [|[l r0] cns IH]; intros r Hne Hall.
-    - congruence.
-    - assert (Hc : snd (l, r0) = r) by (inversion Hall; auto).
-      assert (Hcs : Forall (fun c => snd c = r) cns) by (inversion Hall; auto).
-      simpl in Hc. subst r0.
-      destruct cns as [|c cns'].
-      + simpl. reflexivity.
-      + assert (Hne' : c :: cns' <> []) by discriminate.
-        specialize (IH r Hne' Hcs).
-        simpl. simpl in IH. rewrite IH.
-        simpl.
-        destruct (st_eq_dec r r) as [_|Habs]; [reflexivity|congruence].
-  Qed.
-
-  Lemma lhs_join_app:
-    forall a b,
-      a <> [] ->
-      b <> [] ->
-      lhs_join (a ++ b) = lhs_join a ⊔ lhs_join b.
-  Proof.
-    induction a as [|[l r] a IH]; intros b Hna Hnb.
-    - congruence.
-    - destruct a as [|c a'].
-      + simpl.
-        destruct b as [|cb b']; [congruence|reflexivity].
-      + assert (Hna' : c :: a' <> []) by discriminate.
-        specialize (IH b Hna' Hnb).
-        simpl in *.
-        rewrite IH.
-        rewrite MergeFacts.merge_assoc. reflexivity.
-  Qed.
 
   (** * Statement constraint generation *)
 

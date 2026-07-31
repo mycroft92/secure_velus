@@ -37,68 +37,6 @@ Module Type SECOBCTYPINGCORRECTNESS
 
   (** * Collapse is satisfaction-neutral *)
 
-  Lemma constraint_satisfiable_merge_split:
-    forall dlt a b r,
-      SecT.constraintSatisfiable dlt ((a ⊔ b), r) <->
-      (SecT.constraintSatisfiable dlt (a, r) /\ SecT.constraintSatisfiable dlt (b, r)).
-  Proof.
-    intros dlt a b r.
-    unfold SecT.constraintSatisfiable, SecT.satisfiable.
-    split.
-    - intros Hm.
-      split.
-      + eapply order_trans; [apply SecT.hm_ext_concat_l|exact Hm].
-      + eapply order_trans; [apply SecT.hm_ext_concat_r|exact Hm].
-    - intros [Ha Hb].
-      eapply order_trans; [apply SecT.hm_ext_distributive2|].
-      apply join_least_upper_bound; assumption.
-  Qed.
-
-  Lemma join_into_satisfaction:
-    forall dlt l r acc,
-      SecT.listSatisfiable dlt (join_into l r acc) <->
-      (SecT.constraintSatisfiable dlt (l, r) /\ SecT.listSatisfiable dlt acc).
-  Proof.
-    intros dlt l r acc.
-    induction acc as [|[l' r'] acc IH]; simpl.
-    - split.
-      + intros Hs. inversion Hs as [|? ? Hc Hcs]; subst.
-        split; [exact Hc|constructor].
-      + intros [Hc _]. constructor; [exact Hc|constructor].
-    - destruct (st_eq_dec r r') as [Heq|Hneq].
-      + subst r'.
-        split.
-        * intros Hs. inversion Hs as [|? ? Hc Hcs]; subst.
-          apply constraint_satisfiable_merge_split in Hc.
-          destruct Hc as [Hcl Hcl'].
-          split; [exact Hcl|constructor; [exact Hcl'|exact Hcs]].
-        * intros [Hc Hs]. inversion Hs as [|? ? Hc' Hcs]; subst.
-          constructor; [|exact Hcs].
-          apply constraint_satisfiable_merge_split.
-          split; assumption.
-      + split.
-        * intros Hs. inversion Hs as [|? ? Hc' Hcs]; subst.
-          apply IH in Hcs. destruct Hcs as [Hc Hacc].
-          split; [exact Hc|constructor; [exact Hc'|exact Hacc]].
-        * intros [Hc Hs]. inversion Hs as [|? ? Hc' Hacc]; subst.
-          constructor; [exact Hc'|].
-          apply IH. split; assumption.
-  Qed.
-
-  Theorem collapse_satisfaction:
-    forall dlt cns,
-      SecT.listSatisfiable dlt (collapse cns) <-> SecT.listSatisfiable dlt cns.
-  Proof.
-    intros dlt cns.
-    induction cns as [|[l r] cns IH]; simpl.
-    - tauto.
-    - rewrite join_into_satisfaction. rewrite IH.
-      split.
-      + intros [Hc Hs]. constructor; assumption.
-      + intros Hs. inversion Hs as [|? ? Hc Hcs]; subst.
-        split; assumption.
-  Qed.
-
   (** * Shape of generated constraints: every target list is a singleton *)
 
   Lemma generate_constraints_rhs_singleton:
@@ -233,19 +171,19 @@ Module Type SECOBCTYPINGCORRECTNESS
       Env.find x env = Some ty ->
       exists n, ty = Ids.gensym Ids.sec_reset n /\ (n < st)%positive.
 
-  Lemma fresh_state_insert_sec_range:
+  Lemma fresh_reset_insert_sec_range:
     forall env k st env' sty st' x ty,
       (forall y ty', Env.find y env = Some ty' -> exists n, ty' = Ids.gensym Ids.sec_reset n) ->
-      fresh_state_insert k env st = OK ((env', sty), st') ->
+      fresh_reset_insert k env st = OK ((env', sty), st') ->
       Env.find x env' = Some ty ->
       exists n, ty = Ids.gensym Ids.sec_reset n.
   Proof.
     intros env k st env' sty st' x ty Henv Hins Hfind.
-    unfold fresh_state_insert in Hins.
+    unfold fresh_reset_insert in Hins.
     destruct (Env.mem k env) eqn:Hmem; try discriminate.
     eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
     eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
-    unfold fresh_state_ident in Hfresh.
+    unfold fresh_reset_ident in Hfresh.
     inversion Hfresh; subst v st1.
     unfold insert_env, ret in Hins0.
     inversion Hins0; subst e st2.
@@ -270,7 +208,7 @@ Module Type SECOBCTYPINGCORRECTNESS
       eapply sec_bind2_inv in Hgen as (env1 & sty & st1 & Hstep & Hrec).
       eapply IH; [|eauto|eauto].
       intros y ty' Hy.
-      eapply fresh_state_insert_sec_range; eauto.
+      eapply fresh_reset_insert_sec_range; eauto.
   Qed.
 
   Lemma generate_state_env_range:
@@ -314,20 +252,20 @@ Module Type SECOBCTYPINGCORRECTNESS
     now apply Pos.lt_irrefl in Hlt.
   Qed.
 
-  Lemma fresh_state_insert_env_props:
+  Lemma fresh_reset_insert_env_props:
     forall env k st env' sty st',
       state_env_sec_bounded st env ->
       NoDupMembers (env_values env) ->
-      fresh_state_insert k env st = OK ((env', sty), st') ->
+      fresh_reset_insert k env st = OK ((env', sty), st') ->
       state_env_sec_bounded st' env'
       /\ NoDupMembers (env_values env').
   Proof.
     intros env k st env' sty st' Hbound Hnodup Hgen.
-    unfold fresh_state_insert in Hgen.
+    unfold fresh_reset_insert in Hgen.
     destruct (Env.mem k env) eqn:Hmem; try discriminate.
     eapply sec_bind_inv in Hgen as (v & st1 & Hfresh & Hgen).
     eapply sec_bind_inv in Hgen as (e & st2 & Hins & Hret).
-    unfold fresh_state_ident in Hfresh. inversion Hfresh; subst v st1.
+    unfold fresh_reset_ident in Hfresh. inversion Hfresh; subst v st1.
     unfold insert_env, ret in Hins. inversion Hins; subst e st2.
     unfold ret in Hret. inversion Hret; subst env' sty st'.
     split.
@@ -364,7 +302,7 @@ Module Type SECOBCTYPINGCORRECTNESS
     - simpl in Hgen. inversion Hgen; subst. auto.
     - simpl in Hgen.
       eapply sec_bind2_inv in Hgen as (env1 & sty & st1 & Hstep & Hrec).
-      destruct (fresh_state_insert_env_props _ _ _ _ _ _
+      destruct (fresh_reset_insert_env_props _ _ _ _ _ _
                   Hbound Hnodup Hstep) as [Hbound1 Hnodup1].
       eapply IH; eauto.
   Qed.
@@ -599,11 +537,11 @@ Module Type SECOBCTYPINGCORRECTNESS
       eapply sec_bind2_inv in Hgen as (env1 & sty & st1 & Hstep & Hrec).
       destruct (IH _ _ _ _ _ _ _ _ Hrec Hfind) as [Hin1|Hins].
       + destruct (Env.find o env1) as [ty1|] eqn:Hfind1; [|congruence].
-        unfold fresh_state_insert in Hstep.
+        unfold fresh_reset_insert in Hstep.
         destruct (Env.mem o0 env) eqn:Hmem; try discriminate.
         eapply sec_bind_inv in Hstep as (v & stv & Hfresh & Hstep).
         eapply sec_bind_inv in Hstep as (e & ste & Hins0 & Hret).
-        unfold fresh_state_ident in Hfresh. inversion Hfresh; subst v stv.
+        unfold fresh_reset_ident in Hfresh. inversion Hfresh; subst v stv.
         unfold insert_env, ret in Hins0. inversion Hins0; subst e ste.
         unfold ret in Hret. inversion Hret; subst env1 sty st1.
         destruct (Pos.eq_dec o o0) as [Heq|Hneq].

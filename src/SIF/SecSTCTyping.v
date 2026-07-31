@@ -74,18 +74,7 @@ Module Type SECSTCTYPING
 
   Definition collect_reset_stmts trl := collect_reset_stmts' trl [].
 
-  Definition fresh_reset_ident : Sec ident :=
-    fun n =>
-      let id := Ids.gensym Ids.sec_reset n in
-      OK (id, Pos.succ n).
-
-  Definition fresh_reset_insert (k: ident) (env: Env.t ident): Sec (Env.t ident * ident) :=
-    if Env.mem k env then
-      error (MSG "Key declared more than once " :: [CTX k])
-    else
-      do v <- fresh_reset_ident;
-      do e <- insert_env k v env;
-      ret (e, v).
+  (* fresh_reset_ident / fresh_reset_insert now live in SecContext.v *)
 
   Definition assign_reset_type (tr: trconstr) (env: Env.t ident) : Sec (Env.t ident * ident) :=
     match tr with
@@ -302,26 +291,6 @@ Module Type SECSTCTYPING
           + eapply IH; eauto.
       Qed.
 
-    Lemma fresh_reset_insert_find_in_acc:
-      forall k acc st env' rst_inst st' x ty,
-        fresh_reset_insert k acc st = OK ((env', rst_inst), st') ->
-        Env.find x env' = Some ty ->
-        ty = rst_inst \/ Env.find x acc = Some ty.
-    Proof.
-      intros k acc st env' rst_inst st' x ty Hins Hfind.
-      unfold fresh_reset_insert in Hins.
-      destruct (Env.mem k acc) eqn:Hmem; try discriminate.
-      eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
-      eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
-      unfold fresh_reset_ident in Hfresh.
-      inversion Hfresh; subst v st1.
-      unfold insert_env, ret in Hins0. inversion Hins0; subst e st2.
-      unfold ret in Hret. inversion Hret; subst env' rst_inst st'.
-      destruct (Pos.eq_dec x k) as [Heq|Hneq].
-      - subst x. rewrite Env.gss in Hfind. inversion Hfind. auto.
-      - rewrite Env.gso in Hfind; auto.
-    Qed.
-
       Lemma generate_reset_env'_find_in_acc:
         forall trs env0 acc rids env' st st' x ty,
           (forall y ty', Env.find y env0 = Some ty' -> In ty' acc) ->
@@ -357,46 +326,6 @@ Module Type SECSTCTYPING
         intros y ty' Hyfind.
         rewrite Env.gempty in Hyfind. discriminate.
       Qed.
-
-    Lemma fresh_reset_insert_find_self:
-      forall k acc st env' rst_inst st',
-        fresh_reset_insert k acc st = OK ((env', rst_inst), st') ->
-        Env.find k env' = Some rst_inst.
-    Proof.
-      intros k acc st env' rst_inst st' Hins.
-      unfold fresh_reset_insert in Hins.
-      destruct (Env.mem k acc) eqn:Hmem; try discriminate.
-      eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
-      eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
-      unfold fresh_reset_ident in Hfresh.
-      inversion Hfresh; subst v st1.
-      unfold insert_env, ret in Hins0. inversion Hins0; subst e st2.
-      unfold ret in Hret. inversion Hret; subst env' rst_inst st'.
-      now rewrite Env.gss.
-    Qed.
-
-    Lemma fresh_reset_insert_preserves_find:
-      forall k acc st env' rst_inst st' x ty,
-        fresh_reset_insert k acc st = OK ((env', rst_inst), st') ->
-        Env.find x acc = Some ty ->
-        Env.find x env' = Some ty.
-    Proof.
-      intros k acc st env' rst_inst st' x ty Hins Hfind.
-      unfold fresh_reset_insert in Hins.
-      destruct (Env.mem k acc) eqn:Hmem; try discriminate.
-      eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
-      eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
-      unfold fresh_reset_ident in Hfresh.
-      inversion Hfresh; subst v st1.
-      unfold insert_env, ret in Hins0. inversion Hins0; subst e st2.
-      unfold ret in Hret. inversion Hret; subst env' rst_inst st'.
-      assert (Hxk : x <> k).
-      { intro Heq. subst x.
-        assert (Env.mem k acc = true).
-        { apply Env.mem_1. unfold Env.In. eexists; exact Hfind. }
-        congruence. }
-      now rewrite Env.gso.
-    Qed.
 
     Lemma generate_reset_env'_preserves_find:
       forall trs acc rids st env' rids' st' x ty,

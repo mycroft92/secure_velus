@@ -162,6 +162,111 @@ Lemma mmap_nil_ok:
     mmap f nil st = OK (nil, st).
 Proof. intros. reflexivity. Qed.
 
+(** * Injectivity and scopedness of naming environments *)
+
+Definition env_injective (env: Env.t ident) : Prop :=
+  forall x y tx ty,
+    Env.find x env = Some tx ->
+    Env.find y env = Some ty ->
+    tx = ty ->
+    x = y.
+
+
+Definition names_scoped (env: Env.t ident) (scope: list ident) (xs: list ident) : Prop :=
+  forall x, In x xs -> exists ty, Env.find x env = Some ty /\ In ty scope.
+
+Lemma names_scoped_app:
+  forall env scope xs ys,
+    names_scoped env scope (xs ++ ys) ->
+    names_scoped env scope xs /\ names_scoped env scope ys.
+Proof.
+  intros env scope xs ys H.
+  split; intros z Hz; apply H, in_or_app; auto.
+Qed.
+
+
+(** * Fresh per-key security names
+
+    A key (an STC sub-instance, an Obc object) is given a fresh
+    [sec_reset] name recorded in an environment.  Shared by the STC and
+    Obc security typings, which differ only in how they walk the
+    program to collect the keys. *)
+
+Definition fresh_reset_ident : Sec ident :=
+  fun n =>
+    let id := Ids.gensym Ids.sec_reset n in
+    OK (id, Pos.succ n).
+
+Definition fresh_reset_insert (k: ident) (env: Env.t ident): Sec (Env.t ident * ident) :=
+  if Env.mem k env then
+    error (MSG "Instance declared more than once " :: [CTX k])
+  else
+    do v <- fresh_reset_ident;
+    do e <- insert_env k v env;
+    ret (e, v).
+
+
+Lemma fresh_reset_insert_find_in_acc:
+  forall k acc st env' sty st' x ty,
+    fresh_reset_insert k acc st = OK ((env', sty), st') ->
+    Env.find x env' = Some ty ->
+    ty = sty \/ Env.find x acc = Some ty.
+Proof.
+  intros k acc st env' sty st' x ty Hins Hfind.
+  unfold fresh_reset_insert in Hins.
+  destruct (Env.mem k acc) eqn:Hmem; try discriminate.
+  eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
+  eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
+  unfold fresh_reset_ident in Hfresh.
+  inversion Hfresh; subst v st1.
+  unfold insert_env, ret in Hins0. inversion Hins0; subst e st2.
+  unfold ret in Hret. inversion Hret; subst env' sty st'.
+  destruct (Pos.eq_dec x k) as [Heq|Hneq].
+  - subst x. rewrite Env.gss in Hfind. inversion Hfind. auto.
+  - rewrite Env.gso in Hfind; auto.
+Qed.
+
+Lemma fresh_reset_insert_find_self:
+  forall k acc st env' sty st',
+    fresh_reset_insert k acc st = OK ((env', sty), st') ->
+    Env.find k env' = Some sty.
+Proof.
+  intros k acc st env' sty st' Hins.
+  unfold fresh_reset_insert in Hins.
+  destruct (Env.mem k acc) eqn:Hmem; try discriminate.
+  eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
+  eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
+  unfold fresh_reset_ident in Hfresh.
+  inversion Hfresh; subst v st1.
+  unfold insert_env, ret in Hins0. inversion Hins0; subst e st2.
+  unfold ret in Hret. inversion Hret; subst env' sty st'.
+  now rewrite Env.gss.
+Qed.
+
+Lemma fresh_reset_insert_preserves_find:
+  forall k acc st env' sty st' x ty,
+    fresh_reset_insert k acc st = OK ((env', sty), st') ->
+    Env.find x acc = Some ty ->
+    Env.find x env' = Some ty.
+Proof.
+  intros k acc st env' sty st' x ty Hins Hfind.
+  unfold fresh_reset_insert in Hins.
+  destruct (Env.mem k acc) eqn:Hmem; try discriminate.
+  eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
+  eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
+  unfold fresh_reset_ident in Hfresh.
+  inversion Hfresh; subst v st1.
+  unfold insert_env, ret in Hins0. inversion Hins0; subst e st2.
+  unfold ret in Hret. inversion Hret; subst env' sty st'.
+  assert (Hxk : x <> k).
+  { intro Heq. subst x.
+    assert (Env.mem k acc = true).
+    { apply Env.mem_1. unfold Env.In. eexists; exact Hfind. }
+    congruence. }
+  now rewrite Env.gso.
+Qed.
+
+
 Lemma mmap_find_env_scoped:
   forall env scope xs tys st st',
     (forall x, In x xs -> exists ty, Env.find x env = Some ty /\ In ty scope) ->

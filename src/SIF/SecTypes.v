@@ -474,6 +474,69 @@ Module Type SECTYPES(Import Lat: Lattice).
     apply hm_ext_list_in1, Hincl, Hx.
   Qed.
 
+  Lemma constraint_satisfiable_merge_split:
+    forall dlt a b r,
+      constraintSatisfiable dlt ((a ⊔ b), r) <->
+      (constraintSatisfiable dlt (a, r) /\ constraintSatisfiable dlt (b, r)).
+  Proof.
+    intros dlt a b r.
+    unfold constraintSatisfiable, satisfiable.
+    split.
+    - intros Hm.
+      split.
+      + eapply order_trans; [apply hm_ext_concat_l|exact Hm].
+      + eapply order_trans; [apply hm_ext_concat_r|exact Hm].
+    - intros [Ha Hb].
+      eapply order_trans; [apply hm_ext_distributive2|].
+      apply join_least_upper_bound; assumption.
+  Qed.
+
+  Lemma join_into_satisfaction:
+    forall dlt l r acc,
+      listSatisfiable dlt (join_into l r acc) <->
+      (constraintSatisfiable dlt (l, r) /\ listSatisfiable dlt acc).
+  Proof.
+    intros dlt l r acc.
+    induction acc as [|[l' r'] acc IH]; simpl.
+    - split.
+      + intros Hs. inversion Hs as [|? ? Hc Hcs]; subst.
+        split; [exact Hc|constructor].
+      + intros [Hc _]. constructor; [exact Hc|constructor].
+    - destruct (st_eq_dec r r') as [Heq|Hneq].
+      + subst r'.
+        split.
+        * intros Hs. inversion Hs as [|? ? Hc Hcs]; subst.
+          apply constraint_satisfiable_merge_split in Hc.
+          destruct Hc as [Hcl Hcl'].
+          split; [exact Hcl|constructor; [exact Hcl'|exact Hcs]].
+        * intros [Hc Hs]. inversion Hs as [|? ? Hc' Hcs]; subst.
+          constructor; [|exact Hcs].
+          apply constraint_satisfiable_merge_split.
+          split; assumption.
+      + split.
+        * intros Hs. inversion Hs as [|? ? Hc' Hcs]; subst.
+          apply IH in Hcs. destruct Hcs as [Hc Hacc].
+          split; [exact Hc|constructor; [exact Hc'|exact Hacc]].
+        * intros [Hc Hs]. inversion Hs as [|? ? Hc' Hacc]; subst.
+          constructor; [exact Hc'|].
+          apply IH. split; assumption.
+  Qed.
+
+  Theorem collapse_satisfaction:
+    forall dlt cns,
+      listSatisfiable dlt (collapse cns) <-> listSatisfiable dlt cns.
+  Proof.
+    intros dlt cns.
+    induction cns as [|[l r] cns IH]; simpl.
+    - tauto.
+    - rewrite join_into_satisfaction. rewrite IH.
+      split.
+      + intros [Hc Hs]. constructor; assumption.
+      + intros Hs. inversion Hs as [|? ? Hc Hcs]; subst.
+        split; assumption.
+  Qed.
+
+
   (** Source-inclusion ordering on constraint lists: same targets,
       smaller sources.  A constraint list below another in this ordering
       is weaker, so satisfaction descends. *)

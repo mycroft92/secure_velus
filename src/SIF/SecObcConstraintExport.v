@@ -145,7 +145,7 @@ Definition build_class_constraint_dump
                                     obc_dump_raw_constraints :=
                                       craw_step ++ craw_reset;
                                     obc_dump_collapsed_constraints :=
-                                      SECOBCTYPING.collapse (craw_step ++ craw_reset);
+                                      SymTypes.collapse (craw_step ++ craw_reset);
                                     obc_dump_constraints := sig.(SIG.s_constraints) |}
                           end
                       end

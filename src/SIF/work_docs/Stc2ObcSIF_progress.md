@@ -187,6 +187,32 @@ the STC-side `wc_trconstr` plus the translation, not from Obc typing.
 `preserves_on_refl`. Both are signature-agnostic and belong next to
 `preserves_on_nil` / `preserves_on_weaken`.
 
+**(1c) Ownership refactor (2026-07-31).** Everything generic that had
+accumulated in `SecObcTyping.v` before the `SECSTMTTYPING` section has
+been moved to the module that owns it, and the pre-existing duplicates
+elsewhere were deleted at the same time:
+
+| moved to | items |
+|---|---|
+| `SymTypes.v` (ST / constraint syntax) | `st_eq_dec`, `join_into`, `collapse`, `join_into_rhs_in`, `join_into_rhs_nodup`, `collapse_rhs_nodup`, `collapse_rhs_in`, `join_into_scoped`, `collapse_scoped`, `join_into_rhs_len`, `collapse_wf`, `lhs_join`, `collapse_same_target`, `lhs_join_app` |
+| `SecTypes.v` (satisfaction) | `constraint_satisfiable_merge_split`, `join_into_satisfaction`, `collapse_satisfaction` |
+| `SecContext.v` (Sec monad + Env) | `env_injective`, `names_scoped`, `names_scoped_app`, `fresh_reset_ident`, `fresh_reset_insert`, `fresh_reset_insert_find_in_acc`, `fresh_reset_insert_find_self`, `fresh_reset_insert_preserves_find` |
+
+`SecSTCTyping.v` had a **verbatim duplicate** of the fresh-key machinery
+(`fresh_reset_ident/insert` + the same three lemmas); those were deleted
+and now resolve to `SecContext`. The Obc copies (`fresh_state_*`) are
+gone too — only the *drivers* remain in their own files, since they
+differ: STC walks `trconstr`s and filters `TcReset`, Obc walks `c_objs`.
+No statement changed; `SECSTCTYPING.generate_reset_env` and
+`SECOBCTYPING.generate_state_env` still resolve for the exporters, and
+`SECOBCTYPING.collapse` became `SymTypes.collapse` there.
+
+*Known remaining duplication* (not touched, follow-up): the state/reset
+env range and injectivity lemmas are still duplicated between
+`SecStcTypingCorrectness.v` and `SecObcTypingCorrectness.v`
+(`fresh_*_insert_sec_range`, `*_env_props`, `env_values*`); they are
+generic and belong in `SecContext.v` too.
+
 **(2) Reuse, don't duplicate.** `in_merge_left` / `in_merge_right` were
 defined inside `SecNLusTypingCorrectness.v` although they are pure
 `SymTypes` facts (`in_merge_inv`, their elimination counterpart, already
