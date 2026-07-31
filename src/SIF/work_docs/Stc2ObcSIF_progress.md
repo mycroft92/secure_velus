@@ -405,45 +405,42 @@ the instances so that it does not:
 
 The two cases use different theorems and their extras never collide.
 
-### Item 7 design point: chunk by instance, not by trconstr (2026-07-31)
+### Item 7: per-trconstr chunking suffices (superseded note, 2026-08-01)
 
-`preserves_on_concat_list` requires each chunk's out-of-scope names to
-be that chunk's *private* extras.  Chunking one-per-trconstr does not
-satisfy this for the instance state types, and the reason is worth
-recording because it is easy to rediscover the hard way.
+An earlier note here concluded that the constraint lists had to be
+chunked by *instance group* rather than per trconstr.  That is no longer
+true and the note has been removed.
 
-`generate_reset_env` (STC) walks `resets_of s_tcs`; `generate_state_env`
-(Obc) walks `c_objs = s_subs ~ calls_of s_tcs`.  Different key lists,
-both handing out fresh `sec_reset` gensyms by position — so the two
-environments do **not** agree, and `sty` and `rst_inst` are genuinely
-different identifiers.  (`tcreset_preserv` currently assumes
-`Env.find s reset_env = Env.find s state_env`; that hypothesis is not
-satisfiable for the real generators and must be discharged by a witness
-instead.)  Neither placement of `sty` then works per-trconstr:
+It was a consequence of STC and Obc minting instance names separately
+(`resets_of s_tcs` vs `c_objs`), which made `sty` and `rst_inst`
+different identifiers for the same instance and left `sty` referenced by
+three blocks at once.  Since the shared name generator mints instance
+names once (`ninst`), that is gone.  Each Obc-only name now belongs to
+exactly one block:
 
-- `sty ∈ scope` forces `dlt' sty = dlt sty`, but the Obc `TcReset`
-  block needs `hm_ext dlt src ⊑ dlt' sty` while the STC side only
-  gives `hm_ext dlt src ⊑ dlt rst_inst` — not transferable.
-- `sty ∉ scope` makes it an extra, but it is referenced by *three*
-  blocks: target of the Obc `TcReset` block, target of the reset
-  method's constraint for that instance, and a source in the Obc
-  `TcCall` block.  Extras must be private to one chunk.
+- **Reset instances** — one identifier for both languages.  It lives in
+  the raw scope, is hidden by *both* signatures, and the Obc `TcReset`
+  block is the STC one.  The call's reset actual coincides on the two
+  sides, so `signatures_preserved_equal_calls_from_good` applies and the
+  `~ In sty scope` side condition of the reset-underlying theorem is
+  never needed.
+- **Non-reset instances** — genuinely Obc-exclusive.  `sty` is a private
+  extra of its own `TcCall` block, defined by that instance's
+  reset-method constraint, hidden by `hidden_class_vars`, and eliminated
+  by `simplify`: the "temporary environment we simplify away".
 
-NL→STC does not hit this because `translate_eqn` of a single `EqApp`
-emits both the `TcReset` and the `TcCall`, so the reset instance name
-never leaves one block.
+So `preserves_on_concat_list`'s disjointness holds per trconstr and
+`tcs_preserv` stands as written — no partition of the tc list and no
+permutation lemma over instance groups.
 
-**Fix:** chunk by *instance group* rather than by trconstr — each
-instance's `TcReset` (if any) together with its `TcCall`, plus
-singleton chunks for `TcDef`/`TcNext`.  `s_subs_calls_of` and
-`s_reset_incl` make this a partition (exactly one call per instance, at
-most one reset), and `preserves_on_Permutation` legitimises the
-reordering on both sides.  `tcs_preserv` stays as the per-trconstr
-scaffolding; the grouping sits above it.
+Two general rules the Obc side relies on, both already proved:
 
-Already in place for this: `generate_state_env_stids` (`SecObcTyping.v`,
-the counterpart of `generate_reset_env_rids`), plus the state-env range
-and injectivity facts in `SecObcTypingCorrectness.v`.
+- a variable with several defining statements (a compiled `merge`
+  produces one `Assign` leaf per branch) gets one constraint whose
+  source is the ⊔ of all of them — `collapse`, with
+  `collapse_same_target` and the *equivalence* `collapse_satisfaction`;
+- names local to one language are hidden and simplified away —
+  `hidden_sys_vars` on the STC side, `hidden_class_vars` on the Obc side.
 
 **Structural deviations from NL→STC (no analogue there):**
 - *Expression / cexp correspondence* — NL→STC keeps CE expressions unchanged;
