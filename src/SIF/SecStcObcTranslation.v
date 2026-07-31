@@ -2359,6 +2359,55 @@ Module Type SECSTCOBCTRANSLATION
         apply in_or_app; right; apply in_or_app; right. exact Hscope.
     Qed.
 
+    (** ** Per-block target scopedness
+
+        The Obc scopedness theorem needs the free names of the translated
+        statement to have scoped types; [translate_tc_free] reduces that
+        to the source trconstr's own free and defined names. *)
+
+    Lemma translated_tc_constraints_scoped:
+      forall scope memset clkvars tc e blk sa sb,
+        SIG.secglobal_scoped G2 ->
+        List.In clk_ty scope ->
+        List.In rst_ty scope ->
+        (forall x, IsFStc.Is_free_in_tc x tc \/ List.In x (DefStc.defined_tc tc) ->
+                   exists ty, Env.find x env = Some ty /\ List.In ty scope) ->
+        (forall o sty,
+            List.In o (SECOBCTYPING.stmt_state_keys
+                         (translate_tc memset clkvars tc)) ->
+            Env.find o reset_env = Some sty ->
+            List.In sty (scope ++ e)) ->
+        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
+          (translate_tc memset clkvars tc) sa = OK (blk, sb) ->
+        constraints_scoped (scope ++ e)
+          (blk ++ map (fun ty => ([rst_ty], [ty])) e).
+    Proof.
+      intros scope memset clkvars tc e blk sa sb
+             Hglob Hclk Hrst Hnames Hstate Hgen.
+      unfold constraints_scoped. apply Forall_app. split.
+      - eapply SECOBCTYPING.generate_stmt_constraints_scoped_on_keys;
+          [exact Hglob| | | |..|exact Hgen].
+        + (* free names *)
+          intros x Hin.
+          destruct (translate_tc_free _ _ _ _ Hin) as [Hfree|Hdef];
+            (destruct (Hnames x ltac:(auto)) as (ty & Hfind & Hty);
+             exists ty; split; [exact Hfind|apply in_or_app; now left]).
+        + (* the entry pc *)
+          intros z Hz. simpl in Hz. destruct Hz as [Heq|[]]; subst z.
+          apply in_or_app; now left.
+        + apply in_or_app; now left.
+        + intros o sty st0 st1 Hino Hfind.
+          unfold SC.find_env in Hfind.
+          destruct (Env.find o reset_env) as [v|] eqn:Hv; try discriminate.
+          unfold ret in Hfind. inversion Hfind; subst v st1.
+          eapply Hstate; eauto.
+      - apply Forall_map. apply Forall_forall. intros ty Hty.
+        unfold constraint_scoped, SymTypes.constraint_scope. simpl.
+        intros z Hz. destruct Hz as [Heq|[Heq|[]]]; subst z.
+        + apply in_or_app; now left.
+        + apply in_or_app; now right.
+    Qed.
+
     (** ** Class-level raw preservation
 
         The Obc signature's raw constraints are the step method's, the
