@@ -2134,6 +2134,108 @@ Module Type SECSTCOBCTRANSLATION
       rewrite Hm, Hi, map_app. reflexivity.
     Qed.
 
+    (** ** The raw scope
+
+        Everything the two constraint sets share: the signature scope,
+        the system's locals and lasts, and the instances it resets.  The
+        instances it does not reset are deliberately outside, since they
+        are the per-block extras. *)
+
+    Definition raw_scope (inp out slocals slasts rids: list ident) : list ident :=
+      inp ++ out ++ slocals ++ slasts ++ rids ++ [clk_ty; rst_ty].
+
+    Lemma rst_ty_in_raw_scope:
+      forall inp out slocals slasts rids,
+        List.In rst_ty (raw_scope inp out slocals slasts rids).
+    Proof.
+      intros. unfold raw_scope.
+      repeat (apply in_or_app; right). simpl. now right; left.
+    Qed.
+
+    Lemma sig_scope_in_raw_scope:
+      forall inp out slocals slasts rids x,
+        List.In x (inp ++ out ++ [clk_ty; rst_ty]) ->
+        List.In x (raw_scope inp out slocals slasts rids).
+    Proof.
+      intros inp out slocals slasts rids x Hin.
+      unfold raw_scope.
+      apply in_app_iff in Hin as [Hin|Hin]; [now apply in_or_app; left|].
+      apply in_or_app; right.
+      apply in_app_iff in Hin as [Hin|Hin]; [now apply in_or_app; left|].
+      apply in_or_app; right.
+      repeat (apply in_or_app; right). exact Hin.
+    Qed.
+
+    Lemma unreset_call_insts_step:
+      forall tcs i,
+        List.In i (unreset_call_insts tcs) ->
+        Step_with_reset_in i false tcs.
+    Proof.
+      induction tcs as [|tc tcs IH]; intros i Hin; [inversion Hin|].
+      destruct tc as [x ck ce|x ck e|x ck f|o xs ck [|] g es]; simpl in Hin.
+      - right. now apply IH.
+      - right. now apply IH.
+      - right. now apply IH.
+      - right. now apply IH.
+      - destruct Hin as [Heq|Hin].
+        + subst o. left. constructor.
+        + right. now apply IH.
+    Qed.
+
+    (** An instance the body never resets has a state type distinct from
+        every name the STC side can see: it carries the [sec_reset]
+        prefix, so it is none of the [sec] names, and injectivity plus
+        [reset_consistency] separate it from the reset instances. *)
+
+    Lemma extras_fresh_raw_scope:
+      forall tcs extras rids inp out slocals slasts ty,
+        env_injective reset_env ->
+        (forall x ty', Env.find x reset_env = Some ty' ->
+                       exists n, ty' = Ids.gensym Ids.sec_reset n) ->
+        (forall ty', List.In ty' (inp ++ out ++ slocals ++ slasts
+                                    ++ [clk_ty; rst_ty]) ->
+                     exists n, ty' = Ids.gensym Ids.sec n) ->
+        get_mappings (map fst (resets_of tcs)) reset_env = Some rids ->
+        reset_consistency tcs ->
+        tcs_obc_extras tcs = Some extras ->
+        List.In ty (List.concat extras) ->
+        ~ List.In ty (raw_scope inp out slocals slasts rids).
+    Proof.
+      intros tcs extras rids inp out slocals slasts ty
+             Hinj Hrange Hsec Hrids Hcons Hextras Hin Hscope.
+      pose proof (tcs_obc_extras_concat _ _ Hextras) as Hconcat.
+      destruct (get_mappings_In _ _ _ _ Hconcat Hin) as (i & Hini & Hfindi).
+      destruct (Hrange _ _ Hfindi) as (n1 & Hn1).
+      (* the name is a [sec_reset] gensym, so it is none of the [sec] ones *)
+      assert (Hnotsec : ~ List.In ty (inp ++ out ++ slocals ++ slasts
+                                        ++ [clk_ty; rst_ty])).
+      { intro Hin'. destruct (Hsec _ Hin') as (n2 & Hn2).
+        rewrite Hn1 in Hn2. apply gensym_injective in Hn2 as [Hpref _].
+        symmetry in Hpref. exact (Ids.sec_neq_sec_reset Hpref). }
+      (* and it is not one of the reset instances either *)
+      assert (Hnotrid : ~ List.In ty rids).
+      { intro Hinr.
+        destruct (get_mappings_In _ _ _ _ Hrids Hinr) as (r & Hinr' & Hfindr).
+        assert (i = r) by (eapply Hinj; eauto). subst r.
+        eapply (Hcons i false); [now apply unreset_call_insts_step|].
+        now apply SECSTCTYPING.resets_of_Reset_in. }
+      unfold raw_scope in Hscope.
+      apply in_app_iff in Hscope as [H1|Hscope].
+      { apply Hnotsec, in_or_app; now left. }
+      apply in_app_iff in Hscope as [H2|Hscope].
+      { apply Hnotsec, in_or_app; right; apply in_or_app; now left. }
+      apply in_app_iff in Hscope as [H3|Hscope].
+      { apply Hnotsec, in_or_app; right; apply in_or_app; right;
+          apply in_or_app; now left. }
+      apply in_app_iff in Hscope as [H4|Hscope].
+      { apply Hnotsec, in_or_app; right; apply in_or_app; right;
+          apply in_or_app; right; apply in_or_app; now left. }
+      apply in_app_iff in Hscope as [H5|Hscope].
+      { exact (Hnotrid H5). }
+      apply Hnotsec, in_or_app; right; apply in_or_app; right;
+        apply in_or_app; right; apply in_or_app; right. exact Hscope.
+    Qed.
+
     (** ** Class-level raw preservation
 
         The Obc signature's raw constraints are the step method's, the
