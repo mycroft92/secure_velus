@@ -413,6 +413,43 @@ Module Type SECSTCTYPING
         eapply fresh_reset_insert_preserves_find; eauto.
     Qed.
 
+    (** The accumulated [rids] are exactly the reset instances read back
+        through the generated environment, in order. *)
+
+    Lemma generate_reset_env'_rids:
+      forall trs e acc renv rids st st',
+        generate_reset_env' trs e acc st = OK ((renv, rids), st') ->
+        exists rs,
+          get_mappings (map fst (resets_of trs)) renv = Some rs
+          /\ rids = acc ++ rs.
+    Proof.
+      induction trs as [|tr trs IH]; intros e acc renv rids st st' Hgen.
+      - simpl in Hgen. inversion Hgen; subst.
+        exists []. split; [reflexivity|now rewrite app_nil_r].
+      - destruct tr as [x ck ce|x ck ex|s0 ck f|x xs ck b f exps]; simpl in Hgen |- *.
+        1,2,4: eapply IH; eauto.
+        eapply sec_bind2_inv in Hgen as (e1 & i & st1 & Hstep & Hrec).
+        destruct (IH _ _ _ _ _ _ Hrec) as (rs & Hrs & Hrids).
+        assert (Hself : Env.find s0 e1 = Some i).
+        { eapply fresh_reset_insert_find_self; eauto. }
+        assert (Hfind : Env.find s0 renv = Some i).
+        { eapply generate_reset_env'_preserves_find; eauto. }
+        exists (i :: rs). split.
+        + simpl. rewrite Hfind, Hrs. reflexivity.
+        + rewrite Hrids, <- app_assoc. reflexivity.
+    Qed.
+
+    Lemma generate_reset_env_rids:
+      forall trs renv rids st st',
+        generate_reset_env trs st = OK ((renv, rids), st') ->
+        get_mappings (map fst (resets_of trs)) renv = Some rids.
+    Proof.
+      intros trs renv rids st st' Hgen.
+      unfold generate_reset_env in Hgen.
+      destruct (generate_reset_env'_rids _ _ _ _ _ _ _ Hgen) as (rs & Hrs & Hrids).
+      simpl in Hrids. subst rids. exact Hrs.
+    Qed.
+
     Definition trconstr_targets (tr: trconstr) : option (list ident) :=
       match tr with
       | TcDef x _ _
