@@ -1058,6 +1058,60 @@ Module Type SECSTCOBCTRANSLATION
       eapply constraints_src_le_satisfaction; eauto.
     Qed.
 
+
+    (** ** From the [translate_tcs] fold to a per-trconstr concatenation
+
+        [translate_tcs] is a *left* fold that nests [Comp] in reverse
+        execution order, so the Obc constraints come out as the
+        reverse-order concatenation of the per-trconstr blocks, while the
+        STC generator concatenates them in order.  The two lists are
+        therefore permutations of each other, and satisfaction (a
+        [Forall]) does not care — see [preserves_on_Permutation]. *)
+
+    Lemma translate_tcs_fold_right:
+      forall memset clkvars tcs,
+        translate_tcs memset clkvars tcs
+        = fold_right (fun tc i => SynObc.Comp (translate_tc memset clkvars tc) i)
+            SynObc.Skip (rev tcs).
+    Proof.
+      intros memset clkvars tcs.
+      unfold translate_tcs.
+      rewrite <- fold_left_rev_right.
+      reflexivity.
+    Qed.
+
+    (** Generating constraints for a right fold of [Comp]s is the
+        concatenation of the per-statement constraint blocks, with the
+        state threaded left to right. *)
+
+    Lemma generate_fold_right_Comp:
+      forall memset clkvars pc tcs cns st st',
+        generate_stmt_constraints G2 env state_env rst_ty pc
+          (fold_right (fun tc i => SynObc.Comp (translate_tc memset clkvars tc) i)
+             SynObc.Skip tcs) st = OK (cns, st') ->
+        exists blocks,
+          cns = concat blocks
+          /\ Forall2 (fun tc blk =>
+                        exists sa sb,
+                          generate_stmt_constraints G2 env state_env rst_ty pc
+                            (translate_tc memset clkvars tc) sa = OK (blk, sb))
+                     tcs blocks.
+    Proof.
+      intros memset clkvars pc tcs.
+      induction tcs as [|tc tcs IH]; intros cns st st' Hgen.
+      - simpl in Hgen. unfold ret in Hgen. inversion Hgen; subst.
+        exists nil. split; [reflexivity|constructor].
+      - simpl in Hgen.
+        eapply sec_bind_inv in Hgen as (c1 & st1 & Hc1 & Hgen).
+        eapply sec_bind_inv in Hgen as (c2 & st2 & Hc2 & Hret).
+        unfold ret in Hret. inversion Hret; subst cns st'.
+        destruct (IH c2 st1 st2 Hc2) as (blocks & Hblocks & Hall).
+        exists (c1 :: blocks). split.
+        + simpl. f_equal. exact Hblocks.
+        + constructor; [|exact Hall].
+          exists st, st1. exact Hc1.
+    Qed.
+
   End TCPRESERV.
 
 End SECSTCOBCTRANSLATION.

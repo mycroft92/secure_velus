@@ -1,6 +1,7 @@
 (** Symbolic types, constraints, simplification, and preservation metatheory. *)
 
 From Coq Require Import List.
+From Coq Require Import Sorting.Permutation.
 From Coq Require Import Lists.ListSet.
 
 From Velus Require Import Common.
@@ -1179,6 +1180,31 @@ Module Type SECTYPES(Import Lat: Lattice).
     exists dlt. split.
     - apply agree_on_refl.
     - exact Hsat.
+  Qed.
+
+  Lemma listSatisfiable_Permutation:
+    forall dlt cns cns',
+      Permutation cns cns' ->
+      listSatisfiable dlt cns ->
+      listSatisfiable dlt cns'.
+  Proof.
+    intros dlt cns cns' Hp.
+    unfold listSatisfiable.
+    now rewrite <- Hp.
+  Qed.
+
+  Lemma preserves_on_Permutation:
+    forall scope c1 c1' c2 c2',
+      Permutation c1 c1' ->
+      Permutation c2 c2' ->
+      preserves_on scope c1 c2 ->
+      preserves_on scope c1' c2'.
+  Proof.
+    intros scope c1 c1' c2 c2' Hp1 Hp2 Hpres dlt Hsat.
+    destruct (Hpres dlt (listSatisfiable_Permutation dlt c1' c1 (Permutation_sym Hp1) Hsat))
+      as (dlt' & Hagree & Hsat').
+    exists dlt'. split; [exact Hagree|].
+    eapply listSatisfiable_Permutation; eauto.
   Qed.
 
   Lemma preserves_on_from_entailment:
