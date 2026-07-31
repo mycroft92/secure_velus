@@ -162,9 +162,11 @@ $$
  = ([\rho] \sqcup pc) \Rightarrow [state(s)].
 $$
 
-After `Control`, $pc=K(ck)$.  `tcreset_preserv` assumes the intended
-environment alignment $reset(s) = state(s)$; the positive-reset form then
-matches up to commutativity/associativity/idempotence of $\sqcup$.
+After `Control`, $pc=K(ck)$.  The two targets are *the same identifier*:
+$reset(s)$ and $state(s)$ are both $\iota(s)$ (see "One instance
+environment" below), so the constraints coincide up to
+commutativity/associativity/idempotence of $\sqcup$, with no side
+condition.  `tcreset_preserv` carries none.
 
 ### Calls
 
@@ -188,15 +190,54 @@ $$
  generate\_constraints(O_f,\ inputs_{Obc}, K(ck), [state(i)], outputs).
 $$
 
-The outputs and clock actual agree; translated input types are included in
-the STC input types.  Calls are therefore not a literal equality of local
-constraints.  `tccall_preserv` reduces the case to
-`Signature_call_preserves_obc`, including freshness/scopedness side
-conditions.  `signatures_preserved_obc_calls_from_good` discharges that
-property when the source signature is good, the target one is scoped, and the
-two callee signatures satisfy the existing signature-preservation relation.
+The outputs and clock actual agree, and translated input types are included
+in the STC input types, so calls are not a literal equality of local
+constraints.  Three cases arise, distinguished by whether the system resets
+the instance (`reset_consistency` makes this exactly the call's $rst$ flag):
+
+- **$rst = \mathit{true}$.**  Then $R_{STC} = [\iota(i)] = [state(i)]$: the two
+  calls pass the *same* reset actual, so the equal-actuals preservation
+  applies and $\iota(i)$ may sit inside the shared scope.
+  (`Signature_call_preserves_obc_eq`, `tccall_reset_preserv_eq`.)
+- **$rst = \mathit{false}$, $xs \neq []$.**  Then $R_{STC} = [\rho]$ while Obc
+  passes $[\iota(i)]$.  The reset-underlying preservation bridges them and
+  *produces* the extra constraint $[\rho] \Rightarrow [\iota(i)]$, which is
+  precisely the constraint the reset method emits for that instance.  The
+  block therefore owns $\iota(i)$, which is a name the STC side never sees.
+  (`Signature_call_preserves_obc_rst`, `tccall_unreset_preserv_rst`.)
+- **$xs = []$.**  Both generators produce $\emptyset$, yet $i \in c\_objs$ so
+  the reset method still constrains $\iota(i)$.  Nothing else mentions it, so
+  the block discharges $[\rho] \Rightarrow [\iota(i)]$ directly.
+  (`preserves_on_reset_only_extra`.)
+
+`signatures_preserved_obc_full_from_good` establishes both call properties
+when the source signature is good, the target one is scoped, and the two
+callee signatures satisfy the existing signature-preservation relation.
 
 For `TcCall _ [] _ _ _ _`, both generators produce `[]`.
+
+## One instance environment
+
+Both languages need a security type per subsystem instance: STC for the
+reset instances it names in `TcReset`/reset'd `TcCall`, Obc for the object
+state it resets and passes to `step`.  These are minted **once**, by the
+shared name generator, exactly as the clock and reset types $\beta,\rho$
+already were.  Write
+
+$$
+ \iota : \mathit{ident} \rightharpoonup \mathit{ident}
+$$
+
+for that per-node environment (`ninst` in `node_aux_names`, read back by
+`get_node_inst`); its values carry the `sec_reset` prefix, so they are
+disjoint from the `sec` names of program variables.  Consequently
+
+$$
+  reset(s) \;=\; state(s) \;=\; \iota(s)
+$$
+
+*by construction*, and no hypothesis relating two environments is needed
+anywhere in the bridge.
 
 ## From systems to classes
 
@@ -210,42 +251,118 @@ $$
 \end{array}
 $$
 
-The step body is `translate_tcs s_tcs`; each element is translated by the
-table above.  The reset body resets memory cells and calls `reset` on every
-object.  Ordinary data typing is preserved separately by
-`StcToObc/Stc2ObcTyping.v` (`translate_system_wt` and `translate_wt`).
+The step body is `translate_tcs s_tcs`, typed at entry pc $[\beta]$ with
+$\beta = clk\_ty$.  The reset body is
+`Comp (reset_mems s_lasts) (reset_insts s_subs)`, typed at entry pc $[]$.
 
-At the security-signature level, the two generators have parallel shapes:
+### The reset method
 
-| STC system signature | Translated Obc class signature |
-| --- | --- |
-| Create `reset_env` for reset-instance keys. | Create `state_env` for class objects. |
-| Generate and concatenate `C_STC(tc)` for `s_tcs`. | Generate step constraints at pc `[clk_ty]`, and reset-method constraints at pc `[]`. |
-| `simplify` after hiding system locals, lasts, and reset-instance identifiers. | `collapse` the combined step/reset constraints, then `simplify` after hiding method locals, memory cells, and object-state identifiers. |
+Both halves of the reset method produce constraints of one shape.  With
+$pc = []$, the assignment and reset-call rules give
 
-The difference in raw ordering is intentional: `translate_tcs` is a left fold
-that nests `Comp` in reverse execution order.  STC concatenates in source
-order, whereas the Obc blocks are reverse-order concatenations.
-`translate_tcs_fold_right` and `generate_fold_right_Comp` make this explicit;
-the resulting lists are compared through permutation because constraint
-satisfaction is order-insensitive.
+$$
+ C_{Obc}([],\ reset\_mems(\overline{x}))
+   = \{\, [\rho] \Rightarrow [\Gamma(x)] \;\mid\; x \in \overline{x} \,\},
+ \qquad
+ C_{Obc}([],\ reset\_insts(\overline{o}))
+   = \{\, [\rho] \Rightarrow [\iota(o)] \;\mid\; o \in \overline{o} \,\}.
+$$
 
-## What is established here
+These have no STC counterpart, so they are *discharged* rather than
+preserved, in three ways:
 
-`SecStcObcTranslation.v` proves per-transition `preserves_on` lemmas for
-`TcDef`, `TcNext`, `TcReset`, and `TcCall`, plus the control, expression, and
-composition lemmas needed to assemble them.  It deliberately distinguishes:
+- **memories.**  Every last $x$ has a `TcNext` defining it, and that
+  constraint's source contains $\rho$; hence $[\rho] \Rightarrow [\Gamma(x)]$
+  is entailed by the STC side under the *same* valuation.
+- **reset instances.**  Likewise, every reset instance has a `TcReset` whose
+  source contains $\rho$, giving $[\rho] \Rightarrow [\iota(o)]$.
+- **unreset instances.**  $\iota(o)$ is invisible to STC, and the constraint
+  is produced by that instance's call block, as described above.
 
-- **exact constraints:** `TcNext`, and `TcDef` after collapse;
-- **exact up to reset/state-name alignment and join ACI:** `TcReset`; and
-- **semantic preservation through callee signatures:** `TcCall`.
+The first two need no witness at all: any valuation agreeing with the source
+one on the shared scope satisfies them.
 
-The file provides the fold/concatenation facts for lifting these results from
-one transition constraint to an entire step method.  It does not currently
-state one final theorem equating complete STC-system and Obc-class stored
-signatures; such a theorem must also connect generated reset and state
-environments and account for the class reset method and the two sides'
-different hidden-name sets.
+### Ordering
+
+`translate_tcs` is a left fold nesting `Comp` in reverse execution order, so
+the Obc blocks come out as the reverse-order concatenation of the
+per-transition blocks while STC concatenates in source order.  The two lists
+are therefore permutations of each other, and constraint satisfaction, being
+a conjunction, is order-insensitive.  (`translate_tcs_fold_right`,
+`generate_fold_right_Comp`, and the permutation-tolerance of
+`preserves_on`.)
+
+### The two hidden sets differ, and must
+
+STC hides $locals \cup lasts \cup \{\iota(o) \mid o \text{ reset}\}$; Obc
+hides $locals \cup mems \cup \{\iota(o) \mid o \in c\_objs\}$.  The
+asymmetry is forced: `simplify` may only eliminate a name that *has* a
+defining constraint, and STC never constrains an instance it does not reset,
+whereas the Obc reset method constrains every one of them.  The bridge does
+not require the two sets to agree.
+
+### Scopes
+
+Write $\Sigma = inputs \cup outputs \cup \{\beta, \rho\}$ for the signature
+scope, and
+
+$$
+ \Sigma_{raw} = \Sigma \cup locals \cup lasts \cup \{\iota(o) \mid o \text{ reset}\}
+$$
+
+for the raw scope: everything the two constraint sets share.  The unreset
+instances are deliberately outside $\Sigma_{raw}$ — they are the per-block
+private names ("extras"), and are provably distinct from every element of it
+(prefix separation for the `sec` names, injectivity of $\iota$ together with
+`reset_consistency` for the reset instances).
+
+## The two theorems
+
+Let $C_{STC}$ be the STC system's raw constraints and $C_{step}, C_{reset}$
+the Obc class's.  Raw preservation is
+
+$$
+ \mathit{preserves\_on}\;\Sigma_{raw}\;\;C_{STC}\;\;
+   \mathit{collapse}(C_{step} \mathbin{+\!\!+} C_{reset})
+$$
+
+(`class_preserv_raw`), proved by giving each transition constraint's block a
+target consisting of its own Obc constraints *together with* the
+reset-method constraint of any instance it owns.  Every Obc-exclusive name
+then belongs to exactly one block, so the $n$-ary composition applies per
+transition constraint; the memories and reset instances are appended for
+free; and the proved target — which mentions each Obc constraint at least
+once — is finally narrowed to the generated list.
+
+Lifting across `simplify` is generic:
+
+$$
+ \frac{\mathit{wf}(C) \quad
+       H_1 \cap \Sigma = \emptyset \quad
+       \Sigma \subseteq \Sigma_{raw} \quad
+       \mathit{preserves\_on}\;\Sigma_{raw}\;C\;D}
+      {\mathit{preserves\_on}\;\Sigma\;\;\mathit{simplify}(C, H_1)\;\;
+        \mathit{simplify}(D, H_2)}
+$$
+
+(`preserves_on_simplify_bridge`).  Note $H_1$ and $H_2$ are unrelated, which
+is what the differing hidden sets require.  Composing the two gives
+`class_preserv_signature`, relating the *stored* signature constraints of an
+STC system and its translated Obc class.
+
+## What is established, and what is not
+
+Proved: the per-transition results for `TcDef`, `TcNext`, `TcReset` and all
+three call forms; the whole-body result; the reset method; the raw scope and
+the freshness of the extras; that the free names of a translated transition
+constraint are free or defined in the source; `class_preserv_raw`; the
+`simplify` bridge; and `class_preserv_signature`.
+
+Not yet done: instantiating `class_preserv_signature` at the *generated*
+signatures — the per-block scopedness obligation, the field agreement
+between the two signatures, and the program-level lockstep yielding
+`Signature_consistent`.  These are instantiation and a port of the existing
+NLustre-to-STC induction; no open mathematical question remains.
 
 ## Source pointers
 
