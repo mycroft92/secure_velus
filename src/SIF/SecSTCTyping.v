@@ -1004,6 +1004,105 @@ Module Type SECSTCTYPING
         eapply IH; eauto.
   Qed.
 
+  (** The targets of a whole [trconstr] list are exactly the security
+      types of its variables, its lasts and its reset instances — in some
+      order, since the three groups interleave along the list.  This is
+      what makes a generated system signature [signature_good]: after
+      [simplify] removes the hidden locals, lasts and reset instances,
+      precisely the outputs remain. *)
+
+  Lemma get_mappings_cons_inv:
+    forall x xs e tys,
+      get_mappings (x :: xs) e = Some tys ->
+      exists ty tys',
+        Env.find x e = Some ty
+        /\ get_mappings xs e = Some tys'
+        /\ tys = ty :: tys'.
+  Proof.
+    intros x xs e tys H.
+    simpl in H.
+    destruct (Env.find x e) as [ty|] eqn:Hx; simpl in H; try discriminate.
+    destruct (get_mappings xs e) as [tys'|] eqn:Hxs; simpl in H; try discriminate.
+    inversion H; subst. eauto.
+  Qed.
+
+  Lemma get_mappings_app_inv:
+    forall xs ys e tys,
+      get_mappings (xs ++ ys) e = Some tys ->
+      exists txs tys',
+        get_mappings xs e = Some txs
+        /\ get_mappings ys e = Some tys'
+        /\ tys = txs ++ tys'.
+  Proof.
+    induction xs as [|x xs IH]; intros ys e tys H.
+    - simpl in H. exists [], tys. repeat split; auto.
+    - rewrite <- app_comm_cons in H.
+      apply get_mappings_cons_inv in H as (ty & tys0 & Hx & Hrest & Heq).
+      apply IH in Hrest as (txs & tys' & Hxs & Hys & Heq').
+      exists (ty :: txs), tys'. repeat split.
+      + simpl. rewrite Hx, Hxs. reflexivity.
+      + exact Hys.
+      + subst. reflexivity.
+  Qed.
+
+  Lemma trconstrs_targets_perm:
+    forall tcs tys vs ls rs,
+      trconstrs_targets tcs = Some tys ->
+      get_mappings (variables tcs) env = Some vs ->
+      get_mappings (lasts_of tcs) env = Some ls ->
+      get_mappings (map fst (resets_of tcs)) reset_env = Some rs ->
+      Permutation tys (vs ++ ls ++ rs).
+  Proof.
+    induction tcs as [|tc tcs IH]; intros tys vs ls rs Htys Hvs Hls Hrs.
+    - simpl in *. inversion Htys; inversion Hvs; inversion Hls; inversion Hrs.
+      subst. constructor.
+    - destruct tc as [x ck ce|x ck e|s ck f|i xs ck rst f es].
+      + (* TcDef: contributes one variable *)
+        simpl in Htys.
+        cbn [variables flat_map variables_tc lasts_of resets_of map fst] in Hvs, Hls, Hrs.
+        destruct (Env.find x env) as [tx|] eqn:Hx; try discriminate.
+        destruct (trconstrs_targets tcs) as [tys'|] eqn:Htl; try discriminate.
+        inversion Htys; subst tys.
+        apply get_mappings_cons_inv in Hvs as (tx' & vs' & Hx' & Hvs' & Hvseq).
+        rewrite Hx in Hx'. inversion Hx'; subst tx' vs.
+        simpl. constructor. eapply IH; eauto.
+      + (* TcNext: contributes one last *)
+        simpl in Htys.
+        cbn [variables flat_map variables_tc lasts_of resets_of map fst] in Hvs, Hls, Hrs.
+        destruct (Env.find x env) as [tx|] eqn:Hx; try discriminate.
+        destruct (trconstrs_targets tcs) as [tys'|] eqn:Htl; try discriminate.
+        inversion Htys; subst tys.
+        apply get_mappings_cons_inv in Hls as (tx' & ls' & Hx' & Hls' & Hlseq).
+        rewrite Hx in Hx'. inversion Hx'; subst tx' ls.
+        change (Permutation (tx :: tys') (vs ++ tx :: (ls' ++ rs))).
+        apply Permutation_cons_app.
+        eapply IH; eauto.
+      + (* TcReset: contributes one reset instance *)
+        simpl in Htys.
+        cbn [variables flat_map variables_tc lasts_of resets_of map fst] in Hvs, Hls, Hrs.
+        destruct (Env.find s reset_env) as [ts|] eqn:Hs; try discriminate.
+        destruct (trconstrs_targets tcs) as [tys'|] eqn:Htl; try discriminate.
+        inversion Htys; subst tys.
+        apply get_mappings_cons_inv in Hrs as (ts' & rs' & Hs' & Hrs' & Hrseq).
+        rewrite Hs in Hs'. inversion Hs'; subst ts' rs.
+        change (Permutation (ts :: tys') (vs ++ ls ++ ts :: rs')).
+        rewrite app_assoc.
+        apply Permutation_cons_app.
+        rewrite <- app_assoc.
+        eapply IH; eauto.
+      + (* TcCall: contributes its outputs *)
+        simpl in Htys.
+        cbn [variables flat_map variables_tc lasts_of resets_of map fst] in Hvs, Hls, Hrs.
+        destruct (get_mappings xs env) as [txs|] eqn:Hxs; try discriminate.
+        destruct (trconstrs_targets tcs) as [tys'|] eqn:Htl; try discriminate.
+        inversion Htys; subst tys.
+        apply get_mappings_app_inv in Hvs as (txs' & vs' & Hxs' & Hvs' & Hvseq).
+        rewrite Hxs in Hxs'. inversion Hxs'; subst txs' vs.
+        rewrite <- app_assoc.
+        apply Permutation_app_head.
+        eapply IH; eauto.
+  Qed.
+
   Lemma trconstrs_targets_contains_reset_ids':
     forall trs acc rids st rids' st' tys ty,
       generate_reset_env' trs acc rids st = OK ((reset_env, rids'), st') ->

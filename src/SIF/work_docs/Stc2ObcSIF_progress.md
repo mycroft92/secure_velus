@@ -408,6 +408,16 @@ ideas.
 (one clause — Obc routes *every* call's reset actual through `sty`, and
 `inp` is weaker), `Signature_consistent_obc`.
 
+### Item C status (2026-07-31)
+
+`trconstrs_targets_perm` proved in `SecSTCTyping.v` (additions only):
+the targets of a trconstr list are a permutation of the security types
+of its variables, lasts and reset instances. Supporting lemmas
+`get_mappings_cons_inv` / `get_mappings_app_inv`. Remaining for C:
+`wf_constraints raw` (NoDup of targets) and the `simplify` endgame,
+mirroring `generate_node_sig_good_from_local_env`
+(`SecNLusTypingCorrectness.v:560`).
+
 ## 5. Phase 5 — scheduling (B4)
 
 `StcToObc/Correctness.correctness_loop_call` needs `Well_defined P`
