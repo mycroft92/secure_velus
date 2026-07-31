@@ -1475,6 +1475,36 @@ Module Type SECSTCOBCTRANSLATION
       - exact Hgen2.
     Qed.
 
+    (** A call with no outputs emits nothing on either side, yet the
+        instance is still in [c_objs] and the reset method still
+        constrains it.  Its state type is constrained nowhere else, so
+        the block covers it by naming that identifier directly. *)
+
+    Lemma preserves_on_reset_only_extra:
+      forall scope sty,
+        List.In rst_ty scope ->
+        ~ List.In sty scope ->
+        preserves_on scope [] [([rst_ty], [sty])].
+    Proof.
+      intros scope sty Hrst Hsty dlt _.
+      exists (overlay_scope scope dlt (fun _ => hm_ext dlt [rst_ty])).
+      set (dlt' := overlay_scope scope dlt (fun _ => hm_ext dlt [rst_ty])).
+      assert (Hrsteq : dlt' rst_ty = dlt rst_ty).
+      { unfold dlt', overlay_scope.
+        destruct (in_dec ident_eq_dec rst_ty scope); [reflexivity|contradiction]. }
+      assert (Hstyeq : dlt' sty = hm_ext dlt [rst_ty]).
+      { unfold dlt', overlay_scope.
+        destruct (in_dec ident_eq_dec sty scope); [contradiction|reflexivity]. }
+      split.
+      - apply overlay_scope_agree_on.
+      - constructor; [|constructor].
+        unfold constraintSatisfiable, satisfiable.
+        eapply Lat.order_trans with (y := dlt' sty).
+        + cbn [hm_ext]. rewrite Hrsteq, Hstyeq. cbn [hm_ext].
+          apply Lat.order_refl, Lat.eq_refl.
+        + eapply hm_ext_list_in1. simpl. now left.
+    Qed.
+
     (** ** Obc-exclusive names, per trconstr
 
         The only Obc constraint mentioning a name the STC side never sees
