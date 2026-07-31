@@ -1376,6 +1376,70 @@ Module Type SECSTCOBCTRANSLATION
         eapply tccall_preserv; eauto.
     Qed.
 
+    (** ** Obc-exclusive names, per trconstr
+
+        The only Obc constraint mentioning a name the STC side never sees
+        is the call of an instance the system does *not* reset: there the
+        STC call passes [rst_ty] while the Obc call passes the instance's
+        state type.  For every other trconstr the two sides range over
+        the same identifiers, so the block has no private names.
+
+        A reset instance is *not* exclusive: the shared name generator
+        gives it one identifier, used by both languages. *)
+
+    Definition tc_obc_extras (tc: SynStc.trconstr) : option (list ident) :=
+      match tc with
+      | SynStc.TcCall i _ _ false _ _ =>
+          match Env.find i reset_env with
+          | Some sty => Some [sty]
+          | None => None
+          end
+      | _ => Some []
+      end.
+
+    Fixpoint tcs_obc_extras (tcs: list SynStc.trconstr) : option (list (list ident)) :=
+      match tcs with
+      | [] => Some []
+      | tc :: tcs' =>
+          match tc_obc_extras tc, tcs_obc_extras tcs' with
+          | Some e, Some es => Some (e :: es)
+          | _, _ => None
+          end
+      end.
+
+    Lemma tcs_obc_extras_Forall2:
+      forall tcs es,
+        tcs_obc_extras tcs = Some es ->
+        Forall2 (fun tc e => tc_obc_extras tc = Some e) tcs es.
+    Proof.
+      induction tcs as [|tc tcs IH]; intros es Hes; simpl in Hes.
+      - inversion Hes; subst. constructor.
+      - destruct (tc_obc_extras tc) as [e|] eqn:He; try discriminate.
+        destruct (tcs_obc_extras tcs) as [es'|] eqn:Hes'; try discriminate.
+        inversion Hes; subst es.
+        constructor; [exact He|now apply IH].
+    Qed.
+
+    (** Every extra is the state type of an instance the system does not
+        reset, so it is bound in the shared environment. *)
+
+    Lemma tc_obc_extras_spec:
+      forall tc e ty,
+        tc_obc_extras tc = Some e ->
+        List.In ty e ->
+        exists i, Env.find i reset_env = Some ty
+                  /\ (exists xs ck f es, tc = SynStc.TcCall i xs ck false f es).
+    Proof.
+      intros tc e ty He Hin.
+      destruct tc as [x ck ce|x ck ex|x ck f|i xs ck [|] f es];
+        simpl in He; try (inversion He; subst e; inversion Hin).
+      destruct (Env.find i reset_env) as [sty|] eqn:Hfind; try discriminate.
+      inversion He; subst e.
+      destruct Hin as [Heq|[]]. subst ty.
+      exists i. split; [exact Hfind|].
+      exists xs, ck, f, es. reflexivity.
+    Qed.
+
     (** [translate_tcs] emits the per-trconstr blocks in reverse order,
         so the Obc constraint list is a permutation of the STC one taken
         blockwise.  [extras] names, per trconstr, the identifiers that
@@ -1538,6 +1602,26 @@ Module Type SECSTCOBCTRANSLATION
       destruct (Forall2_in_right _ _ _ _ Hall Hin) as (oc & Hinoc & Hfind).
       eapply SECSTCTYPING.generate_trconstrs_constraints_reset_source;
         [exact Hgen|apply Hreset; exact Hinoc|exact Hfind].
+    Qed.
+
+    (** Appending the reset method's shared-target constraints to a
+        preservation result is free: they hold under any valuation that
+        agrees with the source one on the scope, so no witness changes. *)
+
+    Lemma preserves_on_app_reset_shared:
+      forall scope c t tys,
+        List.In rst_ty scope ->
+        Forall (fun ty =>
+                  List.In ty scope
+                  /\ exists src, List.In (src, [ty]) c /\ List.In rst_ty src)
+               tys ->
+        preserves_on scope c t ->
+        preserves_on scope c (t ++ map (fun ty => ([rst_ty], [ty])) tys).
+    Proof.
+      intros scope c t tys Hrst Hall Hp.
+      eapply preserves_on_app_scope_entailed; [exact Hp|].
+      intros dlt dlt' Hsat Hagree.
+      eapply reset_targets_satisfied; eauto.
     Qed.
 
     Lemma generate_reset_mems_blocks:
