@@ -961,6 +961,35 @@ Module Type SECSTCTYPING
         * symmetry. apply map_app.
   Qed.
 
+  (** Well-formedness of the raw constraints reduces to distinctness of
+      the targets: the generator already emits exactly one singleton
+      target per definition. *)
+
+  Lemma generate_trconstrs_constraints_wf:
+    forall trs cns st st' tys,
+      env_injective env ->
+      NoDup (Def.defined trs) ->
+      generate_trconstrs_constraints trs st = OK (cns, st') ->
+      trconstrs_targets trs = Some tys ->
+      NoDup tys ->
+      wf_constraints cns.
+  Proof.
+    intros trs cns st st' tys Hinj Hnd Hgen Htys Hndtys.
+    destruct (generate_trconstrs_constraints_targets trs cns st st' Hinj Hnd Hgen)
+      as (tys' & Htys' & Hsnd).
+    rewrite Htys in Htys'. inversion Htys'; subst tys'.
+    split.
+    - rewrite Hsnd. apply nodup_singleton_map. exact Hndtys.
+    - clear -Hsnd.
+      revert tys Hsnd.
+      induction cns as [|[l r] cns IH]; intros tys Hsnd.
+      + constructor.
+      + destruct tys as [|ty tys]; simpl in Hsnd; try discriminate.
+        inversion Hsnd; subst r.
+        constructor; [reflexivity|].
+        eapply IH; eauto.
+  Qed.
+
   Lemma trconstr_targets_contains_defined_tc:
     forall tr x ty tys,
       trconstr_targets tr = Some tys ->

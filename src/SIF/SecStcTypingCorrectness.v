@@ -381,6 +381,50 @@ Module Type SECSTCTYPINGCORRECTNESS
         * exact Hrst.
   Qed.
 
+  (** The raw targets of a system are pairwise distinct: variables and
+      lasts get distinct [sec] names because the source names are
+      distinct and the environment is injective, the reset instances get
+      distinct [sec_reset] names, and the two prefixes never collide. *)
+
+  Lemma targets_nodup:
+    forall env reset_env tcs tys vs ls rs,
+      env_injective env ->
+      (forall x ty, Env.find x env = Some ty -> exists n, ty = Ids.gensym Ids.sec n) ->
+      (forall x ty, Env.find x reset_env = Some ty ->
+                    exists n, ty = Ids.gensym Ids.sec_reset n) ->
+      SECSTCTYPING.trconstrs_targets env reset_env tcs = Some tys ->
+      get_mappings (variables tcs) env = Some vs ->
+      get_mappings (lasts_of tcs) env = Some ls ->
+      get_mappings (map fst (resets_of tcs)) reset_env = Some rs ->
+      NoDup (variables tcs ++ lasts_of tcs) ->
+      NoDup rs ->
+      NoDup tys.
+  Proof.
+    intros env reset_env tcs tys vs ls rs
+           Hinj Hsec Hrst Htys Hvs Hls Hrs Hndnames Hndrs.
+    assert (Hperm : Permutation tys (vs ++ ls ++ rs)).
+    { eapply SECSTCTYPING.trconstrs_targets_perm; eauto. }
+    assert (Hvl : get_mappings (variables tcs ++ lasts_of tcs) env = Some (vs ++ ls)).
+    { eapply get_mappings_app; eauto. }
+    assert (Hndvl : NoDup (vs ++ ls)).
+    { eapply (SECSTCTYPING.get_mappings_nodup env (variables tcs ++ lasts_of tcs) (vs ++ ls));
+        [exact Hndnames|exact Hinj|exact Hvl]. }
+    assert (Hdisj : Forall (fun z => ~ In z rs) (vs ++ ls)).
+    { rewrite Forall_forall.
+      intros z Hz Hzr.
+      destruct (get_mappings_In _ _ _ _ Hvl Hz) as (x & _ & Hfx).
+      destruct (get_mappings_In _ _ _ _ Hrs Hzr) as (o & _ & Hfo).
+      destruct (Hsec _ _ Hfx) as (n1 & Hn1).
+      destruct (Hrst _ _ Hfo) as (n2 & Hn2).
+      rewrite Hn1 in Hn2.
+      apply gensym_injective in Hn2.
+      destruct Hn2 as [Hpref Hidx].
+      exact (Ids.sec_neq_sec_reset Hpref). }
+    eapply Permutation_NoDup; [symmetry; exact Hperm|].
+    rewrite app_assoc.
+    apply NoDup_app'; [exact Hndvl|exact Hndrs|exact Hdisj].
+  Qed.
+
   Lemma generated_sys_signature_scope_sec:
     forall all_nodes G s env aux_names sig,
       generate_node_env all_nodes = OK (env, aux_names) ->

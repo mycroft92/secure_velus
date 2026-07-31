@@ -410,7 +410,25 @@ ideas.
 
 ### Item C status (2026-07-31)
 
-`trconstrs_targets_perm` proved in `SecSTCTyping.v` (additions only):
+**Three of four pieces proved** (additions only, no existing statement
+touched):
+- `trconstrs_targets_perm` (`SecSTCTyping.v`)
+- `generate_trconstrs_constraints_wf` (`SecSTCTyping.v`) — well-formedness
+  of the raw constraints reduces to distinctness of the targets
+- `targets_nodup` (`SecStcTypingCorrectness.v`) — the targets *are*
+  distinct: variables and lasts get distinct `sec` names (source names
+  distinct via `s_nodup`, environment injective), reset instances get
+  distinct `sec_reset` names, and the two prefixes never collide
+  (`Ids.sec_neq_sec_reset`)
+
+**Remaining for C:** instantiate these at the signature level (feed the
+record invariants `s_vars_out_in_tcs` / `s_lasts_in_tcs` and the
+`generate_reset_env` correspondence), then the `simplify` endgame —
+`NoDup_Permutation` showing the post-`simplify` targets are exactly the
+outputs, mirroring `generate_node_sig_good_from_local_env`
+(`SecNLusTypingCorrectness.v:560`).
+
+Earlier note: `trconstrs_targets_perm` proved in `SecSTCTyping.v`:
 the targets of a trconstr list are a permutation of the security types
 of its variables, lasts and reset instances. Supporting lemmas
 `get_mappings_cons_inv` / `get_mappings_app_inv`. Remaining for C:
