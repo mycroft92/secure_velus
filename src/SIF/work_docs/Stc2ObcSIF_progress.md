@@ -207,11 +207,30 @@ No statement changed; `SECSTCTYPING.generate_reset_env` and
 `SECOBCTYPING.generate_state_env` still resolve for the exporters, and
 `SECOBCTYPING.collapse` became `SymTypes.collapse` there.
 
-*Known remaining duplication* (not touched, follow-up): the state/reset
-env range and injectivity lemmas are still duplicated between
-`SecStcTypingCorrectness.v` and `SecObcTypingCorrectness.v`
-(`fresh_*_insert_sec_range`, `*_env_props`, `env_values*`); they are
-generic and belong in `SecContext.v` too.
+**(1d) Second ownership pass (2026-07-31).** The env range/injectivity
+family was *triplicated*: `SecStcTypingCorrectness.v`,
+`SecObcTypingCorrectness.v`, and (at the `sec` prefix)
+`NameInterface.v`. The two `sec_reset` copies are now one, in
+`SecContext.v`:
+
+`env_values`, `env_values_add`, `env_values_nodup_injective`,
+`env_reset_bounded` (was `reset_env_sec_bounded` / `state_env_sec_bounded`),
+`env_reset_bounded_step`, `env_values_reset_fresh_notin`,
+`fresh_reset_insert_sec_range`, `fresh_reset_insert_env_props`; plus
+`SecStcTypingCorrectness`'s third copy of `fresh_reset_insert_preserves_find`
+(already hoisted in pass 1c).
+
+Only the *drivers* stay in their own Correctness files
+(`generate_reset_env_range/_props/_injective` over trconstrs;
+`generate_state_env_range/_props/_injective/_key_from_objs` over
+`c_objs`).
+
+**Why `NameInterface.v` was left alone.** Its copies are hard-wired to
+the `Ids.sec` prefix (not `sec_reset`), it is built *before*
+`SecContext.v`, and `NAMEGEN` does not take a `SECMONAD` parameter — so
+reusing the shared family there would mean changing `NAMEGEN`'s
+signature and every instantiation of it. Deliberately out of scope; the
+duplication is prefix-specific rather than verbatim.
 
 **(2) Reuse, don't duplicate.** `in_merge_left` / `in_merge_right` were
 defined inside `SecNLusTypingCorrectness.v` although they are pure

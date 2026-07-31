@@ -51,44 +51,7 @@ Module Type SECSTCTYPINGCORRECTNESS
   (Import Clo   : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst Ord CEClo)
   (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo).
 
-  Definition env_values (env: Env.t ident) : list (ident * ident) :=
-    map (fun '(x, ty) => (ty, x)) (Env.elements env).
 
-  Lemma env_values_add:
-    forall x ty env,
-      ~ Env.In x env ->
-      Permutation (env_values (Env.add x ty env))
-                  ((ty, x) :: env_values env).
-  Proof.
-    intros x ty env Hnin.
-    unfold env_values.
-    replace ((ty, x) :: map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))
-      with (map (fun '(x0, ty0) => (ty0, x0)) ((x, ty) :: Env.elements env))
-      by reflexivity.
-    now apply Permutation_map, Env.elements_add.
-  Qed.
-
-  Lemma env_values_nodup_injective:
-    forall env,
-      NoDupMembers (env_values env) ->
-      SECSTCTYPING.env_injective env.
-  Proof.
-    intros env Hnodup x y tx ty Hfindx Hfindy Heq.
-    apply Env.elements_correct in Hfindx.
-    apply Env.elements_correct in Hfindy.
-    unfold env_values in Hnodup.
-    assert (Hinx : In (tx, x) (map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))).
-    { apply in_map_iff. exists (x, tx). split; [reflexivity|exact Hfindx]. }
-    assert (Hiny : In (tx, y) (map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))).
-    { subst ty.
-      apply in_map_iff. exists (y, tx). split; [reflexivity|exact Hfindy]. }
-    now eapply NoDupMembers_det; eauto.
-  Qed.
-
-  Definition reset_env_sec_bounded (st: ident) (env: Env.t ident) : Prop :=
-    forall x ty,
-      Env.find x env = Some ty ->
-      exists n, ty = Ids.gensym Ids.sec_reset n /\ (n < st)%positive.
 
   Ltac mySecInv :=
     simpl in *;
@@ -109,28 +72,6 @@ Module Type SECSTCTYPINGCORRECTNESS
       eapply sec_bind2_inv in H as [? [? [? [H1 H2]]]]
     end; simpl in *.
 
-  Lemma fresh_reset_insert_sec_range:
-    forall env k st env' rst_inst st' x ty,
-      (forall y ty', Env.find y env = Some ty' -> exists n, ty' = Ids.gensym Ids.sec_reset n) ->
-      fresh_reset_insert k env st = OK ((env', rst_inst), st') ->
-      Env.find x env' = Some ty ->
-      exists n, ty = Ids.gensym Ids.sec_reset n.
-  Proof.
-    intros env k st env' rst_inst st' x ty Henv Hins Hfind.
-    unfold fresh_reset_insert in Hins.
-    destruct (Env.mem k env) eqn:Hmem; try discriminate.
-    eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
-    eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
-    unfold fresh_reset_ident in Hfresh.
-    inversion Hfresh; subst v st1.
-    unfold insert_env, ret in Hins0.
-    inversion Hins0; subst e st2.
-    unfold ret in Hret. inversion Hret. subst env' rst_inst st'.
-    destruct (Pos.eq_dec x k) as [Heq|Hneq].
-    - subst. rewrite Env.gss in Hfind. inversion Hfind. subst.
-      eexists; reflexivity.
-    - rewrite Env.gso in Hfind; eauto.
-  Qed.
 
   Lemma generate_reset_env_range':
     forall trs env acc st reset_env rids st' x ty,
@@ -163,28 +104,6 @@ Module Type SECSTCTYPINGCORRECTNESS
     rewrite Env.gempty in Hy. discriminate.
   Qed.
 
-  Lemma fresh_reset_insert_preserves_find:
-    forall env k st env' rst_inst st' x ty,
-      fresh_reset_insert k env st = OK ((env', rst_inst), st') ->
-      Env.find x env = Some ty ->
-      Env.find x env' = Some ty.
-  Proof.
-    intros env k st env' rst_inst st' x ty Hins Hfind.
-    unfold fresh_reset_insert in Hins.
-    destruct (Env.mem k env) eqn:Hmem; try discriminate.
-    eapply sec_bind_inv in Hins as (v & st1 & Hfresh & Hins).
-    eapply sec_bind_inv in Hins as (e & st2 & Hins0 & Hret).
-    unfold fresh_reset_ident in Hfresh.
-    inversion Hfresh; subst v st1.
-    unfold insert_env, ret in Hins0. inversion Hins0; subst e st2.
-    unfold ret in Hret. inversion Hret; subst env' rst_inst st'.
-    assert (Hxk : x <> k).
-    { intro Heq. subst x.
-      assert (Env.mem k env = true).
-      { apply Env.mem_1. unfold Env.In. eexists; exact Hfind. }
-      congruence. }
-    now rewrite Env.gso.
-  Qed.
 
   Lemma generate_reset_env'_preserves_find:
     forall trs env acc st reset_env rids st' x ty,
@@ -473,77 +392,15 @@ Module Type SECSTCTYPINGCORRECTNESS
     eapply NAMEGEN.generate_node_env_sec_range in Hfind; eauto.
   Qed.
 
-  Lemma reset_env_sec_bounded_step:
-    forall st env,
-      reset_env_sec_bounded st env ->
-      reset_env_sec_bounded (Pos.succ st) env.
-  Proof.
-    intros st env Hbound x ty Hfind.
-    specialize (Hbound _ _ Hfind) as (n & Hn & Hlt).
-    exists n. split; auto.
-    eapply Pos.lt_trans; eauto.
-    apply Pos.lt_succ_diag_r.
-  Qed.
 
-  Lemma reset_env_values_fresh_notin:
-    forall env st,
-      reset_env_sec_bounded st env ->
-      ~ InMembers (Ids.gensym Ids.sec_reset st) (env_values env).
-  Proof.
-    intros env st Hbound Hin.
-    apply InMembers_In in Hin as (x & Hin).
-    unfold env_values in Hin.
-    apply in_map_iff in Hin as ((x', ty') & Heq & Hele).
-    simpl in Heq. inversion Heq; subst x' ty'. clear Heq.
-    apply Env.elements_complete in Hele.
-    specialize (Hbound _ _ Hele) as (n & Hgen & Hlt).
-    apply gensym_injective in Hgen as [_ Hn]. subst n.
-    now apply Pos.lt_irrefl in Hlt.
-  Qed.
 
-  Lemma fresh_reset_insert_env_props:
-    forall env k st env' rst_inst st',
-      reset_env_sec_bounded st env ->
-      NoDupMembers (env_values env) ->
-      fresh_reset_insert k env st = OK ((env', rst_inst), st') ->
-      reset_env_sec_bounded st' env'
-      /\ NoDupMembers (env_values env').
-  Proof.
-    intros env k st env' rst_inst st' Hbound Hnodup Hgen.
-    unfold fresh_reset_insert in Hgen.
-    destruct (Env.mem k env) eqn:Hmem; try discriminate.
-    eapply sec_bind_inv in Hgen as (v & st1 & Hfresh & Hgen).
-    eapply sec_bind_inv in Hgen as (e & st2 & Hins & Hret).
-    unfold fresh_reset_ident in Hfresh. inversion Hfresh; subst v st1.
-    unfold insert_env, ret in Hins. inversion Hins; subst e st2.
-    unfold ret in Hret. inversion Hret; subst env' rst_inst st'.
-    split.
-    - intros x ty Hfind.
-      destruct (ident_eq_dec x k) as [Heq|Hneq].
-      + subst x. rewrite Env.gss in Hfind. inversion Hfind; subst ty.
-        exists st. split; [reflexivity|apply Pos.lt_succ_diag_r].
-      + rewrite Env.gso in Hfind by auto.
-        specialize (Hbound _ _ Hfind) as (n & Hn & Hlt).
-        exists n. split; auto.
-        eapply Pos.lt_trans; eauto.
-        apply Pos.lt_succ_diag_r.
-    - assert (Hnotin : ~ Env.In k env).
-      { intro Hin. apply Env.mem_1 in Hin. rewrite Hmem in Hin. discriminate. }
-      eapply (NoDupMembers_Permutation_Proper
-                (env_values (Env.add k (Ids.gensym Ids.sec_reset st) env))
-                ((Ids.gensym Ids.sec_reset st, k) :: env_values env)).
-      + apply env_values_add; exact Hnotin.
-      + constructor.
-        * apply reset_env_values_fresh_notin; exact Hbound.
-        * exact Hnodup.
-  Qed.
 
   Lemma generate_reset_env_props':
     forall trs env acc st reset_env rids st',
-      reset_env_sec_bounded st env ->
+      env_reset_bounded st env ->
       NoDupMembers (env_values env) ->
       generate_reset_env' trs env acc st = OK ((reset_env, rids), st') ->
-      reset_env_sec_bounded st' reset_env
+      env_reset_bounded st' reset_env
       /\ NoDupMembers (env_values reset_env).
   Proof.
     induction trs as [|tr trs IH]; intros env acc st reset_env rids st'
