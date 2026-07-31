@@ -109,6 +109,39 @@ Module Type SECOBCTYPING
       eapply fresh_reset_insert_preserves_find; eauto.
   Qed.
 
+  Lemma generate_state_env'_stids:
+    forall objs e acc senv stids st st',
+      generate_state_env' objs e acc st = OK ((senv, stids), st') ->
+      exists ss,
+        get_mappings (map fst objs) senv = Some ss
+        /\ stids = acc ++ ss.
+  Proof.
+    induction objs as [|[o cls] objs IH]; intros e acc senv stids st st' Hgen.
+    - simpl in Hgen. inversion Hgen; subst.
+      exists []. split; [reflexivity|now rewrite app_nil_r].
+    - simpl in Hgen |- *.
+      eapply sec_bind2_inv in Hgen as (e1 & sty & st1 & Hstep & Hrec).
+      destruct (IH _ _ _ _ _ _ Hrec) as (ss & Hss & Hstids).
+      assert (Hself : Env.find o e1 = Some sty).
+      { eapply fresh_reset_insert_find_self; eauto. }
+      assert (Hfind : Env.find o senv = Some sty).
+      { eapply generate_state_env'_preserves_find; eauto. }
+      exists (sty :: ss). split.
+      + simpl. rewrite Hfind, Hss. reflexivity.
+      + rewrite Hstids, <- app_assoc. reflexivity.
+  Qed.
+
+  Lemma generate_state_env_stids:
+    forall objs senv stids st st',
+      generate_state_env objs st = OK ((senv, stids), st') ->
+      get_mappings (map fst objs) senv = Some stids.
+  Proof.
+    intros objs senv stids st st' Hgen.
+    unfold generate_state_env in Hgen.
+    destruct (generate_state_env'_stids _ _ _ _ _ _ _ Hgen) as (ss & Hss & Hstids).
+    simpl in Hstids. subst stids. exact Hss.
+  Qed.
+
   End STATEHANDLER.
 
   (** * Free names of Obc expressions and statements
