@@ -2134,6 +2134,65 @@ Module Type SECSTCOBCTRANSLATION
       rewrite Hm, Hi, map_app. reflexivity.
     Qed.
 
+    (** ** Class-level raw preservation
+
+        The Obc signature's raw constraints are the step method's, the
+        reset method's, and then [collapse].  Every reset-method
+        constraint is either backed by an STC constraint on the same
+        target ([shared]) or owned by the call block of the instance it
+        names (an extra). *)
+
+    Theorem class_preserv_raw:
+      forall scope vars memset clkvars tcs extras shared
+             nconst craw_step craw_reset st1 st1' st2 st2',
+        Signature_consistent_obc_full G1 G2 ->
+        List.In rst_ty scope ->
+        Forall (tc_preserv_hyps_aug scope vars) tcs ->
+        tcs_obc_extras tcs = Some extras ->
+        NoDup (List.concat extras) ->
+        (forall x, List.In x (List.concat extras) -> ~ List.In x scope) ->
+        Forall2 (fun tc e =>
+                   forall blk sa sb,
+                     generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
+                       (translate_tc memset clkvars tc) sa = OK (blk, sb) ->
+                     constraints_scoped (scope ++ e)
+                       (blk ++ map (fun ty => ([rst_ty], [ty])) e))
+                tcs extras ->
+        Forall (fun ty =>
+                  List.In ty scope
+                  /\ exists src, List.In (src, [ty]) nconst /\ List.In rst_ty src)
+               shared ->
+        (forall c, List.In c craw_reset ->
+                   exists ty, c = ([rst_ty], [ty])
+                              /\ (List.In ty shared
+                                  \/ List.In ty (List.concat extras))) ->
+        SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty tcs st1
+          = OK (nconst, st1') ->
+        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
+          (translate_tcs memset clkvars tcs) st2 = OK (craw_step, st2') ->
+        preserves_on scope nconst (SymTypes.collapse (craw_step ++ craw_reset)).
+    Proof.
+      intros scope vars memset clkvars tcs extras shared
+             nconst craw_step craw_reset st1 st1' st2 st2'
+             Hcons Hrstin Hhyps Hextras Hnd Hfresh Hsc Hshared Hreset Hstc Hobc.
+      destruct (tcs_preserv_aug scope vars memset clkvars tcs extras
+                  nconst craw_step st1 st1' st2 st2'
+                  Hcons Hhyps Hextras Hnd Hfresh Hsc Hstc Hobc)
+        as (tgt & Hcovstep & Hcovextra & Hpres).
+      apply preserves_on_collapse.
+      eapply preserves_on_incl
+        with (t := tgt ++ map (fun ty => ([rst_ty], [ty])) shared).
+      - intros c Hin.
+        apply in_app_iff in Hin as [Hin|Hin].
+        + apply in_or_app. left. now apply Hcovstep.
+        + destruct (Hreset c Hin) as (ty & Hc & [Hsh|Hex]); subst c.
+          * apply in_or_app. right.
+            apply in_map_iff. exists ty. split; [reflexivity|exact Hsh].
+          * apply in_or_app. left. now apply Hcovextra.
+      - now apply preserves_on_app_reset_shared.
+    Qed.
+
+
   End TCPRESERV.
 
 End SECSTCOBCTRANSLATION.
