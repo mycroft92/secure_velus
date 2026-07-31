@@ -535,6 +535,344 @@ Module Type SECSTCTYPINGCORRECTNESS
     - rewrite IH, app_assoc. reflexivity.
   Qed.
 
+  (** Source names carried by a system are atoms or gensyms drawn from
+      the translation prefixes, never [sec] gensyms; the security
+      identifiers therefore never clash with program variables. *)
+
+  Lemma atom_or_gensym_not_sec:
+    forall x i,
+      AtomOrGensym (PSP.of_list gensym_prefs) x ->
+      x <> Ids.gensym Ids.sec i.
+  Proof.
+    intros x i Hgood Heq.
+    destruct Hgood as [Hat|Hex].
+    - rewrite Heq in Hat.
+      eapply gensym_not_atom; eauto.
+    - unfold PS.Exists in Hex.
+      destruct Hex as (pre & Hinpre & m & Hm).
+      rewrite Heq in Hm.
+      symmetry in Hm.
+      apply gensym_injective in Hm as [Hpre _]. subst pre.
+      apply PSP.of_list_1 in Hinpre.
+      apply SetoidList.InA_alt in Hinpre as (pre' & Heq' & Hinpre).
+      subst pre'.
+      exact (Ids.sec_not_in_gensym_prefs Hinpre).
+  Qed.
+
+  Lemma sys_name_not_sec_gensym:
+    forall s x i,
+      In x (map fst (s.(SynStc.s_in) ++ s.(SynStc.s_vars) ++ s.(SynStc.s_out))
+              ++ map fst s.(SynStc.s_lasts)) ->
+      x <> Ids.gensym Ids.sec i.
+  Proof.
+    intros s x i Hin.
+    apply in_app_iff in Hin as [Hin|Hin].
+    - destruct s.(SynStc.s_good) as [Hgood _].
+      rewrite Forall_forall in Hgood.
+      eapply atom_or_gensym_not_sec; eauto.
+    - destruct s.(SynStc.s_good) as [_ [Hgood _]].
+      rewrite Forall_forall in Hgood.
+      eapply atom_or_gensym_not_sec; eauto.
+  Qed.
+
+  (** [s_nodup] separates the hidden names (locals and lasts) from the
+      visible ones (inputs and outputs). *)
+
+  Lemma sys_hidden_visible_disjoint:
+    forall s x,
+      In x (map fst s.(SynStc.s_vars) ++ map fst s.(SynStc.s_lasts)) ->
+      In x (map fst s.(SynStc.s_in) ++ map fst s.(SynStc.s_out)) ->
+      False.
+  Proof.
+    intros s x Hh Hv.
+    pose proof s.(SynStc.s_nodup) as Hnd.
+    apply in_app_iff in Hh as [Hb|Hd]; apply in_app_iff in Hv as [Ha|Hc].
+    - eapply (NoDup_app_In x _ _ Hnd Ha).
+      apply in_or_app; left; exact Hb.
+    - apply NoDup_app_r in Hnd.
+      eapply (NoDup_app_In x _ _ Hnd Hb).
+      apply in_or_app; left; exact Hc.
+    - eapply (NoDup_app_In x _ _ Hnd Ha).
+      apply in_or_app; right; apply in_or_app; right; exact Hd.
+    - apply NoDup_app_r in Hnd. apply NoDup_app_r in Hnd.
+      eapply (NoDup_app_In x _ _ Hnd Hc).
+      exact Hd.
+  Qed.
+
+  (** The names eliminated by [simplify] are disjoint from the public
+      scope of the generated signature.  Locals and lasts are hidden
+      because their source names differ from the inputs, outputs and
+      auxiliary identifiers; reset instances are hidden because they
+      carry the [sec_reset] prefix. *)
+
+  Lemma generated_sys_hidden_disjoint:
+    forall all_nodes s env aux_names
+           clk_id rst_id clk_type rst_type inp out slocals slasts
+           reset_env rids st_reset ty,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      get_node_aux s.(SynStc.s_name) aux_names = Some (clk_id, rst_id) ->
+      Env.find clk_id env = Some clk_type ->
+      Env.find rst_id env = Some rst_type ->
+      get_mappings_from_node s.(SynStc.s_in) env = Some inp ->
+      get_mappings_from_node s.(SynStc.s_out) env = Some out ->
+      get_mappings_from_node s.(SynStc.s_vars) env = Some slocals ->
+      get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts ->
+      generate_reset_env s.(SynStc.s_tcs) init_state = OK ((reset_env, rids), st_reset) ->
+      In ty (SECSTCTYPING.hidden_sys_vars slocals slasts rids) ->
+      ~ In ty (inp ++ out ++ [clk_type; rst_type]).
+  Proof.
+    intros all_nodes s env aux_names
+           clk_id rst_id clk_type rst_type inp out slocals slasts
+           reset_env rids st_reset ty
+           Henv Haux Hclk Hrst Hinp Hout Hslocals Hslasts Hresetenv Hin Hvis.
+    assert (Hinj : env_injective env)
+      by (eapply NAMEGEN.generate_node_env_injective; eauto).
+    (* Every visible type is a [sec] gensym coming from a source name or
+       from one of the two auxiliary identifiers. *)
+    assert (Hviskey : exists x,
+               (In x (map fst s.(SynStc.s_in) ++ map fst s.(SynStc.s_out))
+                \/ x = clk_id \/ x = rst_id)
+               /\ Env.find x env = Some ty).
+    {
+      repeat rewrite in_app_iff in Hvis.
+      destruct Hvis as [Hv|[Hv|Hv]].
+      - destruct (get_mappings_from_node_In _ _ _ _ _ Hinp Hv)
+          as (x & a & Hinx & Hfindx).
+        exists x. split; [left; apply in_or_app; left|exact Hfindx].
+        now apply in_map with (f := fst) in Hinx.
+      - destruct (get_mappings_from_node_In _ _ _ _ _ Hout Hv)
+          as (x & a & Hinx & Hfindx).
+        exists x. split; [left; apply in_or_app; right|exact Hfindx].
+        now apply in_map with (f := fst) in Hinx.
+      - destruct Hv as [Hv|[Hv|[]]].
+        + subst ty. exists clk_id. split; [right; left; reflexivity|exact Hclk].
+        + subst ty. exists rst_id. split; [right; right; reflexivity|exact Hrst].
+    }
+    destruct Hviskey as (x' & Hx'where & Hx'find).
+    unfold SECSTCTYPING.hidden_sys_vars in Hin.
+    apply nodup_In in Hin.
+    repeat rewrite in_app_iff in Hin.
+    destruct Hin as [Hin|[Hin|Hin]].
+    - (* a local *)
+      destruct (get_mappings_from_node_In _ _ _ _ _ Hslocals Hin)
+        as (x & a & Hinx & Hfindx).
+      assert (x = x') by (eapply Hinj; eauto). subst x'.
+      destruct Hx'where as [Hx'|Hx'].
+      + eapply sys_hidden_visible_disjoint; [|exact Hx'].
+        apply in_or_app; left. now apply in_map with (f := fst) in Hinx.
+      + destruct (NAMEGEN.generate_node_aux_sec_names _ _ _ _ _ _ Henv Haux)
+          as (i & j & Hi & Hj).
+        assert (Hxs : In x (map fst (s.(SynStc.s_in) ++ s.(SynStc.s_vars)
+                                       ++ s.(SynStc.s_out))
+                              ++ map fst s.(SynStc.s_lasts))).
+        { apply in_or_app; left.
+          rewrite map_app. apply in_or_app; right.
+          rewrite map_app. apply in_or_app; left.
+          now apply in_map with (f := fst) in Hinx. }
+        destruct Hx' as [Hx'|Hx'].
+        * rewrite Hx', Hi in Hxs.
+          exact (sys_name_not_sec_gensym s _ i Hxs Logic.eq_refl).
+        * rewrite Hx', Hj in Hxs.
+          exact (sys_name_not_sec_gensym s _ j Hxs Logic.eq_refl).
+    - (* a last *)
+      destruct (get_mappings_from_node_In _ _ _ _ _ Hslasts Hin)
+        as (x & a & Hinx & Hfindx).
+      assert (x = x') by (eapply Hinj; eauto). subst x'.
+      destruct Hx'where as [Hx'|Hx'].
+      + eapply sys_hidden_visible_disjoint; [|exact Hx'].
+        apply in_or_app; right. now apply in_map with (f := fst) in Hinx.
+      + destruct (NAMEGEN.generate_node_aux_sec_names _ _ _ _ _ _ Henv Haux)
+          as (i & j & Hi & Hj).
+        assert (Hxs : In x (map fst (s.(SynStc.s_in) ++ s.(SynStc.s_vars)
+                                       ++ s.(SynStc.s_out))
+                              ++ map fst s.(SynStc.s_lasts))).
+        { apply in_or_app; right.
+          now apply in_map with (f := fst) in Hinx. }
+        destruct Hx' as [Hx'|Hx'].
+        * rewrite Hx', Hi in Hxs.
+          exact (sys_name_not_sec_gensym s _ i Hxs Logic.eq_refl).
+        * rewrite Hx', Hj in Hxs.
+          exact (sys_name_not_sec_gensym s _ j Hxs Logic.eq_refl).
+    - (* a reset instance: prefixes differ *)
+      assert (Hrids : get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env
+                      = Some rids)
+        by (eapply SECSTCTYPING.generate_reset_env_rids; eauto).
+      destruct (get_mappings_In _ _ _ _ Hrids Hin) as (o & _ & Hfindo).
+      destruct (generate_reset_env_range _ _ _ _ _ _ Hresetenv Hfindo) as (n2 & Hn2).
+      destruct (NAMEGEN.generate_node_env_sec_range _ _ _ _ _ Henv Hx'find) as (n1 & Hn1).
+      rewrite Hn1 in Hn2.
+      apply gensym_injective in Hn2 as [Hpref _].
+      exact (Ids.sec_neq_sec_reset Hpref).
+  Qed.
+
+  (** Every generated STC signature is good: its constraints are well
+      formed and their targets are exactly the signature outputs.  This
+      is the STC counterpart of [generate_node_sig_good_from_local_env]
+      on the NLustre side; the extra work is that the raw targets now
+      also cover lasts and reset instances, both of which [simplify]
+      eliminates. *)
+
+  Theorem generate_sys_signature_good:
+    forall all_nodes G P s env aux_names sig,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      secglobal_scoped G ->
+      Clo.wc_system P s ->
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      signature_good sig.
+  Proof.
+    intros all_nodes G P s env aux_names sig Henv Hglobsc Hwc Hsig.
+    assert (Hinj : env_injective env)
+      by (eapply NAMEGEN.generate_node_env_injective; eauto).
+    pose proof (SECSTCTYPING.generate_sys_signature_scoped
+                  G P s env aux_names sig Hglobsc Hinj Hwc Hsig) as Hsigscoped.
+    edestruct generate_sys_signature_inv as
+        (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
+         & reset_env & rids & st_reset & sconst & st_s
+         & Haux & Hclk & Hrst & Hinp & Hout & Hslocals & Hslasts
+         & Hresetenv & Hsconst & Hsigdef); eauto.
+    remember (SECSTCTYPING.hidden_sys_vars slocals slasts rids) as hid eqn:Hhid.
+    subst sig.
+    set (nsig := {| s_name := s.(SynStc.s_name);
+                    s_in := inp;
+                    s_out := out;
+                    s_reset := rst_type;
+                    s_clk := clk_type;
+                    s_constraints := SymTypes.simplify sconst hid |}) in *.
+
+    (* The eliminated names never show up in the public scope. *)
+    assert (Hdisj : forall ty, In ty hid -> ~ In ty (signature_scope nsig)).
+    { intros ty Hinty. subst nsig. unfold signature_scope; cbn.
+      subst hid. eapply generated_sys_hidden_disjoint; eauto. }
+
+    (* Name-level distinctness, transported to the transition constraints. *)
+    assert (Hndvl : NoDup (variables s.(SynStc.s_tcs) ++ lasts_of s.(SynStc.s_tcs))).
+    { eapply Permutation_NoDup with
+        (l := (map fst s.(SynStc.s_vars) ++ map fst s.(SynStc.s_out))
+                ++ map fst s.(SynStc.s_lasts)).
+      - apply Permutation_app.
+        + exact (SynStc.s_vars_out_in_tcs s).
+        + exact (SynStc.s_lasts_in_tcs s).
+      - rewrite <- app_assoc.
+        pose proof s.(SynStc.s_nodup) as Hnd.
+        now apply NoDup_app_r in Hnd. }
+    assert (Hnddef : NoDup (Def.defined s.(SynStc.s_tcs))).
+    { eapply Permutation_NoDup; [symmetry; exact (Def.s_defined s)|exact Hndvl]. }
+
+    (* Type-level images of the three families of targets. *)
+    assert (Hvo : get_mappings (map fst s.(SynStc.s_vars) ++ map fst s.(SynStc.s_out))
+                    env = Some (slocals ++ out)).
+    { apply get_mappings_app; eapply get_mappings_from_node_eq; eauto. }
+    destruct (get_mappings_Permutation_Some _ _ _ _ (SynStc.s_vars_out_in_tcs s) Hvo)
+      as (vs & Hvs).
+    assert (Hpermvs : Permutation (slocals ++ out) vs).
+    { eapply get_mappings_perm;
+        [|exact (SynStc.s_vars_out_in_tcs s)|exact Hinj|exact Hvo|exact Hvs].
+      pose proof s.(SynStc.s_nodup) as Hnd.
+      apply NoDup_app_r in Hnd.
+      rewrite app_assoc in Hnd.
+      apply NoDup_app'_iff in Hnd as [Hnd' _]. exact Hnd'. }
+    assert (Hls0 : get_mappings (map fst s.(SynStc.s_lasts)) env = Some slasts)
+      by (eapply get_mappings_from_node_eq; eauto).
+    destruct (get_mappings_Permutation_Some _ _ _ _ (SynStc.s_lasts_in_tcs s) Hls0)
+      as (ls & Hls).
+    assert (Hpermls : Permutation slasts ls).
+    { eapply get_mappings_perm;
+        [|exact (SynStc.s_lasts_in_tcs s)|exact Hinj|exact Hls0|exact Hls].
+      pose proof s.(SynStc.s_nodup) as Hnd.
+      apply NoDup_app_r, NoDup_app_r, NoDup_app_r in Hnd. exact Hnd. }
+    assert (Hrs : get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env
+                  = Some rids)
+      by (eapply SECSTCTYPING.generate_reset_env_rids; eauto).
+    assert (Hndrids : NoDup rids).
+    { eapply get_mappings_nodup_gen; [| |exact Hrs].
+      - eapply SECSTCTYPING.generate_reset_env_keys_nodup; eauto.
+      - intros x y tx ty Hx Hy Heq.
+        eapply generate_reset_env_injective; eauto. }
+
+    (* Shape and well-formedness of the raw constraints. *)
+    destruct (SECSTCTYPING.generate_trconstrs_constraints_targets
+                G env reset_env clk_type rst_type s.(SynStc.s_tcs) sconst st_reset st_s
+                Hinj Hnddef Hsconst) as (tys & Htys & Hsnd).
+    assert (Hsecrange : forall x ty, Env.find x env = Some ty ->
+                                     exists n, ty = Ids.gensym Ids.sec n).
+    { intros x ty Hf. eapply NAMEGEN.generate_node_env_sec_range; eauto. }
+    assert (Hrstrange : forall x ty, Env.find x reset_env = Some ty ->
+                                     exists n, ty = Ids.gensym Ids.sec_reset n).
+    { intros x ty Hf. eapply generate_reset_env_range; eauto. }
+    assert (Hndtys : NoDup tys)
+      by exact (targets_nodup env reset_env s.(SynStc.s_tcs) tys vs ls rids
+                  Hinj Hsecrange Hrstrange Htys Hvs Hls Hrs Hndvl Hndrids).
+    assert (Hwfraw : wf_constraints sconst)
+      by exact (SECSTCTYPING.generate_trconstrs_constraints_wf
+                  G env reset_env clk_type rst_type s.(SynStc.s_tcs) sconst
+                  st_reset st_s tys Hinj Hnddef Hsconst Htys Hndtys).
+    assert (Hpermtys : Permutation tys (slocals ++ out ++ slasts ++ rids)).
+    { etransitivity.
+      - exact (SECSTCTYPING.trconstrs_targets_perm
+                 env reset_env s.(SynStc.s_tcs) tys vs ls rids Htys Hvs Hls Hrs).
+      - transitivity ((slocals ++ out) ++ slasts ++ rids).
+        + apply Permutation_app; [symmetry; exact Hpermvs|].
+          apply Permutation_app; [symmetry; exact Hpermls|reflexivity].
+        + rewrite <- app_assoc. reflexivity. }
+    assert (Hpermraw : Permutation (map snd sconst)
+                         (map (fun ty => [ty]) (slocals ++ out ++ slasts ++ rids))).
+    { rewrite Hsnd. apply Permutation_map. exact Hpermtys. }
+    assert (Hndall : NoDup (slocals ++ out ++ slasts ++ rids)).
+    { eapply NoDup_map_inv with (f := fun ty => [ty]).
+      eapply Permutation_NoDup; [exact Hpermraw|exact (proj1 Hwfraw)]. }
+    assert (Hwf_simpl : wf_constraints (SymTypes.simplify sconst hid)).
+    { split.
+      - eapply SymTypes.simplify_nodup. exact (proj1 Hwfraw).
+      - eapply SymTypes.simplify_singleton_rhs. exact (proj2 Hwfraw). }
+
+    unfold signature_good. subst nsig. cbn.
+    split; [exact Hwf_simpl|].
+    apply NoDup_Permutation.
+    - exact (proj1 Hwf_simpl).
+    - apply SIG.nodup_singleton_map.
+      apply NoDup_app_r in Hndall.
+      apply NoDup_app'_iff in Hndall as [Hndout _]. exact Hndout.
+    - intros rhs; split; intro Hinr.
+      + pose proof (SymTypes.simplify_rhs_in _ _ _ Hinr) as Hinraw.
+        eapply Permutation_in in Hinraw; [|exact Hpermraw].
+        apply in_map_iff in Hinraw as (ty & Hrhs & Hinall).
+        subst rhs.
+        assert (Hcase : In ty out \/ In ty hid).
+        { subst hid. unfold SECSTCTYPING.hidden_sys_vars.
+          apply in_app_iff in Hinall as [H1|Hinall].
+          - right. apply nodup_In. apply in_or_app; left; exact H1.
+          - apply in_app_iff in Hinall as [H2|Hinall].
+            + left; exact H2.
+            + right. apply nodup_In. apply in_or_app; right; exact Hinall. }
+        destruct Hcase as [Hcase|Hcase].
+        * apply in_map_iff. exists ty. split; [reflexivity|exact Hcase].
+        * exfalso.
+          destruct (SymTypes.findST_of_rhs_in _ _ Hinr) as (stc & Hfindrhs).
+          apply SymTypes.find_correct in Hfindrhs.
+          unfold signature_scoped in Hsigscoped. cbn in Hsigscoped.
+          eapply Forall_forall in Hsigscoped; [|exact Hfindrhs].
+          eapply Hdisj; [exact Hcase|].
+          unfold signature_scope; cbn.
+          eapply constraint_scoped_rhs; [exact Hsigscoped|now left].
+      + apply in_map_iff in Hinr as (ty & Hrhs & Hinout).
+        subst rhs.
+        assert (Hinsigscope : In ty (signature_scope
+                    {| s_name := s.(SynStc.s_name);
+                       s_in := inp;
+                       s_out := out;
+                       s_reset := rst_type;
+                       s_clk := clk_type;
+                       s_constraints := SymTypes.simplify sconst hid |})).
+        { unfold signature_scope; cbn.
+          apply in_or_app; right. apply in_or_app; left. exact Hinout. }
+        eapply SymTypes.simplify_preserves_other_rhs.
+        * intros d Hd Htyeq. subst d.
+          exact (Hdisj ty Hd Hinsigscope).
+        * eapply Permutation_in; [symmetry; exact Hpermraw|].
+          apply in_map_iff. exists ty. split; [reflexivity|].
+          apply in_or_app; right. apply in_or_app; left. exact Hinout.
+  Qed.
+
 End SECSTCTYPINGCORRECTNESS.
 
 Module SecStcTypingCorrectness

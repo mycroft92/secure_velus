@@ -103,9 +103,6 @@ Section Env_helpers.
       simpl. rewrite (IH ys env txs' tys Htail Hys). reflexivity.
   Qed.
 
-  (** [get_mappings] succeeds exactly when every name is bound, so
-      success transports along a permutation of the name list. *)
-
   Lemma get_mappings_Some_iff:
     forall xs env,
       (exists tys, get_mappings xs env = Some tys) <->
@@ -156,6 +153,83 @@ Section Env_helpers.
       + edestruct IH as (ty & Hfind & Hin'); eauto.
         exists ty. split; [exact Hfind|right; exact Hin'].
   Qed.
+
+  Lemma get_mappings_In:
+    forall xs env tys ty,
+      get_mappings xs env = Some tys ->
+      In ty tys ->
+      exists x, In x xs /\ Env.find x env = Some ty.
+  Proof.
+    induction xs as [|x xs IH]; intros env tys ty Hmap Hin.
+    - simpl in Hmap. inversion Hmap; subst. inversion Hin.
+    - simpl in Hmap.
+      destruct (Env.find x env) as [xty|] eqn:Hfind.
+      2: discriminate.
+      destruct (get_mappings xs env) as [tys'|] eqn:Hmaps.
+      2: discriminate.
+      inversion Hmap; subst tys.
+      simpl in Hin.
+      destruct Hin as [Heq|Hin].
+      + subst ty. exists x. split; [left; reflexivity|exact Hfind].
+      + specialize (IH env tys' ty Hmaps Hin) as (x' & Hin' & Hfind').
+        exists x'. split; [right; exact Hin'|exact Hfind'].
+  Qed.
+
+  (** Under an injective environment, mapping a duplicate-free list of
+      names yields a duplicate-free list of types, and permuting the
+      names permutes the types.  (`SecNLusTyping`/`SecSTCTyping` each
+      carry a section-scoped copy of the first of these; they should be
+      collapsed onto this one in a cleanup pass.) *)
+
+  Lemma get_mappings_nodup_gen:
+    forall xs env tys,
+      NoDup xs ->
+      env_injective env ->
+      get_mappings xs env = Some tys ->
+      NoDup tys.
+  Proof.
+    induction xs as [|x xs IH]; intros env tys Hnd Hinj Hmap.
+    - simpl in Hmap. inversion Hmap. constructor.
+    - simpl in Hmap.
+      destruct (Env.find x env) as [xty|] eqn:Hx; simpl in Hmap; try discriminate.
+      destruct (get_mappings xs env) as [tys'|] eqn:Hxs; simpl in Hmap; try discriminate.
+      inversion Hmap; subst tys.
+      inversion Hnd as [|? ? Hnin Hnd']; subst.
+      constructor.
+      + intro Hin.
+        destruct (get_mappings_In _ _ _ _ Hxs Hin) as (y & Hiny & Hy).
+        assert (x = y) by (eapply Hinj; eauto).
+        subst y. contradiction.
+      + eapply IH; eauto.
+  Qed.
+
+  Lemma get_mappings_perm:
+    forall xs ys env txs tys,
+      NoDup xs ->
+      Permutation xs ys ->
+      env_injective env ->
+      get_mappings xs env = Some txs ->
+      get_mappings ys env = Some tys ->
+      Permutation txs tys.
+  Proof.
+    intros xs ys env txs tys Hnd Hperm Hinj Hxs Hys.
+    assert (NoDup ys) as Hndy by (eapply Permutation_NoDup; eauto).
+    apply NoDup_Permutation.
+    - exact (get_mappings_nodup_gen xs env txs Hnd Hinj Hxs).
+    - exact (get_mappings_nodup_gen ys env tys Hndy Hinj Hys).
+    - intros ty; split; intro Hin.
+      + destruct (get_mappings_In _ _ _ _ Hxs Hin) as (x & Hinx & Hx).
+        assert (In x ys) by (rewrite <- Hperm; exact Hinx).
+        destruct (get_mappings_in _ _ _ _ H Hys) as (ty' & Hy & Hinty).
+        rewrite Hx in Hy. inversion Hy; subst. exact Hinty.
+      + destruct (get_mappings_In _ _ _ _ Hys Hin) as (y & Hiny & Hy).
+        assert (In y xs) by (rewrite Hperm; exact Hiny).
+        destruct (get_mappings_in _ _ _ _ H Hxs) as (ty' & Hx & Hintx).
+        rewrite Hy in Hx. inversion Hx; subst. exact Hintx.
+  Qed.
+
+  (** [get_mappings] succeeds exactly when every name is bound, so
+      success transports along a permutation of the name list. *)
 
   Lemma get_mappings_from_node_inmembers:
     forall A (xs: list (ident * A)) env tys x,
@@ -513,27 +587,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       unfold NMret in Hret. inversion Hret; subst env' st'.
       eapply IH; eauto.
       eapply fresh_insert_preserves_find; eauto.
-  Qed.
-
-  Lemma get_mappings_In:
-    forall xs env tys ty,
-      get_mappings xs env = Some tys ->
-      In ty tys ->
-      exists x, In x xs /\ Env.find x env = Some ty.
-  Proof.
-    induction xs as [|x xs IH]; intros env tys ty Hmap Hin.
-    - simpl in Hmap. inversion Hmap; subst. inversion Hin.
-    - simpl in Hmap.
-      destruct (Env.find x env) as [xty|] eqn:Hfind.
-      2: discriminate.
-      destruct (get_mappings xs env) as [tys'|] eqn:Hmaps.
-      2: discriminate.
-      inversion Hmap; subst tys.
-      simpl in Hin.
-      destruct Hin as [Heq|Hin].
-      + subst ty. exists x. split; [left; reflexivity|exact Hfind].
-      + specialize (IH env tys' ty Hmaps Hin) as (x' & Hin' & Hfind').
-        exists x'. split; [right; exact Hin'|exact Hfind'].
   Qed.
 
   Lemma fresh_insert_node_env_preserves_find:
