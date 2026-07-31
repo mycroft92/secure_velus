@@ -1,6 +1,9 @@
 # SIF for Obc: security type system and Stc→Obc preservation plan
 
-Branch: `Stc2ObcSIF`. Status: analysis/plan (no code yet).
+Branch: `Stc2ObcSIF`. **Status: implemented and compiling.** This file is the
+original design note; §2 and the blocker list below have been corrected in
+place where the implementation diverged from the plan. For live status see
+`Stc2ObcSIF_progress.md`; for the call case see `Stc2ObcSIF_tccall.md`.
 
 Goal: a security (SIF) type system for Obc living in `src/SIF`, plus a
 constraint/signature preservation proof along the Stc→Obc translation,
@@ -11,11 +14,15 @@ following the same route as the NLustre→STC chain
 it is about ordinary data types (`wt_exp` / `wt_stmt` / `wt_program` from
 `Obc/ObcTyping.v`), not security types. In this document, "typing" without
 qualification means the SIF *security* typing (symbolic types `ST`,
-constraints, signatures). The ordinary Obc typing judgment is used by us only
-as *scoping infrastructure* (its `In (x,ty) vars/mems` premises bound the free
-variables of expressions/statements), playing the role that `wc_trconstr`
-played in the STC scopedness proofs. Nothing from `Stc2ObcTyping.v` is part of
-the security type system itself.
+constraints, signatures).
+
+The original plan was to use the ordinary Obc typing judgment as scoping
+infrastructure. **That was dropped**: `OBCTYPING` is parameterised by
+`OBCSEMANTICS`, so depending on it would drag the Obc *semantics* into a
+purely syntactic constraint generator. `SecObcTyping.v` therefore depends on
+`Obc.ObcSyntax` and nothing else from Obc, and scopedness is stated over the
+syntactic free names `exp_free` / `stmt_free` / `names_scoped`. Nothing from
+`Stc2ObcTyping.v` is part of, or used by, the security type system.
 
 ---
 
@@ -40,117 +47,149 @@ Per trconstr:
 
 `Control ck s` compiles the clock into `Ifte (bool_var x) s Skip` nests, i.e.
 every dataflow clock becomes imperative control flow. `translate_tcs` is a
-`fold_left Comp` in *reverse* execution order (irrelevant for constraint sets,
-relevant when destructing statement structure).
+`fold_left Comp` in *reverse* execution order. The generated constraint list
+is therefore the reverse-order concatenation of the per-trconstr blocks, while
+the STC generator concatenates them in order: the two are **permutations**, not
+equal. Satisfaction is a `Forall`, hence permutation-stable
+(`listSatisfiable_Permutation` / `preserves_on_Permutation`), but the proof has
+to say so explicitly.
 
 ## 2. Key observation: STC clock types are already pc labels
 
-Every STC constraint LHS joins in `[rst_ty] ⊔ (base_ty-seeded clock type)`.
-In the translated Obc code, that same variable set reappears as the branch
-conditions guarding the statement. So the Obc security system is a classic
-**pc-carrying constraint generator** over statements:
+Every STC constraint source joins in `[rst_ty] ⊔ ckty`, where
+`ckty = assign_clk_type env clk_ty ck` is the clock type seeded at `clk_ty`.
+In the translated Obc code the *same* variables reappear as the branch
+conditions guarding the statement, so the Obc system is a pc-carrying
+constraint generator over statements.
+
+**The rules as implemented** (`SecObcTyping.v`, section `SECSTMTTYPING`,
+with section parameters `G` (callee signatures), `env` (names ↦ security
+types, written `τ`), `state_env` (instances ↦ state types, written `σ`)
+and `rst_ty`):
 
 ```
-gen_stmt (pc : ST) : stmt -> Sec (list constraint)
-  Assign x e           => [(pc ⊔ ty(e), [τ(x)])]
-  AssignSt x e         => [(pc ⊔ ty(e), [τ(x)])]     (* mems share the env; names preserved *)
-  Ifte e s1 s2         => gen_stmt (pc ⊔ ty(e)) s1 ++ gen_stmt (pc ⊔ ty(e)) s2
-  Comp s1 s2           => gen_stmt pc s1 ++ gen_stmt pc s2
-  Skip                 => []
-  Call ys c o step es  => generate_constraints (sig c) (map ty es) pc [state_ty o] (map τ ys)
-  Call [] c o reset [] => [(pc, [state_ty o])]
+gen (pc : ST) : stmt -> Sec (list constraint)
+  Skip                  ↦  []
+  Assign   x e          ↦  [( ([rst_ty] ⊔ pc) ⊔ ty(e) , [τ x] )]
+  AssignSt x e          ↦  [( ([rst_ty] ⊔ pc) ⊔ ty(e) , [τ x] )]
+  Ifte e s₁ s₂          ↦  gen (pc ⊔ ty(e)) s₁  ++  gen (pc ⊔ ty(e)) s₂
+  Comp s₁ s₂            ↦  gen pc s₁ ++ gen pc s₂
+  Call [] c o reset _   ↦  [( [rst_ty] ⊔ pc , [σ o] )]
+  Call ys c o step  es  ↦  generate_constraints (G c) (map ty es) pc [σ o] (map τ ys)
 ```
 
-- `ty(e)`: an Obc mirror of `assign_exp_type` (`Var`/`Valid`/`State` → env
-  lookup, `Const` → `[]`, unop/binop → join).
-- `state_ty o`: per-instance state security type from a generated environment —
-  the exact analogue of `generate_reset_env`/`rids` in `SecSTCTyping.v`
-  (STC's `reset_env` is keyed by the same instance idents).
+Note where `rst_ty` does and does **not** appear. It is added at the
+*leaves* (assignments, reset calls); it is **not** folded into `pc`, so a
+step call passes `pc` alone as the callee's clock actual. The earlier
+draft of this document had `pc` already containing `rst_ty` and no
+`[rst_ty] ⊔ …` at the leaves; that design leaked the reset dependence into
+every callee's clock formal and was corrected on 2026-07-30 (see
+`Stc2ObcSIF_tccall.md` §2).
 
-**Class signature: reuse `SIG.signature` verbatim** (third reuse of
-`SIFSignature.v`). For `translate_system s`:
+- `ty(e)`: Obc expression types — `Var`/`State`/`Valid` ↦ env lookup,
+  `Const` ↦ `[]`, unop ↦ recurse, binop ↦ join.
+- `σ o`: per-instance state type from `generate_state_env`, the analogue of
+  `generate_reset_env`/`rids` in `SecSTCTyping.v`.
 
-- `s_in`/`s_out` from step's input/output types, `s_clk` = step entry pc seed,
-  `s_reset` = reset dependence;
-- constraints = `simplify (collapse (gen_stmt ([s_reset] ⊔ [s_clk]) step_body
-  ++ reset_method_constraints)) (locals ++ lasts ++ state_tys)`.
+**Class signature** (`generate_class_signature`), reusing `SIG.signature`
+verbatim — the third reuse of `SIFSignature.v`. With `clk_ty`/`rst_ty` the
+aux names of the class:
 
-Step body generated with entry pc `[rst_ty] ⊔ [base_ty]` reproduces the
-`[rst_ty] ⊔ ckty` prefix of every STC constraint.
+```
+craw_step  = gen [clk_ty] (step  method body)      (* entry pc = [clk_ty] *)
+craw_reset = gen []       (reset method body)      (* entry pc = []       *)
+s_constraints = simplify (collapse (craw_step ++ craw_reset))
+                         (hidden_class_vars locals lasts stids)
+s_in = inp,  s_out = out,  s_clk = clk_ty,  s_reset = rst_ty
+```
 
-**Why the 2026-07-14 change (commit 997438d) matters here.** The pc at a
-translated reset call `Control (Con ckr r true) (Call [] f o reset [])` is
-`[rst_ty] ⊔ [base_ty] ⊔ clkvars(ckr) ⊔ [τ(r)]` — exactly the new `TcReset`
-rule (`[rst_ty] ⊔ ([rty] ⊔ base_ty-seeded rstckty)`). Under the old
-(rst-seeded, no `base_ty`) rule the STC reset constraint would not match the
-pc semantics of the imperative code, and this bridge would have needed the
-"reset-implies-clk in LHS through simplify" generalization we avoided. The
-generators are now pc-consistent by construction.
+**Why this is exactly right.** `assign_clk_type env clk_ty Cbase = [clk_ty]`,
+so seeding the step body at `pc = [clk_ty]` makes the pc at any site guarded
+by clock `ck` equal to `ckty` *on the nose*:
 
-## 3. Blockers and design decisions (ranked)
+> `clock_pc_from_assign` (with `pc0 = []`):
+> `assign_clk_type env b ck = Some ckty  ⟹  clock_pc (pc0 ⊔ [b]) ck = Some (pc0 ⊔ ckty)`
 
-None is mathematically fatal; the classic imperative problem (implicit flows)
-is already paid for by clock types.
+Hence, at a site under `ck`:
 
-- **B1 — Multiple constraints per target (real design decision).**
-  `translate_cexp x (Emerge y t f)` yields two `Assign x` leaves ⇒ two
-  constraints for `τ(x)`, each with a smaller LHS than STC's single
-  `([rst] ⊔ ck) ⊔ cexpty` (Obc is strictly more precise). But
-  `simplify`/`findST`/`wf_constraints`/shape lemmas assume one constraint per
-  hidden target; `findST` returns the first match, so hidden-var elimination
-  with duplicate targets silently drops flows.
-  *Decision:* (a) add a `collapse` pass joining LHSs per target before
-  `simplify` — makes the Obc signature pointwise equal to the STC one, bridge
-  nearly free (**recommended**); or (b) keep per-leaf precision and generalize
-  `simplify` — much more work for precision the end-to-end theorem cannot use
-  (it is bounded by the NLustre-level signature anyway).
+| construct | Obc source | STC source | relation |
+|---|---|---|---|
+| `TcDef`/`TcNext` | `([rst_ty] ⊔ ckty) ⊔ ty(e)` | `([rst_ty] ⊔ ckty) ⊔ ety` | equal (mod. the `Ewhen`-guard absorption of §2 below) |
+| `TcReset` | `[rst_ty] ⊔ ckty` | `[rst_ty] ⊔ ([rty] ⊔ rstckty)` | equal up to merge ACI |
+| `TcCall` | clock actual `ckty`, reset actual `[σ o]` | clock actual `ckty`, reset actual `[rst_ty]` or `[rst_inst]` | **clock actuals identical**; reset actual differs by name only |
 
-- **B2 — Flow-insensitivity vs re-assignment.** `gen_stmt` unions constraints
-  over `Comp`; sound for any program, but shape/NoDup lemmas need
-  single-assignment method bodies. Translated bodies satisfy this
-  (`s_nodup_defined` / `Is_well_sch`); state it as a precondition, as STC
-  lemmas assume `NoDup (defined tcs)`. Hand-written Obc: imprecise, not
-  unsound. Non-blocker for the compiler chain.
+**Expression types differ, in the safe direction.** `translate_exp` drops
+`Ewhen` guards. For a guarded assignment the dropped variables are clock
+variables of `ck`, hence already in `ckty` — absorbed
+(`translate_exp_type_correspondence`). For *call arguments* the guards belong
+to the instantiated argument clocks and need not be recoverable, so Obc
+argument types are strict *subsets* of the STC ones
+(`translate_args_type_incl`); smaller sources mean weaker constraints, which
+is the direction preservation needs.
 
-- **B3 — ACI alignment of pc joins (proof engineering).** `Control` nests
-  conditions outside-in; `assign_clk_type` folds the clock inside-out. Leaf pc
-  equals the STC clock type only up to `merge` assoc/comm (`MergeFacts`).
-  Prove once: `gen_stmt pc (Control ck s) = gen_stmt (pc ⊔ clkty(ck)) s`
-  (ST-equality via merge ACI); then each per-tc bridge case discharges
-  reflexivity-style like `eqn_preserv`.
+**Why the 2026-07-14 change (commit 997438d) matters here.** With `TcReset`
+seeded at `base_ty` and joined with `[rst_ty]`, the STC reset source is
+`[rst_ty] ⊔ ([rty] ⊔ rstckty)`, which is exactly the Obc pc at a translated
+reset call. Under the old (rst-seeded, no `base_ty`) rule the two would not
+have matched, and the bridge would have needed the "reset-implies-clk in the
+source through `simplify`" generalisation we avoided.
 
-- **B4 — Scheduling sits between SIF-STC and Obc (largest new obligation).**
-  `correctness_loop_call` (the semantic transport) requires `Well_defined P`,
-  i.e. the *scheduled* program; all SIF STC signatures are generated from the
-  unscheduled `Translation.translate all_nodes`. `StcSchedule` permutes
-  `s_tcs`; raw constraints permute (per-tc concatenation), satisfaction is
-  permutation-invariant, but `simplify` output is order-sensitive
-  syntactically. Need: "signatures of a system and its scheduled permutation
-  are `preserves_on`-equivalent" (or generate Obc signatures from the
-  scheduled program and bridge STC ↔ scheduled-STC first).
+## 3. Blockers and design decisions — outcomes
 
-- **B5 — Reset method's non-local writes.** `reset_insts` calls `reset` on
-  every child ⇒ constraints `(pc, [state_ty child])`, whereas at STC level
-  whole-system reset is implicit (modeled by `rst_ty` as an input). All
-  `state_ty` are hidden (like `rids`), so these constraints matter only via
-  `simplify` substitution into step-call constraints — where STC's `rst_inst`
-  machinery also lands. Expected to correspond; most likely place for a
-  surprise, budget verification time.
+None turned out to be mathematically fatal. The classic imperative problem
+(implicit flows) is paid for by clock types, which the translation turns into
+exactly the branch conditions the pc tracks.
 
-- **B6 — Two methods, one signature.** Do not build per-method signature
-  machinery: translated classes have exactly `step`/`reset` with fixed roles,
-  so one class-level `SIG.signature` keeps `generate_constraints`,
-  `Signature_consistent`, `preserves_on` unchanged. Consequence to flag:
-  **the SIF Obc system covers `translate P` output, not arbitrary Obc** (in
-  particular not post-`Fusion`/`ObcAddDefaults` code — those would need
-  per-method signatures and revisiting B2).
+- **B1 — Several constraints per target. RESOLVED (option a).**
+  `translate_cexp x (Emerge y t f)` yields two `Assign x` leaves, so two
+  constraints for `τ x`; but `simplify`/`findST` assume one constraint per
+  hidden target and `findST` takes the first match, which would silently drop
+  flows. `collapse` joins the sources per target before `simplify`.
+  Crucially it is **precision-neutral, not merely sound**:
+  `collapse_satisfaction` proves `listSatisfiable dlt (collapse cns) ↔
+  listSatisfiable dlt cns`. Now in `SymTypes.v` / `SecTypes.v`.
 
-- **B7 — Scoping without clocks.** STC scopedness lemmas leaned on
-  `wc_trconstr`. Obc has no clocks; use ordinary typing `wt_stmt`/`wt_exp`
-  (`Obc/ObcTyping.v`) purely for free-variable containment (`st_scoped`).
-  `StcToObc/Stc2ObcTyping.v` proves translated programs well-typed in that
-  ordinary sense — we *consume* that result; it is not part of the security
-  system. Straightforward infrastructure substitution.
+- **B2 — Flow-insensitivity vs re-assignment. Stands as a precondition.**
+  `gen` unions constraints over `Comp`, which is sound for any program but
+  imprecise if a variable is assigned twice. Translated bodies are
+  single-assignment (`s_nodup_defined`); the shape lemmas take that as a
+  hypothesis, exactly as the STC lemmas assume `NoDup (defined tcs)`.
+
+- **B3 — ACI alignment of pc joins. RESOLVED.**
+  `generate_stmt_constraints_Control` proves
+  `gen pc (Control ck s) = gen (clock-extended pc) s` as an *equality of
+  `Sec` results* (the `Skip` branches contribute `[]` and no state change),
+  with `clock_pc_from_assign` relating the walk to `assign_clk_type` by one
+  `merge_assoc` per `Con`.
+
+- **B4 — Scheduling. STILL OPEN** (phase 5). `correctness_loop_call` needs
+  `Well_defined P`, i.e. the *scheduled* program, while the SIF STC signatures
+  are generated from the unscheduled `translate all_nodes`. Recommended route:
+  generate the Obc signatures from the scheduled program and add a small
+  STC ↔ scheduled-STC signature bridge, rather than proving `simplify` stable
+  under permutation.
+
+- **B5 — Reset-method writes. CONFIRMED, assembly pending** (item 6).
+  `reset_insts` emits `([rst_ty] ⊔ []) ⊑ [σ o]` for **every** instance and
+  `reset_mems` emits `[rst_ty] ⊑ [τ mem]`. The STC side has no counterpart:
+  those are discharged by the `dlt'` choice and by the `TcNext` source (which
+  contains `rst_ty`; every last has a `TcNext` by `s_lasts_in_tcs`). The
+  `counter_paper` dump confirms the predicted shape, including a never-reset
+  instance whose state type is constrained only by the reset method.
+
+- **B6 — Two methods, one signature. Stands.** Translated classes have exactly
+  `step`/`reset` with fixed roles, so one class-level `SIG.signature` suffices
+  and `generate_constraints` / `Signature_consistent` / `preserves_on` are
+  reused unchanged. **Consequence:** the system covers `translate P` output,
+  not arbitrary Obc — in particular not post-`Fusion`/`ObcAddDefaults` code,
+  which would need per-method signatures and revisiting B2.
+
+- **B7 — Scoping without clocks. RESOLVED, differently than planned.**
+  The plan was to use `wt_stmt` for free-variable containment. That was
+  rejected because `OBCTYPING` is parameterised by `OBCSEMANTICS`. Scopedness
+  is now stated over the syntactic free names `exp_free`/`stmt_free` and
+  `names_scoped`, and the scopedness theorems lost their `p`/`insts`/`mems`/
+  `vars` parameters as a result.
 
 ## 4. Proof plan (NLustre→STC pattern, transplanted)
 
@@ -159,7 +198,8 @@ New files in `src/SIF`, mirroring the existing layout:
 1. **`SecObcTyping.v`** (mirror of `SecSTCTyping.v`): Obc `assign_exp_type`,
    `gen_stmt`, `generate_state_env` (≅ `generate_reset_env`), `collapse`,
    `generate_class_signature` (+ `_scoped_env` variant), scopedness + shape
-   theorems using `wt_stmt`. *Largest new file; mostly transliteration.*
+   theorems over the syntactic free names (**not** `wt_stmt` — see B7).
+   *Largest new file; mostly transliteration.*
 2. **`SecObcConstraintExport.v`**: exporter, mirrors
    `SecStcConstraintExport.v`. *Small.*
 3. **`SecObcTypingCorrectness.v`**: `generate_class_signature_inv`,
@@ -186,9 +226,18 @@ New files in `src/SIF`, mirroring the existing layout:
 Order of attack: 1 → 3 → 4 (bridge on unscheduled programs first; isolates
 the type-system correspondence) → 5 → 6; 2 whenever the exporter is wanted.
 
-## 5. Immediate next steps
+## 5. Where the files ended up
 
-- [ ] Decide B1 (`collapse` — recommended) and B4 insertion point.
-- [ ] Draft `SecObcTyping.v` definitions section (generator + signature);
-      this forces B1/B3 to become concrete.
-- [ ] Add new files to `_CoqProject` as they appear.
+All five files exist and compile; `collapse` (B1a) was taken, and the `_CoqProject`
+entries are generated from `vfiles`. Two divergences from the plan above are worth
+recording:
+
+- **`collapse` and its lemmas do not live in `SecObcTyping.v`.** They are generic
+  over constraints, so they were moved to `SymTypes.v` (syntax) and `SecTypes.v`
+  (satisfaction). Likewise `env_injective`/`env_values` went to `SIF/Helpers.v`
+  and the fresh per-key machinery to `SecContext.v`, shared with the STC side.
+- **`generate_class_signature_inv` lives in `SecObcTypingCorrectness.v`**, not in
+  the typing file: implementation in `SecObcTyping`, bridge-facing correctness in
+  the Correctness module.
+
+For the live worklist and per-item status see `Stc2ObcSIF_progress.md` §4b.
