@@ -370,8 +370,8 @@ the 2026-07-30 pc refinement `clk` and `out` agree exactly.
 | 1 | `translate_arg` monotonicity | — (NL→STC shares CE syntax) | **DONE**: `translate_exp_type_incl`, `translate_arg_type_incl`, `translate_args_type_incl` (obligation B, tccall doc §3) |
 | 2 | generalized reset-call preservation | `:2105` `signatures_preserved_reset_underlying_calls_from_good` (now hoisted into `SIGNATURE_PROOFS`) | **DONE** — `signatures_preserved_obc_calls_from_good` in `SecStcObcTranslation.v`. Sub-tasks A (`generate_constraints_mono_inp`) and A′ (`generate_constraints_ok_change_inp`) proved; B (hoist) done. Only sub-task **C** (`signature_good` for generated STC signatures) is still needed, and only to *discharge this theorem's hypotheses* at the lockstep (item 9). |: prove `Signature_call_preserves_obc n1 n2` for *generated* signature pairs (obligation C, tccall doc §4; Route B §5 in reserve). Everything else is now expressed in terms of it. |
 | 3 | TcCall case | part of `eqn_preserv :752` | **DONE**: `tccall_preserv` — inverts both generators, matches clk/outputs, feeds `translate_args_type_incl` and the assumed `Signature_call_preserves_obc`, exactly as `eqn_preserv` consumes `Signature_consistent` |
-| 4 | `tc_preserv` (all four cases) | `eqn_preserv :752` | **all four cases DONE individually**; combining them into a single `tc_preserv` is trivial plumbing. Three via equalities: `tcdef_preserv`, `tcnext_preserv`, `tcreset_preserv` in `SecStcObcTranslation.v` section `TCPRESERV`, stated against the real `SECSTCTYPING.generate_trconstr_constraint` and discharged with `dlt' = dlt` (via `collapse_satisfaction` / `preserves_on_refl`). TcCall outstanding. |
-| 5 | tcs-list assembly | `eqns_preserv_scoped :1080` | **in progress.** Infrastructure done: `listSatisfiable_Permutation` / `preserves_on_Permutation` (SecTypes), `translate_tcs_fold_right` (the left fold is a right fold over `rev tcs`) and `generate_fold_right_Comp` (constraints of a `Comp` chain = `concat` of the per-tc blocks, `Forall2`-related). n-ary concat **done**: `constraints_scoped_concat` and `preserves_on_concat_list` (SecTypes) lift the binary `preserves_on_concat_scoped` to a list of chunks, each with its own target-side-only names. **Remaining:** instantiate it — per-tc `extras` = the `stids` that block touches, discharge the NoDup/freshness side conditions from `generate_state_env_*`, and apply `preserves_on_Permutation` to reconcile the reverse fold order with the STC in-order concatenation. |
+| 4 | `tc_preserv` (all four cases) | `eqn_preserv :752` | **DONE** — `tc_preserv` dispatches on the four cases; the side conditions each case needs are collected in `tc_preserv_hyps`. Three cases go via equalities (`tcdef_preserv`, `tcnext_preserv`, `tcreset_preserv`, discharged with `dlt' = dlt` through `collapse_satisfaction` / `preserves_on_refl`); `tccall_preserv` supplies the fourth. |
+| 5 | tcs-list assembly | `eqns_preserv_scoped :1080` | **DONE** — `tcs_preserv` in `SecStcObcTranslation.v`. Both sides are decomposed into per-trconstr blocks (`generate_trconstrs_constraints_blocks` in `SecSTCTyping.v`; `translate_tcs_fold_right` + `generate_fold_right_Comp` on the Obc side, which pairs blocks with `rev tcs`). The pairing is reversed with `Forall2_rev`, combined via `Forall2_combine{,_with}`, fed to `preserves_on_concat_list`, and the residual order difference is closed by `preserves_on_Permutation` + `concat_rev_Permutation`. `extras` (the Obc-only names, i.e. callee instance state types) and their scopedness stay **hypotheses** of `tcs_preserv`; discharging them at system level is part of item 7. |
 | 6 | reset-method constraints | — (none) | `[rst_ty] ⊑ [sty]` from the `dlt'` choice; `[rst_ty] ⊑ [mem]` from the STC TcNext source (every last has a TcNext by `s_lasts_in_tcs`) |
 | 7 | class-level raw `preserves_on` | `node_preserv_scoped :1341`, `:1418`, `:1496` | scope = `inp ++ out ++ locals ++ [clk; rst]` |
 | 8 | simplify bridge | `:1685` / `:1806` / `:1938` | needs "every hidden var has a definer" for `locals`/`lasts`/`stids` — only derivable **with the translation in hand**; this is the class-scopedness deferred from phase 1. Most likely place for a surprise. |
@@ -396,11 +396,12 @@ the 2026-07-30 pc refinement `clk` and `out` agree exactly.
 **Where the work actually is (updated 2026-07-31, later):** items 1, 2,
 3, 4 are **done** — every per-trconstr case of the bridge is proved,
 including TcCall, and the call-preservation property is established for
-signature pairs related by `signatures_preserved`. What remains is
-assembly (5–7), the simplify bridge (8), the lockstep (9–10) — plus
-sub-task C (`signature_good` for STC signatures) to feed the lockstep.
-Items 5–7 are assembly largely dictated by existing lemmas; 8–10 are ports
-of proofs that already exist. Nothing else in the chain is blocked on new
+signature pairs related by `signatures_preserved`. Item 5 and
+sub-task C are now done too.  What remains is items 6–7 (reset-method
+constraints and the class-level assembly, which also discharges the
+`extras`/scopedness hypotheses `tcs_preserv` currently takes), the
+simplify bridge (8) and the lockstep (9–10) — ports of proofs that
+already exist on the NL→STC side. Nothing else in the chain is blocked on new
 ideas.
 
 **Definitions now in place** (`SecStcObcTranslation.v`, section
@@ -408,33 +409,35 @@ ideas.
 (one clause — Obc routes *every* call's reset actual through `sty`, and
 `inp` is weaker), `Signature_consistent_obc`.
 
-### Item C status (2026-07-31)
+### Item C status — **DONE** (2026-07-31)
 
-**Three of four pieces proved** (additions only, no existing statement
-touched):
-- `trconstrs_targets_perm` (`SecSTCTyping.v`)
-- `generate_trconstrs_constraints_wf` (`SecSTCTyping.v`) — well-formedness
-  of the raw constraints reduces to distinctness of the targets
-- `targets_nodup` (`SecStcTypingCorrectness.v`) — the targets *are*
-  distinct: variables and lasts get distinct `sec` names (source names
-  distinct via `s_nodup`, environment injective), reset instances get
-  distinct `sec_reset` names, and the two prefixes never collide
-  (`Ids.sec_neq_sec_reset`)
+`generate_sys_signature_good` (`SecStcTypingCorrectness.v`): every
+generated STC signature is good.  Ingredients, all additions only:
 
-**Remaining for C:** instantiate these at the signature level (feed the
-record invariants `s_vars_out_in_tcs` / `s_lasts_in_tcs` and the
-`generate_reset_env` correspondence), then the `simplify` endgame —
-`NoDup_Permutation` showing the post-`simplify` targets are exactly the
-outputs, mirroring `generate_node_sig_good_from_local_env`
-(`SecNLusTypingCorrectness.v:560`).
+- `trconstrs_targets_perm`, `generate_trconstrs_constraints_wf`,
+  `generate_trconstrs_constraints_blocks`, `generate_reset_env_rids`,
+  `generate_reset_env_keys_nodup` (`SecSTCTyping.v`)
+- `targets_nodup` (`SecStcTypingCorrectness.v`) — variables and lasts get
+  distinct `sec` names (source names distinct via `s_nodup`, environment
+  injective), reset instances get distinct `sec_reset` names, and the two
+  prefixes never collide (`Ids.sec_neq_sec_reset`)
+- `atom_or_gensym_not_sec`, `sys_name_not_sec_gensym`,
+  `sys_hidden_visible_disjoint`, `generated_sys_hidden_disjoint`
+  (`SecStcTypingCorrectness.v`) — the names `simplify` eliminates never
+  appear in the public scope
+- `get_mappings_nodup_gen` / `get_mappings_perm` hoisted into the
+  `Env_helpers` section of `NameInterface.v` (where `get_mappings` is
+  defined), together with `get_mappings_In`, which had been stranded
+  inside the `NAMEGEN` module type
 
-Earlier note: `trconstrs_targets_perm` proved in `SecSTCTyping.v`:
-the targets of a trconstr list are a permutation of the security types
-of its variables, lasts and reset instances. Supporting lemmas
-`get_mappings_cons_inv` / `get_mappings_app_inv`. Remaining for C:
-`wf_constraints raw` (NoDup of targets) and the `simplify` endgame,
-mirroring `generate_node_sig_good_from_local_env`
-(`SecNLusTypingCorrectness.v:560`).
+The endgame mirrors `generate_node_sig_good_from_local_env`
+(`SecNLusTypingCorrectness.v:560`): `NoDup_Permutation` showing the
+post-`simplify` targets are exactly the outputs.
+
+*Known duplication to collapse later:* `get_mappings_nodup` still has
+section-scoped copies in `SecNLusTyping`/`SecSTCTyping`, and
+`nodup_singleton_map` exists both in `SIFSignature` (SIG) and in
+`SecNLusTyping`.
 
 ## 5. Phase 5 — scheduling (B4)
 
