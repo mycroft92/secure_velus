@@ -1074,6 +1074,33 @@ Module Type SECSTCTYPING
         * symmetry. apply map_app.
   Qed.
 
+  (** The list generator is a plain concatenation of the per-trconstr
+      blocks, with the fresh-name state threaded left to right.  The
+      translation bridge pairs these blocks with the Obc ones. *)
+
+  Lemma generate_trconstrs_constraints_blocks:
+    forall trs cns st st',
+      generate_trconstrs_constraints trs st = OK (cns, st') ->
+      exists blocks,
+        cns = List.concat blocks
+        /\ Forall2 (fun tr blk =>
+                      exists sa sb, generate_trconstr_constraint tr sa = OK (blk, sb))
+                   trs blocks.
+  Proof.
+    induction trs as [|tr trs IH]; intros cns st st' Hgen.
+    - simpl in Hgen. unfold ret in Hgen. inversion Hgen; subst.
+      exists []. split; [reflexivity|constructor].
+    - simpl in Hgen.
+      eapply sec_bind_inv in Hgen as (c1 & st1 & Htr & Hgen).
+      eapply sec_bind_inv in Hgen as (c2 & st2 & Htrs & Hret).
+      unfold ret in Hret. inversion Hret; subst cns st'.
+      destruct (IH c2 st1 st2 Htrs) as (blocks & Hblocks & Hall).
+      exists (c1 :: blocks). split.
+      + simpl. f_equal. exact Hblocks.
+      + constructor; [|exact Hall].
+        exists st, st1. exact Htr.
+  Qed.
+
   (** Well-formedness of the raw constraints reduces to distinctness of
       the targets: the generator already emits exactly one singleton
       target per definition. *)

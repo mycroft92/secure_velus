@@ -209,3 +209,89 @@ Proof.
     apply in_map_iff. exists (y, tx). split; [reflexivity|exact Hfindy]. }
   now eapply NoDupMembers_det; eauto.
 Qed.
+
+(** ** Reversal facts
+
+    [translate_tcs] builds its Obc statement with a left fold, so the
+    per-constraint blocks come out in reverse order compared with the
+    STC generator.  These two lemmas move between the two orders: the
+    pairing is reversed pointwise, and the flattened lists remain
+    permutations of each other. *)
+
+Lemma Forall2_rev:
+  forall {A B} (P: A -> B -> Prop) xs ys,
+    Forall2 P xs ys ->
+    Forall2 P (rev xs) (rev ys).
+Proof.
+  intros A B P xs ys Hall.
+  induction Hall as [|x y xs ys Hxy Hall IH]; simpl.
+  - constructor.
+  - apply Forall2_app; [exact IH|].
+    constructor; [exact Hxy|constructor].
+Qed.
+
+Lemma concat_rev_Permutation:
+  forall {A} (l: list (list A)),
+    Permutation (concat (rev l)) (concat l).
+Proof.
+  intros A l.
+  induction l as [|x l IH]; simpl.
+  - constructor.
+  - rewrite concat_app. simpl. rewrite app_nil_r.
+    etransitivity; [apply Permutation_app_comm|].
+    apply Permutation_app_head. exact IH.
+Qed.
+
+(** ** Combining two pairings over a common index list
+
+    The translation bridge pairs each transition constraint both with
+    its STC constraint block and with its Obc one; these lemmas glue the
+    two pairings into a relation between the blocks themselves. *)
+
+Lemma Forall2_combine:
+  forall {A B C} (P: A -> B -> Prop) (Q: A -> C -> Prop) (R: B -> C -> Prop) xs ys zs,
+    Forall2 P xs ys ->
+    Forall2 Q xs zs ->
+    (forall x y z, P x y -> Q x z -> R y z) ->
+    Forall2 R ys zs.
+Proof.
+  intros A B C P Q R xs ys zs HP.
+  revert zs.
+  induction HP as [|x y xs ys Hxy HP IH]; intros zs HQ Himp.
+  - inversion HQ; subst. constructor.
+  - inversion HQ as [|x' z xs' zs' Hxz HQ']; subst.
+    constructor.
+    + eapply Himp; eauto.
+    + eapply IH; eauto.
+Qed.
+
+Lemma Forall2_combine_with:
+  forall {A B C} (P: A -> B -> Prop) (Q: A -> C -> Prop) (S: A -> Prop)
+         (R: B -> C -> Prop) xs ys zs,
+    Forall2 P xs ys ->
+    Forall2 Q xs zs ->
+    Forall S xs ->
+    (forall x y z, S x -> P x y -> Q x z -> R y z) ->
+    Forall2 R ys zs.
+Proof.
+  intros A B C P Q S R xs ys zs HP.
+  revert zs.
+  induction HP as [|x y xs ys Hxy HP IH]; intros zs HQ HS Himp.
+  - inversion HQ; subst. constructor.
+  - inversion HQ as [|x' z xs' zs' Hxz HQ']; subst.
+    inversion HS as [|x'' xs'' Hx HS']; subst.
+    constructor.
+    + eapply Himp; eauto.
+    + eapply IH; eauto.
+Qed.
+
+Lemma Forall_rev:
+  forall {A} (P: A -> Prop) (l: list A),
+    Forall P l ->
+    Forall P (rev l).
+Proof.
+  intros A P l Hall.
+  apply Forall_forall. intros x Hin.
+  rewrite <- in_rev in Hin.
+  eapply Forall_forall in Hall; eauto.
+Qed.

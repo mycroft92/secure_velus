@@ -24,6 +24,7 @@ From Velus Require Import Stc.StcIsFree.
 From Velus Require Import Stc.StcClocking.
 From Velus Require Import Obc.ObcSyntax.
 From Velus Require Import StcToObc.Translation.
+From Velus Require Import SIF.Helpers.
 From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF.SecTypes.
@@ -37,6 +38,7 @@ From Velus Require Import SIF.SecObcTypingCorrectness.
 
 From Coq Require Import String.
 From Coq Require Import List.
+From Coq Require Import Sorting.Permutation.
 Import List.ListNotations.
 From compcert Require Import common.Errors.
 
@@ -1110,6 +1112,108 @@ Module Type SECSTCOBCTRANSLATION
         + simpl. f_equal. exact Hblocks.
         + constructor; [|exact Hall].
           exists st, st1. exact Hc1.
+    Qed.
+
+    (** ** Whole-body preservation
+
+        The four per-trconstr results are packaged behind one predicate
+        collecting the side conditions each case needs, and then lifted
+        to the whole transition-constraint list. *)
+
+    Definition tc_preserv_hyps (scope: list ident) vars (tc: SynStc.trconstr) : Prop :=
+      match tc with
+      | SynStc.TcDef _ ck ce => CEClo.wc_cexp vars ce ck
+      | SynStc.TcNext _ ck e => CEClo.wc_exp vars e ck
+      | SynStc.TcReset s _ _ => Env.find s reset_env = Env.find s state_env
+      | SynStc.TcCall _ _ ck _ f _ =>
+          exists ckty,
+            SECCETYPING.assign_clk_type env clk_ty ck = Some ckty
+            /\ (forall n1 n2 inptyp1 inptyp2 outtyp srcrst sty,
+                   SIG.find_signature f G1 = Some n1 ->
+                   SIG.find_signature f G2 = Some n2 ->
+                   call_side_conditions scope n1 n2 inptyp1 inptyp2 ckty srcrst sty outtyp)
+      end.
+
+    Lemma tc_preserv:
+      forall scope vars memset clkvars tc nconst sconst st1 st1' st2 st2',
+        Signature_consistent_obc G1 G2 ->
+        tc_preserv_hyps scope vars tc ->
+        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty tc st1
+          = OK (nconst, st1') ->
+        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+          (translate_tc memset clkvars tc) st2 = OK (sconst, st2') ->
+        preserves_on scope nconst sconst.
+    Proof.
+      intros scope vars memset clkvars tc nconst sconst st1 st1' st2 st2'
+             Hcons Hhyps Hstc Hobc.
+      destruct tc as [x ck ce|x ck e|s ck f|i xs ck rst f es]; simpl in Hhyps.
+      - eapply tcdef_preserv; eauto.
+      - eapply tcnext_preserv; eauto.
+      - eapply tcreset_preserv; eauto.
+      - destruct Hhyps as (ckty & Hckty & Hside).
+        eapply tccall_preserv; eauto.
+    Qed.
+
+    (** [translate_tcs] emits the per-trconstr blocks in reverse order,
+        so the Obc constraint list is a permutation of the STC one taken
+        blockwise.  [extras] names, per trconstr, the identifiers that
+        occur only on the Obc side (the callee instance state types);
+        they must be distinct and outside the shared scope. *)
+
+    Lemma tcs_preserv:
+      forall scope vars memset clkvars tcs extras nconst sconst st1 st1' st2 st2',
+        Signature_consistent_obc G1 G2 ->
+        Forall (tc_preserv_hyps scope vars) tcs ->
+        NoDup (List.concat extras) ->
+        (forall x, In x (List.concat extras) -> ~ In x scope) ->
+        Forall2 (fun tc e =>
+                   forall blk sa sb,
+                     generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+                       (translate_tc memset clkvars tc) sa = OK (blk, sb) ->
+                     constraints_scoped (scope ++ e) blk)
+                tcs extras ->
+        SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty tcs st1
+          = OK (nconst, st1') ->
+        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+          (translate_tcs memset clkvars tcs) st2 = OK (sconst, st2') ->
+        preserves_on scope nconst sconst.
+    Proof.
+      intros scope vars memset clkvars tcs extras nconst sconst st1 st1' st2 st2'
+             Hcons Hhyps Hnd Hfresh Hsc Hstc Hobc.
+      (* decompose both sides into per-trconstr blocks *)
+      destruct (SECSTCTYPING.generate_trconstrs_constraints_blocks
+                  G1 env reset_env clk_ty rst_ty tcs nconst st1 st1' Hstc)
+        as (nblocks & Hnconst & Hnall).
+      rewrite translate_tcs_fold_right in Hobc.
+      destruct (generate_fold_right_Comp memset clkvars [clk_ty] (rev tcs)
+                  sconst st2 st2' Hobc)
+        as (sblocks & Hsconst & Hsall).
+      subst nconst sconst.
+      (* the Obc blocks follow [rev tcs]; reverse the STC pairing to match *)
+      apply Forall2_rev in Hnall.
+      apply Forall2_rev in Hsc.
+      assert (Hhypsrev : Forall (tc_preserv_hyps scope vars) (rev tcs))
+        by (apply Forall_rev; exact Hhyps).
+      assert (Hpres : Forall2 (preserves_on scope) (rev nblocks) sblocks).
+      { eapply (Forall2_combine_with _ _ _ _ (rev tcs) (rev nblocks) sblocks
+                  Hnall Hsall Hhypsrev).
+        intros tc nblk sblk Hhyp (sa & sb & Hn) (sc & sd & Hs).
+        eapply tc_preserv; eauto. }
+      assert (Hscoped : Forall2 (fun t e => constraints_scoped (scope ++ e) t)
+                          sblocks (rev extras)).
+      { eapply (Forall2_combine _ _ _ (rev tcs) sblocks (rev extras) Hsall Hsc).
+        intros tc sblk e (sa & sb & Hs) He.
+        eapply He; eauto. }
+      (* the extras are the same set, up to the same reordering *)
+      assert (Hndrev : NoDup (List.concat (rev extras))).
+      { eapply Permutation_NoDup;
+          [symmetry; apply concat_rev_Permutation|exact Hnd]. }
+      assert (Hfreshrev : forall x, In x (List.concat (rev extras)) -> ~ In x scope).
+      { intros x Hin. apply Hfresh.
+        eapply Permutation_in; [apply concat_rev_Permutation|exact Hin]. }
+      eapply preserves_on_Permutation;
+        [apply concat_rev_Permutation|reflexivity|].
+      eapply preserves_on_concat_list; eauto.
     Qed.
 
   End TCPRESERV.
