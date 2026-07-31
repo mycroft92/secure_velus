@@ -279,6 +279,44 @@ Module Type SECOBCTYPING
       | _ => []
       end.
 
+    (** The translation builds several statements as a left fold of
+        [Comp acc new] (the reset method's memory initialisation and its
+        instance resets).  Constraint generation for [Comp] is a plain
+        concatenation, so such a fold yields the accumulator's
+        constraints followed by the per-element blocks, in order. *)
+
+    Lemma generate_fold_left_Comp:
+      forall {A} (f: A -> stmt) (l: list A) acc pc cns st st',
+        generate_stmt_constraints pc
+          (fold_left (fun s a => Comp s (f a)) l acc) st = OK (cns, st') ->
+        exists cacc blocks sa,
+          generate_stmt_constraints pc acc st = OK (cacc, sa)
+          /\ cns = cacc ++ List.concat blocks
+          /\ Forall2 (fun a blk =>
+                        exists s1 s2, generate_stmt_constraints pc (f a) s1 = OK (blk, s2))
+                     l blocks.
+    Proof.
+      intros A f l.
+      induction l as [|a l IH]; intros acc pc cns st st' Hgen.
+      - simpl in Hgen.
+        exists cns, [], st'. repeat split.
+        + exact Hgen.
+        + simpl. now rewrite app_nil_r.
+        + constructor.
+      - simpl in Hgen.
+        destruct (IH (Comp acc (f a)) pc cns st st' Hgen)
+          as (cacc & blocks & sa & Hacc & Hcns & Hall).
+        simpl in Hacc.
+        eapply sec_bind_inv in Hacc as (c1 & s1 & Hc1 & Hacc).
+        eapply sec_bind_inv in Hacc as (c2 & s2 & Hc2 & Hret).
+        unfold ret in Hret. inversion Hret; subst cacc sa.
+        exists c1, (c2 :: blocks), s1. repeat split.
+        + exact Hc1.
+        + subst cns. simpl. now rewrite <- app_assoc.
+        + constructor; [|exact Hall].
+          exists s1, s2. exact Hc2.
+    Qed.
+
     Lemma mmap_assign_exp_type_scoped:
       forall scope es tys st st',
         names_scoped env scope (flat_map exp_free es) ->

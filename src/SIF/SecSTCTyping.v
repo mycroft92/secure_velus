@@ -1074,6 +1074,96 @@ Module Type SECSTCTYPING
         * symmetry. apply map_app.
   Qed.
 
+  (** Every last has a [TcNext] that defines it, and the source of that
+      constraint always contains [rst_ty].  The translation bridge uses
+      this to discharge the Obc reset method's memory initialisations,
+      which are exactly the constraints [rst_ty] |- [last]. *)
+
+  Lemma generate_trconstrs_constraints_last_source:
+    forall trs cns st st' x xty,
+      generate_trconstrs_constraints trs st = OK (cns, st') ->
+      In x (lasts_of trs) ->
+      Env.find x env = Some xty ->
+      exists src, List.In (src, [xty]) cns /\ List.In rst_ty src.
+  Proof.
+    induction trs as [|tr trs IH]; intros cns st st' x xty Hgen Hin Hfind.
+    - inversion Hin.
+    - simpl in Hgen.
+      eapply sec_bind_inv in Hgen as (c1 & st1 & Htr & Hgen).
+      eapply sec_bind_inv in Hgen as (c2 & st2 & Htrs & Hret).
+      unfold ret in Hret. inversion Hret; subst cns st'.
+      destruct tr as [y ck ce|y ck e|y ck f|y ys ck b f exps]; simpl in Hin.
+      2: destruct Hin as [Heq|Hin].
+      2:{ (* the defining [TcNext] *)
+        subst y. simpl in Htr.
+        eapply sec_bind_inv in Htr as (ckty & sa & Hck & Htr).
+        eapply sec_bind_inv in Htr as (ety & sb & He & Htr).
+        eapply sec_bind_inv in Htr as (yty & sc & Hy & Hret1).
+        unfold ret in Hret1. inversion Hret1; subst c1 st1.
+        unfold find_env in Hy.
+        rewrite Hfind in Hy. unfold ret in Hy. inversion Hy; subst yty sc.
+        exists (([rst_ty] ⊔ ckty) ⊔ ety). split.
+        - apply in_or_app. left. simpl. now left.
+        - apply in_merge_left, in_merge_left. simpl. now left. }
+      all: destruct (IH c2 st1 st2 x xty Htrs Hin Hfind) as (src & Hinc & Hrst);
+           exists src; split; [apply in_or_app; now right|exact Hrst].
+  Qed.
+
+  (** Likewise every reset instance has a [TcReset] whose source
+      contains [rst_ty], on either shape of reset clock.  This discharges
+      the Obc reset method's instance resets for the instances the system
+      actually resets. *)
+
+  Lemma generate_trconstrs_constraints_reset_source:
+    forall trs cns st st' o rst_inst,
+      generate_trconstrs_constraints trs st = OK (cns, st') ->
+      List.In o (map fst (resets_of trs)) ->
+      Env.find o reset_env = Some rst_inst ->
+      exists src, List.In (src, [rst_inst]) cns /\ List.In rst_ty src.
+  Proof.
+    induction trs as [|tr trs IH]; intros cns st st' o rst_inst Hgen Hin Hfind.
+    - inversion Hin.
+    - simpl in Hgen.
+      eapply sec_bind_inv in Hgen as (c1 & st1 & Htr & Hgen).
+      eapply sec_bind_inv in Hgen as (c2 & st2 & Htrs & Hret).
+      unfold ret in Hret. inversion Hret; subst cns st'.
+      destruct tr as [y ck ce|y ck e|y ck f|y ys ck b f exps]; simpl in Hin.
+      3: destruct Hin as [Heq|Hin].
+      3:{ (* the defining [TcReset] *)
+        subst y.
+        destruct ck as [|ck0 r0 [|]]; simpl in Htr.
+        - (* Cbase *)
+          eapply sec_bind_inv in Htr as (ckty & sa & Hck & Htr).
+          eapply sec_bind_inv in Htr as (ri & sb & Hri & Hret1).
+          unfold ret in Hret1. inversion Hret1; subst c1 st1.
+          unfold find_env in Hri. rewrite Hfind in Hri.
+          unfold ret in Hri. inversion Hri; subst ri sb.
+          exists ([rst_ty] ⊔ ckty). split.
+          + apply in_or_app. left. simpl. now left.
+          + apply in_merge_left. simpl. now left.
+        - (* Con _ _ true *)
+          eapply sec_bind_inv in Htr as (rty & sa & Hr & Htr).
+          eapply sec_bind_inv in Htr as (rstckty & sb & Hrck & Htr).
+          eapply sec_bind_inv in Htr as (ri & sc & Hri & Hret1).
+          unfold ret in Hret1. inversion Hret1; subst c1 st1.
+          unfold find_env in Hri. rewrite Hfind in Hri.
+          unfold ret in Hri. inversion Hri; subst ri sc.
+          exists ([rst_ty] ⊔ ([rty] ⊔ rstckty)). split.
+          + apply in_or_app. left. simpl. now left.
+          + apply in_merge_left. simpl. now left.
+        - (* Con _ _ false *)
+          eapply sec_bind_inv in Htr as (ckty & sa & Hck & Htr).
+          eapply sec_bind_inv in Htr as (ri & sb & Hri & Hret1).
+          unfold ret in Hret1. inversion Hret1; subst c1 st1.
+          unfold find_env in Hri. rewrite Hfind in Hri.
+          unfold ret in Hri. inversion Hri; subst ri sb.
+          exists ([rst_ty] ⊔ ckty). split.
+          + apply in_or_app. left. simpl. now left.
+          + apply in_merge_left. simpl. now left. }
+      all: destruct (IH c2 st1 st2 o rst_inst Htrs Hin Hfind) as (src & Hinc & Hrst);
+           exists src; split; [apply in_or_app; now right|exact Hrst].
+  Qed.
+
   (** The list generator is a plain concatenation of the per-trconstr
       blocks, with the fresh-name state threaded left to right.  The
       translation bridge pairs these blocks with the Obc ones. *)

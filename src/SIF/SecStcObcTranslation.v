@@ -1216,6 +1216,124 @@ Module Type SECSTCOBCTRANSLATION
       eapply preserves_on_concat_list; eauto.
     Qed.
 
+    (** ** The reset method
+
+        [translate_reset] initialises every memory and then resets every
+        instance.  Neither statement has an STC counterpart, so its
+        constraints are *discharged* rather than preserved: each one has
+        the shape [rst_ty ⊑ ty], and for every such [ty] the STC side
+        already carries a constraint with [rst_ty] in its source and the
+        same target — the [TcNext] of that last, or the [TcReset] of that
+        instance.  Both are therefore entailed under the *same*
+        valuation, with no witness change. *)
+
+    Lemma reset_constraint_entailed:
+      forall dlt src ty,
+        In rst_ty src ->
+        constraintSatisfiable dlt (src, [ty]) ->
+        constraintSatisfiable dlt ([rst_ty], [ty]).
+    Proof.
+      intros dlt src ty Hin Hsat.
+      unfold constraintSatisfiable, satisfiable in *.
+      eapply Lat.order_trans; [|exact Hsat].
+      apply hm_ext_incl.
+      intros z Hz. simpl in Hz. destruct Hz as [Heq|[]]. subst z. exact Hin.
+    Qed.
+
+    Lemma generate_reset_mems_blocks:
+      forall (mems: list (ident * (const * clock))) cns st st',
+        generate_stmt_constraints G2 env state_env rst_ty []
+          (reset_mems mems) st = OK (cns, st') ->
+        exists tys,
+          Forall2 (fun xc ty => Env.find (fst xc) env = Some ty) mems tys
+          /\ cns = map (fun ty => ([rst_ty], [ty])) tys.
+    Proof.
+      intros mems cns st st' Hgen.
+      unfold reset_mems in Hgen.
+      destruct (generate_fold_left_Comp G2 env state_env rst_ty
+                  (fun xc => SynObc.AssignSt (fst xc) (SynObc.Const (fst (snd xc))))
+                  mems SynObc.Skip [] cns st st' Hgen)
+        as (cacc & blocks & sa & Hacc & Hcns & Hall).
+      simpl in Hacc. unfold ret in Hacc. inversion Hacc; subst cacc sa.
+      simpl in Hcns. subst cns.
+      clear Hgen Hacc.
+      induction Hall as [|xc blk mems blocks Hblk Hall IH]; simpl.
+      - exists []. split; [constructor|reflexivity].
+      - destruct Hblk as (s1 & s2 & Hblk).
+        simpl in Hblk.
+        eapply sec_bind_inv in Hblk as (ety & sa & Hety & Hblk).
+        eapply sec_bind_inv in Hblk as (xty & sb & Hxty & Hret).
+        assert (Hfind : Env.find (fst xc) env = Some xty).
+        { unfold SC.find_env in Hxty.
+          destruct (Env.find (fst xc) env) as [v|] eqn:Hf; try discriminate.
+          unfold ret in Hxty. congruence. }
+        assert (Hety0 : ety = []).
+        { unfold ret in Hety. congruence. }
+        unfold ret in Hret. inversion Hret; subst blk.
+        destruct IH as (tys & Htys & Hcns).
+        exists (xty :: tys). split.
+        + constructor; [exact Hfind|exact Htys].
+        + simpl. rewrite Hcns, Hety0.
+          repeat rewrite MergeFacts.merge_nil.
+          reflexivity.
+    Qed.
+
+    Lemma generate_reset_insts_blocks:
+      forall (insts: list (ident * ident)) cns st st',
+        generate_stmt_constraints G2 env state_env rst_ty []
+          (reset_insts insts) st = OK (cns, st') ->
+        exists tys,
+          Forall2 (fun oc ty => Env.find (fst oc) state_env = Some ty) insts tys
+          /\ cns = map (fun ty => ([rst_ty], [ty])) tys.
+    Proof.
+      intros insts cns st st' Hgen.
+      unfold reset_insts in Hgen.
+      destruct (generate_fold_left_Comp G2 env state_env rst_ty
+                  (fun oc => SynObc.Call [] (snd oc) (fst oc) reset [])
+                  insts SynObc.Skip [] cns st st' Hgen)
+        as (cacc & blocks & sa & Hacc & Hcns & Hall).
+      simpl in Hacc. unfold ret in Hacc. inversion Hacc; subst cacc sa.
+      simpl in Hcns. subst cns.
+      clear Hgen Hacc.
+      induction Hall as [|oc blk insts blocks Hblk Hall IH]; simpl.
+      - exists []. split; [constructor|reflexivity].
+      - destruct Hblk as (s1 & s2 & Hblk).
+        simpl in Hblk.
+        rewrite ident_eqb_refl in Hblk.
+        eapply sec_bind_inv in Hblk as (sty & sa & Hsty & Hret).
+        assert (Hfind : Env.find (fst oc) state_env = Some sty).
+        { unfold SC.find_env in Hsty.
+          destruct (Env.find (fst oc) state_env) as [v|] eqn:Hf; try discriminate.
+          unfold ret in Hsty. congruence. }
+        unfold ret in Hret. inversion Hret; subst blk.
+        destruct IH as (tys & Htys & Hcns).
+        exists (sty :: tys). split.
+        + constructor; [exact Hfind|exact Htys].
+        + simpl. rewrite Hcns.
+          repeat rewrite MergeFacts.merge_nil.
+          reflexivity.
+    Qed.
+
+    Lemma generate_translate_reset_blocks:
+      forall s cns st st',
+        generate_stmt_constraints G2 env state_env rst_ty []
+          (translate_reset s) st = OK (cns, st') ->
+        exists mtys itys,
+          Forall2 (fun xc ty => Env.find (fst xc) env = Some ty) s.(SynStc.s_lasts) mtys
+          /\ Forall2 (fun oc ty => Env.find (fst oc) state_env = Some ty) s.(SynStc.s_subs) itys
+          /\ cns = map (fun ty => ([rst_ty], [ty])) (mtys ++ itys).
+    Proof.
+      intros s cns st st' Hgen.
+      unfold translate_reset in Hgen. simpl in Hgen.
+      eapply sec_bind_inv in Hgen as (c1 & s1 & Hc1 & Hgen).
+      eapply sec_bind_inv in Hgen as (c2 & s2 & Hc2 & Hret).
+      unfold ret in Hret. inversion Hret; subst cns st'.
+      destruct (generate_reset_mems_blocks _ _ _ _ Hc1) as (mtys & Hmtys & Hm).
+      destruct (generate_reset_insts_blocks _ _ _ _ Hc2) as (itys & Hitys & Hi).
+      exists mtys, itys. repeat split; [exact Hmtys|exact Hitys|].
+      rewrite Hm, Hi, map_app. reflexivity.
+    Qed.
+
   End TCPRESERV.
 
 End SECSTCOBCTRANSLATION.
