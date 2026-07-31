@@ -2408,6 +2408,88 @@ Module Type SECSTCOBCTRANSLATION
         + apply in_or_app; now right.
     Qed.
 
+    (** ** Shape of the translated class
+
+        The Obc signature generator reads the step method's interface and
+        the class memories; each is the STC system's own list up to
+        [idty] or a type change, so the two generators compute the same
+        security-type lists from the same environment. *)
+
+    Lemma get_mappings_from_node_map_fst:
+      forall A B (xs: list (ident * A)) (ys: list (ident * B)) e tys,
+        map fst xs = map fst ys ->
+        get_mappings_from_node xs e = Some tys ->
+        get_mappings_from_node ys e = Some tys.
+    Proof.
+      intros A B xs ys e tys Hmap Hget.
+      apply get_mappings_from_node_eq in Hget.
+      rewrite Hmap in Hget.
+      revert tys Hget. clear Hmap.
+      induction ys as [|[y a] ys IH]; intros tys Hget; simpl in *.
+      - exact Hget.
+      - destruct (Env.find y e) as [ty|]; try discriminate.
+        destruct (get_mappings (map fst ys) e) as [tys'|] eqn:Hys;
+          try discriminate.
+        inversion Hget; subst tys.
+        now rewrite (IH tys' Logic.eq_refl).
+    Qed.
+
+    Lemma translated_class_step_in:
+      forall s, map fst (m_in (step_method s)) = map fst s.(SynStc.s_in).
+    Proof. intro s. simpl. apply map_fst_idty. Qed.
+
+    Lemma translated_class_step_out:
+      forall s, map fst (m_out (step_method s)) = map fst s.(SynStc.s_out).
+    Proof. intro s. simpl. apply map_fst_idty. Qed.
+
+    Lemma translated_class_step_vars:
+      forall s, map fst (m_vars (step_method s)) = map fst s.(SynStc.s_vars).
+    Proof. intro s. simpl. apply map_fst_idty. Qed.
+
+    Lemma translated_class_mems:
+      forall s, map fst (c_mems (translate_system s)) = map fst s.(SynStc.s_lasts).
+    Proof. intro s. simpl. now rewrite map_map. Qed.
+
+    Lemma translated_class_objs:
+      forall s, c_objs (translate_system s) = s.(SynStc.s_subs).
+    Proof. reflexivity. Qed.
+
+    (** Every instance the class resets is one the system either resets
+        (so its type is among [rids]) or only steps (so its type is a
+        per-block extra).  [reset_consistency] makes the split
+        exhaustive, and is applied once, to the whole list. *)
+
+    Lemma calls_of_step_or_unreset:
+      forall tcs i,
+        List.In i (map fst (calls_of tcs)) ->
+        Step_with_reset_in i true tcs \/ List.In i (unreset_call_insts tcs).
+    Proof.
+      induction tcs as [|tc tcs IH]; intros i Hin; [inversion Hin|].
+      destruct tc as [x ck ce|x ck e|x ck f|o xs ck [|] g es]; simpl in Hin.
+      - destruct (IH i Hin) as [H|H]; [left; now right|right; exact H].
+      - destruct (IH i Hin) as [H|H]; [left; now right|right; exact H].
+      - destruct (IH i Hin) as [H|H]; [left; now right|right; exact H].
+      - destruct Hin as [Heq|Hin].
+        + subst o. left. left. constructor.
+        + destruct (IH i Hin) as [H|H]; [left; now right|right; exact H].
+      - destruct Hin as [Heq|Hin].
+        + subst o. right. simpl. now left.
+        + destruct (IH i Hin) as [H|H];
+            [left; now right|right; simpl; now right].
+    Qed.
+
+    Lemma calls_of_reset_or_unreset:
+      forall tcs i,
+        reset_consistency tcs ->
+        List.In i (map fst (calls_of tcs)) ->
+        List.In i (map fst (resets_of tcs)) \/ List.In i (unreset_call_insts tcs).
+    Proof.
+      intros tcs i Hcons Hin.
+      destruct (calls_of_step_or_unreset _ _ Hin) as [Hstep|Hun]; [|now right].
+      left. apply SECSTCTYPING.Reset_in_resets_of.
+      exact (Hcons i true Hstep).
+    Qed.
+
     (** ** Class-level raw preservation
 
         The Obc signature's raw constraints are the step method's, the
