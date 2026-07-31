@@ -1440,6 +1440,50 @@ Module Type SECSTCOBCTRANSLATION
       exists xs, ck, f, es. reflexivity.
     Qed.
 
+    (** The extras of a whole body are exactly the state types of the
+        instances it steps without resetting, so their distinctness
+        reduces to distinctness of those instances. *)
+
+    Fixpoint unreset_call_insts (tcs: list SynStc.trconstr) : list ident :=
+      match tcs with
+      | [] => []
+      | SynStc.TcCall i _ _ false _ _ :: tcs' => i :: unreset_call_insts tcs'
+      | _ :: tcs' => unreset_call_insts tcs'
+      end.
+
+    Lemma tcs_obc_extras_concat:
+      forall tcs es,
+        tcs_obc_extras tcs = Some es ->
+        get_mappings (unreset_call_insts tcs) reset_env = Some (List.concat es).
+    Proof.
+      induction tcs as [|tc tcs IH]; intros es Hes; simpl in Hes.
+      - inversion Hes; subst es. reflexivity.
+      - destruct (tc_obc_extras tc) as [e|] eqn:He; try discriminate.
+        destruct (tcs_obc_extras tcs) as [es'|] eqn:Hes'; try discriminate.
+        inversion Hes; subst es.
+        specialize (IH es' Logic.eq_refl).
+        destruct tc as [x ck ce|x ck ex|x ck f|i xs ck [|] f es0];
+          simpl in He; simpl.
+        1,2,3: inversion He; subst e; simpl; exact IH.
+        + inversion He; subst e; simpl; exact IH.
+        + destruct (Env.find i reset_env) as [sty|] eqn:Hfind; try discriminate.
+          inversion He; subst e.
+          cbn [unreset_call_insts get_mappings List.concat].
+          rewrite IH. reflexivity.
+    Qed.
+
+    Lemma tcs_obc_extras_nodup:
+      forall tcs es,
+        env_injective reset_env ->
+        NoDup (unreset_call_insts tcs) ->
+        tcs_obc_extras tcs = Some es ->
+        NoDup (List.concat es).
+    Proof.
+      intros tcs es Hinj Hnd Hes.
+      eapply get_mappings_nodup_gen; [exact Hnd|exact Hinj|].
+      now apply tcs_obc_extras_concat.
+    Qed.
+
     (** [translate_tcs] emits the per-trconstr blocks in reverse order,
         so the Obc constraint list is a permutation of the STC one taken
         blockwise.  [extras] names, per trconstr, the identifiers that
