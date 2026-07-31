@@ -1114,6 +1114,92 @@ Module Type SECSTCOBCTRANSLATION
       eapply constraints_src_le_satisfaction; eauto.
     Qed.
 
+
+    Definition Signature_consistent_obc_eq (H1 H2: SIG.secglobal) : Prop :=
+      forall f n1,
+        SIG.find_signature f H1 = Some n1 ->
+        exists n2,
+          SIG.find_signature f H2 = Some n2
+          /\ Signature_call_preserves_obc_eq n1 n2.
+
+    (** The [TcCall] case for an instance the system resets.  Both sides
+        pass the same reset actual, so no freshness condition on it is
+        required and it may live in the shared scope. *)
+
+    Lemma tccall_reset_preserv_eq:
+      forall scope memset clkvars i xs ck f es ckty
+             nconst sconst st1 st1' st2 st2',
+        SECCETYPING.assign_clk_type env clk_ty ck = Some ckty ->
+        Env.find i reset_env = Env.find i state_env ->
+        Signature_consistent_obc_eq G1 G2 ->
+        (forall n1 inptyp1 rinst outtyp,
+            SIG.find_signature f G1 = Some n1 ->
+            SIG.scope_fresh scope n1
+            /\ SIG.call_subst_scoped scope inptyp1 ckty [rinst] outtyp
+            /\ SIG.call_subst_fresh n1 inptyp1 ckty [rinst] outtyp) ->
+        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
+          (SynStc.TcCall i xs ck true f es) st1 = OK (nconst, st1') ->
+        generate_stmt_constraints G2 env state_env rst_ty [clk_ty]
+          (translate_tc memset clkvars (SynStc.TcCall i xs ck true f es)) st2
+          = OK (sconst, st2') ->
+        preserves_on scope nconst sconst.
+    Proof.
+      intros scope memset clkvars i xs ck f es ckty
+             nconst sconst st1 st1' st2 st2' Hckopt Henveq Hcons Hside Hstc Hobc.
+      unfold translate_tc in Hobc.
+      rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
+      rewrite (generate_stmt_constraints_Control_assign
+                 G2 env state_env rst_ty memset ck
+                 (SynObc.Call xs f i step (map (translate_arg memset clkvars ck) es))
+                 clk_ty ckty [] st2 Hckopt) in Hobc.
+      rewrite (MergeFacts.merge_nil2 ckty) in Hobc.
+      destruct xs as [|x xs'].
+      - (* no outputs: both sides emit nothing *)
+        simpl in Hstc. unfold ret in Hstc. inversion Hstc; subst nconst st1'.
+        simpl in Hobc.
+        assert (Hne : ident_eqb step reset = false).
+        { apply ident_eqb_neq. intro Heq. symmetry in Heq.
+          revert Heq. apply reset_not_step. }
+        rewrite Hne in Hobc.
+        unfold ret in Hobc. inversion Hobc; subst sconst st2'.
+        apply preserves_on_nil.
+      - simpl in Hobc.
+        assert (Hstep : ident_eqb step step = true) by apply ident_eqb_refl.
+        rewrite Hstep in Hobc.
+        destruct (SIG.find_signature f G2) as [n2|] eqn:Hf2; try discriminate.
+        eapply sec_bind_inv in Hobc as (inptyp2 & stb1 & Hinp2 & Hobc).
+        eapply sec_bind_inv in Hobc as (outtyp2 & stb2 & Hout2 & Hobc).
+        eapply sec_bind_inv in Hobc as (sty & stb3 & Hsty & Hgen2).
+        simpl in Hstc.
+        destruct (SIG.find_signature f G1) as [n1|] eqn:Hf1; try discriminate.
+        eapply sec_bind_inv in Hstc as (ckty1 & sta1 & Hck1 & Hstc).
+        eapply sec_bind_inv in Hstc as (inptyp1 & sta2 & Hinp1 & Hstc).
+        eapply sec_bind_inv in Hstc as (outtyp1 & sta3 & Hout1 & Hstc).
+        eapply sec_bind_inv in Hstc as (rinst & sta4 & Hrinst & Hgen1).
+        unfold option_to_sec in Hck1.
+        rewrite Hckopt in Hck1. unfold ret in Hck1.
+        inversion Hck1; subst ckty1 sta1.
+        assert (Houteq : outtyp1 = outtyp2).
+        { eapply (@mmap_consistent ident ident
+                    (fun z => SC.find_env z env) (fun z => SC.find_env z env)
+                    (x :: xs')); eauto.
+          intros. eapply SC.find_env_consistent; eauto. }
+        subst outtyp2.
+        assert (Hrsteq : rinst = sty).
+        { unfold SC.find_env in Hrinst, Hsty.
+          rewrite Henveq in Hrinst.
+          destruct (Env.find i state_env) as [v|]; try discriminate.
+          unfold ret in Hrinst, Hsty. congruence. }
+        subst sty.
+        destruct (Hcons f n1 Hf1) as (n2' & Hf2' & Hpres).
+        rewrite Hf2 in Hf2'. inversion Hf2'; subst n2'.
+        destruct (Hside n1 inptyp1 rinst outtyp1 Logic.eq_refl) as (Hsf & Hcss & Hfr1).
+        eapply (Hpres scope inptyp1 inptyp2 ckty [rinst] outtyp1
+                  nconst sconst sta4 stb3 st1' st2');
+          [exact Hsf|exact Hcss|exact Hfr1| |exact Hgen1|exact Hgen2].
+        eapply translate_args_type_incl; eauto.
+    Qed.
+
     (** ** From the [translate_tcs] fold to a per-trconstr concatenation
 
         [translate_tcs] is a *left* fold that nests [Comp] in reverse

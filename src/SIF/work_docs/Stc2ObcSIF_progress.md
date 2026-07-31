@@ -372,11 +372,38 @@ the 2026-07-30 pc refinement `clk` and `out` agree exactly.
 | 3 | TcCall case | part of `eqn_preserv :752` | **DONE**: `tccall_preserv` — inverts both generators, matches clk/outputs, feeds `translate_args_type_incl` and the assumed `Signature_call_preserves_obc`, exactly as `eqn_preserv` consumes `Signature_consistent` |
 | 4 | `tc_preserv` (all four cases) | `eqn_preserv :752` | **DONE** — `tc_preserv` dispatches on the four cases; the side conditions each case needs are collected in `tc_preserv_hyps`. Three cases go via equalities (`tcdef_preserv`, `tcnext_preserv`, `tcreset_preserv`, discharged with `dlt' = dlt` through `collapse_satisfaction` / `preserves_on_refl`); `tccall_preserv` supplies the fourth. |
 | 5 | tcs-list assembly | `eqns_preserv_scoped :1080` | **DONE** — `tcs_preserv` in `SecStcObcTranslation.v`. Both sides are decomposed into per-trconstr blocks (`generate_trconstrs_constraints_blocks` in `SecSTCTyping.v`; `translate_tcs_fold_right` + `generate_fold_right_Comp` on the Obc side, which pairs blocks with `rev tcs`). The pairing is reversed with `Forall2_rev`, combined via `Forall2_combine{,_with}`, fed to `preserves_on_concat_list`, and the residual order difference is closed by `preserves_on_Permutation` + `concat_rev_Permutation`. `extras` (the Obc-only names, i.e. callee instance state types) and their scopedness stay **hypotheses** of `tcs_preserv`; discharging them at system level is part of item 7. |
-| 6 | reset-method constraints | — (none) | `[rst_ty] ⊑ [sty]` from the `dlt'` choice; `[rst_ty] ⊑ [mem]` from the STC TcNext source (every last has a TcNext by `s_lasts_in_tcs`) |
+| 6 | reset-method constraints | — (none) | **DONE bar the assembly.** Both halves of `translate_reset` emit exactly one constraint `([rst_ty], [ty])` per memory and per instance (`generate_reset_mems_blocks`, `generate_reset_insts_blocks`, `generate_translate_reset_blocks`, on top of `generate_fold_left_Comp` in `SecObcTyping.v` — note the reset method folds `Comp acc new`, so unlike `translate_tcs` it comes out *in order*). Each is entailed under the *same* valuation by an STC constraint with the same target and `rst_ty` in its source (`reset_constraint_entailed`), and the STC side supplies exactly those: `generate_trconstrs_constraints_last_source` (every last has a `TcNext`) and `..._reset_source` (every reset instance has a `TcReset`, on either shape of reset clock). What is left is attaching each reset constraint to the right block — part of item 7. |
 | 7 | class-level raw `preserves_on` | `node_preserv_scoped :1341`, `:1418`, `:1496` | scope = `inp ++ out ++ locals ++ [clk; rst]` |
 | 8 | simplify bridge | `:1685` / `:1806` / `:1938` | needs "every hidden var has a definer" for `locals`/`lasts`/`stids` — only derivable **with the translation in hand**; this is the class-scopedness deferred from phase 1. Most likely place for a surprise. |
 | 9 | lockstep induction | `:2503` + `:2382` + `:2342` | yields `Signature_consistent Gstc Gobc` + scopedness + scope_sec of Gobc; needs the phase-3 scope_sec port |
 | 10 | global corollary | `:2785` `generated_program_signatures_preserved_global` | the export the NI transport (phase 6) consumes |
+
+### The reset-instance/extras interaction (resolved, 2026-07-31)
+
+The Obc reset method constrains `rst_ty ⊑ sty_o` for every instance
+`o`, while the step method's call block also touches `sty_o`.  Two
+blocks wanting the same name would break the disjoint-`extras`
+requirement of `preserves_on_concat_list`.  `reset_consistency` splits
+the instances so that it does not:
+
+- **Reset instances** (`Step_with_reset_in o true`): the STC call's
+  reset actual is `[rst_inst]` and the Obc call's is `[sty]`, and these
+  are the *same identifier* (`Env.find o reset_env = Env.find o
+  state_env`).  Nothing needs bridging, so the reset-underlying call
+  theorem — which is where `~ In sty scope` comes from — is not used.
+  `signatures_preserved_equal_calls_from_good` (`SIFSignature.v`),
+  its Obc counterpart `signatures_preserved_obc_equal_calls_from_good`
+  and the trconstr-level `tccall_reset_preserv_eq` handle this case
+  with the instance identifier *inside* `scope`, so extras stay empty
+  and the `TcReset` block may mention it freely.  The reset-method
+  constraint is then entailed by the `TcReset` constraint.
+- **Non-reset instances**: STC passes `[rst_ty]`, Obc passes `[sty]`,
+  and `sty` occurs nowhere on the STC side — a genuine private extra of
+  the call block.  The existing reset-underlying theorem applies, and
+  its witness sets `dlt' sty = hm_ext dlt [rst_ty] = dlt rst_ty`, so
+  `rst_ty ⊑ sty` holds with equality.
+
+The two cases use different theorems and their extras never collide.
 
 **Structural deviations from NL→STC (no analogue there):**
 - *Expression / cexp correspondence* — NL→STC keeps CE expressions unchanged;
