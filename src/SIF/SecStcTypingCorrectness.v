@@ -1,6 +1,7 @@
 (** Correctness facts for generated STC signatures and reset-instance environments. *)
 
 From Velus Require Import Common.
+From Velus Require Import SIF.Helpers.
 From Velus Require Import Environment.
 From Velus Require Import Operators.
 From Velus Require Import CoreExpr.CESyntax.
@@ -127,7 +128,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       secglobal_scoped G ->
       Clo.wc_system P s ->
       find_node_env s.(SynStc.s_name) envs = Some env ->
-      SECSTCTYPING.env_injective env ->
+      env_injective env ->
       SECSTCTYPING.generate_sys_signature_scoped_env G s envs aux_names = OK sig ->
       signature_scoped sig.
   Proof.

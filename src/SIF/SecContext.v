@@ -1,6 +1,7 @@
 (** Security monad and environment operations used by the SIF generators. *)
 
 From Velus Require Import Common.
+From Velus Require Import SIF.Helpers.
 From Velus Require Import Environment.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import Environment.
@@ -165,13 +166,6 @@ Proof. intros. reflexivity. Qed.
 
 (** * Injectivity and scopedness of naming environments *)
 
-Definition env_injective (env: Env.t ident) : Prop :=
-  forall x y tx ty,
-    Env.find x env = Some tx ->
-    Env.find y env = Some ty ->
-    tx = ty ->
-    x = y.
-
 
 Definition names_scoped (env: Env.t ident) (scope: list ident) (xs: list ident) : Prop :=
   forall x, In x xs -> exists ty, Env.find x env = Some ty /\ In ty scope.
@@ -274,39 +268,7 @@ Qed.
     per-instance names with the [sec_reset] prefix through
     [fresh_reset_insert]. *)
 
-Definition env_values (env: Env.t ident) : list (ident * ident) :=
-  map (fun '(x, ty) => (ty, x)) (Env.elements env).
 
-Lemma env_values_add:
-  forall x ty env,
-    ~ Env.In x env ->
-    Permutation (env_values (Env.add x ty env))
-                ((ty, x) :: env_values env).
-Proof.
-  intros x ty env Hnin.
-  unfold env_values.
-  replace ((ty, x) :: map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))
-    with (map (fun '(x0, ty0) => (ty0, x0)) ((x, ty) :: Env.elements env))
-    by reflexivity.
-  now apply Permutation_map, Env.elements_add.
-Qed.
-
-Lemma env_values_nodup_injective:
-  forall env,
-    NoDupMembers (env_values env) ->
-    env_injective env.
-Proof.
-  intros env Hnodup x y tx ty Hfindx Hfindy Heq.
-  apply Env.elements_correct in Hfindx.
-  apply Env.elements_correct in Hfindy.
-  unfold env_values in Hnodup.
-  assert (Hinx : In (tx, x) (map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))).
-  { apply in_map_iff. exists (x, tx). split; [reflexivity|exact Hfindx]. }
-  assert (Hiny : In (tx, y) (map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))).
-  { subst ty.
-    apply in_map_iff. exists (y, tx). split; [reflexivity|exact Hfindy]. }
-  now eapply NoDupMembers_det; eauto.
-Qed.
 
 Definition env_reset_bounded (st: ident) (env: Env.t ident) : Prop :=
   forall x ty,

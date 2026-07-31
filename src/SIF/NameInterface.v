@@ -1,6 +1,7 @@
 (** Shared generation of security identifiers and node-scoped naming environments. *)
 
 From Velus Require Import Common.
+From Velus Require Import SIF.Helpers.
 From Velus Require Import SecLattice.
 From Velus Require Import Environment.
 From Velus Require Import Operators.
@@ -672,16 +673,6 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     | Error e => Error e
     end.
 
-  Definition env_injective (env: Env.t ident) : Prop :=
-    forall x y tx ty,
-      Env.find x env = Some tx ->
-      Env.find y env = Some ty ->
-      tx = ty ->
-      x = y.
-
-  Definition env_values (env: Env.t ident) : list (ident * ident) :=
-    map (fun '(x, ty) => (ty, x)) (Env.elements env).
-
   Definition env_sec_bounded (st: ident) (env: Env.t ident) : Prop :=
     forall x ty,
       Env.find x env = Some ty ->
@@ -712,36 +703,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     apply Pos.lt_succ_diag_r.
   Qed.
 
-  Lemma env_values_add:
-    forall x ty env,
-      ~ Env.In x env ->
-      Permutation (env_values (Env.add x ty env))
-                  ((ty, x) :: env_values env).
-  Proof.
-    intros x ty env Hnin.
-    unfold env_values.
-    replace ((ty, x) :: map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))
-      with (map (fun '(x0, ty0) => (ty0, x0)) ((x, ty) :: Env.elements env))
-      by reflexivity.
-    now apply Permutation_map, Env.elements_add.
-  Qed.
 
-  Lemma env_values_nodup_injective:
-    forall env,
-      NoDupMembers (env_values env) ->
-      env_injective env.
-  Proof.
-    intros env Hnodup x y tx ty Hfindx Hfindy Heq.
-    apply Env.elements_correct in Hfindx.
-    apply Env.elements_correct in Hfindy.
-    unfold env_values in Hnodup.
-    assert (Hinx : In (tx, x) (map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))).
-    { apply in_map_iff. exists (x, tx). split; [reflexivity|exact Hfindx]. }
-    assert (Hiny : In (tx, y) (map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))).
-    { subst ty.
-      apply in_map_iff. exists (y, tx). split; [reflexivity|exact Hfindy]. }
-    now eapply NoDupMembers_det; eauto.
-  Qed.
 
   Lemma env_values_fresh_notin:
     forall env st,

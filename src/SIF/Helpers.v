@@ -5,6 +5,8 @@ From Coq Require Import Lists.ListSet.
 From Coq Require Import Lia.
 
 From Velus Require Import Common.
+From Velus Require Import Environment.
+From Coq Require Import Sorting.Permutation.
 
 Import ListNotations.
 
@@ -157,4 +159,53 @@ Lemma list_len_1 : forall A (x:list A), length x = 1 <-> exists d, x = [d].
         + apply length_zero_iff_nil in H_0. auto.
         + exists a. subst l. auto.
     - intros. destruct H. subst x. reflexivity.
+Qed.
+
+(** * Naming environments
+
+    An environment maps program names to security-type names.  These
+    facts are independent of the monad that builds the environment and
+    of the gensym prefix it uses, so they are shared by the NLustre
+    naming layer ([NameInterface]) and by the Stc and Obc security
+    typings ([SecContext]). *)
+
+Definition env_injective (env: Env.t ident) : Prop :=
+  forall x y tx ty,
+    Env.find x env = Some tx ->
+    Env.find y env = Some ty ->
+    tx = ty ->
+    x = y.
+
+Definition env_values (env: Env.t ident) : list (ident * ident) :=
+  map (fun '(x, ty) => (ty, x)) (Env.elements env).
+
+Lemma env_values_add:
+  forall x ty env,
+    ~ Env.In x env ->
+    Permutation (env_values (Env.add x ty env))
+                ((ty, x) :: env_values env).
+Proof.
+  intros x ty env Hnin.
+  unfold env_values.
+  replace ((ty, x) :: map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))
+    with (map (fun '(x0, ty0) => (ty0, x0)) ((x, ty) :: Env.elements env))
+    by reflexivity.
+  now apply Permutation_map, Env.elements_add.
+Qed.
+
+Lemma env_values_nodup_injective:
+  forall env,
+    NoDupMembers (env_values env) ->
+    env_injective env.
+Proof.
+  intros env Hnodup x y tx ty Hfindx Hfindy Heq.
+  apply Env.elements_correct in Hfindx.
+  apply Env.elements_correct in Hfindy.
+  unfold env_values in Hnodup.
+  assert (Hinx : In (tx, x) (map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))).
+  { apply in_map_iff. exists (x, tx). split; [reflexivity|exact Hfindx]. }
+  assert (Hiny : In (tx, y) (map (fun '(x0, ty0) => (ty0, x0)) (Env.elements env))).
+  { subst ty.
+    apply in_map_iff. exists (y, tx). split; [reflexivity|exact Hfindy]. }
+  now eapply NoDupMembers_det; eauto.
 Qed.

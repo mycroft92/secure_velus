@@ -225,7 +225,28 @@ Only the *drivers* stay in their own Correctness files
 `generate_state_env_range/_props/_injective/_key_from_objs` over
 `c_objs`).
 
-**Why `NameInterface.v` was left alone.** Its copies are hard-wired to
+**(1e) Third pass — one shared instance (2026-07-31).** The genuinely
+monad- and prefix-independent facts now live once, in **`SIF/Helpers.v`**
+(top-level, built first, depends only on `Common`/`Environment`):
+`env_injective`, `env_values`, `env_values_add`,
+`env_values_nodup_injective`. `NameInterface.v`, `SecContext.v` and
+`SecSTCTyping.v` all dropped their copies and `Require Import
+SIF.Helpers` instead; the two qualified references
+(`NAMEGEN.env_injective`, `SECSTCTYPING.env_injective`) were repointed.
+
+`SecContext.v` keeps only what is genuinely `sec_reset`- and
+Sec-monad-specific: `env_reset_bounded(_step)`,
+`env_values_reset_fresh_notin`, `fresh_reset_insert*`. `NameInterface.v`
+keeps its `sec`-prefixed `env_sec_bounded` family and its Name-monad
+`fresh_insert_env_props` — those are *not* duplicates: different gensym
+prefix, different monad.
+
+One variant is deliberately left: `SecNLusTyping.v`'s `env_injective` is
+0-ary over a section variable rather than taking `env` as a parameter.
+Repointing it to the shared one would preserve its type but break the
+`unfold env_injective` steps in its proofs, for no real gain.
+
+**Why `NameInterface.v` keeps its own bounded family.** Its copies are hard-wired to
 the `Ids.sec` prefix (not `sec_reset`), it is built *before*
 `SecContext.v`, and `NAMEGEN` does not take a `SECMONAD` parameter — so
 reusing the shared family there would mean changing `NAMEGEN`'s

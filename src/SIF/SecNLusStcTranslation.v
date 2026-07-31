@@ -3,6 +3,7 @@
 From Coq Require Import List.
 Import List.ListNotations.
 From Velus Require Import Common.
+From Velus Require Import SIF.Helpers.
 From Velus Require Import Ident.
 From Velus Require Import SecLattice.
 From Velus Require Import Environment.
@@ -311,7 +312,7 @@ Module Type SECNLUSSTCTRANSLATION
     Lemma eqns_reset_extras_nodup:
       forall rst_env eqs tys,
         NoDup (reset_call_vars eqs) ->
-        SECSTCTYPING.env_injective rst_env ->
+        env_injective rst_env ->
         eqns_reset_extras rst_env eqs = Some tys ->
         NoDup tys.
     Proof.

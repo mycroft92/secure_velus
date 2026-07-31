@@ -1,6 +1,7 @@
 (** Symbolic security typing and scoped signature generation for translated STC systems. *)
 
 From Velus Require Import Common.
+From Velus Require Import SIF.Helpers.
 From Velus Require Import SecLattice.
 From Velus Require Import Environment.
 From Velus Require Import Operators.
@@ -52,13 +53,6 @@ Module Type SECSTCTYPING
 
   Definition hidden_sys_vars (locals lasts rids: list ident) : list ident :=
     nodup ident_eq_dec (locals ++ lasts ++ rids).
-
-  Definition env_injective (env: Env.t ident) : Prop :=
-    forall x y tx ty,
-      Env.find x env = Some tx ->
-      Env.find y env = Some ty ->
-      tx = ty ->
-      x = y.
 
   Section RESETHANDLER.
 

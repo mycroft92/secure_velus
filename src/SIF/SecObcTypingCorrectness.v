@@ -6,6 +6,7 @@
     the statement-level generator. *)
 
 From Velus Require Import Common.
+From Velus Require Import SIF.Helpers.
 From Velus Require Import Environment.
 From Velus Require Import Operators.
 From Velus Require Import Obc.ObcSyntax.

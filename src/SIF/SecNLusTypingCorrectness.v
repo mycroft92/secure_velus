@@ -3,6 +3,7 @@
 From Coq Require Import List.
 Import List.ListNotations.
 From Velus Require Import Common.
+From Velus Require Import SIF.Helpers.
 From Velus Require Import SecLattice.
 From Velus Require Import Environment.
 From Velus Require Import Operators.
@@ -286,7 +287,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
     forall xs ys env txs tys,
       NoDup xs ->
       Permutation xs ys ->
-      NAMEGEN.env_injective env ->
+      env_injective env ->
       get_mappings xs env = Some txs ->
       get_mappings ys env = Some tys ->
       Permutation txs tys.
