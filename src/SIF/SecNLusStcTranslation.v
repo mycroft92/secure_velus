@@ -25,6 +25,7 @@ From Velus Require Import Stc.StcIsSystem.
 From Velus Require Import Stc.StcOrdered.
 From Velus Require Import Stc.StcIsFree.
 From Velus Require Import Stc.StcClocking.
+From Velus Require Import Stc.StcWellDefined.
 From Velus Require Import NLustre.Memories.
 From Velus Require Import SIF.NameInterface.
 From Velus Require Import SIF.SecCETyping.
@@ -75,9 +76,10 @@ Module Type SECNLUSSTCTRANSLATION
   (Import OrdStc       : STCORDERED Ids Op CESyn SynStc Syst)
   (Import IsFStc       : STCISFREE Ids Op CESyn SynStc CEIsF)
   (Import CloStc       : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst OrdStc CEClo)
+  (Import WD           : STCWELLDEFINED Ids Op CESyn SynStc Syst OrdStc Var Last Def CEIsF IsFStc)
   (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo SECCETYPING Last Var Def Syst OrdStc IsFStc CloStc)
   (Import SECSTCTYPINGCORRECTNESS
-      : SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecTypes SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING Last Var Def Syst OrdStc IsFStc CloStc SECSTCTYPING).
+      : SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecTypes SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING Last Var Def Syst OrdStc IsFStc CloStc WD SECSTCTYPING).
 
   Section SECEQNPRES.
 
@@ -2713,10 +2715,11 @@ Module SecNLusStcTranslation
   (Import OrdStc       : STCORDERED Ids Op CESyn SynStc Syst)
   (Import IsFStc       : STCISFREE Ids Op CESyn SynStc CEIsF)
   (Import CloStc       : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst OrdStc CEClo)
+  (Import WD           : STCWELLDEFINED Ids Op CESyn SynStc Syst OrdStc Var Last Def CEIsF IsFStc)
   (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo SECCETYPING Last Var Def Syst OrdStc IsFStc CloStc)
   (Import SECSTCTYPINGCORRECTNESS
-      : SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecTypes SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING Last Var Def Syst OrdStc IsFStc CloStc SECSTCTYPING)
-  <: SECNLUSSTCTRANSLATION Ids Lat Op SC SecTypes CESyn SynNL SynStc Mem Translation SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING OrdNL IsD IsFNL CloNL SECNLUSTYPING SECNLUSTYPINGCORRECTNESS Last Var Def Syst OrdStc IsFStc CloStc SECSTCTYPING SECSTCTYPINGCORRECTNESS.
+      : SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecTypes SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING Last Var Def Syst OrdStc IsFStc CloStc WD SECSTCTYPING)
+  <: SECNLUSSTCTRANSLATION Ids Lat Op SC SecTypes CESyn SynNL SynStc Mem Translation SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING OrdNL IsD IsFNL CloNL SECNLUSTYPING SECNLUSTYPINGCORRECTNESS Last Var Def Syst OrdStc IsFStc CloStc WD SECSTCTYPING SECSTCTYPINGCORRECTNESS.
 
-  Include SECNLUSSTCTRANSLATION Ids Lat Op SC SecTypes CESyn SynNL SynStc Mem Translation SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING OrdNL IsD IsFNL CloNL SECNLUSTYPING SECNLUSTYPINGCORRECTNESS Last Var Def Syst OrdStc IsFStc CloStc SECSTCTYPING SECSTCTYPINGCORRECTNESS.
+  Include SECNLUSSTCTRANSLATION Ids Lat Op SC SecTypes CESyn SynNL SynStc Mem Translation SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING OrdNL IsD IsFNL CloNL SECNLUSTYPING SECNLUSTYPINGCORRECTNESS Last Var Def Syst OrdStc IsFStc CloStc WD SECSTCTYPING SECSTCTYPINGCORRECTNESS.
 End SecNLusStcTranslation.

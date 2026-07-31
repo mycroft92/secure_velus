@@ -561,6 +561,19 @@ Module Type SECSTCTYPING
           right. now apply IH.
     Qed.
 
+    Lemma resets_of_Reset_in:
+      forall trs x,
+        In x (map fst (resets_of trs)) ->
+        Reset_in x trs.
+    Proof.
+      induction trs as [|tr trs IH]; intros x Hin; [inversion Hin|].
+      destruct tr as [y ck ce|y ck e|y ck f|y ys ck b g es]; simpl in Hin;
+        try (now right; apply IH).
+      destruct Hin as [Heq|Hin].
+      - subst y. left. constructor.
+      - right. now apply IH.
+    Qed.
+
     Lemma trconstrs_reset_keys_cases:
       forall trs x,
         In x (trconstrs_reset_keys trs) ->

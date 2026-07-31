@@ -74,12 +74,12 @@ Module Type SECSTCNONINTERFERENCE
   (Import SECSTCTYPINGCORRECTNESS :
      SECSTCTYPINGCORRECTNESS Ids Op SC CE.Syn NL.Syn Stc.Syn Lat SecT SIG
        SIGPROOFS NAMEGEN CE.IsF CE.Clo SECCETYPING Stc.Last Stc.Var Stc.Def
-       Stc.Syst Stc.Ord Stc.Free Stc.Clo SECSTCTYPING)
+       Stc.Syst Stc.Ord Stc.Free Stc.Clo Stc.Wdef SECSTCTYPING)
   (NLusStcBridge :
      SECNLUSSTCTRANSLATION Ids Lat Op SC SecT CE.Syn NL.Syn Stc.Syn NL.Mem
        Translation SIG SIGPROOFS NAMEGEN CE.IsF CE.Clo SECCETYPING NL.Ord
        NL.IsD NL.IsF NL.Clo SECNLUSTYPING SECNLUSTYPINGCORRECTNESS Stc.Last
-       Stc.Var Stc.Def Stc.Syst Stc.Ord Stc.Free Stc.Clo SECSTCTYPING
+       Stc.Var Stc.Def Stc.Syst Stc.Ord Stc.Free Stc.Clo Stc.Wdef SECSTCTYPING
        SECSTCTYPINGCORRECTNESS).
 
   Definition ground_instantiation : Type := NLusSupport.ground_instantiation.
@@ -346,12 +346,12 @@ Module SecStcNonInterference
   (SECSTCTYPINGCORRECTNESS :
      SECSTCTYPINGCORRECTNESS Ids Op SC CE.Syn NL.Syn Stc.Syn Lat SecT SIG
        SIGPROOFS NAMEGEN CE.IsF CE.Clo SECCETYPING Stc.Last Stc.Var Stc.Def
-       Stc.Syst Stc.Ord Stc.Free Stc.Clo SECSTCTYPING)
+       Stc.Syst Stc.Ord Stc.Free Stc.Clo Stc.Wdef SECSTCTYPING)
   (NLusStcBridge :
      SECNLUSSTCTRANSLATION Ids Lat Op SC SecT CE.Syn NL.Syn Stc.Syn NL.Mem
        Translation SIG SIGPROOFS NAMEGEN CE.IsF CE.Clo SECCETYPING NL.Ord
        NL.IsD NL.IsF NL.Clo SECNLUSTYPING SECNLUSTYPINGCORRECTNESS Stc.Last
-       Stc.Var Stc.Def Stc.Syst Stc.Ord Stc.Free Stc.Clo SECSTCTYPING
+       Stc.Var Stc.Def Stc.Syst Stc.Ord Stc.Free Stc.Clo Stc.Wdef SECSTCTYPING
        SECSTCTYPINGCORRECTNESS)
   <: SECSTCNONINTERFERENCE
        Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc Translation

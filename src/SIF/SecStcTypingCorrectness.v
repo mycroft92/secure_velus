@@ -16,6 +16,7 @@ From Velus Require Import Stc.StcIsSystem.
 From Velus Require Import Stc.StcOrdered.
 From Velus Require Import Stc.StcIsFree.
 From Velus Require Import Stc.StcClocking.
+From Velus Require Import Stc.StcWellDefined.
 From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SecTypes.
 From Velus Require Import SIF.SecCETyping.
@@ -50,6 +51,7 @@ Module Type SECSTCTYPINGCORRECTNESS
   (Import Ord   : STCORDERED Ids Op CESyn SynStc Syst)
   (Import IsF   : STCISFREE Ids Op CESyn SynStc CEIsF)
   (Import Clo   : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst Ord CEClo)
+  (Import WD    : STCWELLDEFINED Ids Op CESyn SynStc Syst Ord Var Last Def CEIsF IsF)
   (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo).
 
 
@@ -714,6 +716,28 @@ Module Type SECSTCTYPINGCORRECTNESS
       exact (Ids.sec_neq_sec_reset Hpref).
   Qed.
 
+  (** A well-scheduled body resets each instance at most once: the
+      scheduling condition forces every later sub of an instance to
+      carry a strictly smaller index than the current one, and a
+      [TcReset] already sits at index 0. *)
+
+  Lemma Is_well_sch_resets_nodup:
+    forall tcs inputs mems,
+      Is_well_sch inputs mems tcs ->
+      NoDup (map fst (resets_of tcs)).
+  Proof.
+    induction tcs as [|tc tcs IH]; intros inputs mems Hsch; simpl.
+    - constructor.
+    - assert (Hsch' : Is_well_sch inputs mems tcs) by (inversion Hsch; auto).
+      destruct tc as [x ck ce|x ck e|i ck f|i xs ck b g es]; simpl;
+        try (now eapply IH; eauto).
+      constructor.
+      + intro Hin.
+        eapply (WD.Reset_not_Reset_in tcs inputs mems i ck f Hsch).
+        now apply SECSTCTYPING.resets_of_Reset_in.
+      + eapply IH; eauto.
+  Qed.
+
   (** Every generated STC signature is good: its constraints are well
       formed and their targets are exactly the signature outputs.  This
       is the STC counterpart of [generate_node_sig_good_from_local_env]
@@ -726,15 +750,20 @@ Module Type SECSTCTYPINGCORRECTNESS
       generate_node_env all_nodes = OK (env, aux_names) ->
       secglobal_scoped G ->
       Clo.wc_system P s ->
-      (** A system resets each instance at most once.  This is genuinely
-          needed rather than bookkeeping: two [TcReset]s for one instance
-          would emit two constraints on the same target, and the
-          signature would not be good. *)
-      NoDup (map fst (resets_of s.(SynStc.s_tcs))) ->
+      (** Well-scheduling, which gives that the system resets each
+          instance at most once.  Two [TcReset]s for one instance would
+          emit two constraints on the same target, so some such
+          condition is genuinely needed; [Well_scheduled] is already a
+          standing assumption of the Stc-to-Obc pipeline. *)
+      Is_well_sch (map fst s.(SynStc.s_in))
+                  (ps_from_list (map fst s.(SynStc.s_lasts)))
+                  s.(SynStc.s_tcs) ->
       SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
       signature_good sig.
   Proof.
-    intros all_nodes G P s env aux_names sig Henv Hglobsc Hwc Hndkeys Hsig.
+    intros all_nodes G P s env aux_names sig Henv Hglobsc Hwc Hsch Hsig.
+    assert (Hndkeys : NoDup (map fst (resets_of s.(SynStc.s_tcs))))
+      by (eapply Is_well_sch_resets_nodup; eauto).
     assert (Hinj : env_injective env)
       by (eapply NAMEGEN.generate_node_env_injective; eauto).
     pose proof (SECSTCTYPING.generate_sys_signature_scoped
@@ -912,9 +941,10 @@ Module SecStcTypingCorrectness
   (Import Ord   : STCORDERED Ids Op CESyn SynStc Syst)
   (Import IsF   : STCISFREE Ids Op CESyn SynStc CEIsF)
   (Import Clo   : STCCLOCKING Ids Op CESyn SynStc Last Var Def Syst Ord CEClo)
+  (Import WD    : STCWELLDEFINED Ids Op CESyn SynStc Syst Ord Var Last Def CEIsF IsF)
   (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo)
-  <: SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecT SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo SECSTCTYPING.
+  <: SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecT SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo WD SECSTCTYPING.
 
-Include SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecT SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo SECSTCTYPING.
+Include SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecT SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCETYPING Last Var Def Syst Ord IsF Clo WD SECSTCTYPING.
 
 End SecStcTypingCorrectness.
