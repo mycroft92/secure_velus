@@ -542,6 +542,53 @@ Module Type SECSTCTYPING
       | tr :: trs' => trconstr_reset_keys tr ++ trconstrs_reset_keys trs'
       end.
 
+    (** The instances whose reset type the generator looks up are exactly
+        the ones the system resets: a step call carrying [rst = true] has
+        a matching [TcReset] elsewhere in the list, by
+        [reset_consistency]. *)
+
+    Lemma Reset_in_resets_of:
+      forall trs x,
+        Reset_in x trs ->
+        In x (map fst (resets_of trs)).
+    Proof.
+      induction trs as [|tr trs IH]; intros x Hin.
+      - inversion Hin.
+      - inversion Hin as [tr' trs' Hhd|tr' trs' Htl]; subst.
+        + inversion Hhd; subst. simpl. now left.
+        + destruct tr as [y ck ce|y ck e|y ck f|y ys ck b f es]; simpl;
+            try (now apply IH).
+          right. now apply IH.
+    Qed.
+
+    Lemma trconstrs_reset_keys_cases:
+      forall trs x,
+        In x (trconstrs_reset_keys trs) ->
+        Reset_in x trs \/ Step_with_reset_in x true trs.
+    Proof.
+      induction trs as [|tr trs IH]; intros x Hin; [inversion Hin|].
+      simpl in Hin. apply in_app_iff in Hin as [Hhd|Htl].
+      - destruct tr as [y ck ce|y ck e|y ck f|y ys ck [|] f es];
+          simpl in Hhd; try contradiction.
+        + destruct Hhd as [Heq|[]]; subst y.
+          left. left. constructor.
+        + destruct Hhd as [Heq|[]]; subst y.
+          right. left. constructor.
+      - destruct (IH x Htl) as [H|H]; [left|right]; now right.
+    Qed.
+
+    Lemma trconstrs_reset_keys_in_resets:
+      forall trs x,
+        reset_consistency trs ->
+        In x (trconstrs_reset_keys trs) ->
+        In x (map fst (resets_of trs)).
+    Proof.
+      intros trs x Hcons Hin.
+      apply Reset_in_resets_of.
+      destruct (trconstrs_reset_keys_cases _ _ Hin) as [H|H]; [exact H|].
+      exact (Hcons x true H).
+    Qed.
+
     Theorem generate_trconstr_constraint_scoped_on_keys:
       forall P vars scope tr cns st st',
         secglobal_scoped G ->
@@ -1398,6 +1445,49 @@ Module Type SECSTCTYPING
       + right. apply in_or_app. right. exact Hin_tail.
   Qed.
 
+  Lemma In_resets_of:
+    forall trs x ck f,
+      List.In (TcReset x ck f) trs ->
+      List.In (x, f) (resets_of trs).
+  Proof.
+    induction trs as [|tr trs IH]; intros x ck f Hin; [inversion Hin|].
+    destruct Hin as [Heq|Hin].
+    - subst tr. simpl. now left.
+    - destruct tr as [y c ce|y c e|y c g|y ys c b g es]; simpl;
+        try (now apply (IH x ck f)).
+      right. now apply (IH x ck f).
+  Qed.
+
+  (** Mapping-based counterpart, for signatures whose instance
+      environment comes from the shared name generator rather than from
+      a local [generate_reset_env] run. *)
+
+  Lemma trconstrs_targets_contains_reset_ids_map:
+    forall trs rids tys ty,
+      get_mappings (map fst (resets_of trs)) reset_env = Some rids ->
+      trconstrs_targets trs = Some tys ->
+      In ty rids ->
+      In ty tys.
+  Proof.
+    induction trs as [|tr trs IH]; intros rids tys ty Hmap Htys Hin.
+    - simpl in Hmap. inversion Hmap; subst rids. inversion Hin.
+    - simpl in Htys.
+      destruct (trconstr_targets tr) as [tys1|] eqn:Hty1; try discriminate.
+      destruct (trconstrs_targets trs) as [tys2|] eqn:Hty2; try discriminate.
+      inversion Htys; subst tys.
+      destruct tr as [x ck ce|x ck e|x ck f|x xs ck b f exps]; simpl in Hmap.
+      1,2,4: apply in_or_app; right; eapply IH; eauto.
+      destruct (Env.find x reset_env) as [ri|] eqn:Hri; try discriminate.
+      destruct (get_mappings (map fst (resets_of trs)) reset_env) as [rs|] eqn:Hrs;
+        try discriminate.
+      simpl in Hmap. inversion Hmap; subst rids.
+      simpl in Hin. destruct Hin as [Heq|Hin].
+      + subst ty. apply in_or_app; left.
+        simpl in Hty1. rewrite Hri in Hty1. inversion Hty1; subst tys1.
+        simpl. now left.
+      + apply in_or_app; right. eapply IH; eauto.
+  Qed.
+
   Lemma trconstrs_targets_contains_reset_ids:
     forall trs rids st' tys ty,
       generate_reset_env trs init_state = OK ((reset_env, rids), st') ->
@@ -1426,7 +1516,8 @@ Module Type SECSTCTYPING
               do out <- option_to_sec (get_mappings_from_node (n.(SynStc.s_out)) env);
               do locals <- option_to_sec (get_mappings_from_node (n.(SynStc.s_vars)) env);
               do lasts <- option_to_sec (get_mappings_from_node (n.(SynStc.s_lasts)) env);
-              do (reset_env, rids) <- generate_reset_env n.(SynStc.s_tcs);
+              do reset_env <- option_to_sec (get_node_inst (n.(SynStc.s_name)) aux_names);
+              do rids <- option_to_sec (get_mappings (map fst (resets_of n.(SynStc.s_tcs))) reset_env);
               do constraints' <- generate_trconstrs_constraints G env reset_env clk_type rst_type (n.(SynStc.s_tcs));
               ret (inp, out, rst_type, clk_type,
                    simplify constraints' (hidden_sys_vars locals lasts rids), env)) init_state with
@@ -1497,7 +1588,8 @@ Module Type SECSTCTYPING
           do out <- option_to_sec (get_mappings_from_node (s.(SynStc.s_out)) env);
           do locals <- option_to_sec (get_mappings_from_node (s.(SynStc.s_vars)) env);
           do lasts <- option_to_sec (get_mappings_from_node (s.(SynStc.s_lasts)) env);
-          do (reset_env, rids) <- generate_reset_env s.(SynStc.s_tcs);
+          do reset_env <- option_to_sec (get_node_inst (s.(SynStc.s_name)) aux_names);
+          do rids <- option_to_sec (get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env);
           do constraints' <- generate_trconstrs_constraints G env reset_env clk_type rst_type (s.(SynStc.s_tcs));
           ret (inp, out, rst_type, clk_type,
                simplify constraints' (hidden_sys_vars locals lasts rids), env))
@@ -1516,7 +1608,8 @@ Module Type SECSTCTYPING
       eapply sec_bind_inv in Hgen as (out & st_out & Hout & Hgen).
       eapply sec_bind_inv in Hgen as (locals & st_locals & Hlocals & Hgen).
       eapply sec_bind_inv in Hgen as (lasts & st_lasts & Hlasts & Hgen).
-      eapply sec_bind2_inv in Hgen as (reset_env & rids & st_reset & Hresetenv & Hgen).
+      eapply sec_bind_inv in Hgen as (reset_env & st_renv & Hresetenv & Hgen).
+      eapply sec_bind_inv in Hgen as (rids & st_reset & Hrids & Hgen).
       eapply sec_bind_inv in Hgen as (raw & st_raw & Hraw & Hret).
       unfold option_to_sec in Haux.
       destruct (get_node_aux (s.(SynStc.s_name)) aux_names) as [[clk_id0 rst_id0]|] eqn:Haux0; try discriminate.
@@ -1547,7 +1640,7 @@ Module Type SECSTCTYPING
       unfold signature_scoped, signature_scope.
       eapply simplify_scoped with (ds := hidden_sys_vars locals lasts rids).
       - apply NoDup_nodup.
-      - eapply generate_trconstrs_constraints_scoped
+      - eapply generate_trconstrs_constraints_scoped_on_keys
           with (P := P)
                (vars := idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars) ++ s.(SynStc.s_out))
                            ++ idck s.(SynStc.s_lasts)); eauto.
@@ -1591,11 +1684,20 @@ Module Type SECSTCTYPING
           apply in_or_app. right.
           apply in_or_app. right.
           simpl. right. left. reflexivity.
-        + intros x ty st1 st2 Hfind.
+        + intros x ty st1 st2 Hkey Hfind.
           unfold find_env in Hfind.
           destruct (Env.find x reset_env) as [ty'|] eqn:Henv; try discriminate.
           inversion Hfind; subst ty st2.
-          pose proof (generate_reset_env_find_in _ _ _ _ _ _ Hresetenv Henv) as Hinrid.
+          assert (Hinrid : In ty' rids).
+          { unfold option_to_sec in Hrids.
+            destruct (get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env)
+              as [rs|] eqn:Hmap; try discriminate.
+            unfold ret in Hrids. inversion Hrids; subst rs st_reset.
+            destruct (get_mappings_in _ _ _ _
+                        (trconstrs_reset_keys_in_resets _ _
+                           (s.(SynStc.s_reset_consistency)) Hkey) Hmap)
+              as (ty0 & Hfind0 & Hin0).
+            rewrite Henv in Hfind0. inversion Hfind0; subst ty0. exact Hin0. }
           unfold signature_scope, hidden_sys_vars. simpl.
           apply in_or_app. right.
           rewrite nodup_In. apply in_or_app. right. apply in_or_app. right. exact Hinrid.
@@ -1620,7 +1722,13 @@ Module Type SECSTCTYPING
               now apply in_map with (f := fst) in Hinx. }
             eapply trconstrs_targets_contains_defined in Hdefx; eauto.
             rewrite Hsnd. apply in_map_iff. eexists. split; [reflexivity|exact Hdefx].
-          * eapply trconstrs_targets_contains_reset_ids in Hd; eauto.
+          * assert (Hrmap : get_mappings (map fst (resets_of s.(SynStc.s_tcs)))
+                              reset_env = Some rids).
+            { unfold option_to_sec in Hrids.
+              destruct (get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env)
+                as [rs|] eqn:Hmap0; try discriminate.
+              unfold ret in Hrids. inversion Hrids; subst rs st_reset. reflexivity. }
+            eapply trconstrs_targets_contains_reset_ids_map in Hd; eauto.
             rewrite Hsnd. apply in_map_iff. eexists. split; [reflexivity|exact Hd].
     Qed.
   End SECSYSTYPING.

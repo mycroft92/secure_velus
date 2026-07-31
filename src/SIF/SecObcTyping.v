@@ -588,7 +588,8 @@ Module Type SECOBCTYPING
              do out    <- option_to_sec (get_mappings_from_node stepm.(m_out) env);
              do locals <- option_to_sec (get_mappings_from_node stepm.(m_vars) env);
              do lasts  <- option_to_sec (get_mappings_from_node c.(c_mems) env);
-             do (state_env, stids) <- generate_state_env c.(c_objs);
+             do state_env <- option_to_sec (get_node_inst c.(c_name) aux_names);
+             do stids  <- option_to_sec (get_mappings (map fst c.(c_objs)) state_env);
              do craw_step <- generate_stmt_constraints G env state_env rst_type
                               [clk_type] stepm.(m_body);
              do craw_reset <- generate_stmt_constraints G env state_env rst_type

@@ -1308,26 +1308,34 @@ Module Type SECNLUSSTCTRANSLATION
       eapply fresh_map_list_sec_range; eauto.
     Qed.
 
+    (** The signature generator only succeeds when every reset instance of
+        the translated system is bound in the shared instance
+        environment, so its own success is the completeness fact. *)
+
     Lemma generated_reset_env_maps_reset_calls:
-      forall eqs reset_env rids st' x,
-        generate_reset_env (translate_eqns eqs) init_state = OK ((reset_env, rids), st') ->
+      forall eqs reset_env rids x,
+        get_mappings (map fst (resets_of (translate_eqns eqs))) reset_env = Some rids ->
         In x (reset_call_vars eqs) ->
         exists ty, Env.find x reset_env = Some ty.
     Proof.
-      intros eqs reset_env rids st' x Hgen Hin.
+      intros eqs reset_env rids x Hmap Hin.
       destruct (reset_call_vars_translate_eqns _ _ Hin) as (ck & f & Hinreset).
-      eapply SECSTCTYPINGCORRECTNESS.generate_reset_env_has_reset_stmt; eauto.
+      edestruct get_mappings_in as (ty & Hfind & _); [|exact Hmap|].
+      - apply in_map_iff. exists (x, f). split; [reflexivity|].
+        eapply SECSTCTYPING.In_resets_of; eauto.
+      - eauto.
     Qed.
 
     Lemma generated_eqns_reset_extras:
-      forall eqs reset_env rids st',
+      forall eqs reset_env rids,
         NoDup (vars_defined eqs) ->
-        generate_reset_env (translate_eqns eqs) init_state = OK ((reset_env, rids), st') ->
+        get_mappings (map fst (resets_of (translate_eqns eqs))) reset_env = Some rids ->
+        env_injective reset_env ->
         exists tys,
           eqns_reset_extras reset_env eqs = Some tys
           /\ NoDup tys.
     Proof.
-      intros eqs reset_env rids st' Hnodup Hgen.
+      intros eqs reset_env rids Hnodup Hmap Hinj.
       destruct (eqns_reset_extras_exists reset_env eqs) as [tys Hextras].
       {
         intros x Hin.
@@ -1335,9 +1343,7 @@ Module Type SECNLUSSTCTRANSLATION
       }
       exists tys. split; [exact Hextras|].
       eapply eqns_reset_extras_nodup; eauto.
-      - eapply reset_call_vars_nodup; eauto.
-      - intros x y tx ty Hfindx Hfindy Heq.
-        eapply SECSTCTYPINGCORRECTNESS.generate_reset_env_injective; eauto.
+      eapply reset_call_vars_nodup; eauto.
     Qed.
 
     (** This lifts equation preservation to one generated NLustre/STC signature pair under the shared scoped environment.  The global bridge reuses it once per node. *)
@@ -1347,7 +1353,7 @@ Module Type SECNLUSSTCTRANSLATION
              (env: Env.t ident) (aux_names: list node_aux_names)
              clk_id rst_id clk_type rst_type
              inp out locals
-             reset_env rids extras
+             reset_env extras
              nconst sconst
              st_reset st_n st_s,
         translate_node n = s ->
@@ -1363,7 +1369,8 @@ Module Type SECNLUSSTCTRANSLATION
         get_mappings_from_node (n.(n_out)) env = Some out ->
         get_mappings_from_node (n.(n_vars)) env = Some locals ->
         scope = inp ++ out ++ locals ++ (clk_type :: rst_type :: nil) ->
-        generate_reset_env s.(SynStc.s_tcs) init_state = OK ((reset_env, rids), st_reset) ->
+        (forall x ty, Env.find x reset_env = Some ty ->
+                      exists m, ty = Ids.gensym Ids.sec_reset m) ->
         eqns_reset_extras reset_env n.(n_eqs) = Some extras ->
         NoDup extras ->
         (forall x rst_inst st1 st2,
@@ -1374,11 +1381,11 @@ Module Type SECNLUSSTCTRANSLATION
         preserves_on scope nconst sconst.
     Proof.
       intros P n s scope G1 G2 env aux_names clk_id rst_id clk_type rst_type
-             inp out locals reset_env rids extras nconst sconst st_reset st_n st_s
+             inp out locals reset_env extras nconst sconst st_reset st_n st_s
              Htr Hsig Hscopefresh Hglobsec Hscoped Hwc Haux Hclk Hrst Hinp Hout Hlocals Hscope
              Hresetenv Hextras Hnd Hfresh Hnl Hstc.
       subst scope.
-      subst s. simpl in Hresetenv, Hstc.
+      subst s. simpl in Hstc.
       destruct Hwc as [_ [_ [Hwcenv Hwc]]].
       eapply (eqns_preserv_scoped
                 (inp ++ out ++ locals ++ clk_type :: rst_type :: nil)
@@ -1400,7 +1407,7 @@ Module Type SECNLUSSTCTRANSLATION
         unfold find_env in Hfind.
         destruct (Env.find x0 reset_env) as [rst_inst'|] eqn:Hrstfind; try discriminate.
         inversion Hfind; subst rst_inst st2.
-        eapply generate_reset_env_range; eauto.
+        eapply Hresetenv; eauto.
       - exact Hfresh.
       - exact Hnl.
       - exact Hstc.
@@ -1445,7 +1452,7 @@ Module Type SECNLUSSTCTRANSLATION
       edestruct SECSTCTYPINGCORRECTNESS.generate_sys_signature_inv as
           (clk_id' & rst_id' & clk_type' & rst_type' & inp' & out' & slocals & slasts
            & reset_env & rids & st_reset & sconst & st_s
-           & Haux' & Hclk' & Hrst' & Hinp' & Hout' & Hslocals & Hslasts & Hresetenv & Hsconst & Hssigdef); eauto.
+           & Haux' & Hclk' & Hrst' & Hinp' & Hout' & Hslocals & Hslasts & Hresetenv & Hrids & Hsconst & Hssigdef); eauto.
       simpl in Haux', Hinp', Hout', Hslocals, Hslasts, Hresetenv, Hsconst, Hssigdef.
       rewrite Haux in Haux'. inversion Haux'. subst clk_id' rst_id'.
       rewrite Hclk in Hclk'. inversion Hclk'. subst clk_type'.
@@ -1458,7 +1465,10 @@ Module Type SECNLUSSTCTRANSLATION
                     clk_id rst_id clk_type rst_type inp out nlocals
                     Haux Hclk Hrst Hinp Hout Hnlocals)
         as Hscopefresh.
-      destruct (generated_eqns_reset_extras _ _ _ _ (NoDup_var_defined_n_eqs n) Hresetenv)
+      destruct (NAMEGEN.generate_node_env_inst_props
+                  _ _ _ _ _ Henvgen Hresetenv) as [Hinstinj _].
+      destruct (generated_eqns_reset_extras _ _ _
+                  (NoDup_var_defined_n_eqs n) Hrids Hinstinj)
         as [extras [Hextras Hnd]].
       exists nlocals, slocals, slasts, rids, nconst, sconst.
       split.
@@ -1474,7 +1484,9 @@ Module Type SECNLUSSTCTRANSLATION
           unfold find_env in Hfind.
           destruct (Env.find x reset_env) as [rst_inst'|] eqn:Hrstfind; try discriminate.
           inversion Hfind; clear Hfind; subst.
-          edestruct generate_reset_env_range as (nrst_idx & Hrsteq); eauto.
+          edestruct (proj2 (NAMEGEN.generate_node_env_inst_props
+                              _ _ _ _ _ Henvgen Hresetenv))
+            as (nrst_idx & Hrsteq); eauto.
           edestruct SECNLUSTYPINGCORRECTNESS.node_scope_sec_range as (nsec & Hscopeeq); eauto.
           rewrite Hrsteq in Hscopeeq.
           apply gensym_injective in Hscopeeq as [Hpref _].
@@ -1491,9 +1503,11 @@ Module Type SECNLUSSTCTRANSLATION
                (clk_id := clk_id) (rst_id := rst_id)
                (clk_type := clk_type) (rst_type := rst_type)
                (inp := inp) (out := out) (locals := nlocals)
-               (rids := rids) (extras := extras)
+               (extras := extras)
                (nconst := nconst) (sconst := sconst);
           eauto.
+      exact (proj2 (NAMEGEN.generate_node_env_inst_props
+                      _ _ _ _ _ Henvgen Hresetenv)).
     Qed.
 
     Theorem generated_node_preserv_scoped_scoped_env:
@@ -1532,7 +1546,7 @@ Module Type SECNLUSSTCTRANSLATION
           (clk_id' & rst_id' & clk_type' & rst_type' & inp' & out' & slocals & slasts
            & reset_env & rids & st_reset & sconst & st_s
            & Haux' & Hclk' & Hrst' & Hinp' & Hout' & Hslocals & Hslasts
-           & Hresetenv & Hsconst & Hssigdef); eauto.
+           & Hresetenv & Hrids & Hsconst & Hssigdef); eauto.
       simpl in Haux', Hinp', Hout', Hslocals, Hslasts, Hresetenv, Hsconst, Hssigdef.
       rewrite Haux in Haux'. inversion Haux'. subst clk_id' rst_id'.
       rewrite Hclk in Hclk'. inversion Hclk'. subst clk_type'.
@@ -1550,7 +1564,10 @@ Module Type SECNLUSSTCTRANSLATION
         as (local_env & rec & st_pref & st_local & Hlocalgen & Hlocalfind);
         eauto.
       rewrite Hfindenv in Hlocalfind. inversion Hlocalfind. subst local_env.
-      destruct (generated_eqns_reset_extras _ _ _ _ (NoDup_var_defined_n_eqs n) Hresetenv)
+      destruct (NAMEGEN.generate_node_scoped_env_inst_props
+                  _ _ _ _ _ Henvsgen Hresetenv) as [Hinstinj _].
+      destruct (generated_eqns_reset_extras _ _ _
+                  (NoDup_var_defined_n_eqs n) Hrids Hinstinj)
         as [extras [Hextras Hnd]].
       exists nlocals, slocals, slasts, rids, nconst, sconst.
       split.
@@ -1566,7 +1583,9 @@ Module Type SECNLUSSTCTRANSLATION
           unfold find_env in Hfind.
           destruct (Env.find x reset_env) as [rst_inst'|] eqn:Hrstfind; try discriminate.
           inversion Hfind; clear Hfind; subst.
-          edestruct generate_reset_env_range as (nrst_idx & Hrsteq); eauto.
+          edestruct (proj2 (NAMEGEN.generate_node_scoped_env_inst_props
+                              _ _ _ _ _ Henvsgen Hresetenv))
+            as (nrst_idx & Hrsteq); eauto.
           repeat rewrite in_app_iff in Hin.
           destruct Hin as [Hin|[Hin|[Hin|[Hin|[Hin|[]]]]]].
           - destruct (get_mappings_from_node_In _ _ _ _ _ Hinp Hin)
@@ -1623,9 +1642,11 @@ Module Type SECNLUSSTCTRANSLATION
                (clk_id := clk_id) (rst_id := rst_id)
                (clk_type := clk_type) (rst_type := rst_type)
                (inp := inp) (out := out) (locals := nlocals)
-               (rids := rids) (extras := extras)
+               (extras := extras)
                (nconst := nconst) (sconst := sconst);
           eauto.
+      exact (proj2 (NAMEGEN.generate_node_scoped_env_inst_props
+                      _ _ _ _ _ Henvsgen Hresetenv)).
     Qed.
 
     Corollary generated_node_preserv_scoped_global:
@@ -1709,7 +1730,7 @@ Module Type SECNLUSSTCTRANSLATION
           (clk_id' & rst_id' & clk_type' & rst_type' & inp' & out' & slocals & slasts
            & reset_env & rids & st_reset & sconst & st_s
            & Haux' & Hclk' & Hrst' & Hinp' & Hout' & Hslocals & Hslasts
-           & Hresetenv & Hsconst & Hssigdef); eauto.
+           & Hresetenv & Hrids & Hsconst & Hssigdef); eauto.
       simpl in Haux', Hinp', Hout', Hslocals, Hslasts, Hresetenv, Hsconst, Hssigdef.
       rewrite Haux in Haux'. inversion Haux'. subst clk_id' rst_id'.
       rewrite Hclk in Hclk'. inversion Hclk'. subst clk_type'.
@@ -1720,7 +1741,10 @@ Module Type SECNLUSSTCTRANSLATION
                   clk_id rst_id clk_type rst_type inp out locals nconst st_n
                   Hnsig Haux Hclk Hrst Hinp Hout Hlocals Hnconst Hnsigdef)
         as [Hwf Hdisj].
-      destruct (generated_eqns_reset_extras _ _ _ _ (NoDup_var_defined_n_eqs n) Hresetenv)
+      destruct (NAMEGEN.generate_node_env_inst_props
+                  _ _ _ _ _ Henvgen Hresetenv) as [Hinstinj _].
+      destruct (generated_eqns_reset_extras _ _ _
+                  (NoDup_var_defined_n_eqs n) Hrids Hinstinj)
         as [extras [Hextras Hnd]].
       assert (Hrawpres :
                 preserves_on
@@ -1736,7 +1760,9 @@ Module Type SECNLUSSTCTRANSLATION
           unfold find_env in Hfindrst.
           destruct (Env.find x reset_env) as [rst_inst'|] eqn:Hrstfind; try discriminate.
           inversion Hfindrst; clear Hfindrst; subst.
-          edestruct generate_reset_env_range as (nrst_idx & Hrsteq); eauto.
+          edestruct (proj2 (NAMEGEN.generate_node_env_inst_props
+                              _ _ _ _ _ Henvgen Hresetenv))
+            as (nrst_idx & Hrsteq); eauto.
           edestruct SECNLUSTYPINGCORRECTNESS.node_scope_sec_range as (nsec & Hscopeeq); eauto.
           rewrite Hrsteq in Hscopeeq.
           apply gensym_injective in Hscopeeq as [Hpref _].
@@ -1750,7 +1776,7 @@ Module Type SECNLUSSTCTRANSLATION
                (env := env) (aux_names := aux_names)
                (clk_id := clk_id) (rst_id := rst_id)
                (inp := inp) (out := out) (locals := locals)
-               (reset_env := reset_env) (rids := rids) (extras := extras)
+               (reset_env := reset_env) (extras := extras)
                (st_reset := st_reset) (st_n := st_n) (st_s := st_s).
         - reflexivity.
         - exact Hcons.
@@ -1765,7 +1791,8 @@ Module Type SECNLUSSTCTRANSLATION
         - exact Hout.
         - exact Hlocals.
         - reflexivity.
-        - exact Hresetenv.
+        - exact (proj2 (NAMEGEN.generate_node_env_inst_props
+                          _ _ _ _ _ Henvgen Hresetenv)).
         - exact Hextras.
         - exact Hnd.
         - exact Hfresh.
@@ -1815,12 +1842,13 @@ Module Type SECNLUSSTCTRANSLATION
         CloNL.wc_node P n ->
         generate_local_env_for_node n st = OK ((env, rec), st') ->
         get_node_aux n.(n_name) aux_names = Some (rec.(nclk), rec.(nrst)) ->
+        get_node_inst n.(n_name) aux_names = Some rec.(ninst) ->
         SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nsig ->
         SECSTCTYPING.generate_sys_signature G2 (translate_node n) env aux_names = OK ssig ->
         signatures_preserved nsig ssig.
     Proof.
       intros P G1 G2 n env aux_names rec st st' nsig ssig
-             Hcons Hscopefreshenv Hglobsec Hscoped Hwc Hlocal Hauxrec Hnsig Hssig.
+             Hcons Hscopefreshenv Hglobsec Hscoped Hwc Hlocal Hauxrec Hinstrec Hnsig Hssig.
       edestruct SECNLUSTYPINGCORRECTNESS.generate_node_sig_inv as
           (clk_id & rst_id & clk_type & rst_type & inp & out & locals & nconst & st_n
            & Haux & Hclk & Hrst & Hinp & Hout & Hlocals & Hnconst & Hnsigdef); eauto.
@@ -1828,7 +1856,7 @@ Module Type SECNLUSSTCTRANSLATION
           (clk_id' & rst_id' & clk_type' & rst_type' & inp' & out' & slocals & slasts
            & reset_env & rids & st_reset & sconst & st_s
            & Haux' & Hclk' & Hrst' & Hinp' & Hout' & Hslocals & Hslasts
-           & Hresetenv & Hsconst & Hssigdef); eauto.
+           & Hresetenv & Hrids & Hsconst & Hssigdef); eauto.
       simpl in Haux', Hinp', Hout', Hslocals, Hslasts, Hresetenv, Hsconst, Hssigdef.
       rewrite Hauxrec in Haux. inversion Haux. subst clk_id rst_id.
       rewrite Hauxrec in Haux'. inversion Haux'. subst clk_id' rst_id'.
@@ -1840,7 +1868,13 @@ Module Type SECNLUSSTCTRANSLATION
                     rec.(nclk) rec.(nrst) clk_type rst_type inp out locals
                     Hauxrec Hclk Hrst Hinp Hout Hlocals)
         as Hscopefresh.
-      destruct (generated_eqns_reset_extras _ _ _ _ (NoDup_var_defined_n_eqs n) Hresetenv)
+      rewrite Hinstrec in Hresetenv. inversion Hresetenv as [Hreseteq].
+      destruct (NAMEGEN.generate_local_env_for_node_inst_props
+                  _ _ _ _ _ Hlocal) as [Hinstinj0 Hinstrange0].
+      rewrite Hreseteq in Hinstinj0, Hinstrange0.
+      pose proof Hinstinj0 as Hinstinj. pose proof Hinstrange0 as Hinstrange.
+      destruct (generated_eqns_reset_extras _ _ _
+                  (NoDup_var_defined_n_eqs n) Hrids Hinstinj)
         as [extras [Hextras Hnd]].
       assert (Hrawpres :
                 preserves_on
@@ -1856,7 +1890,7 @@ Module Type SECNLUSSTCTRANSLATION
           unfold find_env in Hfindrst.
           destruct (Env.find x reset_env) as [rst_inst'|] eqn:Hrstfind; try discriminate.
           inversion Hfindrst; clear Hfindrst; subst.
-          edestruct generate_reset_env_range as (nrst_idx & Hrsteq); eauto.
+          edestruct Hinstrange as (nrst_idx & Hrsteq); eauto.
           destruct
             (SECNLUSTYPINGCORRECTNESS.local_node_scope_sec_range
                n st env rec st'
@@ -1875,7 +1909,7 @@ Module Type SECNLUSSTCTRANSLATION
                (env := env) (aux_names := aux_names)
                (clk_id := rec.(nclk)) (rst_id := rec.(nrst))
                (inp := inp) (out := out) (locals := locals)
-               (reset_env := reset_env) (rids := rids)
+               (reset_env := reset_env)
                (nconst := nconst) (sconst := sconst)
                (st_reset := st_reset) (st_n := st_n) (st_s := st_s); eauto.
       }
@@ -1981,6 +2015,13 @@ Module Type SECNLUSSTCTRANSLATION
         eapply NAMEGEN.generate_node_scoped_env'_preserves_get_node_aux; eauto.
         - pose proof (NAMEGEN.generate_local_env_for_node_name _ _ _ _ _ Hlocal) as Hrecname.
           unfold get_node_aux. simpl. rewrite <- Hrecname, ident_eqb_refl. reflexivity.
+        - eapply NAMEGEN.fresh_insert_node_env_finds_new; eauto.
+      }
+      assert (Hinstlocal : get_node_inst n.(n_name) aux_names = Some rec.(ninst)).
+      {
+        eapply NAMEGEN.generate_node_scoped_env'_preserves_get_node_inst; eauto.
+        - pose proof (NAMEGEN.generate_local_env_for_node_name _ _ _ _ _ Hlocal) as Hrecname.
+          unfold get_node_inst. simpl. rewrite <- Hrecname, ident_eqb_refl. reflexivity.
         - eapply NAMEGEN.fresh_insert_node_env_finds_new; eauto.
       }
       rewrite Hfindenv in Hfindlocal. inversion Hfindlocal. subst local_env.
@@ -2159,7 +2200,7 @@ Module Type SECNLUSSTCTRANSLATION
       edestruct SECSTCTYPINGCORRECTNESS.generate_sys_signature_inv as
           (clk_id' & rst_id' & clk_type' & rst_type' & inp' & out' & slocals & slasts
            & reset_env & rids & st_reset & sconst & st_s
-           & Haux' & Hclk' & Hrst' & Hinp' & Hout' & Hslocals & Hslasts & Hresetenv & Hsconst & Hssigdef); eauto.
+           & Haux' & Hclk' & Hrst' & Hinp' & Hout' & Hslocals & Hslasts & Hresetenv & Hrids & Hsconst & Hssigdef); eauto.
       rewrite Hnsigdef, Hssigdef. reflexivity.
     Qed.
 
@@ -2388,6 +2429,13 @@ Module Type SECNLUSSTCTRANSLATION
           eapply NAMEGEN.generate_node_scoped_env'_preserves_get_node_aux; eauto.
           - pose proof (NAMEGEN.generate_local_env_for_node_name _ _ _ _ _ Hlocal) as Hrecname.
             unfold get_node_aux. simpl. rewrite <- Hrecname, ident_eqb_refl. reflexivity.
+          - eapply NAMEGEN.fresh_insert_node_env_finds_new; eauto.
+        }
+        assert (Hinstlocal : get_node_inst n.(n_name) aux_names = Some rec.(ninst)).
+        {
+          eapply NAMEGEN.generate_node_scoped_env'_preserves_get_node_inst; eauto.
+          - pose proof (NAMEGEN.generate_local_env_for_node_name _ _ _ _ _ Hlocal) as Hrecname.
+            unfold get_node_inst. simpl. rewrite <- Hrecname, ident_eqb_refl. reflexivity.
           - eapply NAMEGEN.fresh_insert_node_env_finds_new; eauto.
         }
         unfold SECNLUSTYPING.generate_node_sig_scoped_env in Hnsig.

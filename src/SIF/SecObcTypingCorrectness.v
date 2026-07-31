@@ -464,7 +464,8 @@ Module Type SECOBCTYPINGCORRECTNESS
           /\ get_mappings_from_node stepm.(m_out) env = Some out
           /\ get_mappings_from_node stepm.(m_vars) env = Some locals
           /\ get_mappings_from_node c.(c_mems) env = Some lasts
-          /\ generate_state_env c.(c_objs) init_state = OK ((state_env, stids), st_state)
+          /\ get_node_inst c.(c_name) aux_names = Some state_env
+          /\ get_mappings (map fst c.(c_objs)) state_env = Some stids
           /\ generate_stmt_constraints G env state_env rst_type [clk_type]
                stepm.(m_body) st_state = OK (craw_step, st_step)
           /\ generate_stmt_constraints G env state_env rst_type []
@@ -502,7 +503,8 @@ Module Type SECOBCTYPINGCORRECTNESS
       eapply sec_bind_inv in Hgen as (out & st_out & Hout & Hgen).
       eapply sec_bind_inv in Hgen as (locals & st_locals & Hlocals & Hgen).
       eapply sec_bind_inv in Hgen as (lasts & st_lasts & Hlasts & Hgen).
-      eapply sec_bind2_inv in Hgen as (state_env & stids & st_state & Hstate & Hgen).
+      eapply sec_bind_inv in Hgen as (state_env & st_senv & Hstate & Hgen).
+      eapply sec_bind_inv in Hgen as (stids & st_state & Hstids & Hgen).
       eapply sec_bind_inv in Hgen as (craw_step & st_step & Hstepc & Hgen).
       eapply sec_bind_inv in Hgen as (craw_reset & st_raw & Hresetc & Hret).
       unfold option_to_sec in Haux.
@@ -532,10 +534,17 @@ Module Type SECOBCTYPINGCORRECTNESS
       unfold option_to_sec in Hlasts.
       destruct (get_mappings_from_node (c.(c_mems)) env) as [lasts0|] eqn:Hlasts0; try discriminate.
       inversion Hlasts; subst lasts0 st_lasts.
+      unfold option_to_sec in Hstate.
+      destruct (get_node_inst (c.(c_name)) aux_names) as [state_env0|] eqn:Hstate0;
+        try discriminate.
+      unfold ret in Hstate. inversion Hstate; subst state_env0.
+      unfold ret in Hstids.
+      unfold option_to_sec in Hstids.
+      destruct (get_mappings (map fst (c.(c_objs))) state_env) as [stids0|] eqn:Hstids0;
+        try discriminate.
+      unfold ret in Hstids. inversion Hstids; subst stids0.
       unfold ret in Hret. inversion Hret; subst.
-      exists clk_id, rst_id, packed_clk_type, packed_rst_type, stepm, resetm,
-             packed_inp, packed_out, locals, lasts, state_env, stids,
-             craw_step, craw_reset, st_state, st_step, st_res.
+      do 17 eexists.
       repeat split; eauto.
     Qed.
 

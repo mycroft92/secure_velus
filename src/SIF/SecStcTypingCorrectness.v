@@ -270,7 +270,8 @@ Module Type SECSTCTYPINGCORRECTNESS
         /\ get_mappings_from_node s.(SynStc.s_out) env = Some out
         /\ get_mappings_from_node s.(SynStc.s_vars) env = Some slocals
         /\ get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts
-        /\ generate_reset_env s.(SynStc.s_tcs) init_state = OK ((reset_env, rids), st_reset)
+        /\ get_node_inst s.(SynStc.s_name) aux_names = Some reset_env
+        /\ get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env = Some rids
         /\ generate_trconstrs_constraints G env reset_env clk_type rst_type s.(SynStc.s_tcs) st_reset = OK (sconst, st_s)
         /\ sig = {| s_name := s.(SynStc.s_name);
                     s_in := inp;
@@ -301,7 +302,8 @@ Module Type SECSTCTYPINGCORRECTNESS
     eapply sec_bind_inv in Hgen as (out & st_out & Hout & Hgen).
     eapply sec_bind_inv in Hgen as (slocals & st_locals & Hslocals & Hgen).
     eapply sec_bind_inv in Hgen as (slasts & st_lasts & Hslasts & Hgen).
-    eapply sec_bind2_inv in Hgen as (reset_env & rids & st_reset & Hresetenv & Hgen).
+    eapply sec_bind_inv in Hgen as (reset_env & st_renv & Hresetenv & Hgen).
+    eapply sec_bind_inv in Hgen as (rids & st_rids & Hrids & Hgen).
     eapply sec_bind_inv in Hgen as (sconst & st_s & Hsconst & Hret).
     unfold option_to_sec in Haux.
     destruct (get_node_aux (s.(SynStc.s_name)) aux_names) as [[clk_id0 rst_id0]|] eqn:Haux0; try discriminate.
@@ -325,8 +327,16 @@ Module Type SECSTCTYPINGCORRECTNESS
     destruct (get_mappings_from_node (s.(SynStc.s_lasts)) env) as [slasts0|] eqn:Hslasts0; try discriminate.
     inversion Hslasts; subst slasts0 st_lasts.
     unfold ret in Hret. inversion Hret; subst.
+    unfold option_to_sec in Hresetenv.
+    destruct (get_node_inst (s.(SynStc.s_name)) aux_names) as [reset_env0|] eqn:Hrenv0;
+      try discriminate.
+    unfold ret in Hresetenv. inversion Hresetenv; subst reset_env0.
+    unfold option_to_sec in Hrids.
+    destruct (get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env)
+      as [rids0|] eqn:Hrids0; try discriminate.
+    unfold ret in Hrids. inversion Hrids; subst rids0.
     exists clk_id, rst_id, packed_clk_type, packed_rst_type, packed_inp, packed_out,
-           slocals, slasts, reset_env, rids, st_reset, sconst, st_res.
+           slocals, slasts, reset_env, rids, st_rids, sconst, st_res.
     repeat split; eauto.
   Qed.
 
@@ -347,7 +357,7 @@ Module Type SECSTCTYPINGCORRECTNESS
         (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
          & reset_env & rids & st_reset & sconst & st_s
          & Haux & Hclk & Hrst & Hinp & Hout & Hslocals & Hslasts
-         & Hresetenv & Hsconst & Hsigdef); eauto.
+         & Hresetenv & Hrids & Hsconst & Hsigdef); eauto.
     subst sig.
     unfold signature_scope in Hin.
     repeat rewrite in_app_iff in Hin.
@@ -608,7 +618,7 @@ Module Type SECSTCTYPINGCORRECTNESS
   Lemma generated_sys_hidden_disjoint:
     forall all_nodes s env aux_names
            clk_id rst_id clk_type rst_type inp out slocals slasts
-           reset_env rids st_reset ty,
+           reset_env rids ty,
       generate_node_env all_nodes = OK (env, aux_names) ->
       get_node_aux s.(SynStc.s_name) aux_names = Some (clk_id, rst_id) ->
       Env.find clk_id env = Some clk_type ->
@@ -617,14 +627,16 @@ Module Type SECSTCTYPINGCORRECTNESS
       get_mappings_from_node s.(SynStc.s_out) env = Some out ->
       get_mappings_from_node s.(SynStc.s_vars) env = Some slocals ->
       get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts ->
-      generate_reset_env s.(SynStc.s_tcs) init_state = OK ((reset_env, rids), st_reset) ->
+      get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env = Some rids ->
+      (forall x ty', Env.find x reset_env = Some ty' ->
+                     exists n, ty' = Ids.gensym Ids.sec_reset n) ->
       In ty (SECSTCTYPING.hidden_sys_vars slocals slasts rids) ->
       ~ In ty (inp ++ out ++ [clk_type; rst_type]).
   Proof.
     intros all_nodes s env aux_names
            clk_id rst_id clk_type rst_type inp out slocals slasts
-           reset_env rids st_reset ty
-           Henv Haux Hclk Hrst Hinp Hout Hslocals Hslasts Hresetenv Hin Hvis.
+           reset_env rids ty
+           Henv Haux Hclk Hrst Hinp Hout Hslocals Hslasts Hrids Hrstrange Hin Hvis.
     assert (Hinj : env_injective env)
       by (eapply NAMEGEN.generate_node_env_injective; eauto).
     (* Every visible type is a [sec] gensym coming from a source name or
@@ -694,11 +706,8 @@ Module Type SECSTCTYPINGCORRECTNESS
         * rewrite Hx', Hj in Hxs.
           exact (sys_name_not_sec_gensym s _ j Hxs Logic.eq_refl).
     - (* a reset instance: prefixes differ *)
-      assert (Hrids : get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env
-                      = Some rids)
-        by (eapply SECSTCTYPING.generate_reset_env_rids; eauto).
       destruct (get_mappings_In _ _ _ _ Hrids Hin) as (o & _ & Hfindo).
-      destruct (generate_reset_env_range _ _ _ _ _ _ Hresetenv Hfindo) as (n2 & Hn2).
+      destruct (Hrstrange _ _ Hfindo) as (n2 & Hn2).
       destruct (NAMEGEN.generate_node_env_sec_range _ _ _ _ _ Henv Hx'find) as (n1 & Hn1).
       rewrite Hn1 in Hn2.
       apply gensym_injective in Hn2 as [Hpref _].
@@ -717,10 +726,19 @@ Module Type SECSTCTYPINGCORRECTNESS
       generate_node_env all_nodes = OK (env, aux_names) ->
       secglobal_scoped G ->
       Clo.wc_system P s ->
+      (** Properties of the shared instance environment, discharged at
+          the lockstep from the name generator: its values are
+          [sec_reset] gensyms, distinct instances get distinct types,
+          and a system resets each instance at most once. *)
+      (forall ie, get_node_inst s.(SynStc.s_name) aux_names = Some ie ->
+                  (forall x ty, Env.find x ie = Some ty ->
+                                exists n, ty = Ids.gensym Ids.sec_reset n)
+                  /\ env_injective ie) ->
+      NoDup (map fst (resets_of s.(SynStc.s_tcs))) ->
       SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
       signature_good sig.
   Proof.
-    intros all_nodes G P s env aux_names sig Henv Hglobsc Hwc Hsig.
+    intros all_nodes G P s env aux_names sig Henv Hglobsc Hwc Hinstprops Hndkeys Hsig.
     assert (Hinj : env_injective env)
       by (eapply NAMEGEN.generate_node_env_injective; eauto).
     pose proof (SECSTCTYPING.generate_sys_signature_scoped
@@ -729,7 +747,7 @@ Module Type SECSTCTYPINGCORRECTNESS
         (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
          & reset_env & rids & st_reset & sconst & st_s
          & Haux & Hclk & Hrst & Hinp & Hout & Hslocals & Hslasts
-         & Hresetenv & Hsconst & Hsigdef); eauto.
+         & Hresetenv & Hrids & Hsconst & Hsigdef); eauto.
     remember (SECSTCTYPING.hidden_sys_vars slocals slasts rids) as hid eqn:Hhid.
     subst sig.
     set (nsig := {| s_name := s.(SynStc.s_name);
@@ -742,7 +760,8 @@ Module Type SECSTCTYPINGCORRECTNESS
     (* The eliminated names never show up in the public scope. *)
     assert (Hdisj : forall ty, In ty hid -> ~ In ty (signature_scope nsig)).
     { intros ty Hinty. subst nsig. unfold signature_scope; cbn.
-      subst hid. eapply generated_sys_hidden_disjoint; eauto. }
+      subst hid. eapply generated_sys_hidden_disjoint; eauto.
+      intros z tz Hz. eapply (proj1 (Hinstprops _ Hresetenv)); eauto. }
 
     (* Name-level distinctness, transported to the transition constraints. *)
     assert (Hndvl : NoDup (variables s.(SynStc.s_tcs) ++ lasts_of s.(SynStc.s_tcs))).
@@ -780,14 +799,10 @@ Module Type SECSTCTYPINGCORRECTNESS
         [|exact (SynStc.s_lasts_in_tcs s)|exact Hinj|exact Hls0|exact Hls].
       pose proof s.(SynStc.s_nodup) as Hnd.
       apply NoDup_app_r, NoDup_app_r, NoDup_app_r in Hnd. exact Hnd. }
-    assert (Hrs : get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env
-                  = Some rids)
-      by (eapply SECSTCTYPING.generate_reset_env_rids; eauto).
+    pose proof Hrids as Hrs.
     assert (Hndrids : NoDup rids).
-    { eapply get_mappings_nodup_gen; [| |exact Hrs].
-      - eapply SECSTCTYPING.generate_reset_env_keys_nodup; eauto.
-      - intros x y tx ty Hx Hy Heq.
-        eapply generate_reset_env_injective; eauto. }
+    { eapply get_mappings_nodup_gen; [exact Hndkeys| |exact Hrs].
+      exact (proj2 (Hinstprops _ Hresetenv)). }
 
     (* Shape and well-formedness of the raw constraints. *)
     destruct (SECSTCTYPING.generate_trconstrs_constraints_targets
@@ -798,7 +813,7 @@ Module Type SECSTCTYPINGCORRECTNESS
     { intros x ty Hf. eapply NAMEGEN.generate_node_env_sec_range; eauto. }
     assert (Hrstrange : forall x ty, Env.find x reset_env = Some ty ->
                                      exists n, ty = Ids.gensym Ids.sec_reset n).
-    { intros x ty Hf. eapply generate_reset_env_range; eauto. }
+    { exact (proj1 (Hinstprops _ Hresetenv)). }
     assert (Hndtys : NoDup tys)
       by exact (targets_nodup env reset_env s.(SynStc.s_tcs) tys vs ls rids
                   Hinj Hsecrange Hrstrange Htys Hvs Hls Hrs Hndvl Hndrids).

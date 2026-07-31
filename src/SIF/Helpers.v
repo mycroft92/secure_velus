@@ -295,3 +295,18 @@ Proof.
   rewrite <- in_rev in Hin.
   eapply Forall_forall in Hall; eauto.
 Qed.
+
+
+(** A value stored in an environment appears among the environment's
+    values.  Used to show that every instance security type is hidden by
+    the generated signatures. *)
+
+Lemma env_find_in_elements_snd:
+  forall (env: Env.t ident) x ty,
+    Env.find x env = Some ty ->
+    In ty (map snd (Env.elements env)).
+Proof.
+  intros env x ty Hfind.
+  apply Env.elements_correct in Hfind.
+  apply in_map_iff. exists (x, ty). split; [reflexivity|exact Hfind].
+Qed.
