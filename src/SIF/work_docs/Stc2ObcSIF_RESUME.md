@@ -189,57 +189,34 @@ point the actuals are the real ones and the scopedness facts apply.
 The tree will be red for a stretch during step 1-3; commit only at green
 points.
 
-### 4a-bis. CHECKPOINT (paused mid-port)
+### 4a-bis. Items 1-3 are done (superseded checkpoint)
 
-`Stc2ObcSIF` is **green** at `fb936db`.  The in-progress port is parked,
-**not building**, on branch **`Stc2ObcSIF-wip-callsides`** (pushed).
+The port described above is complete and merged.  The earlier checkpoint
+here blamed the `HoutScope` assert for the mid-port failure; that was
+wrong — it was the `Hfr1` assert-`by`, where
+`call_subst_fresh_from_scope_fresh`'s five premises had to be supplied
+explicitly instead of via `eauto`.
 
-**Where it stopped.**  Rewriting `tccall_reset_preserv_eq` to take the
-NL hypothesis set
+What landed:
 
-```coq
-  Signature_consistent_obc_eq G1 G2 ->
-  SIG.secglobal_scope_fresh scope G1 ->
-  wc_env vars ->
-  CloStc.wc_trconstr P vars (SynStc.TcCall i xs ck true f es) ->
-  SECSTCTYPING.vars_env_scoped env vars scope ->
-  List.In clk_ty scope ->
-  (forall rinst, Env.find i reset_env = Some rinst -> List.In rinst scope) ->
-```
+- `tccall_reset_preserv_eq` and `tccall_unreset_preserv_rst` both take
+  the NLustre-Stc hypothesis set and **derive** `scope_fresh`,
+  `call_subst_scoped` and `call_subst_fresh` from the real actuals after
+  inverting the generator.  The callee side of the unreset case uses
+  `call_subst_fresh_reset_from_scope_fresh`, since the instance state
+  type is deliberately outside the scope and the plain version's
+  `st_scoped scope [sty]` is false there.
+- `tc_preserv_hyps_aug` is **deleted** — it had no content left.
+- Specialising `rawscope` to `raw_scope` made three further hypotheses
+  provable (`In rst_ty`, `In clk_ty`, and the reset-instance condition),
+  via `rst_ty_in_raw_scope`, `clk_ty_in_raw_scope` and
+  `reset_inst_in_raw_scope`.
+- Item 3, `generated_signature_fields_agree`.
 
-and derive `scope_fresh` / `call_subst_scoped` / `call_subst_fresh`
-in-proof, after inverting the generator, where the actuals are the real
-ones.  Four of the five derivations went in cleanly:
-
-- `Hsf` from `secglobal_scope_fresh` at `f`;
-- `Hckscope` from `assign_clk_type_scoped` + `wc_tc_clock_free_in_vars`;
-- `HinpScope` from `mmap_assign_exp_type_scoped` + `wc_call_args_scoped`;
-- `Hfr1` from `call_subst_fresh_from_scope_fresh`.
-
-**The residual.**  The `HoutScope` assert
-
-```coq
-  assert (HoutScope : Forall (fun z => List.In z scope) outtyp1).
-  { eapply (SC.mmap_find_env_scoped env scope (x :: xs') outtyp1);
-      [|exact Hout1].
-    intros y Hy.
-    eapply (SECSTCTYPING.wc_call_outs_scoped env vars scope sub ck
-              (SynStc.s_out sy) (x :: xs')); eauto. }
-```
-
-appears not to close — the later goal `Forall (fun x => In x scope)
-outtyp1` has no matching assumption even under `assumption`, which points
-at an unmet obligation inside the `wc_call_outs_scoped` application
-(likely the `Forall2` argument not being picked up by `eauto`, or the
-`sub`/`s_out sy` instantiation).  **Debug that application first** — the
-statement itself is right; compare against the template use at
-`SecSTCTyping.v:829`, which is the same call with `Houttyp` supplied
-explicitly.
-
-**Then, in order:** the same rewrite for `tccall_unreset_preserv_rst`,
-then delete `tc_preserv_hyps_aug` and re-signature `tc_preserv_aug`,
-`tcs_preserv_aug`, `class_preserv_raw`, `class_preserv_signature`, then
-the assembly theorem.
+Recurring gotcha: `eauto` / `easy` after `eapply` is unreliable in this
+file once the goal count shifts — name the arguments instead.  Two
+scripted replaces also hit the wrong lemma because hypothesis prefixes
+repeat; check `s.count` before replacing.
 
 ### 4b. Item 3 — `signature_fields_agree`
 
