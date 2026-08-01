@@ -4291,33 +4291,6 @@ Module Type SECSTCOBCTRANSLATION
     apply Signature_consistent_obc_full_nil.
   Qed.
 
-  (** ** The scoped-environment variant
-
-      Both scoped generators look their environment up by the same key --
-      a translated system's class name is the system's name -- so they
-      always run on the same [env].  That is what makes this variant a
-      short reduction to the abstract one rather than a second
-      induction over the freshness bookkeeping. *)
-
-  Lemma scoped_env_generators_share_env:
-    forall G1 G2 s envs aux stcsig obcsig,
-      SECSTCTYPING.generate_sys_signature_scoped_env G1 s envs aux = OK stcsig ->
-      SECOBCTYPING.generate_class_signature_scoped_env G2 (translate_system s)
-        envs aux = OK obcsig ->
-      exists env,
-        SECSTCTYPING.generate_sys_signature G1 s env aux = OK stcsig
-        /\ SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux
-           = OK obcsig.
-  Proof.
-    intros G1 G2 s envs aux stcsig obcsig Hstc Hobc.
-    unfold SECSTCTYPING.generate_sys_signature_scoped_env in Hstc.
-    unfold SECOBCTYPING.generate_class_signature_scoped_env in Hobc.
-    simpl in Hobc.
-    destruct (find_node_env s.(SynStc.s_name) envs) as [env|] eqn:Henv;
-      try discriminate.
-    exists env. split; assumption.
-  Qed.
-
   (** This is the main lockstep induction for the translation layer.  It
       runs the STC and Obc signature generators over the same
       node-scoped environment, proves that each fresh signature pair is
@@ -4545,6 +4518,59 @@ Module Type SECSTCOBCTRANSLATION
     - apply SIG.secglobal_scope_bounded_above_nil.
     - exact Hstc.
     - exact Hobc.
+  Qed.
+
+  Corollary generate_all_signatures_consistent_obc:
+    forall all_nodes systems envs aux_names G1 G2,
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) all_nodes systems ->
+      CloStc.wc_program systems ->
+      WD.Well_scheduled systems ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
+        = OK G1 ->
+      SECOBCTYPING.generate_all_class_signatures_scoped_env (translate systems)
+        envs aux_names = OK G2 ->
+      Signature_consistent_obc_full G1 G2.
+  Proof.
+    intros all_nodes systems envs aux_names G1 G2 Henvsgen Hnames Hwc Hsch Hstc Hobc.
+    destruct (generate_all_signatures_consistent_obc_scoped
+                all_nodes systems envs aux_names G1 G2
+                Henvsgen Hnames Hwc Hsch Hstc Hobc) as [Hcons _].
+    exact Hcons.
+  Qed.
+
+  (** This is the public lookup theorem exported by the translation
+      layer, the Stc-to-Obc counterpart of NLustre's
+      [generated_program_signatures_preserved_global].  Once the two
+      global signature environments are generated from the same scoped
+      naming data, every STC signature lookup has a matching Obc class
+      signature lookup with the same visible fields and the
+      call-preservation facts needed later. *)
+
+  Corollary generated_program_signatures_preserved_obc_global:
+    forall all_nodes systems (G1 G2: SIG.secglobal)
+           (envs: node_scoped_env) (aux_names: list node_aux_names),
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) all_nodes systems ->
+      CloStc.wc_program systems ->
+      WD.Well_scheduled systems ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
+        = OK G1 ->
+      SECOBCTYPING.generate_all_class_signatures_scoped_env (translate systems)
+        envs aux_names = OK G2 ->
+      forall f stcsig,
+        SIG.find_signature f G1 = Some stcsig ->
+        exists obcsig,
+          SIG.find_signature f G2 = Some obcsig
+          /\ Signature_head_consistent_obc stcsig obcsig.
+  Proof.
+    intros all_nodes systems G1 G2 envs aux_names
+           Henvsgen Hnames Hwc Hsch Hstc Hobc f stcsig Hfindsig.
+    pose proof (generate_all_signatures_consistent_obc
+                  all_nodes systems envs aux_names G1 G2
+                  Henvsgen Hnames Hwc Hsch Hstc Hobc) as Hcons.
+    destruct (Hcons f stcsig Hfindsig) as (obcsig & Hfindobc & Hhead).
+    exists obcsig. split; assumption.
   Qed.
 
 End SECSTCOBCTRANSLATION.
