@@ -45,6 +45,9 @@ From Velus Require Import SIF.SecNLusNonInterference.
 From Velus Require Import SIF.SecSTCTyping.
 From Velus Require Import SIF.SecStcTypingCorrectness.
 From Velus Require Import SIF.SecNLusStcTranslation.
+From Velus Require Import SIF.SecObcTyping.
+From Velus Require Import SIF.SecObcTypingCorrectness.
+From Velus Require Import SIF.SecStcObcTranslation.
 From Velus Require Import SIF.SecStcNonInterference.
 From Velus Require Import Clocks.
 From compcert Require Import common.Errors.
@@ -119,7 +122,19 @@ Module Type SECOBCNONINTERFERENCE
       can hold of. *)
   (ExtSch : EXT_STCSCHEDULER Ids Op CE.Syn Stc.Syn)
   (Sched : STCSCHEDULE Ids Op OpAux Str CE Stc.Syn Stc.Syst Stc.Ord Stc.Sem
-             Stc.Typ Stc.Var Stc.Last Stc.Def Stc.Clo Stc.Free Stc.Wdef ExtSch).
+             Stc.Typ Stc.Var Stc.Last Stc.Def Stc.Clo Stc.Free Stc.Wdef ExtSch)
+  (** The Stc-to-Obc signature bridge, so that a class's security witness
+      can name the Obc signature the way [system_security] names the Stc
+      one.  Taken as a parameter, not re-derived. *)
+  (SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC Obc.Syn SIG)
+  (SECOBCTYPINGCORRECTNESS :
+     SECOBCTYPINGCORRECTNESS Ids Op OpAux SC Obc.Syn Lat SecT SIG SIGPROOFS
+       SECOBCTYPING)
+  (StcObcBridge :
+     SECSTCOBCTRANSLATION Ids Op OpAux SC CE.Syn Stc.Syn Obc.Syn Lat SecT SIG
+       SIGPROOFS CE.IsF CE.Clo SECCETYPING Stc.Last Stc.Var Stc.Def Stc.Syst
+       Stc.Ord Stc.Free Stc.Clo SECSTCTYPING NL.Syn NAMEGEN Stc.Wdef
+       SECSTCTYPINGCORRECTNESS TransObc SECOBCTYPING SECOBCTYPINGCORRECTNESS).
 
   Definition ground_instantiation : Type := NLusSupport.ground_instantiation.
 
@@ -345,6 +360,160 @@ Module Type SECOBCNONINTERFERENCE
       [exact Hins|exact Hins'|exact Habs|exact Hlowin].
   Qed.
 
+  (** ** Reading the statement off the Obc class
+
+      The theorem above is indexed by the Stc system's interface.  That
+      interface is literally the translated class's [step] method's,
+      [translate_system] taking [m_in := idty s_in] and [m_out := idty
+      s_out] and [schedule_system] copying both, so the conclusion can be
+      stated over the class the compiler actually emits without assuming
+      anything new. *)
+
+  Lemma translated_class_step_method:
+    forall sys,
+      Obc.Syn.find_method step
+        (TransObc.translate_system (Sched.schedule_system sys)).(Obc.Syn.c_methods)
+      = Some (TransObc.step_method (Sched.schedule_system sys)).
+  Proof.
+    intro sys. apply TransObc.exists_step_method.
+  Qed.
+
+  Lemma translated_class_step_interface:
+    forall sys stepm,
+      Obc.Syn.find_method step
+        (TransObc.translate_system (Sched.schedule_system sys)).(Obc.Syn.c_methods)
+      = Some stepm ->
+      List.map fst stepm.(Obc.Syn.m_in) = List.map fst (Stc.Syn.s_in sys)
+      /\ List.map fst stepm.(Obc.Syn.m_out) = List.map fst (Stc.Syn.s_out sys).
+  Proof.
+    intros sys stepm Hfind.
+    rewrite translated_class_step_method in Hfind.
+    inversion Hfind; subst stepm.
+    split; simpl; apply map_fst_idty.
+  Qed.
+
+  (** The Obc-facing statement proper: both stream hypotheses and the
+      conclusion are indexed by the emitted class's [step] method. *)
+
+  Corollary translated_class_noninterference_outputs_step:
+    forall all_nodes Gsrc Gstc envs aux_names sys cls stepm ty_env
+           dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
+      cls = TransObc.translate_system (Sched.schedule_system sys) ->
+      Obc.Syn.find_method step cls.(Obc.Syn.c_methods) = Some stepm ->
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
+      NL.Clo.wc_global all_nodes ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+        = OK Gsrc ->
+      NLCaus.nl_global_causal all_nodes ->
+      find_node_env (Stc.Syn.s_name sys) envs = Some ty_env ->
+      StcNI.system_security all_nodes Gsrc Gstc envs aux_names sys
+        dlt_sig dlt_raw ->
+      translated_class_behavior all_nodes sys xss yss ins outs ->
+      translated_class_behavior all_nodes sys xss' yss' ins' outs' ->
+      eq_str (clock_of xss) (clock_of xss') ->
+      (forall k i, nth_error (xss k) i = Some absent
+                   <-> nth_error (xss' k) i = Some absent) ->
+      obc_stream_low_eq ty_env dlt_sig t
+        (List.map fst stepm.(Obc.Syn.m_in)) ins ins' ->
+      obc_stream_low_eq ty_env dlt_sig t
+        (List.map fst stepm.(Obc.Syn.m_out)) outs outs'.
+  Proof.
+    intros all_nodes Gsrc Gstc envs aux_names sys cls stepm ty_env
+           dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs'
+           Hcls Hstepm Henvsgen Hord Hwc Hallsrc Hcaus Hfindenv
+           Hsyssec Hbeh Hbeh' Hclock_eq Habs Hlowin.
+    subst cls.
+    destruct (translated_class_step_interface sys stepm Hstepm) as (Hin & Hout).
+    rewrite Hout. rewrite Hin in Hlowin.
+    eapply translated_class_noninterference_outputs_obc;
+      [exact Henvsgen|exact Hord|exact Hwc|exact Hallsrc|exact Hcaus
+      |exact Hfindenv|exact Hsyssec|exact Hbeh|exact Hbeh'|exact Hclock_eq
+      |exact Habs|exact Hlowin].
+  Qed.
+
+  (** ** The class-level security witness
+
+      The mirror of [StcNI.system_security], one layer down.  Where that
+      one exhibits the NLustre node behind a system together with the
+      NLustre-to-Stc head consistency, this one exhibits the system
+      behind a class together with the two facts the rest of the chain
+      supplies: the scheduling step -- signature preservation from the
+      unscheduled accumulator [Gstc] to the scheduled one [Gstcs], which
+      is what [generated_signatures_preserved_by_scheduling] produces --
+      and the Stc-to-Obc head consistency out of [Gstcs] into [Gobc].
+
+      It is indexed by the system rather than by the class because a
+      class does not determine its system: [schedule_tcs] is not
+      injective, so two differently-ordered bodies can translate to the
+      same class.  Every lookup is nevertheless the class's own, the
+      translation preserving names. *)
+
+  Definition class_security
+    (all_nodes : NL.Syn.global) (Gsrc Gstc Gstcs Gobc : secglobal)
+    (envs : node_scoped_env) (aux_names : list node_aux_names)
+    (sys : Stc.Syn.system) (dlt_sig dlt_raw : ground_instantiation) : Prop :=
+    exists ssig ssigs osig,
+      StcNI.system_security all_nodes Gsrc Gstc envs aux_names sys
+        dlt_sig dlt_raw
+      /\ SIG.find_signature (Stc.Syn.s_name sys) Gstc = Some ssig
+      /\ SIG.find_signature (Stc.Syn.s_name sys) Gstcs = Some ssigs
+      /\ signatures_preserved ssig ssigs
+      /\ SIG.find_signature (Stc.Syn.s_name sys) Gobc = Some osig
+      /\ StcObcBridge.Signature_head_consistent_obc ssigs osig.
+
+  Lemma class_security_system:
+    forall all_nodes Gsrc Gstc Gstcs Gobc envs aux_names sys dlt_sig dlt_raw,
+      class_security all_nodes Gsrc Gstc Gstcs Gobc envs aux_names sys
+        dlt_sig dlt_raw ->
+      StcNI.system_security all_nodes Gsrc Gstc envs aux_names sys
+        dlt_sig dlt_raw.
+  Proof.
+    intros all_nodes Gsrc Gstc Gstcs Gobc envs aux_names sys dlt_sig dlt_raw
+           (ssig & ssigs & osig & Hsys & _).
+    exact Hsys.
+  Qed.
+
+  (** ** The final Obc theorem
+
+      Same content as [translated_class_noninterference_outputs_step],
+      stated against the class-level witness. *)
+
+  Theorem class_noninterference_outputs:
+    forall all_nodes Gsrc Gstc Gstcs Gobc envs aux_names sys cls stepm ty_env
+           dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
+      cls = TransObc.translate_system (Sched.schedule_system sys) ->
+      Obc.Syn.find_method step cls.(Obc.Syn.c_methods) = Some stepm ->
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
+      NL.Clo.wc_global all_nodes ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+        = OK Gsrc ->
+      NLCaus.nl_global_causal all_nodes ->
+      find_node_env (Stc.Syn.s_name sys) envs = Some ty_env ->
+      class_security all_nodes Gsrc Gstc Gstcs Gobc envs aux_names sys
+        dlt_sig dlt_raw ->
+      translated_class_behavior all_nodes sys xss yss ins outs ->
+      translated_class_behavior all_nodes sys xss' yss' ins' outs' ->
+      eq_str (clock_of xss) (clock_of xss') ->
+      (forall k i, nth_error (xss k) i = Some absent
+                   <-> nth_error (xss' k) i = Some absent) ->
+      obc_stream_low_eq ty_env dlt_sig t
+        (List.map fst stepm.(Obc.Syn.m_in)) ins ins' ->
+      obc_stream_low_eq ty_env dlt_sig t
+        (List.map fst stepm.(Obc.Syn.m_out)) outs outs'.
+  Proof.
+    intros all_nodes Gsrc Gstc Gstcs Gobc envs aux_names sys cls stepm ty_env
+           dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs'
+           Hcls Hstepm Henvsgen Hord Hwc Hallsrc Hcaus Hfindenv
+           Hclssec Hbeh Hbeh' Hclock_eq Habs Hlowin.
+    eapply translated_class_noninterference_outputs_step;
+      [exact Hcls|exact Hstepm|exact Henvsgen|exact Hord|exact Hwc|exact Hallsrc
+      |exact Hcaus|exact Hfindenv
+      |eapply class_security_system; exact Hclssec
+      |exact Hbeh|exact Hbeh'|exact Hclock_eq|exact Habs|exact Hlowin].
+  Qed.
+
 End SECOBCNONINTERFERENCE.
 
 Module SecObcNonInterference
@@ -418,16 +587,30 @@ Module SecObcNonInterference
   (ExtSch : EXT_STCSCHEDULER Ids Op CE.Syn Stc.Syn)
   (Sched : STCSCHEDULE Ids Op OpAux Str CE Stc.Syn Stc.Syst Stc.Ord Stc.Sem
              Stc.Typ Stc.Var Stc.Last Stc.Def Stc.Clo Stc.Free Stc.Wdef ExtSch)
+  (** The Stc-to-Obc signature bridge, so that a class's security witness
+      can name the Obc signature the way [system_security] names the Stc
+      one.  Taken as a parameter, not re-derived. *)
+  (SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC Obc.Syn SIG)
+  (SECOBCTYPINGCORRECTNESS :
+     SECOBCTYPINGCORRECTNESS Ids Op OpAux SC Obc.Syn Lat SecT SIG SIGPROOFS
+       SECOBCTYPING)
+  (StcObcBridge :
+     SECSTCOBCTRANSLATION Ids Op OpAux SC CE.Syn Stc.Syn Obc.Syn Lat SecT SIG
+       SIGPROOFS CE.IsF CE.Clo SECCETYPING Stc.Last Stc.Var Stc.Def Stc.Syst
+       Stc.Ord Stc.Free Stc.Clo SECSTCTYPING NL.Syn NAMEGEN Stc.Wdef
+       SECSTCTYPINGCORRECTNESS TransObc SECOBCTYPING SECOBCTYPINGCORRECTNESS)
   <: SECOBCNONINTERFERENCE
        Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc TransNL
        NLStcCorr SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
        SECNLUSTYPING SECNLUSTYPINGCORRECTNESS NLusSupport NLusNI
        SECSTCTYPING SECSTCTYPINGCORRECTNESS NLusStcBridge StcNI Obc
-       TransObc Corres StcObcCorr ExtSch Sched.
+       TransObc Corres StcObcCorr ExtSch Sched SECOBCTYPING
+       SECOBCTYPINGCORRECTNESS StcObcBridge.
   Include SECOBCNONINTERFERENCE
             Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc TransNL
             NLStcCorr SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
             SECNLUSTYPING SECNLUSTYPINGCORRECTNESS NLusSupport NLusNI
             SECSTCTYPING SECSTCTYPINGCORRECTNESS NLusStcBridge StcNI Obc
-            TransObc Corres StcObcCorr ExtSch Sched.
+            TransObc Corres StcObcCorr ExtSch Sched SECOBCTYPING
+            SECOBCTYPINGCORRECTNESS StcObcBridge.
 End SecObcNonInterference.
