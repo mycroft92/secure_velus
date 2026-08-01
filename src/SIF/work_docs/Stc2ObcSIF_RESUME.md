@@ -302,11 +302,20 @@ Three things about the shape are worth keeping.
   -- `outs` is the pointwise image of `yss` under `value_to_option` -- so
   low-equivalence crosses them in both directions.  Inputs are not:
   `eq_if_present absent o` holds for *every* `o`, so an Obc input slot
-  whose dataflow value is absent carries no information at all.  Recovering
-  the dataflow-level hypothesis therefore needs the two runs to agree on
-  which inputs are present.  That is a premise of the Obc-level corollary,
-  of the same nature as the `eq_str` premise the Stc theorem already
-  carries, and is *not* derived.
+  whose dataflow value is absent carries no information at all.
+  Recovering the dataflow-level hypothesis therefore needs
+  `same_low_presence`: the two runs agree on which of their *low* inputs
+  are present.
+
+  This is **not** an extra demand on the program, and not new to this
+  layer.  NLustre and Stc streams carry `value`, so `env_low_eq`'s
+  `Env.find x R = Env.find x R'` and `tuple_stream_low_eq`'s `v = v'`
+  already force low positions to agree on presence: the requirement sits
+  *inside* the low-equivalence relation there rather than beside it.  Obc
+  streams carry `option val`, `eq_if_present` discards absence, and so the
+  same content has to be written down separately.  It is guarded by
+  `low_var` for exactly that reason -- quantifying over all positions
+  instead would be strictly stronger than what the layers above assume.
 - **`class_security` is indexed by the system, not by the class.**  A class
   does not determine its system: `schedule_tcs` is not injective, so two
   differently-ordered bodies translate to the same class.  Every signature

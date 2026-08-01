@@ -165,6 +165,28 @@ Module Type SECOBCNONINTERFERENCE
       nth_error (ins' k) i = Some (Some v') ->
       v = v'.
 
+  (** Two runs agreeing on which of their *low* inputs are present.
+
+      This is not a new demand on the program.  At NLustre and Stc the
+      streams carry [value], so [env_low_eq]'s [Env.find x R = Env.find x
+      R'] and [tuple_stream_low_eq]'s [v = v'] already force low
+      positions to agree on presence -- the requirement is inside the
+      low-equivalence relation there, not beside it.  Obc streams carry
+      [option val] and [eq_if_present] discards absence entirely, so the
+      same content can no longer be carried by the relation and has to be
+      written down separately.  It is guarded by [low_var] for exactly
+      that reason: anything more would be stronger than what the layers
+      above already assume. *)
+
+  Definition same_low_presence
+    (ty_env : local_sec_env) (dlt : ground_instantiation) (t : Lat.t)
+    (xs : list ident) (xss xss' : stream (list value)) : Prop :=
+    forall k i x,
+      nth_error xs i = Some x ->
+      NLusSupport.low_var ty_env dlt t x ->
+      (nth_error (xss k) i = Some absent
+       <-> nth_error (xss' k) i = Some absent).
+
   (** ** What an Obc behaviour of a translated class is
 
       The dataflow behaviour behind it, plus the two stream
@@ -263,8 +285,7 @@ Module Type SECOBCNONINTERFERENCE
     forall ty_env dlt t xs xss xss' ins ins',
       (forall n, Forall2 StcObcCorr.eq_if_present (xss n) (ins n)) ->
       (forall n, Forall2 StcObcCorr.eq_if_present (xss' n) (ins' n)) ->
-      (forall k i, nth_error (xss k) i = Some absent
-                   <-> nth_error (xss' k) i = Some absent) ->
+      same_low_presence ty_env dlt t xs xss xss' ->
       obc_stream_low_eq ty_env dlt t xs ins ins' ->
       StcNI.tuple_stream_low_eq ty_env dlt t xs xss xss'.
   Proof.
@@ -272,8 +293,10 @@ Module Type SECOBCNONINTERFERENCE
            k i x v v' Hnthx Hlowx Hnth Hnth'.
     destruct v as [|c]; destruct v' as [|c'].
     - reflexivity.
-    - apply Habs in Hnth. rewrite Hnth in Hnth'. discriminate.
-    - apply Habs in Hnth'. rewrite Hnth in Hnth'. discriminate.
+    - apply (Habs k i x Hnthx Hlowx) in Hnth.
+      rewrite Hnth in Hnth'. discriminate.
+    - apply (Habs k i x Hnthx Hlowx) in Hnth'.
+      rewrite Hnth in Hnth'. discriminate.
     - destruct (SecT.Forall2_nth_error_inv
                   _ _ StcObcCorr.eq_if_present (xss k) (ins k) i
                   (present c) (Hins k) Hnth) as (o & Hnto & Ho).
@@ -347,8 +370,8 @@ Module Type SECOBCNONINTERFERENCE
       translated_class_behavior all_nodes sys xss yss ins outs ->
       translated_class_behavior all_nodes sys xss' yss' ins' outs' ->
       eq_str (clock_of xss) (clock_of xss') ->
-      (forall k i, nth_error (xss k) i = Some absent
-                   <-> nth_error (xss' k) i = Some absent) ->
+      same_low_presence ty_env dlt_sig t
+        (List.map fst (Stc.Syn.s_in sys)) xss xss' ->
       obc_stream_low_eq ty_env dlt_sig t
         (List.map fst (Stc.Syn.s_in sys)) ins ins' ->
       obc_stream_low_eq ty_env dlt_sig t
@@ -420,8 +443,8 @@ Module Type SECOBCNONINTERFERENCE
       translated_class_behavior all_nodes sys xss yss ins outs ->
       translated_class_behavior all_nodes sys xss' yss' ins' outs' ->
       eq_str (clock_of xss) (clock_of xss') ->
-      (forall k i, nth_error (xss k) i = Some absent
-                   <-> nth_error (xss' k) i = Some absent) ->
+      same_low_presence ty_env dlt_sig t
+        (List.map fst stepm.(Obc.Syn.m_in)) xss xss' ->
       obc_stream_low_eq ty_env dlt_sig t
         (List.map fst stepm.(Obc.Syn.m_in)) ins ins' ->
       obc_stream_low_eq ty_env dlt_sig t
@@ -433,7 +456,8 @@ Module Type SECOBCNONINTERFERENCE
            Hsyssec Hbeh Hbeh' Hclock_eq Habs Hlowin.
     subst cls.
     destruct (translated_class_step_interface sys stepm Hstepm) as (Hin & Hout).
-    rewrite Hout. rewrite Hin in Hlowin.
+    rewrite Hout. rewrite Hin in Hlowin. unfold same_low_presence in Habs.
+    rewrite Hin in Habs.
     eapply translated_class_noninterference_outputs_obc;
       [exact Henvsgen|exact Hord|exact Hwc|exact Hallsrc|exact Hcaus
       |exact Hfindenv|exact Hsyssec|exact Hbeh|exact Hbeh'|exact Hclock_eq
@@ -563,8 +587,8 @@ Module Type SECOBCNONINTERFERENCE
       translated_class_behavior all_nodes sys xss yss ins outs ->
       translated_class_behavior all_nodes sys xss' yss' ins' outs' ->
       eq_str (clock_of xss) (clock_of xss') ->
-      (forall k i, nth_error (xss k) i = Some absent
-                   <-> nth_error (xss' k) i = Some absent) ->
+      same_low_presence ty_env dlt_sig t
+        (List.map fst stepm.(Obc.Syn.m_in)) xss xss' ->
       obc_stream_low_eq ty_env dlt_sig t
         (List.map fst stepm.(Obc.Syn.m_in)) ins ins' ->
       obc_stream_low_eq ty_env dlt_sig t
