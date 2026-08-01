@@ -232,47 +232,18 @@ Module Type SECSTCTYPING
         + eapply IH; eauto.
     Qed.
 
-      Lemma get_mappings_nodup:
-        forall xs tys,
-          NoDup xs ->
-          env_injective env ->
-          get_mappings xs env = Some tys ->
-          NoDup tys.
+    (** The shared lemma, read at this section's [env]. *)
+
+    Lemma get_mappings_nodup:
+      forall xs tys,
+        NoDup xs ->
+        env_injective env ->
+        get_mappings xs env = Some tys ->
+        NoDup tys.
     Proof.
-      induction xs as [|x xs IH]; intros tys Hnd Hinj Hmap.
-      - simpl in Hmap. inversion Hmap. constructor.
-      - simpl in Hmap.
-        destruct (Env.find x env) as [xty|] eqn:Hfind; try discriminate.
-        destruct (get_mappings xs env) as [tys'|] eqn:Htail; try discriminate.
-          inversion Hmap; subst tys.
-          apply NoDup_cons.
-          + intro Hin.
-            apply NoDup_cons_iff in Hnd as [Hnin _].
-            assert (exists y, In y xs /\ Env.find y env = Some xty).
-            {
-              clear IH Hmap.
-              revert tys' Htail Hin.
-              induction xs as [|y ys IHys]; intros tys' Htail Hin.
-              - simpl in Htail. inversion Htail; subst tys'. inversion Hin.
-              - simpl in Htail.
-                destruct (Env.find y env) as [yty|] eqn:Hyfind; try discriminate.
-                destruct (get_mappings ys env) as [tys''|] eqn:Hys; try discriminate.
-                inversion Htail; subst tys'.
-                simpl in Hin.
-                destruct Hin as [Heq|Hin'].
-                * inversion Heq; subst yty. exists y. split; [left; reflexivity|exact Hyfind].
-                * specialize (IHys (fun Hinys => Hnin (or_intror Hinys)) _ eq_refl Hin')
-                    as (z & Hinz & Hzfind).
-                  exists z. split; [right; exact Hinz|exact Hzfind].
-            }
-            destruct H as (y & Hiny & Hyfind).
-            assert (x = y) by (eapply Hinj; eauto).
-            subst y. contradiction.
-          + apply IH.
-            * now apply NoDup_cons_iff in Hnd.
-            * exact Hinj.
-            * exact eq_refl.
-      Qed.
+      intros xs tys Hnd Hinj Hmap.
+      eapply get_mappings_nodup_gen; eauto.
+    Qed.
 
     Lemma mmap_find_env_inv:
       forall xs tys st st',
