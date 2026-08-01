@@ -1541,15 +1541,20 @@ Module Type SECSTCOBCTRANSLATION
         reset method's constraint on it. *)
 
     Lemma tccall_unreset_preserv_rst:
-      forall scope memset clkvars i xs ck f es ckty sty
+      forall scope vars P memset clkvars i xs ck f es ckty sty
              nconst sconst st1 st1' st2 st2',
         SECCETYPING.assign_clk_type env clk_ty ck = Some ckty ->
         Env.find i reset_env = Some sty ->
         Signature_consistent_obc_full G1 G2 ->
-        (forall n1 n2 inptyp1 inptyp2 outtyp,
-            SIG.find_signature f G1 = Some n1 ->
-            SIG.find_signature f G2 = Some n2 ->
-            call_side_conditions scope n1 n2 inptyp1 inptyp2 ckty [rst_ty] sty outtyp) ->
+        SIG.secglobal_scope_fresh scope G1 ->
+        secglobal_scope_sec G2 ->
+        wc_env vars ->
+        CloStc.wc_trconstr P vars (SynStc.TcCall i xs ck false f es) ->
+        SECSTCTYPING.vars_env_scoped env vars scope ->
+        List.In clk_ty scope ->
+        List.In rst_ty scope ->
+        ~ List.In sty scope ->
+        (exists n, sty = Ids.gensym Ids.sec_reset n) ->
         SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
           (SynStc.TcCall i xs ck false f es) st1 = OK (nconst, st1') ->
         generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
@@ -1558,8 +1563,10 @@ Module Type SECSTCOBCTRANSLATION
         xs <> [] ->
         preserves_on scope nconst (sconst ++ [([rst_ty], [sty])]).
     Proof.
-      intros scope memset clkvars i xs ck f es ckty sty
-             nconst sconst st1 st1' st2 st2' Hckopt Hsty Hcons Hside Hstc Hobc Hxs.
+      intros scope vars P memset clkvars i xs ck f es ckty sty
+             nconst sconst st1 st1' st2 st2'
+             Hckopt Hsty Hcons Hscopefresh Hg2sec Hwcenv Hwc Hvars
+             Hclkin Hrstin Hstynotin Hstysec Hstc Hobc Hxs.
       unfold translate_tc in Hobc.
       rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
       rewrite (generate_stmt_constraints_Control_assign
@@ -1593,13 +1600,63 @@ Module Type SECSTCOBCTRANSLATION
       { unfold SC.find_env in Hsty'. rewrite Hsty in Hsty'.
         unfold ret in Hsty'. now inversion Hsty'. }
       subst sty'.
-      destruct (Hcons f n1 Hf1) as (n2' & Hf2' & _ & _ & Hpresrst & _).
+      destruct (Hcons f n1 Hf1) as (n2' & Hf2' & _ & Hfields & Hpresrst & _).
       rewrite Hf2 in Hf2'. inversion Hf2'; subst n2'.
+      (* the call side conditions, from the real actuals *)
+      assert (Hsf : SIG.scope_fresh scope n1) by (eapply Hscopefresh; eauto).
+      inversion Hwc as [| | |i2 xs2 ck2 rst2 f2 es2 sy P' sub
+                            Hfindnode Hinputs Houtputs]; subst.
+      assert (Hckscope : st_scoped scope ckty).
+      { eapply (SECCETYPING.assign_clk_type_scoped env clk_ty scope ck ckty);
+          [exact Hclkin| |exact Hckopt].
+        intros z Hz. eapply Hvars.
+        eapply (SECSTCTYPING.wc_tc_clock_free_in_vars P vars i (x :: xs') ck false f es);
+          eauto. }
+      assert (HinpScope : Forall (st_scoped scope) inptyp1).
+      { eapply (SECSTCTYPING.mmap_assign_exp_type_scoped env scope es inptyp1);
+          [|exact Hinp1].
+        eapply (SECSTCTYPING.wc_call_args_scoped env vars scope sub ck
+                  (SynStc.s_in sy) es); eauto. }
+      assert (HoutScope : Forall (fun z => List.In z scope) outtyp1).
+      { eapply (SC.mmap_find_env_scoped env scope (x :: xs') outtyp1);
+          [|exact Hout1].
+        intros y Hy.
+        eapply (SECSTCTYPING.wc_call_outs_scoped env vars scope sub ck
+                  (SynStc.s_out sy) (x :: xs')); eauto. }
+      assert (Hincl2 : Forall2 (fun t1 t2 => forall z, List.In z t2 -> List.In z t1)
+                         inptyp1 inptyp2)
+        by (eapply translate_args_type_incl; eauto).
+      assert (HinpScope2 : Forall (st_scoped scope) inptyp2).
+      { clear -HinpScope Hincl2.
+        induction Hincl2 as [|t1 t2 l1 l2 Ht Hall IH];
+          [constructor|].
+        inversion HinpScope as [|? ? Ht1 Hrest]; subst.
+        constructor; [|now apply IH].
+        intros z Hz. apply Ht1. now apply Ht. }
+      assert (Hcss : SIG.call_subst_scoped scope inptyp1 ckty [rst_ty] outtyp1).
+      { split.
+        - unfold SIG.call_actuals_scoped.
+          split; [exact HinpScope|]. split; [exact Hckscope|assumption].
+        - apply st_scoped_singleton. exact Hrstin. }
+      assert (Hfr1 : SIG.call_subst_fresh n1 inptyp1 ckty [rst_ty] outtyp1).
+      { eapply (SIG.call_subst_fresh_from_scope_fresh scope n1 inptyp1 ckty
+                  [rst_ty] outtyp1); auto.
+        apply st_scoped_singleton. exact Hrstin. }
+      assert (Hsf2 : SIG.scope_fresh scope n2)
+        by (eapply SIG.scope_fresh_fields_agree; eauto).
+      assert (Hfr2 : SIG.call_subst_fresh n2 inptyp2 ckty [sty] outtyp1).
+      { eapply (SIG.call_subst_fresh_reset_from_scope_fresh scope n2 inptyp2
+                  ckty sty outtyp1); auto.
+        eapply Hg2sec; eauto. }
       eapply preserves_on_Permutation;
         [reflexivity|apply Permutation_cons_append|].
       eapply (Hpresrst scope inptyp1 inptyp2 ckty [rst_ty] sty outtyp1
                 nconst sconst sta3 stb3 st1' st2').
-      - eapply Hside; eauto.
+      - unfold call_side_conditions.
+        split; [exact Hsf|].
+        split; [exact Hcss|].
+        split; [exact Hstynotin|].
+        split; [exact Hfr1|exact Hfr2].
       - eapply translate_args_type_incl; eauto.
       - exact Hgen1.
       - exact Hgen2.
@@ -1756,26 +1813,10 @@ Module Type SECSTCOBCTRANSLATION
     (** ** Per-trconstr preservation, with the block owning its extras
 
         The target of a block is its own Obc constraints together with
-        the reset-method constraint of any instance it owns. *)
-
-    Definition tc_preserv_hyps_aug (scope: list ident)
-      (vars: list (ident * clock)) (tc: SynStc.trconstr) : Prop :=
-      match tc with
-      | SynStc.TcDef _ _ _ => True
-      | SynStc.TcNext _ _ _ => True
-      | SynStc.TcReset _ _ _ => True
-      | SynStc.TcCall _ _ _ true _ _ => True
-      | SynStc.TcCall i _ ck false f _ =>
-          List.In rst_ty scope
-          /\ (exists sty, Env.find i reset_env = Some sty /\ ~ List.In sty scope)
-          /\ (forall ckty sty n1 n2 inptyp1 inptyp2 outtyp,
-                  SECCETYPING.assign_clk_type env clk_ty ck = Some ckty ->
-                  Env.find i reset_env = Some sty ->
-                  SIG.find_signature f G1 = Some n1 ->
-                  SIG.find_signature f G2 = Some n2 ->
-                  call_side_conditions scope n1 n2 inptyp1 inptyp2 ckty
-                    [rst_ty] sty outtyp)
-      end.
+        the reset-method constraint of any instance it owns.  No
+        per-trconstr predicate is assumed: the call side conditions are
+        derived in-proof from the same facts the NLustre-Stc bridge
+        takes. *)
 
     Lemma tc_preserv_aug:
       forall scope vars P memset clkvars tc e nconst sconst st1 st1' st2 st2',
@@ -1789,8 +1830,12 @@ Module Type SECSTCOBCTRANSLATION
             ((exists ck g, tc = SynStc.TcReset i ck g)
              \/ (exists ys ck g es, tc = SynStc.TcCall i ys ck true g es)) ->
             Env.find i reset_env = Some rinst -> List.In rinst scope) ->
-        tc_preserv_hyps_aug scope vars tc ->
+        secglobal_scope_sec G2 ->
+        List.In rst_ty scope ->
+        (forall x sty, Env.find x reset_env = Some sty ->
+                       exists n, sty = Ids.gensym Ids.sec_reset n) ->
         tc_obc_extras tc = Some e ->
+        (forall ty, List.In ty e -> ~ List.In ty scope) ->
         SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty tc st1
           = OK (nconst, st1') ->
         generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
@@ -1799,9 +1844,9 @@ Module Type SECSTCOBCTRANSLATION
     Proof.
       intros scope vars P memset clkvars tc e nconst sconst st1 st1' st2 st2'
              Hcons Hscopefresh Hwcenv Hwc Hvars Hclkin Hresetscope
-             Hhyps Hextras Hstc Hobc.
+             Hg2sec Hrstin Hrange Hextras Hefresh Hstc Hobc.
       destruct tc as [x ck ce|x ck ex|i ck f|i xs ck [|] f es];
-        simpl in Hhyps, Hextras.
+        simpl in Hextras.
       - inversion Hextras; subst e. simpl. rewrite app_nil_r.
         inversion Hwc; subst.
         eapply tcdef_preserv; eauto.
@@ -1830,8 +1875,10 @@ Module Type SECSTCOBCTRANSLATION
         + exact Hstc.
         + exact Hobc.
       - (* an unreset call: the block owns the instance's state type *)
-        destruct Hhyps as (Hrstin & (sty & Hsty & Hstynotin) & Hside).
-        rewrite Hsty in Hextras. inversion Hextras; subst e. simpl.
+        simpl in Hextras.
+        destruct (Env.find i reset_env) as [sty|] eqn:Hsty; [|discriminate].
+        inversion Hextras; subst e. simpl.
+        assert (Hstynotin : ~ List.In sty scope) by (apply Hefresh; now left).
         assert (Hckex : exists ckty,
                    SECCETYPING.assign_clk_type env clk_ty ck = Some ckty).
         { unfold translate_tc in Hobc.
@@ -1857,7 +1904,9 @@ Module Type SECSTCOBCTRANSLATION
           rewrite Hne in Hobc.
           unfold ret in Hobc. inversion Hobc; subst sconst st2'.
           simpl. now apply preserves_on_reset_only_extra.
-        + eapply tccall_unreset_preserv_rst; eauto. discriminate.
+        + eapply (tccall_unreset_preserv_rst scope vars P memset clkvars i
+                    (x :: xs') ck f es ckty sty); eauto.
+          discriminate.
     Qed.
 
     (** Pointwise augmentation of the Obc blocks with the reset-method
@@ -1925,7 +1974,11 @@ Module Type SECSTCOBCTRANSLATION
             ((exists ck g, tc = SynStc.TcReset i ck g)
              \/ (exists ys ck g es, tc = SynStc.TcCall i ys ck true g es)) ->
             Env.find i reset_env = Some rinst -> List.In rinst scope) ->
-        Forall (tc_preserv_hyps_aug scope vars) tcs ->
+        secglobal_scope_sec G2 ->
+        List.In rst_ty scope ->
+        (forall x sty, Env.find x reset_env = Some sty ->
+                       exists n, sty = Ids.gensym Ids.sec_reset n) ->
+
         Forall2 (fun tc nblk =>
                    exists sa sb,
                      SECSTCTYPING.generate_trconstr_constraint G1 env reset_env
@@ -1935,29 +1988,32 @@ Module Type SECSTCOBCTRANSLATION
                      generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
                        (translate_tc memset clkvars tc) sa = OK (sblk, sb)) tcs sblocks ->
         Forall2 (fun tc e => tc_obc_extras tc = Some e) tcs extras ->
+        (forall e ty, List.In e extras -> List.In ty e -> ~ List.In ty scope) ->
         Forall2 (preserves_on scope) nblocks (zip_app sblocks extras).
     Proof.
       intros scope vars P memset clkvars tcs nblocks sblocks extras
-             Hcons Hscopefresh Hwcenv Hwctcs Hvars Hclkin Hresetscope Hhyps Hn Hs He.
-      revert nblocks sblocks extras Hn Hs He.
-      revert Hwctcs Hresetscope Hhyps.
+             Hcons Hscopefresh Hwcenv Hwctcs Hvars Hclkin Hresetscope
+             Hg2sec Hrstin Hrange Hn Hs He Hefresh.
+      revert nblocks sblocks extras Hn Hs He Hefresh.
+      revert Hwctcs Hresetscope.
       induction tcs as [|tc tcs IH];
-        intros Hwctcs Hresetscope Hhyps nblocks sblocks extras Hn Hs He.
+        intros Hwctcs Hresetscope nblocks sblocks extras Hn Hs He Hefresh.
       - inversion Hn; inversion Hs; inversion He; subst. simpl. constructor.
       - inversion Hn as [|tc1 nblk tcs1 nbs Hnb Hn']; subst.
         inversion Hs as [|tc2 sblk tcs2 sbs Hsb Hs']; subst.
         inversion He as [|tc3 e tcs3 es Hee He']; subst.
-        inversion Hhyps as [|tc4 tcs4 Hh Hhyps']; subst.
         simpl. constructor.
         + destruct Hnb as (sa & sb & Hnb). destruct Hsb as (sc & sd & Hsb).
           inversion Hwctcs as [|tc5 tcs5 Hwctc Hwcrest]; subst.
           eapply (tc_preserv_aug scope vars P); eauto.
-          intros i rinst Hshape Hfind.
-          eapply Hresetscope; [now left|exact Hshape|exact Hfind].
+          * intros i rinst Hshape Hfind.
+            eapply Hresetscope; [now left|exact Hshape|exact Hfind].
+          * intros ty Hty. eapply Hefresh; [now left|exact Hty].
         + inversion Hwctcs; subst.
           eapply IH; eauto.
-          intros tc5 i rinst Hin5 Hshape Hfind.
-          eapply Hresetscope; [right; exact Hin5|exact Hshape|exact Hfind].
+          * intros tc5 i rinst Hin5 Hshape Hfind.
+            eapply Hresetscope; [right; exact Hin5|exact Hshape|exact Hfind].
+          * intros e5 ty He5 Hty. eapply Hefresh; [right; exact He5|exact Hty].
     Qed.
 
     (** Whole-body preservation against a target that also carries the
@@ -1976,7 +2032,11 @@ Module Type SECSTCOBCTRANSLATION
             ((exists ck g, tc = SynStc.TcReset i ck g)
              \/ (exists ys ck g es, tc = SynStc.TcCall i ys ck true g es)) ->
             Env.find i reset_env = Some rinst -> List.In rinst scope) ->
-        Forall (tc_preserv_hyps_aug scope vars) tcs ->
+        secglobal_scope_sec G2 ->
+        List.In rst_ty scope ->
+        (forall x sty, Env.find x reset_env = Some sty ->
+                       exists n, sty = Ids.gensym Ids.sec_reset n) ->
+
         tcs_obc_extras tcs = Some extras ->
         NoDup (List.concat extras) ->
         (forall x, List.In x (List.concat extras) -> ~ List.In x scope) ->
@@ -1999,7 +2059,7 @@ Module Type SECSTCOBCTRANSLATION
     Proof.
       intros scope vars P memset clkvars tcs extras nconst sconst st1 st1' st2 st2'
              Hcons Hscopefresh Hwcenv Hwctcs Hvars Hclkin Hresetscope
-             Hhyps Hextras Hnd Hfresh Hsc Hstc Hobc.
+             Hg2sec Hrstin Hrange Hextras Hnd Hfresh Hsc Hstc Hobc.
       destruct (SECSTCTYPING.generate_trconstrs_constraints_blocks
                   G1 env reset_env clk_ty rst_ty tcs nconst st1 st1' Hstc)
         as (nblocks & Hnconst & Hnall).
@@ -2012,8 +2072,6 @@ Module Type SECSTCOBCTRANSLATION
       apply Forall2_rev in Hnall.
       apply Forall2_rev in Hextall.
       apply Forall2_rev in Hsc.
-      assert (Hhypsrev : Forall (tc_preserv_hyps_aug scope vars) (rev tcs))
-        by (apply Forall_rev; exact Hhyps).
       assert (Hpres : Forall2 (preserves_on scope) (rev nblocks)
                         (zip_app sblocks (rev extras))).
       { assert (Hwcrev : Forall (CloStc.wc_trconstr P vars) (rev tcs))
@@ -2028,7 +2086,10 @@ Module Type SECSTCOBCTRANSLATION
           rewrite <- in_rev in Hin5.
           eapply Hresetscope; eauto. }
         eapply (tcs_blocks_preserv_aug scope vars P memset clkvars (rev tcs)
-                  (rev nblocks) sblocks (rev extras)); eauto. }
+                  (rev nblocks) sblocks (rev extras)); eauto.
+        intros e5 ty He5 Hty. apply Hfresh.
+        rewrite <- in_rev in He5.
+        apply in_concat. exists e5. split; assumption. }
       assert (Hscoped : Forall2 (fun t e => constraints_scoped (scope ++ e) t)
                           (zip_app sblocks (rev extras)) (rev extras)).
       { apply zip_app_Forall2_scoped.
@@ -2871,8 +2932,11 @@ Module Type SECSTCOBCTRANSLATION
             ((exists ck g, tc = SynStc.TcReset i ck g)
              \/ (exists ys ck g es, tc = SynStc.TcCall i ys ck true g es)) ->
             Env.find i reset_env = Some rinst -> List.In rinst scope) ->
+        secglobal_scope_sec G2 ->
         List.In rst_ty scope ->
-        Forall (tc_preserv_hyps_aug scope vars) tcs ->
+        (forall x sty, Env.find x reset_env = Some sty ->
+                       exists n, sty = Ids.gensym Ids.sec_reset n) ->
+
         tcs_obc_extras tcs = Some extras ->
         NoDup (List.concat extras) ->
         (forall x, List.In x (List.concat extras) -> ~ List.In x scope) ->
@@ -2900,11 +2964,11 @@ Module Type SECSTCOBCTRANSLATION
       intros scope vars P memset clkvars tcs extras shared
              nconst craw_step craw_reset st1 st1' st2 st2'
              Hcons Hscopefresh Hwcenv Hwctcs Hvars Hclkin Hresetscope
-             Hrstin Hhyps Hextras Hnd Hfresh Hsc Hshared Hreset Hstc Hobc.
+             Hg2sec Hrstin Hrange Hextras Hnd Hfresh Hsc Hshared Hreset Hstc Hobc.
       destruct (tcs_preserv_aug scope vars P memset clkvars tcs extras
                   nconst craw_step st1 st1' st2 st2'
                   Hcons Hscopefresh Hwcenv Hwctcs Hvars Hclkin Hresetscope
-                  Hhyps Hextras Hnd Hfresh Hsc Hstc Hobc)
+                  Hg2sec Hrstin Hrange Hextras Hnd Hfresh Hsc Hstc Hobc)
         as (tgt & Hcovstep & Hcovextra & Hpres).
       apply preserves_on_collapse.
       eapply preserves_on_incl
@@ -2940,7 +3004,9 @@ Module Type SECSTCOBCTRANSLATION
         SECSTCTYPING.vars_env_scoped env vars rawscope ->
         reset_consistency tcs ->
         get_mappings (map fst (resets_of tcs)) reset_env = Some rids ->
-        Forall (tc_preserv_hyps_aug rawscope vars) tcs ->
+        secglobal_scope_sec G2 ->
+        (forall x sty, Env.find x reset_env = Some sty ->
+                       exists n, sty = Ids.gensym Ids.sec_reset n) ->
         tcs_obc_extras tcs = Some extras ->
         NoDup (List.concat extras) ->
         (forall x, List.In x (List.concat extras) -> ~ List.In x rawscope) ->
@@ -2973,10 +3039,10 @@ Module Type SECSTCOBCTRANSLATION
       intros.
       eapply preserves_on_simplify_bridge with (rawscope := rawscope); eauto.
       eapply class_preserv_raw; eauto.
-      - apply clk_ty_in_raw_scope.
-      - intros tc i rinst Hin Hshape Hfind.
-        eapply reset_inst_in_raw_scope; eauto.
-      - apply rst_ty_in_raw_scope.
+      all: first [ apply clk_ty_in_raw_scope
+                 | apply rst_ty_in_raw_scope
+                 | (intros tc i rinst Hin Hshape Hfind;
+                    eapply reset_inst_in_raw_scope; eauto) ].
     Qed.
 
   End TCPRESERV.
