@@ -250,3 +250,21 @@ Scheduling equivalence (B4) and the NI transport.
 - Adding a monadic bind to a generator breaks every `name_bind_inv`
   chain that inverts it — patch each inversion site, and watch for
   lemmas whose state bounds shift (`env_sec_bounded_le`).
+
+
+---
+
+## 6. Deferred cleanups (after all theorems are proved)
+
+- **Naming.** The Stc-to-Obc bridge inherited `nsig`/`ssig` from the
+  NLustre-to-STC chain, where they mean *NLustre* and *STC*.  Here they
+  mean *STC* and *Obc*, which is actively misleading — `NoDup
+  (signature_scope nsig)` reads as an NLustre fact but is an STC one.
+  Rename to something layer-neutral (`src_sig`/`tgt_sig`) or explicit
+  (`stcsig`/`obcsig`) once the proofs are closed, so the rename is a
+  pure refactor with a green build either side.
+- `get_mappings_nodup` still has section-scoped copies in
+  `SecNLusTyping`/`SecSTCTyping` that should collapse onto
+  `NameInterface.get_mappings_nodup_gen`.
+- `nodup_singleton_map` exists both in `SIFSignature` (SIG) and in
+  `SecNLusTyping`.

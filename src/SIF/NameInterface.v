@@ -1741,6 +1741,61 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     now rewrite Hie in Hprops.
   Qed.
 
+  (** The clock and reset names of a node are distinct: they are minted
+      from consecutive states. *)
+
+  Definition aux_clk_rst_distinct (aux: list node_aux_names) : Prop :=
+    Forall (fun rec => ~ (rec.(nclk) = rec.(nrst))) aux.
+
+  Lemma generate_node_env'_clk_rst_distinct:
+    forall ns env acc st env' aux st',
+      aux_clk_rst_distinct acc ->
+      generate_node_env' ns env acc st = OK ((env', aux), st') ->
+      aux_clk_rst_distinct aux.
+  Proof.
+    induction ns as [|n ns IH]; intros env acc st env' aux st' Hacc Hgen.
+    - simpl in Hgen. inversion Hgen; subst. exact Hacc.
+    - simpl in Hgen.
+      eapply name_bind2_inv in Hgen as (env1 & rec & st1 & Hnew & Hgen).
+      eapply name_bind2_inv in Hgen as (env2 & aux2 & st2 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst env2 aux2 st2.
+      eapply IH; [|exact Hrec].
+      constructor; [|exact Hacc].
+      unfold generate_new_names_for_node in Hnew.
+      eapply name_bind_inv in Hnew as (clk_name & sa & Hclk & Hnew).
+      eapply name_bind_inv in Hnew as (rst_name & sb & Hrst & Hnew).
+      eapply name_bind_inv in Hnew as (env0 & sc & Hmap & Hnew).
+      eapply name_bind_inv in Hnew as (ie & sd & Hinst & Hret2).
+      unfold NMret in Hret2. inversion Hret2; subst env1 rec st1.
+      unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name sa.
+      unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name sb.
+      simpl. intro Heq.
+      apply gensym_injective in Heq as [_ Heq].
+      pose proof (Pos.lt_succ_diag_r st) as Hlt.
+      rewrite <- Heq in Hlt.
+      exact (Pos.lt_irrefl _ Hlt).
+  Qed.
+
+  Lemma generate_node_env_clk_rst_distinct:
+    forall all_nodes env aux_names name clk_id rst_id,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      get_node_aux name aux_names = Some (clk_id, rst_id) ->
+      ~ (clk_id = rst_id).
+  Proof.
+    intros all_nodes env aux_names name clk_id rst_id Hgen Haux.
+    unfold generate_node_env in Hgen.
+    destruct (generate_node_env' all_nodes (Env.empty _) nil init_state)
+      as [[[env0 aux0] st0]|] eqn:Hgen'; try discriminate.
+    inversion Hgen; subst env aux_names.
+    assert (Hprops : aux_clk_rst_distinct aux0).
+    { eapply generate_node_env'_clk_rst_distinct; [|exact Hgen']. constructor. }
+    destruct (get_node_aux_In _ _ _ _ Haux) as (rec & Hin & _ & Hclk & Hrst).
+    unfold aux_clk_rst_distinct in Hprops.
+    rewrite Forall_forall in Hprops.
+    specialize (Hprops rec Hin).
+    rewrite Hclk, Hrst in Hprops. exact Hprops.
+  Qed.
+
   Lemma generate_node_aux_sec_names:
     forall all_nodes env aux_names name clk_id rst_id,
       generate_node_env all_nodes = OK (env, aux_names) ->

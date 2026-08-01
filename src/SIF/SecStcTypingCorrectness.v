@@ -738,6 +738,79 @@ Module Type SECSTCTYPINGCORRECTNESS
       + eapply IH; eauto.
   Qed.
 
+  (** The public scope of a generated STC signature is duplicate-free:
+      inputs and outputs are images of distinct source names under an
+      injective environment, and the two auxiliary names are distinct
+      from each other and, being [sec] gensyms, from every source name. *)
+
+  Theorem generate_sys_signature_scope_nodup:
+    forall all_nodes G s env aux_names sig,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      NoDup (signature_scope sig).
+  Proof.
+    intros all_nodes G s env aux_names sig Henv Hsig.
+    edestruct generate_sys_signature_inv as
+        (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
+         & reset_env & rids & st_reset & sconst & st_s
+         & Haux & Hclk & Hrst & Hinp & Hout & Hslocals & Hslasts
+         & Hrenv & Hrids & Hsconst & Hsigdef); [exact Hsig|].
+    subst sig. unfold signature_scope; simpl.
+    assert (Hinj : env_injective env)
+      by (eapply NAMEGEN.generate_node_env_injective; eauto).
+    (* the whole scope is the image of one key list *)
+    assert (Hmapio : get_mappings (map fst (s.(SynStc.s_in) ++ s.(SynStc.s_out)))
+                       env = Some (inp ++ out)).
+    { rewrite map_app. eapply get_mappings_app;
+        eapply get_mappings_from_node_eq; eauto. }
+    assert (Hmapall :
+              get_mappings (map fst (s.(SynStc.s_in) ++ s.(SynStc.s_out))
+                              ++ [clk_id; rst_id]) env
+              = Some ((inp ++ out) ++ [clk_type; rst_type])).
+    { eapply get_mappings_app; [exact Hmapio|].
+      simpl. now rewrite Hclk, Hrst. }
+    (* the key list is duplicate-free *)
+    assert (Hndio : NoDup (map fst (s.(SynStc.s_in) ++ s.(SynStc.s_out)))).
+    { pose proof s.(SynStc.s_nodup) as Hnd.
+      rewrite map_app. apply NoDup_app'.
+      - now apply NoDup_app_l in Hnd.
+      - apply NoDup_app_r in Hnd. apply NoDup_app_r in Hnd.
+        now apply NoDup_app_l in Hnd.
+      - rewrite Forall_forall. intros x Hinx Hxout.
+        eapply (NoDup_app_In x _ _ Hnd Hinx).
+        apply in_or_app; right. apply in_or_app; now left. }
+    assert (Hauxnotin : forall x, List.In x [clk_id; rst_id] ->
+                                  ~ List.In x (map fst (s.(SynStc.s_in)
+                                                          ++ s.(SynStc.s_out)))).
+    { intros x Hx Hin.
+      destruct (NAMEGEN.generate_node_aux_sec_names _ _ _ _ _ _ Henv Haux)
+        as (i & j & Hi & Hj).
+      rewrite map_app in Hin.
+      eapply (sys_name_not_sec_gensym s x
+                (if ident_eq_dec x clk_id then i else j)).
+      - apply in_or_app; left.
+        rewrite map_app. apply in_app_iff in Hin as [H|H].
+        + apply in_or_app; now left.
+        + apply in_or_app; right. rewrite map_app. apply in_or_app; now right.
+      - destruct Hx as [Heq|[Heq|[]]]; subst x.
+        + destruct (ident_eq_dec clk_id clk_id); [exact Hi|contradiction].
+        + destruct (ident_eq_dec rst_id clk_id) as [He|_]; [rewrite He|]; auto. }
+    assert (Hndkeys : NoDup (map fst (s.(SynStc.s_in) ++ s.(SynStc.s_out))
+                               ++ [clk_id; rst_id])).
+    { apply NoDup_app'; [exact Hndio| |].
+      - constructor.
+        + intro Hin. simpl in Hin. destruct Hin as [Heq|[]].
+          eapply (NAMEGEN.generate_node_env_clk_rst_distinct
+                    _ _ _ _ _ _ Henv Haux).
+          symmetry. exact Heq.
+        + constructor; [intro Hin; inversion Hin|constructor].
+      - rewrite Forall_forall. intros x Hinx Hxaux.
+        eapply Hauxnotin; eauto. }
+    assert (Hnd : NoDup ((inp ++ out) ++ [clk_type; rst_type]))
+      by (eapply get_mappings_nodup_gen; eauto).
+    now rewrite <- app_assoc in Hnd.
+  Qed.
+
   (** Every generated STC signature is good: its constraints are well
       formed and their targets are exactly the signature outputs.  This
       is the STC counterpart of [generate_node_sig_good_from_local_env]
