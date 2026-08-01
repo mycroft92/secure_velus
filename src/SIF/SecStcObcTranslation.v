@@ -2932,6 +2932,254 @@ Module Type SECSTCOBCTRANSLATION
         + right. exists tc5. split; [now right|exact Hshape].
     Qed.
 
+    (** ** Free names of the step body
+
+        [translate_tc_free] sends a name free in a translated trconstr
+        back to a name the source constraint reads or defines.  The
+        names it defines are the system's own variables and lasts; the
+        names it reads are declared because the system is well clocked.
+        The expression-level halves of that are already available as
+        [SECCETYPING.wc_{clock,exp,cexp}_free_in_vars]; the trconstr
+        level is the STC counterpart of [wc_call_clock_free_in_vars],
+        whose call case reappears here verbatim. *)
+
+    Lemma wc_trconstr_free_in_vars:
+      forall P vars x tc,
+        wc_env vars ->
+        wc_trconstr P vars tc ->
+        IsFStc.Is_free_in_tc x tc ->
+        InMembers x vars.
+    Proof.
+      intros P vars x tc Henv Hwc Hfree.
+      inversion Hwc as [y ck ce Hinv Hwce
+                       |y ck e Hinv Hwce
+                       |i ck g Hwck
+                       |i ys ck rst g es sy P' sub Hfind Hargs Houts];
+        subst; inv Hfree.
+      - (* TcDef *)
+        match goal with H: Is_free_in_caexp _ _ _ |- _ => inv H end.
+        + eapply SECCETYPING.wc_cexp_free_in_vars; eauto.
+        + assert (wc_clock vars ck) by (eapply wc_env_var; eauto).
+          eapply SECCETYPING.wc_clock_free_in_vars; eauto.
+      - (* TcNext *)
+        match goal with H: Is_free_in_aexp _ _ _ |- _ => inv H end.
+        + eapply SECCETYPING.wc_exp_free_in_vars; eauto.
+        + assert (wc_clock vars ck) by (eapply wc_env_var; eauto).
+          eapply SECCETYPING.wc_clock_free_in_vars; eauto.
+      - (* TcReset *)
+        eapply SECCETYPING.wc_clock_free_in_vars; eauto.
+      - (* TcCall *)
+        match goal with H: Is_free_in_aexps _ _ _ |- _ => inv H end.
+        + (* free in an argument *)
+          match goal with
+          | H: Exists _ _ |- _ => apply Exists_exists in H as (e & Hine & Hfe)
+          end.
+          destruct (Forall2_in_right _ _ _ _ Hargs Hine) as (p & _ & Hp).
+          destruct p as (z & zt & zck).
+          destruct Hp as (_ & lck & Hwce & _).
+          eapply SECCETYPING.wc_exp_free_in_vars; eauto.
+        + (* free in the call's clock, as in [wc_call_clock_free_in_vars] *)
+          destruct (SynStc.s_in sy) as [|(z & zt & zck) ins] eqn:Hinps.
+          { pose proof (SynStc.s_ingt0 sy) as Hgt0. rewrite Hinps in Hgt0.
+            simpl in Hgt0. inversion Hgt0. }
+          inversion Hargs as [|? ? ? ? Hhead Htail]; subst.
+          destruct Hhead as (_ & lck & Hexp & Hinst).
+          assert (Hfree' : Is_free_in_clock x lck)
+            by (eapply instck_free_bck; eauto).
+          assert (Hwc_lck : wc_clock vars lck)
+            by (eapply wc_clock_exp; eauto).
+          eapply SECCETYPING.wc_clock_free_in_vars; eauto.
+    Qed.
+
+    Lemma stmt_free_translate_tcs_fold:
+      forall memset clkvars tcs acc x,
+        List.In x (SECOBCTYPING.stmt_free
+                     (fold_left (fun i tc =>
+                        SynObc.Comp (translate_tc memset clkvars tc) i) tcs acc)) ->
+        List.In x (SECOBCTYPING.stmt_free acc)
+        \/ exists tc, List.In tc tcs
+                     /\ (IsFStc.Is_free_in_tc x tc
+                         \/ List.In x (DefStc.defined_tc tc)).
+    Proof.
+      induction tcs as [|tc tcs IH]; intros acc x Hx; simpl in Hx |- *.
+      - now left.
+      - destruct (IH _ _ Hx) as [Hin|(tc' & Hin' & Hsrc)].
+        + cbn [SECOBCTYPING.stmt_free] in Hin.
+          apply in_app_iff in Hin as [Hin|Hin].
+          * right. exists tc. split; [now left|].
+            now apply translate_tc_free in Hin.
+          * now left.
+        + right. exists tc'. split; [now right|exact Hsrc].
+    Qed.
+
+    (** ** [translate_system] produces a well-defined class
+
+        The class's fields and its two method bodies read off the source
+        system; naming them once keeps the assembly below readable. *)
+
+    Lemma translate_system_mems:
+      forall s,
+        (translate_system s).(c_mems)
+        = map (fun xc => (fst xc, type_const (fst (snd xc)))) (SynStc.s_lasts s).
+    Proof. reflexivity. Qed.
+
+    Lemma translate_system_objs:
+      forall s, (translate_system s).(c_objs) = SynStc.s_subs s.
+    Proof. reflexivity. Qed.
+
+    Lemma step_method_vars:
+      forall s, (step_method s).(m_vars) = idty (SynStc.s_vars s).
+    Proof. reflexivity. Qed.
+
+    Lemma step_method_ins:
+      forall s, (step_method s).(m_in) = idty (SynStc.s_in s).
+    Proof. reflexivity. Qed.
+
+    Lemma step_method_outs:
+      forall s, (step_method s).(m_out) = idty (SynStc.s_out s).
+    Proof. reflexivity. Qed.
+
+    Lemma step_method_body:
+      forall s,
+      exists memset clkvars,
+        (step_method s).(m_body) = translate_tcs memset clkvars (SynStc.s_tcs s).
+    Proof. intro s. do 2 eexists; reflexivity. Qed.
+
+    Lemma reset_method_body:
+      forall s,
+        (reset_method s).(m_body)
+        = SynObc.Comp (reset_mems (SynStc.s_lasts s)) (reset_insts (SynStc.s_subs s)).
+    Proof. reflexivity. Qed.
+
+    (** Every clause of [class_well_defined] holds for a translated
+        system.  The fold lemmas above give the syntactic ones;
+        [s_vars_out_in_tcs], [s_lasts_in_tcs], [s_subs_calls_of] and
+        [s_reset_incl] connect the source targets to the class's own
+        names; and [wc_system] is what places the step body's reads
+        inside the interface -- the single non-syntactic ingredient,
+        exactly as [wc_node] is for [node_preserv_scoped]. *)
+
+    Lemma translate_system_well_defined:
+      forall P s,
+        wc_system P s ->
+        SECOBCTYPING.class_well_defined (translate_system s).
+    Proof.
+      intros P s Hwc stepm resetm Hstep Hreset.
+      rewrite exists_step_method in Hstep; inv Hstep.
+      rewrite exists_reset_method in Hreset; inv Hreset.
+      destruct Hwc as (_ & _ & Henv & Htcs).
+      pose proof (SynStc.s_vars_out_in_tcs s) as Hvo.
+      pose proof (SynStc.s_lasts_in_tcs s) as Hls.
+      pose proof (SynStc.s_subs_calls_of s) as Hsubs.
+      pose proof (SynStc.s_reset_incl s) as Hrincl.
+      repeat split.
+      - (* the step body assigns every local *)
+        intros x Hx.
+        rewrite step_method_vars in Hx.
+        apply fst_InMembers in Hx. rewrite map_fst_idty in Hx.
+        destruct (step_method_body s) as (memset & clkvars & Hb). rewrite Hb.
+        unfold translate_tcs.
+        apply (proj2 (stmt_writes_translate_tcs_fold
+                        memset clkvars (SynStc.s_tcs s) SynObc.Skip)).
+        eapply Permutation_in; [apply Hvo|].
+        apply in_or_app; now left.
+      - (* the reset body assigns every memory *)
+        intros x Hx.
+        rewrite translate_system_mems in Hx.
+        apply fst_InMembers in Hx. rewrite map_map in Hx. simpl in Hx.
+        rewrite reset_method_body.
+        cbn [SECOBCTYPING.stmt_writes]. apply in_or_app; left.
+        unfold reset_mems.
+        apply (proj2 (stmt_writes_reset_mems_fold
+                        (SynStc.s_lasts s) SynObc.Skip)).
+        exact Hx.
+      - (* the reset body resets every object *)
+        intros o Ho.
+        rewrite translate_system_objs in Ho. apply fst_InMembers in Ho.
+        rewrite reset_method_body.
+        cbn [SECOBCTYPING.stmt_reset_insts]. apply in_or_app; right.
+        unfold reset_insts.
+        apply (proj2 (stmt_reset_insts_reset_insts_fold
+                        (SynStc.s_subs s) SynObc.Skip)).
+        exact Ho.
+      - (* the step body reads only interface names *)
+        intros x Hx.
+        assert (Hint: SECOBCTYPING.class_interface
+                        (translate_system s) (step_method s)
+                = map fst (SynStc.s_in s) ++ map fst (SynStc.s_vars s)
+                  ++ map fst (SynStc.s_out s) ++ map fst (SynStc.s_lasts s)).
+        { unfold SECOBCTYPING.class_interface.
+          rewrite step_method_ins, step_method_vars, step_method_outs,
+            translate_system_mems, 3 map_fst_idty, map_map.
+          reflexivity. }
+        rewrite Hint.
+        destruct (step_method_body s) as (memset & clkvars & Hb). rewrite Hb in Hx.
+        unfold translate_tcs in Hx.
+        apply stmt_free_translate_tcs_fold in Hx
+          as [Hx|(tc & Htc & [Hfree|Hdef])].
+        + cbn in Hx. contradiction.
+        + (* a name the constraint reads: declared, since [s] is well clocked *)
+          eapply Forall_forall in Htcs; eauto.
+          eapply wc_trconstr_free_in_vars in Htcs; eauto.
+          apply InMembers_app in Htcs as [Hin|Hin];
+            rewrite InMembers_idck in Hin; apply fst_InMembers in Hin;
+            [rewrite 2 map_app in Hin|];
+            repeat rewrite in_app_iff in *; tauto.
+        + (* a name the constraint defines: a variable, an output or a last *)
+          assert (Hd : In x (DefStc.defined (SynStc.s_tcs s)))
+            by (unfold DefStc.defined; apply in_flat_map; eauto).
+          assert (Hd' : In x (SynStc.variables (SynStc.s_tcs s)
+                              ++ SynStc.lasts_of (SynStc.s_tcs s)))
+            by (eapply Permutation_in; [apply (DefStc.s_defined s)|exact Hd]).
+          apply in_app_iff in Hd' as [Hd'|Hd'].
+          * assert (In x (map fst (SynStc.s_vars s)
+                          ++ map fst (SynStc.s_out s)))
+              by (eapply Permutation_in; [apply (Permutation_sym Hvo)|exact Hd']).
+            repeat rewrite in_app_iff in *; tauto.
+          * assert (In x (map fst (SynStc.s_lasts s)))
+              by (eapply Permutation_in; [apply (Permutation_sym Hls)|exact Hd']).
+            repeat rewrite in_app_iff in *; tauto.
+      - (* the reset body reads only memories *)
+        intros x Hx.
+        rewrite reset_method_body in Hx.
+        cbn [SECOBCTYPING.stmt_free] in Hx.
+        apply in_app_iff in Hx as [Hx|Hx].
+        + unfold reset_mems in Hx.
+          apply stmt_free_reset_mems_fold in Hx as [Hx|Hx];
+            [cbn in Hx; contradiction|].
+          rewrite translate_system_mems. apply fst_InMembers.
+          rewrite map_map. simpl. exact Hx.
+        + unfold reset_insts in Hx.
+          apply stmt_free_reset_insts_fold in Hx. cbn in Hx. contradiction.
+      - (* the step body touches only the class's own objects *)
+        intros o Ho.
+        destruct (step_method_body s) as (memset & clkvars & Hb). rewrite Hb in Ho.
+        unfold translate_tcs in Ho.
+        apply stmt_state_keys_translate_tcs_fold in Ho
+          as [Ho|(tc & Htc & Hshape)]; [cbn in Ho; contradiction|].
+        rewrite translate_system_objs. apply fst_InMembers.
+        assert (Hcall : exists g, In (o, g) (SynStc.calls_of (SynStc.s_tcs s))).
+        { destruct Hshape as [(ck & g & Heq)|(ys & ck & b & g & es & Heq)];
+            subst tc.
+          - exists g. apply Hrincl. eapply SECSTCTYPING.In_resets_of; eauto.
+          - exists g. eapply SECSTCTYPING.In_calls_of; eauto. }
+        destruct Hcall as (g & Hcall).
+        assert (Hin : In (o, g) (SynStc.s_subs s))
+          by (eapply Permutation_in; [apply (Permutation_sym Hsubs)|exact Hcall]).
+        now apply (in_map fst) in Hin.
+      - (* the reset body touches only the class's own objects *)
+        intros o Ho.
+        rewrite reset_method_body in Ho.
+        cbn [SECOBCTYPING.stmt_state_keys] in Ho.
+        apply in_app_iff in Ho as [Ho|Ho].
+        + unfold reset_mems in Ho.
+          apply stmt_state_keys_reset_mems_fold in Ho. cbn in Ho. contradiction.
+        + unfold reset_insts in Ho.
+          apply stmt_state_keys_reset_insts_fold in Ho as [Ho|Ho];
+            [cbn in Ho; contradiction|].
+          rewrite translate_system_objs. now apply fst_InMembers.
+    Qed.
+
     (** ** The raw scope
 
         Everything the two constraint sets share: the signature scope,

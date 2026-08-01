@@ -1471,6 +1471,19 @@ Module Type SECSTCTYPING
       right. now apply (IH x ck f).
   Qed.
 
+  Lemma In_calls_of:
+    forall trs x ys ck b f es,
+      List.In (TcCall x ys ck b f es) trs ->
+      List.In (x, f) (calls_of trs).
+  Proof.
+    induction trs as [|tr trs IH]; intros x ys ck b f es Hin; [inversion Hin|].
+    destruct Hin as [Heq|Hin].
+    - subst tr. simpl. now left.
+    - destruct tr as [y c ce|y c e|y c g|y zs c r g es']; simpl;
+        try (now apply (IH x ys ck b f es)).
+      right. now apply (IH x ys ck b f es).
+  Qed.
+
   (** Mapping-based counterpart, for signatures whose instance
       environment comes from the shared name generator rather than from
       a local [generate_reset_env] run. *)
