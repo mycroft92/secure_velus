@@ -1841,6 +1841,69 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       exists n. exact Hty.
   Qed.
 
+  (** ** The naming facts every consumer needs
+
+      Downstream proofs never use [generate_node_env] or
+      [generate_local_env_for_node] directly; they use these four
+      properties of the environment those calls produce.  Bundling them
+      is what lets one theorem serve both the whole-program environment
+      and a single node's local environment, so the [_from_local_env]
+      and [_from_generated_env] pairs differ only in which constructor
+      they invoke. *)
+
+  Definition naming_env_props
+    (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
+    env_injective env
+    /\ (forall x ty, Env.find x env = Some ty ->
+                     exists m, ty = Ids.gensym Ids.sec m)
+    /\ (forall name clk_id rst_id,
+           get_node_aux name aux_names = Some (clk_id, rst_id) ->
+           exists i j, clk_id = Ids.gensym Ids.sec i
+                       /\ rst_id = Ids.gensym Ids.sec j)
+    /\ (forall name ie,
+           get_node_inst name aux_names = Some ie ->
+           env_injective ie
+           /\ (forall x ty, Env.find x ie = Some ty ->
+                            exists m, ty = Ids.gensym Ids.sec_reset m))
+    /\ aux_clk_rst_distinct aux_names.
+
+  Lemma naming_env_props_from_generated_env:
+    forall all_nodes env aux_names,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      naming_env_props env aux_names.
+  Proof.
+    intros all_nodes env aux_names Hgen.
+    split; [eapply generate_node_env_injective; eauto|].
+    split; [intros; eapply generate_node_env_sec_range; eauto|].
+    split; [intros; eapply generate_node_aux_sec_names; eauto|].
+    split; [intros name ie Hinst; eapply generate_node_env_inst_props; eauto|].
+    unfold generate_node_env in Hgen.
+    destruct (generate_node_env' all_nodes (Env.empty _) nil init_state)
+      as [[[env0 aux0] st0]|] eqn:Hgen'; try discriminate.
+    inversion Hgen; subst env aux_names.
+    eapply generate_node_env'_clk_rst_distinct; [constructor|exact Hgen'].
+  Qed.
+
+  Lemma naming_env_props_from_local_env:
+    forall n st env rec st' aux_names,
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      (forall name clk_id rst_id,
+          get_node_aux name aux_names = Some (clk_id, rst_id) ->
+          exists i j, clk_id = Ids.gensym Ids.sec i
+                      /\ rst_id = Ids.gensym Ids.sec j) ->
+      (forall name ie, get_node_inst name aux_names = Some ie -> ie = rec.(ninst)) ->
+      aux_clk_rst_distinct aux_names ->
+      naming_env_props env aux_names.
+  Proof.
+    intros n st env rec st' aux_names Hlocal Hauxsec Hinstrec Hdist.
+    split; [eapply generate_local_env_for_node_injective; eauto|].
+    split; [intros; eapply generate_local_env_for_node_sec_range; eauto|].
+    split; [exact Hauxsec|].
+    split; [|exact Hdist].
+    intros name ie Hinst. rewrite (Hinstrec _ _ Hinst).
+    eapply generate_local_env_for_node_inst_props; eauto.
+  Qed.
+
 End NAMEGEN.
 
 Module Type  NameGen  (Ids   : IDS)
