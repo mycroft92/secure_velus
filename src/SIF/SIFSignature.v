@@ -3701,4 +3701,125 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       exact (Hscopefresh_ssig x Hin).
   Qed.
 
+  (** ** The call-preservation rules, shared by both bridges
+
+      A callee signature may be re-generated at input actuals pointwise
+      *contained* in the original ones.  The Stc-to-Obc translation does
+      exactly that -- an Obc argument's type is the type of the
+      translated expression -- and the NLustre-to-Stc one is the special
+      case where the two coincide.  Stating both rules at this
+      generality is what lets the two bridges share one definition.
+
+      Neither rule takes a freshness hypothesis on the *target*
+      signature for actuals the two calls share: those transfer from the
+      source through [signature_fields_agree_scope_eq], as the proofs
+      below show.  Only the reset actual of [call_preserves_rst], which
+      genuinely differs between the two calls, needs one. *)
+
+  Definition inp_le (inp1 inp2: list ST) : Prop :=
+    Forall2 (fun t1 t2 => forall z, In z t2 -> In z t1) inp1 inp2.
+
+  Definition call_preserves_eq (n1 n2: signature) : Prop :=
+    forall scope inptyp1 inptyp2 ckty rstty outtyp
+           nconst sconst st_init1 st_init2 st1 st2,
+      scope_fresh scope n1 ->
+      call_subst_scoped scope inptyp1 ckty rstty outtyp ->
+      call_subst_fresh n1 inptyp1 ckty rstty outtyp ->
+      inp_le inptyp1 inptyp2 ->
+      generate_constraints n1 inptyp1 ckty rstty outtyp st_init1 = OK (nconst, st1) ->
+      generate_constraints n2 inptyp2 ckty rstty outtyp st_init2 = OK (sconst, st2) ->
+      preserves_on scope nconst sconst.
+
+  Definition call_preserves_rst (n1 n2: signature) : Prop :=
+    forall scope inptyp1 inptyp2 ckty srcrst sty outtyp
+           nconst sconst st_init1 st_init2 st1 st2,
+      scope_fresh scope n1 ->
+      call_subst_scoped scope inptyp1 ckty srcrst outtyp ->
+      ~ In sty scope ->
+      call_subst_fresh n1 inptyp1 ckty srcrst outtyp ->
+      type_fresh (sig_scope n2) [sty] ->
+      inp_le inptyp1 inptyp2 ->
+      generate_constraints n1 inptyp1 ckty srcrst outtyp st_init1 = OK (nconst, st1) ->
+      generate_constraints n2 inptyp2 ckty [sty] outtyp st_init2 = OK (sconst, st2) ->
+      preserves_on scope nconst ((srcrst, [sty]) :: sconst).
+
+  Theorem call_preserves_eq_from_good:
+    forall n1 n2,
+      signature_good n1 ->
+      NoDup (sig_scope n1) ->
+      signature_scoped n2 ->
+      signatures_preserved n1 n2 ->
+      call_preserves_eq n1 n2.
+  Proof.
+    intros nsig ssig Hgood Hnd Hssc Hpres.
+    intros scope inptyp1 inptyp2 ckty rstty outtyp
+           nconst sconst si1 si2 stA stB Hsf Hcss Hfr1 Hincl Hgen1 Hgen2.
+    assert (Hlen : List.length inptyp2 = List.length inptyp1)
+      by (symmetry; eapply Forall2_length; eauto).
+    destruct (generate_constraints_ok_change_inp
+                ssig inptyp2 inptyp1 ckty rstty outtyp sconst si2 stB si2
+                Hlen Hgen2)
+      as (sconst1 & sB1 & Hgen2').
+    pose proof (signatures_preserved_equal_calls_from_good
+                  nsig ssig Hgood Hnd Hssc Hpres
+                  scope inptyp1 ckty rstty outtyp
+                  nconst sconst1 si1 si2 stA sB1
+                  Hsf Hcss Hfr1 Hgen1 Hgen2')
+      as Hpres1.
+    assert (Hle : constraints_src_le sconst1 sconst)
+      by (eapply generate_constraints_mono_inp;
+          [exact Hincl|exact Hgen2'|exact Hgen2]).
+    intros dlt Hsat.
+    destruct (Hpres1 dlt Hsat) as (dlt' & Hagree & Hsat').
+    exists dlt'. split; [exact Hagree|].
+    eapply constraints_src_le_satisfaction; eauto.
+  Qed.
+
+  Theorem call_preserves_rst_from_good:
+    forall n1 n2,
+      signature_good n1 ->
+      NoDup (sig_scope n1) ->
+      signature_scoped n2 ->
+      signatures_preserved n1 n2 ->
+      call_preserves_rst n1 n2.
+  Proof.
+    intros nsig ssig Hgood Hnd Hssc Hpres.
+    intros scope inptyp1 inptyp2 ckty srcrst sty outtyp
+           nconst sconst si1 si2 stA stB
+           Hsf Hcss Hstynotin Hfr1 Hrst2 Hincl Hgen1 Hgen2.
+    assert (Hlen : List.length inptyp2 = List.length inptyp1)
+      by (symmetry; eapply Forall2_length; eauto).
+    destruct (generate_constraints_ok_change_inp
+                ssig inptyp2 inptyp1 ckty [sty] outtyp sconst si2 stB si2
+                Hlen Hgen2)
+      as (sconst1 & sB1 & Hgen2').
+    destruct Hpres as [Hfields Hprescns].
+    assert (Hscopeeq : sig_scope nsig = sig_scope ssig)
+      by (eapply signature_fields_agree_scope_eq; eauto).
+    destruct Hfr1 as (Hin1 & Hclk1 & Hrst1 & Hout1).
+    assert (Hfr2' : call_subst_fresh ssig inptyp1 ckty [sty] outtyp).
+    { repeat split.
+      - rewrite <- Hscopeeq. exact Hin1.
+      - rewrite <- Hscopeeq. exact Hclk1.
+      - exact Hrst2.
+      - rewrite <- Hscopeeq. exact Hout1. }
+    pose proof (signatures_preserved_reset_underlying_calls_from_good
+                  nsig ssig Hgood Hnd Hssc (conj Hfields Hprescns)
+                  scope inptyp1 ckty srcrst outtyp sty
+                  nconst sconst1 si1 si2 stA sB1
+                  Hsf Hcss Hstynotin
+                  (conj Hin1 (conj Hclk1 (conj Hrst1 Hout1)))
+                  Hfr2' Hgen1 Hgen2')
+      as Hpres1.
+    assert (Hle : constraints_src_le sconst1 sconst)
+      by (eapply generate_constraints_mono_inp;
+          [exact Hincl|exact Hgen2'|exact Hgen2]).
+    intros dlt Hsat.
+    destruct (Hpres1 dlt Hsat) as (dlt' & Hagree & Hsat').
+    exists dlt'. split; [exact Hagree|].
+    inversion Hsat' as [|c cs Hc Hcs]; subst.
+    constructor; [exact Hc|].
+    eapply constraints_src_le_satisfaction; eauto.
+  Qed.
+
 End SIGNATURE_PROOFS.

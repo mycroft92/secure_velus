@@ -1150,14 +1150,9 @@ Module Type SECSTCOBCTRANSLATION
         reset-method constraint instead of leaving [sty] constrained
         from two different blocks. *)
 
+    (** The shared rule (SIGPROOFS): identical on both bridges. *)
     Definition Signature_call_preserves_obc_rst (n1 n2: SIG.signature) : Prop :=
-      forall scope inptyp1 inptyp2 ckty srcrst sty outtyp
-             nconst sconst st_init1 st_init2 stA stB,
-        call_side_conditions scope n1 n2 inptyp1 inptyp2 ckty srcrst sty outtyp ->
-        Forall2 (fun t1 t2 => forall z, In z t2 -> In z t1) inptyp1 inptyp2 ->
-        SIG.generate_constraints n1 inptyp1 ckty srcrst outtyp st_init1 = OK (nconst, stA) ->
-        SIG.generate_constraints n2 inptyp2 ckty [sty] outtyp st_init2 = OK (sconst, stB) ->
-        preserves_on scope nconst ((srcrst, [sty]) :: sconst).
+      SIGPROOFS.call_preserves_rst n1 n2.
 
     Theorem signatures_preserved_obc_calls_from_good_rst:
       forall nsig ssig,
@@ -1167,43 +1162,7 @@ Module Type SECSTCOBCTRANSLATION
         SIGPROOFS.signatures_preserved nsig ssig ->
         Signature_call_preserves_obc_rst nsig ssig.
     Proof.
-      intros nsig ssig Hgood Hnd Hssc Hpres.
-      intros scope inptyp1 inptyp2 ckty srcrst sty outtyp
-             nconst sconst si1 si2 stA stB Hside Hincl Hgen1 Hgen2.
-      destruct Hside as (Hsf & Hcss & Hstynotin & Hfr1 & Hrst2).
-      assert (Hlen : List.length inptyp2 = List.length inptyp1).
-      { symmetry. eapply Forall2_length; eauto. }
-      destruct (SIGPROOFS.generate_constraints_ok_change_inp
-                  ssig inptyp2 inptyp1 ckty [sty] outtyp sconst si2 stB si2
-                  Hlen Hgen2)
-        as (sconst1 & sB1 & Hgen2').
-      destruct Hpres as [Hfields Hprescns].
-      assert (Hscopeeq : SIG.signature_scope nsig = SIG.signature_scope ssig).
-      { eapply SIG.signature_fields_agree_scope_eq; eauto. }
-      destruct Hfr1 as (Hin1 & Hclk1 & Hrst1 & Hout1).
-      assert (Hfr2' : SIG.call_subst_fresh ssig inptyp1 ckty [sty] outtyp).
-      { repeat split.
-        - rewrite <- Hscopeeq. exact Hin1.
-        - rewrite <- Hscopeeq. exact Hclk1.
-        - exact Hrst2.
-        - rewrite <- Hscopeeq. exact Hout1. }
-      pose proof (SIGPROOFS.signatures_preserved_reset_underlying_calls_from_good
-                    nsig ssig Hgood Hnd Hssc (conj Hfields Hprescns)
-                    scope inptyp1 ckty srcrst outtyp sty
-                    nconst sconst1 si1 si2 stA sB1
-                    Hsf Hcss Hstynotin
-                    (conj Hin1 (conj Hclk1 (conj Hrst1 Hout1)))
-                    Hfr2' Hgen1 Hgen2')
-        as Hpres1.
-      assert (Hle : constraints_src_le sconst1 sconst).
-      { eapply SIGPROOFS.generate_constraints_mono_inp;
-          [exact Hincl|exact Hgen2'|exact Hgen2]. }
-      intros dlt Hsat.
-      destruct (Hpres1 dlt Hsat) as (dlt' & Hagree & Hsat').
-      exists dlt'. split; [exact Hagree|].
-      inversion Hsat' as [|c cs Hc Hcs]; subst.
-      constructor; [exact Hc|].
-      eapply constraints_src_le_satisfaction; eauto.
+      exact SIGPROOFS.call_preserves_rst_from_good.
     Qed.
 
     (** Dropping the head recovers the plain version. *)
@@ -1217,16 +1176,9 @@ Module Type SECSTCOBCTRANSLATION
         inside the shared scope, where the [TcReset] constraint also
         mentions it. *)
 
+    (** The shared rule (SIGPROOFS): identical on both bridges. *)
     Definition Signature_call_preserves_obc_eq (n1 n2: SIG.signature) : Prop :=
-      forall scope inptyp1 inptyp2 ckty rstty outtyp
-             nconst sconst st_init1 st_init2 stA stB,
-        SIG.scope_fresh scope n1 ->
-        SIG.call_subst_scoped scope inptyp1 ckty rstty outtyp ->
-        SIG.call_subst_fresh n1 inptyp1 ckty rstty outtyp ->
-        Forall2 (fun t1 t2 => forall z, In z t2 -> In z t1) inptyp1 inptyp2 ->
-        SIG.generate_constraints n1 inptyp1 ckty rstty outtyp st_init1 = OK (nconst, stA) ->
-        SIG.generate_constraints n2 inptyp2 ckty rstty outtyp st_init2 = OK (sconst, stB) ->
-        preserves_on scope nconst sconst.
+      SIGPROOFS.call_preserves_eq n1 n2.
 
     Theorem signatures_preserved_obc_equal_calls_from_good:
       forall nsig ssig,
@@ -1236,28 +1188,7 @@ Module Type SECSTCOBCTRANSLATION
         SIGPROOFS.signatures_preserved nsig ssig ->
         Signature_call_preserves_obc_eq nsig ssig.
     Proof.
-      intros nsig ssig Hgood Hnd Hssc Hpres.
-      intros scope inptyp1 inptyp2 ckty rstty outtyp
-             nconst sconst si1 si2 stA stB Hsf Hcss Hfr1 Hincl Hgen1 Hgen2.
-      assert (Hlen : List.length inptyp2 = List.length inptyp1).
-      { symmetry. eapply Forall2_length; eauto. }
-      destruct (SIGPROOFS.generate_constraints_ok_change_inp
-                  ssig inptyp2 inptyp1 ckty rstty outtyp sconst si2 stB si2
-                  Hlen Hgen2)
-        as (sconst1 & sB1 & Hgen2').
-      pose proof (SIGPROOFS.signatures_preserved_equal_calls_from_good
-                    nsig ssig Hgood Hnd Hssc Hpres
-                    scope inptyp1 ckty rstty outtyp
-                    nconst sconst1 si1 si2 stA sB1
-                    Hsf Hcss Hfr1 Hgen1 Hgen2')
-        as Hpres1.
-      assert (Hle : constraints_src_le sconst1 sconst).
-      { eapply SIGPROOFS.generate_constraints_mono_inp;
-          [exact Hincl|exact Hgen2'|exact Hgen2]. }
-      intros dlt Hsat.
-      destruct (Hpres1 dlt Hsat) as (dlt' & Hagree & Hsat').
-      exists dlt'. split; [exact Hagree|].
-      eapply constraints_src_le_satisfaction; eauto.
+      exact SIGPROOFS.call_preserves_eq_from_good.
     Qed.
 
 
@@ -1644,11 +1575,11 @@ Module Type SECSTCOBCTRANSLATION
         [reflexivity|apply Permutation_cons_append|].
       eapply (Hpresrst scope inptyp1 inptyp2 ckty [rst_ty] sty outtyp1
                 nconst sconst sta3 stb3 st1' st2').
-      - unfold call_side_conditions.
-        split; [exact Hsf|].
-        split; [exact Hcss|].
-        split; [exact Hstynotin|].
-        split; [exact Hfr1|exact (proj1 (proj2 (proj2 Hfr2)))].
+      - exact Hsf.
+      - exact Hcss.
+      - exact Hstynotin.
+      - exact Hfr1.
+      - exact (proj1 (proj2 (proj2 Hfr2))).
       - eapply translate_args_type_incl; eauto.
       - exact Hgen1.
       - exact Hgen2.
