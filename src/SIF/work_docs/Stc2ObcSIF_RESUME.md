@@ -1,7 +1,7 @@
 # Stc→Obc SIF preservation — resume state
 
-**Branch** `Stc2ObcSIF`, HEAD `0553c47`, pushed to `origin`.
-58 commits since `constraint_gen`. **Build green, zero admits.**
+**Branch** `Stc2ObcSIF`, HEAD `06d86df`, pushed to `origin`.
+66 commits since `constraint_gen`. **Build green, zero admits.**
 
 Companion docs: `Stc2ObcSIF_plan.md` (design), `Stc2ObcSIF_progress.md`
 (worklist + design notes), `Stc2ObcSIF_tccall.md` (the call case).
@@ -116,56 +116,74 @@ all of `c_objs`.
 
 ## 4. What remains
 
-### 4a. The one open obligation (next thing to do)
+### 4a. Item 2 — instantiate at the generated signatures (in progress)
 
-`class_preserv_raw` takes a per-block target-scopedness hypothesis:
+All the individual obligations of `class_preserv_signature` are proved:
+`rst_ty_in_raw_scope`, `sig_scope_in_raw_scope`, `tcs_obc_extras_exists`,
+`tcs_obc_extras_nodup` (via `unreset_call_insts_nodup`),
+`extras_fresh_raw_scope`, `translated_tc_constraints_scoped`,
+`reset_mems_targets` / `reset_insts_targets`,
+`generate_translate_reset_blocks` + `calls_of_reset_or_unreset`,
+`generate_trconstrs_constraints_wf` + `targets_nodup`,
+`generated_sys_hidden_disjoint`, and the component identification
+(`translated_class_{step_in,step_out,step_vars,mems,objs}` with
+`get_mappings_from_node_map_fst`).
 
-```coq
-Forall2 (fun tc e =>
-  forall blk sa sb,
-    generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
-      (translate_tc memset clkvars tc) sa = OK (blk, sb) ->
-    constraints_scoped (rawscope ++ e)
-      (blk ++ map (fun ty => ([rst_ty], [ty])) e))
-  tcs extras
-```
+**A redesign is needed first.** `tc_preserv_hyps_aug` currently *assumes*
+`exists ckty, assign_clk_type … = Some ckty` and the call side
+conditions.  Comparing with the NL→STC per-equation lemma `eqn_preserv`
+(`SecNLusStcTranslation.v`), neither should be assumed:
 
-`SecObcTyping.generate_stmt_constraints_scoped_on_keys` discharges it,
-and all its premises are available except one:
+- `eqn_preserv` obtains `ckty` by destructing the *successful* generator
+  run (`destruct (assign_clk_type …) eqn:…; try discriminate`);
+- the call side conditions come from `secglobal_scope_fresh` via
+  `call_subst_fresh_from_scope_fresh`,
+  `call_subst_fresh_reset_from_scope_fresh` and
+  `scope_fresh_fields_agree` (all in `SIFSignature.v`).
 
-```coq
-names_scoped env (raw_scope …) (stmt_free (translate_tc memset clkvars tc))
-```
+The Obc bridge must therefore need **no more hypotheses than NL→STC**:
+`Signature_consistent_obc_full`, `secglobal_scope_fresh scope G1`,
+`secglobal_scope_sec G2`, `secglobal_scoped G2`, `wc_env vars`,
+`wc_trconstr P vars tc`, `vars_env_scoped env vars scope`,
+`In clk_ty scope`, `In rst_ty scope`, plus the instance-type range and
+freshness facts — all supplied by `wc_system` and the signature
+inversion.
 
-— the free names of a *translated* trconstr map into the scope. This is
-new content, not plumbing: NL→Stc has no analogue because it does not
-recompile expressions, whereas `translate_tc` compiles clocks to `Ifte`
-via `Control` and expressions via `translate_exp`. Estimate 60–100 lines.
-Route: induct on `Control`/`translate_cexp`, relating `stmt_free` of the
-translation to `Is_free_in_tc` of the source, then use the STC-side
-`vars_env_scoped` facts already used by
-`generate_trconstr_constraint_scoped_on_keys`.
+**Plan.**
 
-The other hypotheses are available: `wf_constraints nconst` from
-`generate_trconstrs_constraints_wf` + `targets_nodup`; `hidden_stc`
-disjointness from `generated_sys_hidden_disjoint`; scope inclusion from
-`sig_scope_in_raw_scope`; `NoDup`/freshness of extras from
-`tcs_obc_extras_nodup` / `extras_fresh_raw_scope`.
+1. `generate_stmt_constraints_Control_inv` — the converse of
+   `generate_stmt_constraints_Control`: a successful run on
+   `Control ck s` yields `clock_pc pc ck = Some pc'` and a run on `s`.
+   Needed because for `TcCall i [] ck …` the STC generator returns
+   `ret []` without consulting the clock, so `ckty` is *not* derivable
+   from the STC run there; it must come from the Obc run.
+2. Change `tc_preserv_hyps_aug` to quantify over `ckty` instead of
+   asserting it, and derive `ckty` inside `tc_preserv_aug`.
+3. Add `tc_preserv_hyps_aug_from_wc`, deriving the predicate from the
+   NL-style hypothesis set above.
+4. Then the assembly theorem, which inverts both signature generators,
+   identifies components, sets `rawscope`, and feeds
+   `class_preserv_signature`.
 
-### 4b. Items 9–10 — the lockstep
+Steps 2–3 change the signatures of `tc_preserv_aug`, `tcs_preserv_aug`,
+`class_preserv_raw` and `class_preserv_signature`.
+
+### 4b. Item 3 — `signature_fields_agree`
+
+Both signatures read the same `env` and `aux_names`, so name, inputs,
+outputs, clock and reset agree; the shape facts of item 2 give it.
+
+### 4c. Item 4 — the lockstep
 
 Port `generated_signature_consistent_step` /
 `generate_all_signatures_consistent'_abstract` from
-`SecNLusStcTranslation.v` (`:2315`, `:2326`). Mechanical. This is where
+`SecNLusStcTranslation.v` (`:2315`, `:2326`).  Mechanical.  This is where
 `generate_sys_signature_good` and
-`signatures_preserved_obc_full_from_good` get consumed to build
-`Signature_consistent_obc_full` for the callee pairs.
+`signatures_preserved_obc_full_from_good` are consumed.
 
-### 4c. Later phases (out of scope for preservation)
+### 4d. Later phases (out of scope for preservation)
 
 Scheduling equivalence (B4) and the NI transport.
-
----
 
 ## 5. Gotchas worth keeping
 
