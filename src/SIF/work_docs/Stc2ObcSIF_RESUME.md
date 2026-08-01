@@ -189,6 +189,58 @@ point the actuals are the real ones and the scopedness facts apply.
 The tree will be red for a stretch during step 1-3; commit only at green
 points.
 
+### 4a-bis. CHECKPOINT (paused mid-port)
+
+`Stc2ObcSIF` is **green** at `fb936db`.  The in-progress port is parked,
+**not building**, on branch **`Stc2ObcSIF-wip-callsides`** (pushed).
+
+**Where it stopped.**  Rewriting `tccall_reset_preserv_eq` to take the
+NL hypothesis set
+
+```coq
+  Signature_consistent_obc_eq G1 G2 ->
+  SIG.secglobal_scope_fresh scope G1 ->
+  wc_env vars ->
+  CloStc.wc_trconstr P vars (SynStc.TcCall i xs ck true f es) ->
+  SECSTCTYPING.vars_env_scoped env vars scope ->
+  List.In clk_ty scope ->
+  (forall rinst, Env.find i reset_env = Some rinst -> List.In rinst scope) ->
+```
+
+and derive `scope_fresh` / `call_subst_scoped` / `call_subst_fresh`
+in-proof, after inverting the generator, where the actuals are the real
+ones.  Four of the five derivations went in cleanly:
+
+- `Hsf` from `secglobal_scope_fresh` at `f`;
+- `Hckscope` from `assign_clk_type_scoped` + `wc_tc_clock_free_in_vars`;
+- `HinpScope` from `mmap_assign_exp_type_scoped` + `wc_call_args_scoped`;
+- `Hfr1` from `call_subst_fresh_from_scope_fresh`.
+
+**The residual.**  The `HoutScope` assert
+
+```coq
+  assert (HoutScope : Forall (fun z => List.In z scope) outtyp1).
+  { eapply (SC.mmap_find_env_scoped env scope (x :: xs') outtyp1);
+      [|exact Hout1].
+    intros y Hy.
+    eapply (SECSTCTYPING.wc_call_outs_scoped env vars scope sub ck
+              (SynStc.s_out sy) (x :: xs')); eauto. }
+```
+
+appears not to close — the later goal `Forall (fun x => In x scope)
+outtyp1` has no matching assumption even under `assumption`, which points
+at an unmet obligation inside the `wc_call_outs_scoped` application
+(likely the `Forall2` argument not being picked up by `eauto`, or the
+`sub`/`s_out sy` instantiation).  **Debug that application first** — the
+statement itself is right; compare against the template use at
+`SecSTCTyping.v:829`, which is the same call with `Houttyp` supplied
+explicitly.
+
+**Then, in order:** the same rewrite for `tccall_unreset_preserv_rst`,
+then delete `tc_preserv_hyps_aug` and re-signature `tc_preserv_aug`,
+`tcs_preserv_aug`, `class_preserv_raw`, `class_preserv_signature`, then
+the assembly theorem.
+
 ### 4b. Item 3 — `signature_fields_agree`
 
 Both signatures read the same `env` and `aux_names`, so name, inputs,
