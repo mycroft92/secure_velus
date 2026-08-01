@@ -3629,14 +3629,59 @@ Module Type SECSTCOBCTRANSLATION
       apply stmt_state_keys_translate_tc in Ho.
       destruct Ho as [(ck & g & Heq)|(ys & ck & b & g & es & Heq)]; subst tc.
       - apply in_or_app; left.
-        eapply reset_inst_in_raw_scope; eauto.
+        eapply reset_inst_in_raw_scope
+          with (tcs := tcs) (tc := SynStc.TcReset o ck g) (i := o);
+          [exact Hcons|exact Hrids|exact Htc| |exact Hfind].
+        left. exists ck, g. reflexivity.
       - destruct b.
         + apply in_or_app; left.
-          eapply reset_inst_in_raw_scope with (i := o); eauto.
+          eapply reset_inst_in_raw_scope
+            with (tcs := tcs) (tc := SynStc.TcCall o ys ck true g es) (i := o);
+            [exact Hcons|exact Hrids|exact Htc| |exact Hfind].
+          right. exists ys, ck, g, es. reflexivity.
         + (* an unreset call owns its instance's type as its extra *)
           apply in_or_app; right.
           cbn [tc_obc_extras] in He. rewrite Hfind in He.
           inversion He; subst e. now left.
+    Qed.
+
+    (** Lifting per-block scopedness to the whole constraint list. *)
+
+    Lemma translated_tcs_constraints_scoped:
+      forall s P vars inp out slocals slasts rids extras memset clkvars,
+        SIG.secglobal_scoped G2 ->
+        vars = idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars) ++ s.(SynStc.s_out))
+               ++ idck s.(SynStc.s_lasts) ->
+        wc_env vars ->
+        Forall (CloStc.wc_trconstr P vars) s.(SynStc.s_tcs) ->
+        get_mappings_from_node s.(SynStc.s_in) env = Some inp ->
+        get_mappings_from_node s.(SynStc.s_out) env = Some out ->
+        get_mappings_from_node s.(SynStc.s_vars) env = Some slocals ->
+        get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts ->
+        reset_consistency s.(SynStc.s_tcs) ->
+        get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env = Some rids ->
+        tcs_obc_extras s.(SynStc.s_tcs) = Some extras ->
+        Forall2 (fun tc e =>
+                   forall blk sa sb,
+                     generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
+                       (translate_tc memset clkvars tc) sa = OK (blk, sb) ->
+                     constraints_scoped
+                       (raw_scope inp out slocals slasts rids ++ e)
+                       (blk ++ map (fun ty => ([rst_ty], [ty])) e))
+                s.(SynStc.s_tcs) extras.
+    Proof.
+      intros s P vars inp out slocals slasts rids extras memset clkvars
+             Hglob Hvars Hwcenv Hwctcs Hinp Hout Hslocals Hslasts
+             Hcons Hrids Hextras.
+      eapply Forall2_impl_In; [|exact (tcs_obc_extras_Forall2 _ _ Hextras)].
+      intros tc e Htc He Hextc blk sa sb Hgen.
+      eapply translated_tc_constraints_scoped;
+        [exact Hglob|apply clk_ty_in_raw_scope|apply rst_ty_in_raw_scope| | |exact Hgen].
+      - intros x Hx.
+        eapply tc_names_env_scoped with (s := s) (P := P) (vars := vars); eauto.
+        subst vars. eapply sys_vars_env_scoped_from_mappings; eauto.
+      - intros o sty Ho Hfind.
+        eapply tc_state_keys_in_scope_or_extras; eauto.
     Qed.
 
     (** ** The reset method's constraints
@@ -3952,6 +3997,184 @@ Module Type SECSTCOBCTRANSLATION
     Qed.
 
   End TCPRESERV.
+
+  (** ** Signature preservation for one translated system
+
+      The Stc-to-Obc counterpart of NLustre's
+      [generated_signatures_preserved_from_simplify_bridge_scoped]: both
+      generators are inverted, their components matched through the
+      translation, and the raw scope handed to [class_preserv_signature].
+      The hypotheses are the same ones NLustre takes, with [wc_system]
+      for [wc_node] and the two Stc-side side conditions in place of
+      their node counterparts. *)
+
+  Theorem generated_signatures_preserved_obc:
+    forall all_nodes P (s: SynStc.system) (G1 G2: SIG.secglobal)
+           (env: Env.t ident) (aux_names: list node_aux_names)
+           (stcsig obcsig: SIG.signature),
+      Signature_consistent_obc_full G1 G2 ->
+      SECSTCTYPINGCORRECTNESS.sys_scope_fresh_in_env s env aux_names G1 ->
+      SIG.secglobal_scope_sec G2 ->
+      SIG.secglobal_scoped G2 ->
+      NAMEGEN.generate_node_env all_nodes = OK (env, aux_names) ->
+      CloStc.wc_system P s ->
+      SECSTCTYPING.generate_sys_signature G1 s env aux_names = OK stcsig ->
+      SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux_names
+        = OK obcsig ->
+      SECSTCTYPINGCORRECTNESS.generated_sys_simplify_ready env aux_names ->
+      signatures_preserved stcsig obcsig.
+  Proof.
+    intros all_nodes P s G1 G2 env aux_names stcsig obcsig
+           Hcons Hfreshenv Hg2sec Hg2scoped Henvgen Hwc Hstcsig Hobcsig Hready.
+    (* both generators, inverted *)
+    edestruct SECSTCTYPINGCORRECTNESS.generate_sys_signature_inv as
+        (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
+         & reset_env & rids & st_reset & sconst & st_s
+         & Haux & Hclk & Hrst & Hinp & Hout & Hslocals & Hslasts
+         & Hrenv & Hrids & Hsconst & Hstcdef); [exact Hstcsig|].
+    edestruct SECOBCTYPINGCORRECTNESS.generate_class_signature_inv as
+        (clk_id' & rst_id' & clk_type' & rst_type' & stepm & resetm
+         & inp' & out' & locals' & lasts' & state_env & stids
+         & craw_step & craw_reset & st_state & st_step & st_raw
+         & Haux' & Hclk' & Hrst' & Hstepm & Hresetm & Hinp' & Hout'
+         & Hlocals' & Hlasts' & Hsenv & Hstids & Hstepc & Hresetc & Hobcdef);
+      [exact Hobcsig|].
+    (* the class's name, auxiliaries and instance environment are the system's *)
+    simpl in Haux', Hsenv.
+    rewrite Haux in Haux'. inversion Haux'; subst clk_id' rst_id'.
+    rewrite Hclk in Hclk'. inversion Hclk'; subst clk_type'.
+    rewrite Hrst in Hrst'. inversion Hrst'; subst rst_type'.
+    rewrite Hrenv in Hsenv. inversion Hsenv; subst state_env.
+    pose proof (exists_step_method s) as Hexs.
+    rewrite Hstepm in Hexs. inversion Hexs; subst stepm.
+    pose proof (exists_reset_method s) as Hexr.
+    rewrite Hresetm in Hexr. inversion Hexr; subst resetm.
+    rewrite translate_system_objs in Hstids.
+    (* the two generators read the same interface lists *)
+    assert (Hinpeq : inp' = inp).
+    { assert (Hmap : get_mappings_from_node (m_in (step_method s)) env = Some inp)
+        by (eapply get_mappings_from_node_map_fst;
+            [symmetry; apply translated_class_step_in|exact Hinp]).
+      rewrite Hmap in Hinp'. now inversion Hinp'. }
+    assert (Houteq : out' = out).
+    { assert (Hmap : get_mappings_from_node (m_out (step_method s)) env = Some out)
+        by (eapply get_mappings_from_node_map_fst;
+            [symmetry; apply translated_class_step_out|exact Hout]).
+      rewrite Hmap in Hout'. now inversion Hout'. }
+    subst inp' out'.
+    (* the instance environment is injective and made of sec_reset names *)
+    destruct (NAMEGEN.generate_node_env_inst_props _ _ _ _ _ Henvgen Hrenv)
+      as (Hinstinj & Hinstrange).
+    (* everything the two signatures share is a sec name *)
+    assert (Hsec : forall ty,
+               List.In ty (inp ++ out ++ slocals ++ slasts
+                             ++ [clk_type; rst_type]) ->
+               exists n, ty = Ids.gensym Ids.sec n).
+    { intros ty Hin.
+      assert (Hfind : exists x, Env.find x env = Some ty).
+      { repeat (apply in_app_iff in Hin as [Hin|Hin]);
+          [ apply get_mappings_from_node_eq in Hinp
+          | apply get_mappings_from_node_eq in Hout
+          | apply get_mappings_from_node_eq in Hslocals
+          | apply get_mappings_from_node_eq in Hslasts
+          | ].
+        1-4: match goal with
+             | H: get_mappings _ _ = Some _ |- _ =>
+                 destruct (get_mappings_In _ _ _ _ H Hin) as (x & _ & Hf);
+                 now exists x
+             end.
+        destruct Hin as [Heq|[Heq|[]]]; subst ty; eauto. }
+      destruct Hfind as (x & Hfind).
+      eapply NAMEGEN.generate_node_env_sec_range; eauto. }
+    (* the per-block extras exist, are distinct, and avoid the raw scope *)
+    destruct (tcs_obc_extras_exists reset_env s.(SynStc.s_tcs) s.(SynStc.s_subs)
+                reset_env stids) as (extras & Hextras).
+    { intros i Hin.
+      eapply Permutation_in;
+        [apply Permutation_map, (Permutation_sym (SynStc.s_subs_calls_of s))|].
+      now apply unreset_call_insts_incl_calls. }
+    { exact Hstids. }
+    { reflexivity. }
+    assert (Hndcalls : NoDup (map fst (calls_of s.(SynStc.s_tcs)))).
+    { eapply Permutation_NoDup;
+        [apply Permutation_map, (SynStc.s_subs_calls_of s)
+        |apply fst_NoDupMembers, (SynStc.s_nodup_subs s)]. }
+    assert (Hndextras : NoDup (List.concat extras)).
+    { eapply get_mappings_nodup_gen;
+        [apply unreset_call_insts_nodup; exact Hndcalls
+        |exact Hinstinj
+        |apply tcs_obc_extras_concat; exact Hextras]. }
+    (* now the two halves of [signatures_preserved] *)
+    split.
+    - destruct (generated_signature_fields_agree G1 G2 env s aux_names
+                  stcsig obcsig Hstcsig Hobcsig) as (_ & Hagree).
+      exact Hagree.
+    - subst stcsig obcsig. unfold SIG.signature_scope; simpl.
+      destruct Hwc as (_ & _ & Hwcenv & Hwctcs).
+      pose proof (SynStc.s_reset_consistency s) as Hrcons.
+      destruct (step_method_body s) as (memset & clkvars & Hbody).
+      rewrite Hbody in Hstepc.
+      (* every side condition of [class_preserv_signature], up front *)
+      assert (Hfresh : SIG.secglobal_scope_fresh
+                         (raw_scope clk_type rst_type inp out slocals slasts rids)
+                         G1).
+      { unfold raw_scope. eapply Hfreshenv; eauto. }
+      assert (Hvarscoped :
+                SECSTCTYPING.vars_env_scoped env
+                  (idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars) ++ s.(SynStc.s_out))
+                   ++ idck s.(SynStc.s_lasts))
+                  (raw_scope clk_type rst_type inp out slocals slasts rids)).
+      { eapply sys_vars_env_scoped_from_mappings; eauto. }
+      assert (Hextrafresh :
+                forall x, List.In x (List.concat extras) ->
+                          ~ List.In x (raw_scope clk_type rst_type inp out
+                                         slocals slasts rids)).
+      { intros ty Hin. eapply extras_fresh_raw_scope; eauto. }
+      assert (Hblockscoped :
+                Forall2 (fun tc e =>
+                           forall blk sa sb,
+                             generate_stmt_constraints G2 env reset_env rst_type
+                               [clk_type] (translate_tc memset clkvars tc) sa
+                             = OK (blk, sb) ->
+                             constraints_scoped
+                               (raw_scope clk_type rst_type inp out slocals
+                                  slasts rids ++ e)
+                               (blk ++ map (fun ty => ([rst_type], [ty])) e))
+                        s.(SynStc.s_tcs) extras).
+      { eapply translated_tcs_constraints_scoped; eauto. }
+      assert (Hsharedok :
+                Forall (fun ty =>
+                          List.In ty (raw_scope clk_type rst_type inp out
+                                        slocals slasts rids)
+                          /\ exists src, List.In (src, [ty]) sconst
+                                         /\ List.In rst_type src)
+                       (slasts ++ rids)).
+      { eapply reset_shared_targets; eauto. }
+      assert (Hresetok :
+                forall c, List.In c craw_reset ->
+                          exists ty, c = ([rst_type], [ty])
+                                     /\ (List.In ty (slasts ++ rids)
+                                         \/ List.In ty (List.concat extras))).
+      { eapply reset_body_constraints_classified; eauto. }
+      assert (Hwf : wf_constraints sconst) by (eapply Hready; eauto).
+      assert (Hdisj :
+                forall x, List.In x (SECSTCTYPING.hidden_sys_vars slocals slasts rids) ->
+                          ~ List.In x (inp ++ out ++ [clk_type; rst_type])).
+      { intros ty Hin. eapply generated_sys_hidden_disjoint; eauto. }
+      eapply class_preserv_signature
+        with (sigscope := inp ++ out ++ [clk_type; rst_type])
+             (inp := inp) (out := out) (slocals := slocals) (slasts := slasts)
+             (rids := rids) (extras := extras)
+             (shared := slasts ++ rids)
+             (vars := idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars)
+                            ++ s.(SynStc.s_out)) ++ idck s.(SynStc.s_lasts))
+             (P := P) (tcs := s.(SynStc.s_tcs))
+             (memset := memset) (clkvars := clkvars)
+             (craw_reset := craw_reset)
+             (st1 := st_reset) (st1' := st_s)
+             (st2 := st_state) (st2' := st_step);
+        eauto using sig_scope_in_raw_scope.
+  Qed.
 
 End SECSTCOBCTRANSLATION.
 
