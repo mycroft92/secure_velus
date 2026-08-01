@@ -1,7 +1,7 @@
 # Stc→Obc SIF preservation — resume state
 
-**Branch** `Stc2ObcSIF`, HEAD `06d86df`, pushed to `origin`.
-66 commits since `constraint_gen`. **Build green, zero admits.**
+**Branch** `Stc2ObcSIF`, HEAD `fb936db`, pushed to `origin`.
+72 commits since `constraint_gen`. **Build green, zero admits.**
 
 Companion docs: `Stc2ObcSIF_plan.md` (design), `Stc2ObcSIF_progress.md`
 (worklist + design notes), `Stc2ObcSIF_tccall.md` (the call case).
@@ -129,44 +129,65 @@ All the individual obligations of `class_preserv_signature` are proved:
 (`translated_class_{step_in,step_out,step_vars,mems,objs}` with
 `get_mappings_from_node_map_fst`).
 
-**A redesign is needed first.** `tc_preserv_hyps_aug` currently *assumes*
-`exists ckty, assign_clk_type … = Some ckty` and the call side
-conditions.  Comparing with the NL→STC per-equation lemma `eqn_preserv`
-(`SecNLusStcTranslation.v`), neither should be assumed:
+**A redesign is needed first, and `tc_preserv_hyps_aug` is unsound as
+written.** Its call cases read
 
-- `eqn_preserv` obtains `ckty` by destructing the *successful* generator
-  run (`destruct (assign_clk_type …) eqn:…; try discriminate`);
-- the call side conditions come from `secglobal_scope_fresh` via
-  `call_subst_fresh_from_scope_fresh`,
-  `call_subst_fresh_reset_from_scope_fresh` and
-  `scope_fresh_fields_agree` (all in `SIFSignature.v`).
+```coq
+| TcCall _ _ ck true f _ =>
+    forall ckty n1 inptyp1 rinst outtyp,
+      assign_clk_type env clk_ty ck = Some ckty ->
+      find_signature f G1 = Some n1 ->
+      scope_fresh scope n1
+      /\ call_subst_scoped scope inptyp1 ckty [rinst] outtyp
+      /\ call_subst_fresh n1 inptyp1 ckty [rinst] outtyp
+```
 
-The Obc bridge must therefore need **no more hypotheses than NL→STC**:
-`Signature_consistent_obc_full`, `secglobal_scope_fresh scope G1`,
-`secglobal_scope_sec G2`, `secglobal_scoped G2`, `wc_env vars`,
-`wc_trconstr P vars tc`, `vars_env_scoped env vars scope`,
-`In clk_ty scope`, `In rst_ty scope`, plus the instance-type range and
-freshness facts — all supplied by `wc_system` and the signature
-inversion.
+`inptyp1`, `rinst` and `outtyp` are universally quantified with nothing
+tying them to the call, yet `call_subst_scoped` requires them to be
+scoped.  Nothing constrains them, so the predicate is **not
+dischargeable** — not from `wc_system`, not from anything.  Step 3 as
+originally planned cannot work against it.
 
-**Plan.**
+**The correct shape is NL's.**  `eqn_preserv` takes no per-equation
+predicate.  It takes `wc_equation`, `vars_env_scoped`,
+`secglobal_scope_fresh`, `secglobal_scope_sec` and derives the call side
+conditions *inside* its proof, after inverting the generator — at which
+point the actuals are the real ones and the scopedness facts apply.
 
-1. `generate_stmt_constraints_Control_inv` — the converse of
-   `generate_stmt_constraints_Control`: a successful run on
-   `Control ck s` yields `clock_pc pc ck = Some pc'` and a run on `s`.
-   Needed because for `TcCall i [] ck …` the STC generator returns
-   `ret []` without consulting the clock, so `ckty` is *not* derivable
-   from the STC run there; it must come from the Obc run.
-2. Change `tc_preserv_hyps_aug` to quantify over `ckty` instead of
-   asserting it, and derive `ckty` inside `tc_preserv_aug`.
-3. Add `tc_preserv_hyps_aug_from_wc`, deriving the predicate from the
-   NL-style hypothesis set above.
+**Port plan.**
+
+1. Delete `tc_preserv_hyps_aug`.  Give `tc_preserv_aug` the NL
+   hypothesis set: `Signature_consistent_obc_full`,
+   `secglobal_scope_fresh scope G1`, `secglobal_scope_sec G2`,
+   `secglobal_scoped G2`, `wc_env vars`, `wc_trconstr P vars tc`,
+   `vars_env_scoped env vars scope`, `In clk_ty scope`,
+   `In rst_ty scope`, and the instance-type range/freshness facts.
+2. Derive `call_side_conditions` in-proof, porting the two `EqApp`
+   branches of `eqn_preserv` (roughly 100 lines each).  Ingredients, all
+   already present: `assign_clk_type_scoped` (`SecCETyping.v`), the
+   `mmap` scopedness lemmas used inside
+   `generate_trconstr_constraint_scoped_on_keys` (`SecSTCTyping.v`),
+   `call_subst_fresh_from_scope_fresh`,
+   `call_subst_fresh_reset_from_scope_fresh`, `scope_fresh_fields_agree`
+   (`SIFSignature.v`).
+   - `[rinst] ⊆ scope` for a reset'd call: `reset_consistency` makes
+     `rst = true` imply the instance is reset, so its type is in `rids`,
+     which is inside `raw_scope`.
+   - `¬ In sty scope` for an unreset call: `extras_fresh_raw_scope` via
+     `tcs_obc_extras_concat`.
+   - the callee-side `call_subst_fresh n2`: needs
+     `signature_fields_agree n1 n2`, which is why
+     `Signature_head_consistent_obc` was added (commit `fb936db`); the
+     two signatures then share a scope.
+3. Re-signature `tcs_preserv_aug`, `class_preserv_raw` and
+   `class_preserv_signature` accordingly.
 4. Then the assembly theorem, which inverts both signature generators,
-   identifies components, sets `rawscope`, and feeds
-   `class_preserv_signature`.
+   identifies components via `translated_class_*` and
+   `get_mappings_from_node_map_fst`, sets `rawscope`, and discharges the
+   remaining six obligations with the lemmas listed above.
 
-Steps 2–3 change the signatures of `tc_preserv_aug`, `tcs_preserv_aug`,
-`class_preserv_raw` and `class_preserv_signature`.
+The tree will be red for a stretch during step 1-3; commit only at green
+points.
 
 ### 4b. Item 3 — `signature_fields_agree`
 
