@@ -1233,6 +1233,119 @@ Module Type SECSTCTYPINGCORRECTNESS
       [node_scope_lower_bounded_from_local_env] and
       [generated_node_sig_scope_upper_bound_from_local_env]. *)
 
+  (** ** Systems with a windowed environment
+
+      What the scoped signature induction actually consumes, per system:
+      the environment its signature is generated from, and the state
+      window that environment's names live in.  Consecutive systems get
+      abutting windows, which is exactly the statement that a system's
+      names postdate every signature generated before it.
+
+      Phrasing the induction against this rather than against the
+      NLustre naming run is what keeps the Stc-to-Obc theorems free of
+      NLustre nodes: the one lemma below is where that coupling lives. *)
+
+  Inductive scoped_envs_windowed (envs: node_scoped_env)
+    : ident -> list SynStc.system -> Prop :=
+  | SEW_nil: forall st,
+      scoped_envs_windowed envs st []
+  | SEW_cons: forall st st' s systems env,
+      find_node_env s.(SynStc.s_name) envs = Some env ->
+      NAMEGEN.env_naming_props env ->
+      NAMEGEN.env_sec_window env st st' ->
+      scoped_envs_windowed envs st' systems ->
+      scoped_envs_windowed envs st (s :: systems).
+
+  (** The window of a system whose environment was minted for node [n]
+      by the scoped naming run. *)
+
+  Lemma scoped_envs_windowed_step:
+    forall envs s n st env rec st' systems,
+      find_node_env s.(SynStc.s_name) envs = Some env ->
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      scoped_envs_windowed envs st' systems ->
+      scoped_envs_windowed envs st (s :: systems).
+  Proof.
+    intros envs s n st env rec st' systems Hfind Hlocal Htail.
+    econstructor;
+      [exact Hfind
+      |eapply NAMEGEN.env_naming_props_from_local_env; eauto
+      |eapply NAMEGEN.env_sec_window_from_local_env; eauto
+      |exact Htail].
+  Qed.
+
+  Lemma scoped_envs_windowed_from_scoped_env':
+    forall prefix nodes systems envs aux_names envs_pref aux_pref st,
+      generate_node_scoped_env' prefix (Env.empty _) nil init_state
+        = OK ((envs_pref, aux_pref), st) ->
+      generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
+      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) nodes systems ->
+      scoped_envs_windowed envs st systems.
+  Proof.
+    intros prefix nodes.
+    revert prefix.
+    induction nodes as [|n nodes IH];
+      intros prefix systems envs aux_names envs_pref aux_pref st
+             Hprefgen Henvsgen Hnames.
+    - inversion Hnames; subst systems. constructor.
+    - inversion Hnames as [|n' s ns systems' Hname Hnames']; subst n' ns systems.
+      pose proof Henvsgen as Henvsgen_full.
+      unfold generate_node_scoped_env in Henvsgen_full.
+      destruct (generate_node_scoped_env' (prefix ++ n :: nodes)
+                  (Env.empty _) nil init_state)
+        as [[[envs_full aux_full] st_full]|] eqn:Hrun; try discriminate.
+      inversion Henvsgen_full; subst envs_full aux_full; clear Henvsgen_full.
+      edestruct generate_node_scoped_env'_split_node
+        as (envs_pref' & aux_pref' & st_pref & local_env & rec & st_local
+            & envs_cur & st_cur & Hpref & Hlocal & Hins & Htail);
+        eauto.
+      rewrite Hprefgen in Hpref.
+      inversion Hpref; subst envs_pref' aux_pref' st_pref.
+      assert (Hcur : st_cur = st_local).
+      { unfold fresh_insert_node_env in Hins.
+        destruct (Env.mem n.(n_name) envs_pref) eqn:Hmem; try discriminate.
+        unfold insert_node_env, NMret in Hins.
+        inversion Hins. reflexivity. }
+      subst st_cur.
+      assert (Hfindlocal : find_node_env s.(SynStc.s_name) envs = Some local_env).
+      { rewrite Hname.
+        eapply generate_node_scoped_env'_preserves_find; eauto.
+        eapply fresh_insert_node_env_finds_new; eauto. }
+      eapply scoped_envs_windowed_step; [exact Hfindlocal|exact Hlocal|].
+      (* step the prefix by one node and recurse *)
+      assert (Hstep :
+                generate_node_scoped_env' (n :: nil) envs_pref aux_pref st
+                = OK ((envs_cur, rec :: aux_pref), st_local)).
+      { simpl. unfold NMbind2. rewrite Hlocal. simpl.
+        unfold NMbind. rewrite Hins. simpl. reflexivity. }
+      assert (Hprefgen' :
+                generate_node_scoped_env' (prefix ++ n :: nil)
+                  (Env.empty _) nil init_state
+                = OK ((envs_cur, rec :: aux_pref), st_local))
+        by (eapply generate_node_scoped_env'_app; eauto).
+      assert (Henvsgen' :
+                generate_node_scoped_env ((prefix ++ n :: nil) ++ nodes)
+                = OK (envs, aux_names)).
+      { assert (Heqlist : (prefix ++ n :: nil) ++ nodes = prefix ++ n :: nodes).
+        { clear - prefix n nodes.
+          induction prefix as [|a prefix IHprefix]; simpl;
+            [reflexivity|now f_equal]. }
+        rewrite Heqlist. exact Henvsgen. }
+      eapply IH; eauto.
+  Qed.
+
+  Lemma scoped_envs_windowed_from_scoped_env:
+    forall all_nodes systems envs aux_names,
+      generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) all_nodes systems ->
+      scoped_envs_windowed envs init_state systems.
+  Proof.
+    intros all_nodes systems envs aux_names Hgen Hnames.
+    eapply scoped_envs_windowed_from_scoped_env'
+      with (prefix := nil) (envs_pref := Env.empty _) (aux_pref := nil);
+      [reflexivity|exact Hgen|exact Hnames].
+  Qed.
+
   Lemma env_sec_lower_bounded_from_local_env:
     forall n st env rec st',
       generate_local_env_for_node n st = OK ((env, rec), st') ->
@@ -1269,6 +1382,46 @@ Module Type SECSTCTYPINGCORRECTNESS
     destruct (generated_sys_signature_scope_key _ _ _ _ _ _ Hsig Hin)
       as (_ & _ & x & _ & _ & Hfind).
     eapply NAMEGEN.generate_local_env_for_node_sec_range; eauto.
+  Qed.
+
+  (** The same two bounds, read off the environment's own properties
+      rather than off the run that produced it.  Every element of a
+      generated signature's scope is some [Env.find x env], so both
+      bounds factor through the environment. *)
+
+  Lemma generated_sys_signature_scope_sec_from_env_props:
+    forall G s env aux_names sig,
+      NAMEGEN.env_naming_props env ->
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      signature_scope_sec sig.
+  Proof.
+    intros G s env aux_names sig (_ & Hsec) Hsig ty Hin.
+    destruct (generated_sys_signature_scope_key _ _ _ _ _ _ Hsig Hin)
+      as (_ & _ & x & _ & _ & Hfind).
+    eapply Hsec; eauto.
+  Qed.
+
+  Lemma generated_sys_signature_scope_bounded_from_window:
+    forall G s env aux_names sig st st',
+      NAMEGEN.env_sec_window env st st' ->
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      SIG.signature_scope_bounded_above sig st'.
+  Proof.
+    intros G s env aux_names sig st st' (Hwin & _) Hsig ty Hin.
+    destruct (generated_sys_signature_scope_key _ _ _ _ _ _ Hsig Hin)
+      as (_ & _ & x & _ & _ & Hfind).
+    destruct (Hwin _ _ Hfind) as (m & Hm & _ & Hlt).
+    exists m. split; assumption.
+  Qed.
+
+  Lemma env_sec_lower_bounded_from_window:
+    forall env st st',
+      NAMEGEN.env_sec_window env st st' ->
+      env_sec_lower_bounded env st.
+  Proof.
+    intros env st st' (Hwin & _) x ty Hfind.
+    destruct (Hwin _ _ Hfind) as (m & Hm & Hlo & _).
+    exists m. split; assumption.
   Qed.
 
   (** The local-environment form, mirroring NLustre's
