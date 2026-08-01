@@ -4101,10 +4101,6 @@ Module Type SECSTCOBCTRANSLATION
       environment minted for the corresponding node.  Name preservation
       by the NLustre-to-Stc translation is what supplies it. *)
 
-  Definition systems_named_after
-    (nodes: list node) (systems: list SynStc.system) : Prop :=
-    Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) nodes systems.
-
   (** This is the main lockstep induction for the translation layer.  It
       runs the STC and Obc signature generators over the same
       node-scoped environment, proves that each fresh signature pair is
@@ -4125,7 +4121,7 @@ Module Type SECSTCOBCTRANSLATION
       NAMEGEN.generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
         = OK ((envs_pref, aux_pref), st) ->
       NAMEGEN.generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
-      systems_named_after nodes systems ->
+      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) nodes systems ->
       CloStc.wc_program systems ->
       WD.Well_scheduled systems ->
       Signature_consistent_obc_full acc1 acc2 ->
@@ -4148,12 +4144,10 @@ Module Type SECSTCOBCTRANSLATION
       intros prefix systems acc1 acc2 envs aux_names envs_pref aux_pref st G1 G2
              Hprefgen Henvsgen Hnames Hwc Hsch Hcons Hacc1scoped Hacc2scoped
              Hacc1sec Hacc2sec Hbound Hstc Hobc.
-    - unfold systems_named_after in Hnames.
-      inversion Hnames; subst systems.
+    - inversion Hnames; subst systems.
       simpl in Hstc, Hobc. inversion Hstc; inversion Hobc; subst.
       repeat split; assumption.
-    - unfold systems_named_after in Hnames.
-      inversion Hnames as [|n' s ns systems' Hname Hnames']; subst n' ns systems.
+    - inversion Hnames as [|n' s ns systems' Hname Hnames']; subst n' ns systems.
       inversion Hwc as [|s' systems'' Hwc_tail Hwc_head]; subst s' systems''.
       inversion Hsch as [|s' systems'' Hsch_head Hsch_tail]; subst s' systems''.
       simpl in Hstc, Hobc.
@@ -4303,7 +4297,7 @@ Module Type SECSTCOBCTRANSLATION
   Corollary generate_all_signatures_consistent_obc_scoped:
     forall all_nodes systems envs aux_names G1 G2,
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-      systems_named_after all_nodes systems ->
+      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) all_nodes systems ->
       CloStc.wc_program systems ->
       WD.Well_scheduled systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
@@ -4339,7 +4333,7 @@ Module Type SECSTCOBCTRANSLATION
   Corollary generate_all_signatures_consistent_obc:
     forall all_nodes systems envs aux_names G1 G2,
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-      systems_named_after all_nodes systems ->
+      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) all_nodes systems ->
       CloStc.wc_program systems ->
       WD.Well_scheduled systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
@@ -4367,7 +4361,7 @@ Module Type SECSTCOBCTRANSLATION
     forall all_nodes systems (G1 G2: SIG.secglobal)
            (envs: node_scoped_env) (aux_names: list node_aux_names),
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-      systems_named_after all_nodes systems ->
+      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) all_nodes systems ->
       CloStc.wc_program systems ->
       WD.Well_scheduled systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
