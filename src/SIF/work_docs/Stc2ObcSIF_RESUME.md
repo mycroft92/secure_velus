@@ -114,122 +114,30 @@ all of `c_objs`.
 
 ---
 
-## 4. What remains
+## 4. Status: signature preservation is complete
 
-### 4a. Item 2 — instantiate at the generated signatures (in progress)
+The whole chain is proved, admit-free, and mirrors `SecNLusStcTranslation.v`
+member for member:
 
-All the individual obligations of `class_preserv_signature` are proved:
-`rst_ty_in_raw_scope`, `sig_scope_in_raw_scope`, `tcs_obc_extras_exists`,
-`tcs_obc_extras_nodup` (via `unreset_call_insts_nodup`),
-`extras_fresh_raw_scope`, `translated_tc_constraints_scoped`,
-`reset_mems_targets` / `reset_insts_targets`,
-`generate_translate_reset_blocks` + `calls_of_reset_or_unreset`,
-`generate_trconstrs_constraints_wf` + `targets_nodup`,
-`generated_sys_hidden_disjoint`, and the component identification
-(`translated_class_{step_in,step_out,step_vars,mems,objs}` with
-`get_mappings_from_node_map_fst`).
+| NLustre-Stc                                                | Stc-Obc                                              |
+|------------------------------------------------------------|------------------------------------------------------|
+| `generated_signatures_preserved_from_simplify_bridge_scoped` | `generated_signatures_preserved_obc`                 |
+| `Signature_consistent_cons`                                  | `Signature_consistent_obc_full_cons`                 |
+| `generated_signature_consistent_step`                        | `generated_signature_consistent_step`                |
+| `generated_signature_step_consistent_from_bridges`           | `generated_signature_step_consistent_obc_from_bridges` |
+| `generate_all_signatures_consistent'_abstract`               | `generate_all_signatures_consistent_obc'_abstract`   |
+| `generate_all_signatures_consistent_abstract`                | `generate_all_signatures_consistent_obc_abstract`    |
+| `generate_all_signatures_consistent_scoped'`                 | `generate_all_signatures_consistent_obc_scoped'_abstract` |
 
-**A redesign is needed first, and `tc_preserv_hyps_aug` is unsound as
-written.** Its call cases read
+Two hypotheses of `generated_signatures_preserved_obc` are Stc-side side
+conditions with no proof yet, exactly as their NLustre counterparts are
+assumptions there: `sys_scope_fresh_in_env` and
+`generated_sys_simplify_ready` (both in `SecStcTypingCorrectness.v`).
 
-```coq
-| TcCall _ _ ck true f _ =>
-    forall ckty n1 inptyp1 rinst outtyp,
-      assign_clk_type env clk_ty ck = Some ckty ->
-      find_signature f G1 = Some n1 ->
-      scope_fresh scope n1
-      /\ call_subst_scoped scope inptyp1 ckty [rinst] outtyp
-      /\ call_subst_fresh n1 inptyp1 ckty [rinst] outtyp
-```
-
-`inptyp1`, `rinst` and `outtyp` are universally quantified with nothing
-tying them to the call, yet `call_subst_scoped` requires them to be
-scoped.  Nothing constrains them, so the predicate is **not
-dischargeable** — not from `wc_system`, not from anything.  Step 3 as
-originally planned cannot work against it.
-
-**The correct shape is NL's.**  `eqn_preserv` takes no per-equation
-predicate.  It takes `wc_equation`, `vars_env_scoped`,
-`secglobal_scope_fresh`, `secglobal_scope_sec` and derives the call side
-conditions *inside* its proof, after inverting the generator — at which
-point the actuals are the real ones and the scopedness facts apply.
-
-**Port plan.**
-
-1. Delete `tc_preserv_hyps_aug`.  Give `tc_preserv_aug` the NL
-   hypothesis set: `Signature_consistent_obc_full`,
-   `secglobal_scope_fresh scope G1`, `secglobal_scope_sec G2`,
-   `secglobal_scoped G2`, `wc_env vars`, `wc_trconstr P vars tc`,
-   `vars_env_scoped env vars scope`, `In clk_ty scope`,
-   `In rst_ty scope`, and the instance-type range/freshness facts.
-2. Derive `call_side_conditions` in-proof, porting the two `EqApp`
-   branches of `eqn_preserv` (roughly 100 lines each).  Ingredients, all
-   already present: `assign_clk_type_scoped` (`SecCETyping.v`), the
-   `mmap` scopedness lemmas used inside
-   `generate_trconstr_constraint_scoped_on_keys` (`SecSTCTyping.v`),
-   `call_subst_fresh_from_scope_fresh`,
-   `call_subst_fresh_reset_from_scope_fresh`, `scope_fresh_fields_agree`
-   (`SIFSignature.v`).
-   - `[rinst] ⊆ scope` for a reset'd call: `reset_consistency` makes
-     `rst = true` imply the instance is reset, so its type is in `rids`,
-     which is inside `raw_scope`.
-   - `¬ In sty scope` for an unreset call: `extras_fresh_raw_scope` via
-     `tcs_obc_extras_concat`.
-   - the callee-side `call_subst_fresh n2`: needs
-     `signature_fields_agree n1 n2`, which is why
-     `Signature_head_consistent_obc` was added (commit `fb936db`); the
-     two signatures then share a scope.
-3. Re-signature `tcs_preserv_aug`, `class_preserv_raw` and
-   `class_preserv_signature` accordingly.
-4. Then the assembly theorem, which inverts both signature generators,
-   identifies components via `translated_class_*` and
-   `get_mappings_from_node_map_fst`, sets `rawscope`, and discharges the
-   remaining six obligations with the lemmas listed above.
-
-The tree will be red for a stretch during step 1-3; commit only at green
-points.
-
-### 4a-bis. Items 1-3 are done (superseded checkpoint)
-
-The port described above is complete and merged.  The earlier checkpoint
-here blamed the `HoutScope` assert for the mid-port failure; that was
-wrong — it was the `Hfr1` assert-`by`, where
-`call_subst_fresh_from_scope_fresh`'s five premises had to be supplied
-explicitly instead of via `eauto`.
-
-What landed:
-
-- `tccall_reset_preserv_eq` and `tccall_unreset_preserv_rst` both take
-  the NLustre-Stc hypothesis set and **derive** `scope_fresh`,
-  `call_subst_scoped` and `call_subst_fresh` from the real actuals after
-  inverting the generator.  The callee side of the unreset case uses
-  `call_subst_fresh_reset_from_scope_fresh`, since the instance state
-  type is deliberately outside the scope and the plain version's
-  `st_scoped scope [sty]` is false there.
-- `tc_preserv_hyps_aug` is **deleted** — it had no content left.
-- Specialising `rawscope` to `raw_scope` made three further hypotheses
-  provable (`In rst_ty`, `In clk_ty`, and the reset-instance condition),
-  via `rst_ty_in_raw_scope`, `clk_ty_in_raw_scope` and
-  `reset_inst_in_raw_scope`.
-- Item 3, `generated_signature_fields_agree`.
-
-Recurring gotcha: `eauto` / `easy` after `eapply` is unreliable in this
-file once the goal count shifts — name the arguments instead.  Two
-scripted replaces also hit the wrong lemma because hypothesis prefixes
-repeat; check `s.count` before replacing.
-
-### 4b. Item 3 — `signature_fields_agree`
-
-Both signatures read the same `env` and `aux_names`, so name, inputs,
-outputs, clock and reset agree; the shape facts of item 2 give it.
-
-### 4c. Item 4 — the lockstep
-
-Port `generated_signature_consistent_step` /
-`generate_all_signatures_consistent'_abstract` from
-`SecNLusStcTranslation.v` (`:2315`, `:2326`).  Mechanical.  This is where
-`generate_sys_signature_good` and
-`signatures_preserved_obc_full_from_good` are consumed.
+The scoped-env variant is much shorter than NLustre's because a translated
+system's class name *is* the system's name, so both scoped generators look up
+the same per-node environment (`scoped_env_generators_share_env`).  No second
+induction over freshness bookkeeping is needed.
 
 ### 4d. Later phases (out of scope for preservation)
 
