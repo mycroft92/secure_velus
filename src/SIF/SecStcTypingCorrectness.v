@@ -618,10 +618,14 @@ Module Type SECSTCTYPINGCORRECTNESS
       carry the [sec_reset] prefix. *)
 
   Lemma generated_sys_hidden_disjoint:
-    forall all_nodes s env aux_names
+    forall s env aux_names
            clk_id rst_id clk_type rst_type inp out slocals slasts
            reset_env rids ty,
-      generate_node_env all_nodes = OK (env, aux_names) ->
+      env_injective env ->
+      (forall x ty', Env.find x env = Some ty' ->
+                     exists m, ty' = Ids.gensym Ids.sec m) ->
+      (exists i j, clk_id = Ids.gensym Ids.sec i
+                   /\ rst_id = Ids.gensym Ids.sec j) ->
       get_node_aux s.(SynStc.s_name) aux_names = Some (clk_id, rst_id) ->
       Env.find clk_id env = Some clk_type ->
       Env.find rst_id env = Some rst_type ->
@@ -635,12 +639,11 @@ Module Type SECSTCTYPINGCORRECTNESS
       In ty (SECSTCTYPING.hidden_sys_vars slocals slasts rids) ->
       ~ In ty (inp ++ out ++ [clk_type; rst_type]).
   Proof.
-    intros all_nodes s env aux_names
+    intros s env aux_names
            clk_id rst_id clk_type rst_type inp out slocals slasts
            reset_env rids ty
-           Henv Haux Hclk Hrst Hinp Hout Hslocals Hslasts Hrids Hrstrange Hin Hvis.
-    assert (Hinj : env_injective env)
-      by (eapply NAMEGEN.generate_node_env_injective; eauto).
+           Hinj Hsecrange Hauxsec
+           Haux Hclk Hrst Hinp Hout Hslocals Hslasts Hrids Hrstrange Hin Hvis.
     (* Every visible type is a [sec] gensym coming from a source name or
        from one of the two auxiliary identifiers. *)
     assert (Hviskey : exists x,
@@ -674,7 +677,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       destruct Hx'where as [Hx'|Hx'].
       + eapply sys_hidden_visible_disjoint; [|exact Hx'].
         apply in_or_app; left. now apply in_map with (f := fst) in Hinx.
-      + destruct (NAMEGEN.generate_node_aux_sec_names _ _ _ _ _ _ Henv Haux)
+      + destruct Hauxsec
           as (i & j & Hi & Hj).
         assert (Hxs : In x (map fst (s.(SynStc.s_in) ++ s.(SynStc.s_vars)
                                        ++ s.(SynStc.s_out))
@@ -695,7 +698,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       destruct Hx'where as [Hx'|Hx'].
       + eapply sys_hidden_visible_disjoint; [|exact Hx'].
         apply in_or_app; right. now apply in_map with (f := fst) in Hinx.
-      + destruct (NAMEGEN.generate_node_aux_sec_names _ _ _ _ _ _ Henv Haux)
+      + destruct Hauxsec
           as (i & j & Hi & Hj).
         assert (Hxs : In x (map fst (s.(SynStc.s_in) ++ s.(SynStc.s_vars)
                                        ++ s.(SynStc.s_out))
@@ -710,7 +713,7 @@ Module Type SECSTCTYPINGCORRECTNESS
     - (* a reset instance: prefixes differ *)
       destruct (get_mappings_In _ _ _ _ Hrids Hin) as (o & _ & Hfindo).
       destruct (Hrstrange _ _ Hfindo) as (n2 & Hn2).
-      destruct (NAMEGEN.generate_node_env_sec_range _ _ _ _ _ Henv Hx'find) as (n1 & Hn1).
+      destruct (Hsecrange _ _ Hx'find) as (n1 & Hn1).
       rewrite Hn1 in Hn2.
       apply gensym_injective in Hn2 as [Hpref _].
       exact (Ids.sec_neq_sec_reset Hpref).
@@ -858,10 +861,20 @@ Module Type SECSTCTYPINGCORRECTNESS
     (* The eliminated names never show up in the public scope. *)
     assert (Hdisj : forall ty, In ty hid -> ~ In ty (signature_scope nsig)).
     { intros ty Hinty. subst nsig. unfold signature_scope; cbn.
-      subst hid. eapply generated_sys_hidden_disjoint; eauto.
-      intros z tz Hz.
-      eapply (proj2 (NAMEGEN.generate_node_env_inst_props
-                       _ _ _ _ _ Henv Hresetenv)); eauto. }
+      subst hid.
+      assert (Hinj0 : env_injective env)
+        by (eapply NAMEGEN.generate_node_env_injective; eauto).
+      assert (Hsec0 : forall x tz, Env.find x env = Some tz ->
+                                   exists m, tz = Ids.gensym Ids.sec m)
+        by (intros; eapply NAMEGEN.generate_node_env_sec_range; eauto).
+      assert (Haux0 : exists i j, clk_id = Ids.gensym Ids.sec i
+                                  /\ rst_id = Ids.gensym Ids.sec j)
+        by (eapply NAMEGEN.generate_node_aux_sec_names; eauto).
+      assert (Hrst0 : forall x tz, Env.find x reset_env = Some tz ->
+                                   exists m, tz = Ids.gensym Ids.sec_reset m)
+        by exact (proj2 (NAMEGEN.generate_node_env_inst_props
+                           _ _ _ _ _ Henv Hresetenv)).
+      eapply generated_sys_hidden_disjoint; eassumption. }
 
     (* Name-level distinctness, transported to the transition constraints. *)
     assert (Hndvl : NoDup (variables s.(SynStc.s_tcs) ++ lasts_of s.(SynStc.s_tcs))).
@@ -1133,10 +1146,19 @@ Module Type SECSTCTYPINGCORRECTNESS
     split.
     - eapply generate_sys_signature_raw_wf; eauto.
     - intros ty Hinhid. subst sig. unfold signature_scope; cbn.
-      eapply generated_sys_hidden_disjoint; eauto.
-      intros z tz Hz.
-      eapply (proj2 (NAMEGEN.generate_node_env_inst_props
-                       _ _ _ _ _ Henv Hresetenv)); eauto.
+      assert (Hinj0 : env_injective env)
+        by (eapply NAMEGEN.generate_node_env_injective; eauto).
+      assert (Hsec0 : forall x tz, Env.find x env = Some tz ->
+                                   exists m, tz = Ids.gensym Ids.sec m)
+        by (intros; eapply NAMEGEN.generate_node_env_sec_range; eauto).
+      assert (Haux0 : exists i j, clk_id = Ids.gensym Ids.sec i
+                                  /\ rst_id = Ids.gensym Ids.sec j)
+        by (eapply NAMEGEN.generate_node_aux_sec_names; eauto).
+      assert (Hrst0 : forall x tz, Env.find x reset_env = Some tz ->
+                                   exists m, tz = Ids.gensym Ids.sec_reset m)
+        by exact (proj2 (NAMEGEN.generate_node_env_inst_props
+                           _ _ _ _ _ Henv Hresetenv)).
+      eapply generated_sys_hidden_disjoint; eassumption.
   Qed.
 
   (** Every name the generator hands out is a [sec] gensym minted at or
