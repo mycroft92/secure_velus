@@ -1,7 +1,7 @@
 # Stc→Obc SIF preservation — resume state
 
-**Branch** `Stc2ObcSIF`, HEAD `628ddee`.
-131 commits since `constraint_gen`. **Build green, zero admits.**
+**Branch** `Stc2ObcSIF`, HEAD `377ab66`.
+137 commits since `constraint_gen`. **Build green, zero admits.**
 
 Companion docs: `Stc2ObcSIF_plan.md` (design), `Stc2ObcSIF_progress.md`
 (worklist + design notes), `Stc2ObcSIF_tccall.md` (the call case).
@@ -125,7 +125,8 @@ all of `c_objs`.
 The whole chain is proved, admit-free, and ends in a public lookup
 theorem.  The *chain skeleton* matches `SecNLusStcTranslation.v` item for
 item -- the table below is exact, statement and often proof.  The
-*call-preservation core* underneath it deliberately does not; see §4b.
+call-preservation rules underneath it are now literally shared with the
+NLustre chain; see §4b.
 
 | NLustre-Stc                                                | Stc-Obc                                              |
 |------------------------------------------------------------|------------------------------------------------------|
@@ -179,40 +180,24 @@ run.
 
 ### 4b. Layer differences, all real rather than incidental
 
-- **The two call rules are generalizations of the NLustre ones, not
-  copies.**  `Signature_call_preserves` (NL) fixes one `inptyp` for both
-  sides.  `Signature_call_preserves_obc_eq` and `_obc_rst` take `inptyp1`
-  and `inptyp2` related by
-  `Forall2 (fun t1 t2 => forall z, In z t2 -> In z t1)`, since the Obc
-  actual for an argument is the type of the *translated* expression and
-  need only be contained in the STC one.  Both are proved
-  (`signatures_preserved_obc_equal_calls_from_good`,
-  `signatures_preserved_obc_calls_from_good_rst`), so the Obc bridge
-  exports a **stronger** property than the NLustre one.  A member-for-member
-  diff of the two files will not line up here, and should not.
-- **`_obc_eq` takes no freshness hypothesis on the target signature;
-  `_obc_rst` does** (inside `call_side_conditions`).  This asymmetry is
-  deliberate, not an oversight.  In the equal-actuals case the reset
-  actual is the *same identifier* on both sides; in the reset case it
-  differs (`srcrst` vs `[sty]`).  The proof of
-  `signatures_preserved_obc_calls_from_good_rst` shows precisely this --
-  of the four components of the target-side `call_subst_fresh`, three are
-  re-derived from the source-side one through
-  `signature_fields_agree_scope_eq` and only the reset component is used:
+- **The two call rules are shared, and live in `SIGNATURE_PROOFS`.**
+  `call_preserves_eq` and `call_preserves_rst` (`SIFSignature.v`) are
+  stated at the general actuals -- `inp_le inptyp1 inptyp2`, since an Obc
+  argument's type is the type of the *translated* expression and need
+  only be contained in the STC one; the NLustre-to-Stc case is the
+  instance where the two coincide.  `Signature_call_preserves_obc_eq` and
+  `_obc_rst` *are* those definitions, and their `..._from_good` producers
+  are one-line delegations to `call_preserves_{eq,rst}_from_good`.
+  `SecNLusStcTranslation.Signature_call_preserves` keeps its own copy
+  deliberately: the NL-Stc side is not to be changed (§6).
 
-  ```coq
-  assert (Hfr2' : SIG.call_subst_fresh ssig inptyp1 ckty [sty] outtyp).
-  { repeat split.
-    - rewrite <- Hscopeeq. exact Hin1.    (* from the n1 hypothesis *)
-    - rewrite <- Hscopeeq. exact Hclk1.   (* from the n1 hypothesis *)
-    - exact Hrst2.                        (* the only use of the n2 one *)
-    - rewrite <- Hscopeeq. exact Hout1. } (* from the n1 hypothesis *)
-  ```
-
-  Do not "restore symmetry" by adding a hypothesis to `_obc_eq`.  The
-  target-side hypothesis in `call_side_conditions` has since been narrowed
-  to just that reset component, since the three re-derived ones were
-  never consumed.
+  Neither rule takes a freshness hypothesis on the *target* signature for
+  actuals the two calls share: those transfer from the source through
+  `signature_fields_agree_scope_eq`, which is what
+  `call_preserves_rst_from_good` does inline.  Only the reset actual of
+  `call_preserves_rst`, the one actual the two calls do not share, needs
+  `type_fresh (sig_scope n2) [sty]`.  Do not add a target-side hypothesis
+  to `call_preserves_eq`: there is no actual there that differs.
 
 - `generated_signatures_preserved_obc` carries `Is_well_sch`, which NLustre
   needs no counterpart for.  Two `TcReset`s for one instance would put the
@@ -398,27 +383,66 @@ checks them against whatever concrete lattice they want.
 
 ---
 
-## 6. Deferred cleanups (after all theorems are proved)
+## 6. Open items
 
-- **Naming.** The Stc-to-Obc bridge inherited `nsig`/`ssig` from the
+None of these affect what is proved.
+
+- **`SecObcConstraintExport.v` does not schedule.**  Lines 205-206 are
+  `NL2Stc.translate ordered_nodes` then `Stc2Obc.translate systems`,
+  whereas `NLCorrectness.nl_to_cl` is translate -> `schedule_program` ->
+  `Stc2Obc.translate`.  So the `.o.sif` dump is of the *unscheduled*
+  pipeline while the compiler compiles the scheduled one.  The proofs
+  cover both and B4 relates them, so this is a fidelity gap in the
+  exporter only -- but the dump does not describe the emitted code.
+- **`Signature_call_preserves` (NL) stays as it is.  Decided, do not
+  revisit.**  It is `SecNLusStcTranslation.v:89`, its own conjunction of
+  two rules that are the special case of `call_preserves_{eq,rst}` at
+  equal actuals, plus a target-side `call_subst_fresh` that its own
+  producer (`signatures_preserved_equal_calls_from_good`) never uses.
+  Replacing it with `call_preserves_eq n1 n2 /\ call_preserves_rst n1 n2`
+  would give the two bridges one definition -- but it would strengthen
+  `Signature_head_consistent` and hence `Signature_consistent`, whose
+  statements §1 records as verified unchanged against base `997438d`.
+  The theorem *text* would not move but its meaning would.  The NL-Stc
+  side is not to be changed; the sharing is one-directional by design,
+  the Obc bridge reading the general rule and NLustre keeping its
+  instance of it.
+
+- **`Signature_call_preserves_obc` (`SecStcObcTranslation.v:959`) is
+  subsumed** by `_obc_rst`: identical hypotheses, strictly weaker
+  conclusion.  Used only at 979 and 1461, both intermediate.  Scaffolding
+  that outlived its use.
+- **Naming.**  The Stc-to-Obc bridge inherited `nsig`/`ssig` from the
   NLustre-to-STC chain, where they mean *NLustre* and *STC*.  Here they
-  mean *STC* and *Obc*, which is actively misleading — `NoDup
+  mean *STC* and *Obc*, which is actively misleading -- `NoDup
   (signature_scope nsig)` reads as an NLustre fact but is an STC one.
-  Rename to something layer-neutral (`src_sig`/`tgt_sig`) or explicit
-  (`stcsig`/`obcsig`) once the proofs are closed, so the rename is a
-  pure refactor with a green build either side.
-- `get_mappings_nodup` still has section-scoped copies in
-  `SecNLusTyping`/`SecSTCTyping` that should collapse onto
-  `NameInterface.get_mappings_nodup_gen`.
-- ~~`get_mappings_nodup` section-local copies~~ and
-  ~~`nodup_singleton_map` duplicate~~: both done.
-- ~~`call_side_conditions` over-asks~~: done.  Its last conjunct is now
-  `SIG.type_fresh (SIG.signature_scope n2) [sty]` rather than the full
-  `call_subst_fresh n2 inptyp2 ckty [sty] outtyp`, which is all either
-  proof ever used (§4b).  Fewer hypotheses means
-  `Signature_call_preserves_obc{,_rst}` -- and so
-  `Signature_head_consistent_obc` and `Signature_consistent_obc_full` --
-  are now *stronger* exported properties.
-- `Signature_call_preserves_obc` (`SecStcObcTranslation.v:959`) is
-  subsumed by `_obc_rst` (1150): identical hypotheses, strictly weaker
-  conclusion.  Scaffolding that outlived its use.
+  Rename to `stcsig`/`obcsig`.  Pure refactor, green build either side,
+  but a large mechanical diff across a 4000-line proof file.
+
+## 7. Evidence the chain is not vacuous
+
+Every top-level theorem is conditioned on `generate_... = OK G`; there
+are no totality lemmas, exactly as for Velus's own passes.  So vacuity is
+ruled out empirically:
+
+```
+velus -dsif <file>.lus     ->  <file>.{n,s,o}.sif
+```
+
+Over all 42 of `tests/ok_*.lus` that compile, the Stc and Obc
+*simplified* constraint sets are **identical** in every case (compare the
+constraint lines as sets -- comparing the text from `simplified
+constraints:` to end of file is wrong, it swallows the next system's
+section).  The theorem only claims `preserves_on`, so equality is
+stronger than what is proved, and it is what the generator actually does.
+
+A worked example (`tests/ok_alias.lus`, class `wrong`) showing the Obc
+extras and `collapse` doing their job:
+
+```
+Stc  raw:        [sec$13, sec$14] <= [sec$18]
+Obc  raw:        [sec$13, sec_reset$1] <= [sec$18]
+                 [sec$14] <= [sec_reset$1]        <- reset method
+Obc  collapsed:  both, reordered
+both simplified: [sec$13, sec$14] <= [sec$18]
+```
