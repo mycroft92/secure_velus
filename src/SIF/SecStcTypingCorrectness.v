@@ -990,6 +990,57 @@ Module Type SECSTCTYPINGCORRECTNESS
           apply in_or_app; right. apply in_or_app; left. exact Hinout.
   Qed.
 
+  (** ** Side conditions for the downstream bridge
+
+      The Stc counterparts of [node_scope_fresh_in_env] and
+      [generated_node_simplify_ready].  A system's raw constraints range
+      over more than a node's do -- the lasts and the reset instances are
+      hidden alongside the locals -- so both conditions are phrased
+      against that wider list, which is exactly the raw scope the
+      Stc-to-Obc bridge works in. *)
+
+  Definition sys_scope_fresh_in_env
+    (s: SynStc.system) (env: Env.t ident)
+    (aux_names: list node_aux_names) (G: secglobal) : Prop :=
+    forall clk_id rst_id clk_type rst_type inp out slocals slasts reset_env rids,
+      get_node_aux s.(SynStc.s_name) aux_names = Some (clk_id, rst_id) ->
+      Env.find clk_id env = Some clk_type ->
+      Env.find rst_id env = Some rst_type ->
+      get_mappings_from_node s.(SynStc.s_in) env = Some inp ->
+      get_mappings_from_node s.(SynStc.s_out) env = Some out ->
+      get_mappings_from_node s.(SynStc.s_vars) env = Some slocals ->
+      get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts ->
+      get_node_inst s.(SynStc.s_name) aux_names = Some reset_env ->
+      get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env = Some rids ->
+      SIG.secglobal_scope_fresh
+        (inp ++ out ++ slocals ++ slasts ++ rids ++ [clk_type; rst_type]) G.
+
+  Definition generated_sys_simplify_ready
+    (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
+    forall G s sig clk_id rst_id clk_type rst_type inp out slocals slasts
+           reset_env rids raw st_reset st_s,
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      get_node_aux s.(SynStc.s_name) aux_names = Some (clk_id, rst_id) ->
+      Env.find clk_id env = Some clk_type ->
+      Env.find rst_id env = Some rst_type ->
+      get_mappings_from_node s.(SynStc.s_in) env = Some inp ->
+      get_mappings_from_node s.(SynStc.s_out) env = Some out ->
+      get_mappings_from_node s.(SynStc.s_vars) env = Some slocals ->
+      get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts ->
+      get_node_inst s.(SynStc.s_name) aux_names = Some reset_env ->
+      get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env = Some rids ->
+      SECSTCTYPING.generate_trconstrs_constraints G env reset_env clk_type rst_type
+        s.(SynStc.s_tcs) st_reset = OK (raw, st_s) ->
+      sig = {| s_name := s.(SynStc.s_name);
+               s_in := inp;
+               s_out := out;
+               s_reset := rst_type;
+               s_clk := clk_type;
+               s_constraints :=
+                 SymTypes.simplify raw
+                   (SECSTCTYPING.hidden_sys_vars slocals slasts rids) |} ->
+      wf_constraints raw.
+
 End SECSTCTYPINGCORRECTNESS.
 
 Module SecStcTypingCorrectness

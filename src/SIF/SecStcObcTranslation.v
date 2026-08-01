@@ -3526,6 +3526,119 @@ Module Type SECSTCOBCTRANSLATION
           rewrite Hes'. eexists; reflexivity.
     Qed.
 
+    (** ** Feeding the per-block scopedness hypothesis
+
+        [translate_tc_constraints_scoped] asks for two things about each
+        trconstr: that every name it mentions has a type in the raw
+        scope, and that every instance the translation touches has its
+        type in the scope or in that block's own extras.  Both follow
+        from the system's well-clockedness and its record invariants. *)
+
+    Lemma sys_vars_env_scoped_from_mappings:
+      forall s inp out slocals slasts rids,
+        get_mappings_from_node s.(SynStc.s_in) env = Some inp ->
+        get_mappings_from_node s.(SynStc.s_out) env = Some out ->
+        get_mappings_from_node s.(SynStc.s_vars) env = Some slocals ->
+        get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts ->
+        SECSTCTYPING.vars_env_scoped env
+          (idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars) ++ s.(SynStc.s_out))
+           ++ idck s.(SynStc.s_lasts))
+          (raw_scope inp out slocals slasts rids).
+    Proof.
+      intros s inp out slocals slasts rids Hinp Hout Hslocals Hslasts x Hmem.
+      unfold raw_scope.
+      apply InMembers_app in Hmem as [Hmem|Hmem]; rewrite InMembers_idck in Hmem.
+      - apply InMembers_app in Hmem as [Hin|Hmem].
+        + destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hinp)
+            as (ty & Hfind & Hscope).
+          exists ty. split; [exact Hfind|]. apply in_or_app; now left.
+        + apply InMembers_app in Hmem as [Hin|Hin].
+          * destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hslocals)
+              as (ty & Hfind & Hscope).
+            exists ty. split; [exact Hfind|].
+            apply in_or_app; right. apply in_or_app; right.
+            apply in_or_app; now left.
+          * destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hout)
+              as (ty & Hfind & Hscope).
+            exists ty. split; [exact Hfind|].
+            apply in_or_app; right. apply in_or_app; now left.
+      - destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hmem Hslasts)
+          as (ty & Hfind & Hscope).
+        exists ty. split; [exact Hfind|].
+        apply in_or_app; right. apply in_or_app; right.
+        apply in_or_app; right. apply in_or_app; now left.
+    Qed.
+
+    (** A name a constraint reads is declared because the system is well
+        clocked; a name it defines is one of the system's own variables,
+        outputs or lasts.  Either way it is in [vars], so the mappings
+        give it a type in the raw scope. *)
+
+    Lemma tc_names_env_scoped:
+      forall s P vars scope tc x,
+        vars = idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars) ++ s.(SynStc.s_out))
+               ++ idck s.(SynStc.s_lasts) ->
+        wc_env vars ->
+        Forall (CloStc.wc_trconstr P vars) s.(SynStc.s_tcs) ->
+        SECSTCTYPING.vars_env_scoped env vars scope ->
+        List.In tc s.(SynStc.s_tcs) ->
+        (IsFStc.Is_free_in_tc x tc \/ List.In x (DefStc.defined_tc tc)) ->
+        exists ty, Env.find x env = Some ty /\ List.In ty scope.
+    Proof.
+      intros s P vars scope tc x Hvars Henv Htcs Hscoped Htc Hx.
+      apply Hscoped.
+      destruct Hx as [Hfree|Hdef].
+      - eapply Forall_forall in Htcs; [|exact Htc].
+        eapply wc_trconstr_free_in_vars; eauto.
+      - subst vars.
+        assert (Hd : List.In x (DefStc.defined s.(SynStc.s_tcs)))
+          by (unfold DefStc.defined; apply in_flat_map; eauto).
+        assert (Hd' : List.In x (SynStc.variables s.(SynStc.s_tcs)
+                                 ++ SynStc.lasts_of s.(SynStc.s_tcs)))
+          by (eapply Permutation_in; [apply (DefStc.s_defined s)|exact Hd]).
+        apply InMembers_app.
+        apply in_app_iff in Hd' as [Hd'|Hd'].
+        + left. rewrite InMembers_idck.
+          assert (List.In x (map fst s.(SynStc.s_vars)
+                             ++ map fst s.(SynStc.s_out)))
+            by (eapply Permutation_in;
+                [apply (Permutation_sym (SynStc.s_vars_out_in_tcs s))|exact Hd']).
+          apply fst_InMembers. rewrite 2 map_app.
+          repeat rewrite in_app_iff in *. tauto.
+        + right. rewrite InMembers_idck. apply fst_InMembers.
+          eapply Permutation_in;
+            [apply (Permutation_sym (SynStc.s_lasts_in_tcs s))|exact Hd'].
+    Qed.
+
+    (** The instances a translated trconstr touches: reset by the system,
+        hence typed inside the raw scope, or only stepped, hence the sole
+        member of that block's extras. *)
+
+    Lemma tc_state_keys_in_scope_or_extras:
+      forall tcs rids inp out slocals slasts tc e o sty memset clkvars,
+        reset_consistency tcs ->
+        get_mappings (map fst (resets_of tcs)) reset_env = Some rids ->
+        List.In tc tcs ->
+        tc_obc_extras tc = Some e ->
+        List.In o (SECOBCTYPING.stmt_state_keys (translate_tc memset clkvars tc)) ->
+        Env.find o reset_env = Some sty ->
+        List.In sty (raw_scope inp out slocals slasts rids ++ e).
+    Proof.
+      intros tcs rids inp out slocals slasts tc e o sty memset clkvars
+             Hcons Hrids Htc He Ho Hfind.
+      apply stmt_state_keys_translate_tc in Ho.
+      destruct Ho as [(ck & g & Heq)|(ys & ck & b & g & es & Heq)]; subst tc.
+      - apply in_or_app; left.
+        eapply reset_inst_in_raw_scope; eauto.
+      - destruct b.
+        + apply in_or_app; left.
+          eapply reset_inst_in_raw_scope with (i := o); eauto.
+        + (* an unreset call owns its instance's type as its extra *)
+          apply in_or_app; right.
+          cbn [tc_obc_extras] in He. rewrite Hfind in He.
+          inversion He; subst e. now left.
+    Qed.
+
     (** ** The reset method's constraints
 
         [translate_reset] emits one [rst_ty ==> ty] constraint per memory
