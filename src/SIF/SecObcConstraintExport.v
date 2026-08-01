@@ -197,12 +197,24 @@ Fixpoint build_constraint_dump
       end
   end.
 
+(** The Obc program the compiler emits is [Stc2Obc.translate] of the
+    *scheduled* Stc program, not of [NL2Stc.translate nodes].  Those are
+    different programs -- the step method's statements are in a different
+    order -- so the dump has to be given the scheduled systems rather
+    than recompute the pipeline.  It cannot schedule for itself:
+    [Scheduler] is realised in [NLCorrectness], above this file in the
+    dependency order.
+
+    The Stc dump next door stays at the *unscheduled* program on purpose:
+    that is the one the NLustre-to-Stc bridge proves about.  B4
+    ([generated_signatures_preserved_by_scheduling]) is what relates the
+    two, so each dump sits at the point its own theorem is stated. *)
+
 Definition generate_obc_constraint_dump
-  (nodes : NL.Syn.global)
+  (nodes : NL.Syn.global) (systems : Stc.Syn.program)
   : res obc_constraint_dump :=
 
   let ordered_nodes := rev nodes in
-  let systems := Instantiator.NL2Stc.translate ordered_nodes in
   let classes := Instantiator.Stc2Obc.translate systems in
   match NAMEGEN.generate_node_scoped_env ordered_nodes with
   | Error e => Error e

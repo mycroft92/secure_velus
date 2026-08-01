@@ -107,7 +107,15 @@ let dump_sif_if ast =
             | OK stc_dump ->
               begin
                 Veluslib.print_stcsif_if stc_dump;
-                match SecObcConstraintExport.generate_obc_constraint_dump nl with
+                (* the emitted Obc comes from the *scheduled* Stc
+                   program, so the dump has to be given that one *)
+                match NLCorrectness.schedule_program
+                        (Instantiator.NL2Stc.translate (List.rev nl)) with
+                | Error errmsg ->
+                  Format.eprintf "%a@." Driveraux.print_error errmsg; exit 1
+                | OK sched ->
+                match SecObcConstraintExport.generate_obc_constraint_dump
+                        nl sched with
                 | Error errmsg ->
                   Format.eprintf "%a@." Driveraux.print_error errmsg; exit 1
                 | OK obc_dump ->

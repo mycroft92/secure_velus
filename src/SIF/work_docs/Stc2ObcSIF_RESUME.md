@@ -387,27 +387,6 @@ checks them against whatever concrete lattice they want.
 
 None of these affect what is proved.
 
-- **`SecObcConstraintExport.v` does not schedule.**  Lines 205-206 are
-  `NL2Stc.translate ordered_nodes` then `Stc2Obc.translate systems`,
-  whereas `NLCorrectness.nl_to_cl` is translate -> `schedule_program` ->
-  `Stc2Obc.translate`.  So `.o.sif` describes a *different Obc program*
-  from the one the compiler emits -- different statement order in the
-  step method, hence different raw and collapsed constraint listings.
-
-  Note the gap is not closed by B4.  B4 gives
-  `signatures_preserved stc_u stc_s` and phase 4 gives
-  `signatures_preserved stc_s obc_s`, but the dump is `obc_u`, related to
-  `stc_u` by `signatures_preserved stc_u obc_u` -- which does not
-  invert.  So the dumped signature is **not** provably related to the
-  emitted one.  Empirically they coincided on all 42 `ok_` tests (§7),
-  but that is evidence, not a theorem.
-
-  The fix is plumbing, not proof: give `generate_obc_constraint_dump` the
-  already-scheduled Stc program instead of recomputing the pipeline, and
-  have `velusmain.ml` hand it `NLCorrectness.schedule_program`'s output.
-  `Scheduler` lives in `NLCorrectness.v`, above the exporter in the
-  dependency order, so the exporter cannot schedule for itself.
-
 - **`Signature_call_preserves` (NL) stays as it is.  Decided, do not
   revisit.**  It is `SecNLusStcTranslation.v:89`, its own conjunction of
   two rules that are the special case of `call_preserves_{eq,rst}` at
@@ -447,6 +426,16 @@ ruled out empirically:
 ```
 velus -dsif <file>.lus     ->  <file>.{n,s,o}.sif
 ```
+
+`.s.sif` is of the *unscheduled* Stc program -- the one the
+NLustre-to-Stc bridge proves about -- while `.o.sif` is of
+`Stc2Obc.translate` of the *scheduled* one, which is what the compiler
+emits; `velusmain.ml` hands `generate_obc_constraint_dump` the output of
+`NLCorrectness.schedule_program`.  Each dump therefore sits at the point
+its own theorem is stated, and B4 relates them.  (Threading the schedule
+through changed 32 of the 42 dumps -- by constraint *order* only, the
+sets and the simplified signatures being unaffected, exactly as B4
+predicts.)
 
 Over all 42 of `tests/ok_*.lus` that compile, the Stc and Obc
 *simplified* constraint sets are **identical** in every case (compare the
