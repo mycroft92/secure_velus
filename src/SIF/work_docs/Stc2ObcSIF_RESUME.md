@@ -122,8 +122,10 @@ all of `c_objs`.
 
 ## 4. Status: signature preservation is complete
 
-The whole chain is proved, admit-free, and mirrors `SecNLusStcTranslation.v`
-member for member, ending in a public lookup theorem:
+The whole chain is proved, admit-free, and ends in a public lookup
+theorem.  The *chain skeleton* matches `SecNLusStcTranslation.v` item for
+item -- the table below is exact, statement and often proof.  The
+*call-preservation core* underneath it deliberately does not; see §4b.
 
 | NLustre-Stc                                                | Stc-Obc                                              |
 |------------------------------------------------------------|------------------------------------------------------|
@@ -176,6 +178,38 @@ consecutive `fresh_ident_gen` calls (`st` vs `Pos.succ st`), and
 run.
 
 ### 4b. Layer differences, all real rather than incidental
+
+- **The two call rules are generalizations of the NLustre ones, not
+  copies.**  `Signature_call_preserves` (NL) fixes one `inptyp` for both
+  sides.  `Signature_call_preserves_obc_eq` and `_obc_rst` take `inptyp1`
+  and `inptyp2` related by
+  `Forall2 (fun t1 t2 => forall z, In z t2 -> In z t1)`, since the Obc
+  actual for an argument is the type of the *translated* expression and
+  need only be contained in the STC one.  Both are proved
+  (`signatures_preserved_obc_equal_calls_from_good`,
+  `signatures_preserved_obc_calls_from_good_rst`), so the Obc bridge
+  exports a **stronger** property than the NLustre one.  A member-for-member
+  diff of the two files will not line up here, and should not.
+- **`_obc_eq` takes no freshness hypothesis on the target signature;
+  `_obc_rst` does** (inside `call_side_conditions`).  This asymmetry is
+  deliberate, not an oversight.  In the equal-actuals case the reset
+  actual is the *same identifier* on both sides; in the reset case it
+  differs (`srcrst` vs `[sty]`).  The proof of
+  `signatures_preserved_obc_calls_from_good_rst` shows precisely this --
+  of the four components of the target-side `call_subst_fresh`, three are
+  re-derived from the source-side one through
+  `signature_fields_agree_scope_eq` and only the reset component is used:
+
+  ```coq
+  assert (Hfr2' : SIG.call_subst_fresh ssig inptyp1 ckty [sty] outtyp).
+  { repeat split.
+    - rewrite <- Hscopeeq. exact Hin1.    (* from the n1 hypothesis *)
+    - rewrite <- Hscopeeq. exact Hclk1.   (* from the n1 hypothesis *)
+    - exact Hrst2.                        (* the only use of the n2 one *)
+    - rewrite <- Hscopeeq. exact Hout1. } (* from the n1 hypothesis *)
+  ```
+
+  Do not "restore symmetry" by adding a hypothesis to `_obc_eq`.
 
 - `generated_signatures_preserved_obc` carries `Is_well_sch`, which NLustre
   needs no counterpart for.  Two `TcReset`s for one instance would put the
@@ -282,9 +316,11 @@ not before.
 
 ### 4e. Phase 6 -- the NI transport.  DONE
 
-`SecObcNonInterference.v` mirrors `SecStcNonInterference.v` member for
-member.  Like it, it is a *transport*: the imperative semantics is never
-attacked directly.
+`SecObcNonInterference.v` follows `SecStcNonInterference.v` item for item,
+with the correspondence below.  Like it, it is a *transport*: the
+imperative semantics is never attacked directly.  Note that one Stc
+conversion lemma becomes two here, the input and output directions no
+longer being symmetric.
 
 | Stc | Obc |
 |---|---|
@@ -371,5 +407,13 @@ checks them against whatever concrete lattice they want.
 - `get_mappings_nodup` still has section-scoped copies in
   `SecNLusTyping`/`SecSTCTyping` that should collapse onto
   `NameInterface.get_mappings_nodup_gen`.
-- `nodup_singleton_map` exists both in `SIFSignature` (SIG) and in
-  `SecNLusTyping`.
+- ~~`get_mappings_nodup` section-local copies~~ and
+  ~~`nodup_singleton_map` duplicate~~: both done.
+- `call_side_conditions` over-asks: it requires the full
+  `call_subst_fresh n2 inptyp2 ckty [sty] outtyp` where the proof uses
+  only the reset component (see §4b).  The single call site derives all
+  four from `scope_fresh scope n2` anyway, so nothing is blocked; the
+  hypothesis just reads stronger than it is.
+- `Signature_call_preserves_obc` (`SecStcObcTranslation.v:959`) is
+  subsumed by `_obc_rst` (1150): identical hypotheses, strictly weaker
+  conclusion.  Scaffolding that outlived its use.

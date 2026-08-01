@@ -57,7 +57,7 @@ resume the work cold (with any model/person).
 | 1 | `src/SIF/SecObcTyping.v` | **DONE** |
 | 2 | `src/SIF/SecObcConstraintExport.v` | **DONE** — full pipeline wired: extraction entry (`extraction/Extraction.v`), printers (`src/SIF/siflib.ml`), `osif_destination`/`print_obcsif_if` (`src/veluslib.ml`), driver call + `-dsif` writes `<file>.o.sif` (`src/velusmain.ml`); dump shows raw, collapsed and simplified constraints per class plus name maps |
 | 3 | `src/SIF/SecObcTypingCorrectness.v` | **DONE** — the scope_key/scope_sec leftovers landed as `generated_sys_signature_scope_key` and `generated_sys_signature_scope_sec_from_env_props` in `SecStcTypingCorrectness.v`, plus `generate_class_signature_scoped` here |
-| 4 | `src/SIF/SecStcObcTranslation.v` (bridge) | **DONE, admit-free** — signature preservation complete, from `generated_signatures_preserved_obc` up to `generated_program_signatures_preserved_obc_global`.  Mirrors `SecNLusStcTranslation.v` member for member; the scoped induction carries its accumulator invariants rather than assuming a step predicate.  See `RESUME.md` §4 for the correspondence table |
+| 4 | `src/SIF/SecStcObcTranslation.v` (bridge) | **DONE, admit-free** — signature preservation complete, from `generated_signatures_preserved_obc` up to `generated_program_signatures_preserved_obc_global`.  The chain skeleton matches `SecNLusStcTranslation.v` item for item; the call-preservation core underneath is a deliberate generalization of it (`RESUME.md` §4b).  The scoped induction carries its accumulator invariants rather than assuming a step predicate.  See `RESUME.md` §4 for the correspondence table |
 | 4b | `src/SIF/SecNLusStcObcEnv.v` | **DONE** — chain-level environment threading; discharges the name alignment and builds `scoped_envs_windowed`, ending in `generated_program_signatures_preserved_obc_scheduled` (the program `nl_to_cl` actually reaches).  See `RESUME.md` §4c |
 | 5 | scheduling equivalence (B4) | **DONE, admit-free** — constraint generation mints no identifiers, so reordering `s_tcs` permutes the raw constraints with identical names.  Runs from the `state_pure` stack up to `generated_signatures_preserved_by_scheduling` in `SecNLusStcObcEnv.v`.  See `RESUME.md` §4d for the layer table and for the `Is_well_sch` → `NoDup (map fst (resets_of _))` premise change it forced |
 | 6 | `src/SIF/SecObcNonInterference.v` | **DONE, admit-free** — the transport, mirroring `SecStcNonInterference.v` member for member.  See `RESUME.md` §4e |
@@ -548,7 +548,7 @@ transition constraints, hence one that survives the reordering.
 
 ## 6. Phase 6 — `SecObcNonInterference.v`.  DONE
 
-Mirrors `SecStcNonInterference.v` (it is a transport, not a fresh NI proof):
+Follows `SecStcNonInterference.v` item for item (it is a transport, not a fresh NI proof):
 - `class_security` ≅ `system_security`: ∃ source node n, STC witness,
   `Signature_head_consistent` pairs for both hops (NLus↔STC from the
   existing bridge, STC↔Obc from phase 4).
