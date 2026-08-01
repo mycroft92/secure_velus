@@ -390,10 +390,24 @@ None of these affect what is proved.
 - **`SecObcConstraintExport.v` does not schedule.**  Lines 205-206 are
   `NL2Stc.translate ordered_nodes` then `Stc2Obc.translate systems`,
   whereas `NLCorrectness.nl_to_cl` is translate -> `schedule_program` ->
-  `Stc2Obc.translate`.  So the `.o.sif` dump is of the *unscheduled*
-  pipeline while the compiler compiles the scheduled one.  The proofs
-  cover both and B4 relates them, so this is a fidelity gap in the
-  exporter only -- but the dump does not describe the emitted code.
+  `Stc2Obc.translate`.  So `.o.sif` describes a *different Obc program*
+  from the one the compiler emits -- different statement order in the
+  step method, hence different raw and collapsed constraint listings.
+
+  Note the gap is not closed by B4.  B4 gives
+  `signatures_preserved stc_u stc_s` and phase 4 gives
+  `signatures_preserved stc_s obc_s`, but the dump is `obc_u`, related to
+  `stc_u` by `signatures_preserved stc_u obc_u` -- which does not
+  invert.  So the dumped signature is **not** provably related to the
+  emitted one.  Empirically they coincided on all 42 `ok_` tests (§7),
+  but that is evidence, not a theorem.
+
+  The fix is plumbing, not proof: give `generate_obc_constraint_dump` the
+  already-scheduled Stc program instead of recomputing the pipeline, and
+  have `velusmain.ml` hand it `NLCorrectness.schedule_program`'s output.
+  `Scheduler` lives in `NLCorrectness.v`, above the exporter in the
+  dependency order, so the exporter cannot schedule for itself.
+
 - **`Signature_call_preserves` (NL) stays as it is.  Decided, do not
   revisit.**  It is `SecNLusStcTranslation.v:89`, its own conjunction of
   two rules that are the special case of `call_preserves_{eq,rst}` at
@@ -408,10 +422,15 @@ None of these affect what is proved.
   the Obc bridge reading the general rule and NLustre keeping its
   instance of it.
 
-- **`Signature_call_preserves_obc` (`SecStcObcTranslation.v:959`) is
+- **`Signature_call_preserves_obc` (`SecStcObcTranslation.v:963`) is
   subsumed** by `_obc_rst`: identical hypotheses, strictly weaker
-  conclusion.  Used only at 979 and 1461, both intermediate.  Scaffolding
-  that outlived its use.
+  conclusion.  It is *not* dead, though -- `Signature_consistent_obc`
+  (972) built on it is a live hypothesis of `tccall_preserv` (979), used
+  at 1409.  Only its producer
+  `signatures_preserved_obc_calls_from_good` (1092) is unused.  Removing
+  the cluster means re-pointing `tccall_preserv` at the `_rst` rule and
+  dropping the head constraint there instead; worth doing, but it is a
+  proof edit, not a deletion.
 - **Naming.**  The Stc-to-Obc bridge inherited `nsig`/`ssig` from the
   NLustre-to-STC chain, where they mean *NLustre* and *STC*.  Here they
   mean *STC* and *Obc*, which is actively misleading -- `NoDup
