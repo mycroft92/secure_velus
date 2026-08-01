@@ -1,7 +1,7 @@
 # Stc→Obc SIF preservation — resume state
 
-**Branch** `Stc2ObcSIF`, HEAD `65911ea`.
-126 commits since `constraint_gen`. **Build green, zero admits.**
+**Branch** `Stc2ObcSIF`, HEAD `628ddee`.
+131 commits since `constraint_gen`. **Build green, zero admits.**
 
 Companion docs: `Stc2ObcSIF_plan.md` (design), `Stc2ObcSIF_progress.md`
 (worklist + design notes), `Stc2ObcSIF_tccall.md` (the call case).
@@ -280,12 +280,55 @@ so `rewrite Forall_app` will not fire on it but `apply Forall_app in`
 will; and `edestruct H` puts the main goal *after* `H`'s side conditions,
 not before.
 
-### 4e. Later phases
+### 4e. Phase 6 -- the NI transport.  DONE
 
-The NI transport (phase 6), ~370 lines mirroring `SecStcNonInterference.v`.
-Also note nothing yet *applies* these functors to concrete arguments; there
-is no concrete `Lattice` and that is deliberate -- the proofs are for an
-arbitrary lattice, and a user extracts constraints from the pipeline and
+`SecObcNonInterference.v` mirrors `SecStcNonInterference.v` member for
+member.  Like it, it is a *transport*: the imperative semantics is never
+attacked directly.
+
+| Stc | Obc |
+|---|---|
+| `tuple_stream_low_eq` | `obc_stream_low_eq` |
+| `translated_system_behavior` | `translated_class_behavior` |
+| (behaviour built from `correctness_loop`) | `translated_class_behavior_from_system` |
+| `history_low_eq_of_tuple_stream_low_eq` | `obc_stream_low_eq_of_tuple_stream_low_eq` (outputs) and `tuple_stream_low_eq_of_obc_stream_low_eq` (inputs) |
+| `system_security` | `class_security` |
+| `system_security_from_node_security` | `class_security_from_node_security` |
+| `translated_system_noninterference_outputs` | `class_noninterference_outputs` |
+
+Three things about the shape are worth keeping.
+
+- **The two stream correspondences are not symmetric.**  Outputs are exact
+  -- `outs` is the pointwise image of `yss` under `value_to_option` -- so
+  low-equivalence crosses them in both directions.  Inputs are not:
+  `eq_if_present absent o` holds for *every* `o`, so an Obc input slot
+  whose dataflow value is absent carries no information at all.  Recovering
+  the dataflow-level hypothesis therefore needs the two runs to agree on
+  which inputs are present.  That is a premise of the Obc-level corollary,
+  of the same nature as the `eq_str` premise the Stc theorem already
+  carries, and is *not* derived.
+- **`class_security` is indexed by the system, not by the class.**  A class
+  does not determine its system: `schedule_tcs` is not injective, so two
+  differently-ordered bodies translate to the same class.  Every signature
+  lookup in it is nevertheless the class's own, names being preserved.  It
+  records the two chain facts B4 and phase 4 supply: `signatures_preserved`
+  from the unscheduled accumulator to the scheduled one, and
+  `Signature_head_consistent_obc` out of the latter.
+- **The conclusion is read off the emitted class's own `step` method**
+  (`translated_class_step_interface`), `translate_system` taking
+  `m_in := idty s_in` and `schedule_system` copying it.
+
+There is no composed NLustre-to-Obc *signature* theorem, and none is
+needed: exactly as `system_security` carries the source witness and
+`Signature_head_consistent` side by side rather than composing them,
+`class_security` carries all three legs side by side.  Composing them
+would need transitivity of `Signature_head_consistent_obc`, whose premises
+mention `call_subst_fresh` of the *middle* signature -- not available from
+the two ends.  Do not try to strengthen this.
+
+Note also that nothing yet *applies* these functors to concrete arguments;
+there is no concrete `Lattice` and that is deliberate -- the proofs are for
+an arbitrary lattice, and a user extracts constraints from the pipeline and
 checks them against whatever concrete lattice they want.
 
 ## 5. Gotchas worth keeping
