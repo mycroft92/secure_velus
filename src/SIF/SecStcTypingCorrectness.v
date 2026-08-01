@@ -1046,7 +1046,9 @@ Module Type SECSTCTYPINGCORRECTNESS
                s_constraints :=
                  SymTypes.simplify raw
                    (SECSTCTYPING.hidden_sys_vars slocals slasts rids) |} ->
-      wf_constraints raw.
+      wf_constraints raw
+      /\ (forall x, In x (SECSTCTYPING.hidden_sys_vars slocals slasts rids) ->
+                    ~ In x (signature_scope sig)).
 
   (** ** Discharging the two side conditions
 
@@ -1128,7 +1130,13 @@ Module Type SECSTCTYPINGCORRECTNESS
            reset_env rids raw st_reset st_s
            Hsig Haux Hclk Hrst Hinp Hout Hslocals Hslasts Hresetenv Hrids
            Hraw Hsch Hsigdef.
-    eapply generate_sys_signature_raw_wf; eauto.
+    split.
+    - eapply generate_sys_signature_raw_wf; eauto.
+    - intros ty Hinhid. subst sig. unfold signature_scope; cbn.
+      eapply generated_sys_hidden_disjoint; eauto.
+      intros z tz Hz.
+      eapply (proj2 (NAMEGEN.generate_node_env_inst_props
+                       _ _ _ _ _ Henv Hresetenv)); eauto.
   Qed.
 
   (** Every name the generator hands out is a [sec] gensym minted at or

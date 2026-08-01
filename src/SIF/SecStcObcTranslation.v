@@ -4161,11 +4161,12 @@ Module Type SECSTCOBCTRANSLATION
                                      /\ (List.In ty (slasts ++ rids)
                                          \/ List.In ty (List.concat extras))).
       { eapply reset_body_constraints_classified; eauto. }
-      assert (Hwf : wf_constraints sconst) by (eapply Hready; eauto).
+      (* both halves come from [generated_sys_simplify_ready], as in NLustre *)
+      edestruct Hready as (Hwf & Hdisjready); eauto.
       assert (Hdisj :
                 forall x, List.In x (SECSTCTYPING.hidden_sys_vars slocals slasts rids) ->
                           ~ List.In x (inp ++ out ++ [clk_type; rst_type])).
-      { intros ty Hin. eapply generated_sys_hidden_disjoint; eauto. }
+      { intros ty Hin. exact (Hdisjready ty Hin). }
       eapply class_preserv_signature
         with (sigscope := inp ++ out ++ [clk_type; rst_type])
              (inp := inp) (out := out) (slocals := slocals) (slasts := slasts)
