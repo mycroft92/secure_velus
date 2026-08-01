@@ -129,10 +129,36 @@ member for member:
 | `generate_all_signatures_consistent_abstract`                | `generate_all_signatures_consistent_obc_abstract`    |
 | `generate_all_signatures_consistent_scoped'`                 | `generate_all_signatures_consistent_obc_scoped'_abstract` |
 
-Two hypotheses of `generated_signatures_preserved_obc` are Stc-side side
-conditions with no proof yet, exactly as their NLustre counterparts are
-assumptions there: `sys_scope_fresh_in_env` and
-`generated_sys_simplify_ready` (both in `SecStcTypingCorrectness.v`).
+Both Stc-side conditions of `generated_signatures_preserved_obc` are now
+discharged, mirroring NLustre:
+
+| NLustre                                          | Stc                                              |
+|--------------------------------------------------|--------------------------------------------------|
+| `generated_node_simplify_ready_from_generated_env` | `generated_sys_simplify_ready_from_generated_env` |
+| `node_scope_fresh_in_env_from_bounds`              | `sys_scope_fresh_in_env_from_bounds`              |
+
+Two layer differences, both real rather than incidental:
+
+- `generated_signatures_preserved_obc` carries `Is_well_sch`, which NLustre
+  needs no counterpart for.  Two `TcReset`s for one instance would put the
+  same target on two constraints, breaking `wf_constraints`.
+- `sys_scope_fresh_in_env_from_bounds` cannot run the index-bound argument on
+  the reset instances: they are `sec_reset` gensyms, not `sec` ones, so
+  `scope_lower_bounded` does not apply.  They are excluded from any signature
+  scope by prefix instead (`sec_reset_not_in_signature_scope`), which is why
+  the lemma also takes `secglobal_scope_sec G`.
+
+**What is left to make the chain fully concrete.**  The bounds hypotheses of
+`sys_scope_fresh_in_env_from_bounds` (`env_sec_lower_bounded env st` and
+`secglobal_scope_bounded_above G st`) hold per node, not for the whole
+`generate_node_env` at once: names are minted incrementally, so no single `st`
+bounds the global env below while bounding the accumulator above.  Threading
+them is the job of the *scoped* induction, exactly as in NLustre's
+`generate_all_signatures_consistent_scoped'` (`SecNLusStcTranslation.v:2370`,
+~240 lines, uses `generate_node_scoped_env'_split_node`).  The abstract
+scoped theorem `generate_all_signatures_consistent_obc_scoped'_abstract` is
+already proved and takes the step-consistency as a parameter; what remains is
+the concrete version that establishes that parameter by threading the bounds.
 
 The scoped-env variant is much shorter than NLustre's because a translated
 system's class name *is* the system's name, so both scoped generators look up
