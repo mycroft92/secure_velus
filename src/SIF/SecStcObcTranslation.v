@@ -2517,6 +2517,37 @@ Module Type SECSTCOBCTRANSLATION
             exact (translate_arg_free memset clkvars ck e0 x Hfree).
     Qed.
 
+    (** ** Targets of a translated trconstr
+
+        [Control] only adds [Skip] branches, so it leaves the targets
+        alone up to membership; a translated trconstr then writes exactly
+        the security types of the names the source defines.  This is what
+        shows every hidden class variable has a defining constraint,
+        which [simplify_scoped] requires. *)
+
+    Lemma stmt_targets_Control:
+      forall memset ck s tys,
+        SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env s = Some tys ->
+        exists tys',
+          SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
+            (Control memset ck s) = Some tys'
+          /\ (forall d, List.In d tys' <-> List.In d tys).
+    Proof.
+      intros memset ck. induction ck as [|ck IH x b]; intros s tys Htys.
+      - exists tys. split; [exact Htys|tauto].
+      - destruct b.
+        + destruct (IH (SynObc.Ifte (bool_var memset x) s SynObc.Skip)
+                     (tys ++ [])) as (tys' & Htys' & Hiff).
+          { simpl. rewrite Htys. reflexivity. }
+          exists tys'. split; [exact Htys'|].
+          intros d. rewrite Hiff, app_nil_r. tauto.
+        + destruct (IH (SynObc.Ifte (bool_var memset x) SynObc.Skip s)
+                     ([] ++ tys)) as (tys' & Htys' & Hiff).
+          { simpl. rewrite Htys. reflexivity. }
+          exists tys'. split; [exact Htys'|].
+          intros d. rewrite Hiff. simpl. tauto.
+    Qed.
+
     (** ** The raw scope
 
         Everything the two constraint sets share: the signature scope,
