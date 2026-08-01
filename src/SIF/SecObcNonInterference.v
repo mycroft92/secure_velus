@@ -1,0 +1,275 @@
+(** Noninterference for Obc behaviors that come from translated secure
+    NLustre nodes.
+
+    Like [SecStcNonInterference.v], this is a *transport*, not a fresh
+    noninterference proof: the imperative semantics is never attacked
+    directly.  A behaviour of a translated class is exhibited together
+    with the Stc behaviour behind it -- which is what
+    [StcToObc.Correctness.correctness_loop_call] produces -- and the Stc
+    theorem is run on that.  The only real work is moving
+    low-equivalence between the two stream representations: Stc speaks
+    [value] streams, Obc speaks [option val] streams, related by
+    [eq_if_present] on the way in and by [value_to_option] on the way
+    out. *)
+
+From Coq Require Import List.
+Import List.ListNotations.
+
+From Velus Require Import Common.
+From Velus Require Import SecLattice.
+From Velus Require Import Environment.
+From Velus Require Import Operators.
+From Velus Require Import CoindStreams.
+From Velus Require Import IndexedStreams.
+From Velus Require Import CoindToIndexed.
+From Velus Require Import CoreExpr.
+From Velus Require Import NLustre.
+From Velus Require Import Stc.
+From Velus Require Import Stc.StcSchedule.
+From Velus Require Import Obc.
+From Velus Require NLustreToStc.Translation.
+From Velus Require NLustreToStc.Correctness.
+From Velus Require StcToObc.Translation.
+From Velus Require StcToObc.Correctness.
+From Velus Require Import StcToObc.StcMemoryCorres.
+From Velus Require Import SIF.NameInterface.
+From Velus Require Import SIF.SecContext.
+From Velus Require Import SIF.SecCETyping.
+From Velus Require Import SIF.SIFSignature.
+From Velus Require Import SIF.SecTypes.
+From Velus Require Import SIF.SecNLusTyping.
+From Velus Require Import SIF.SecNLusTypingCorrectness.
+From Velus Require Import SIF.NLustreCausality.
+From Velus Require Import SIF.SecNLusNonInterferenceSupport.
+From Velus Require Import SIF.SecNLusNonInterference.
+From Velus Require Import SIF.SecSTCTyping.
+From Velus Require Import SIF.SecStcTypingCorrectness.
+From Velus Require Import SIF.SecNLusStcTranslation.
+From Velus Require Import SIF.SecStcNonInterference.
+From Velus Require Import Clocks.
+From compcert Require Import common.Errors.
+
+Module Type SECOBCNONINTERFERENCE
+  (Import Ids   : IDS)
+  (Import Lat   : Lattice)
+  (Import Op    : OPERATORS)
+  (Import OpAux : OPERATORS_AUX Op)
+  (Import CStr  : COINDSTREAMS Op OpAux)
+  (Import Str   : INDEXEDSTREAMS Op OpAux)
+  (Import CIStr : COINDTOINDEXED Op OpAux CStr Str)
+  (Import SC    : SECMONAD Ids)
+  (Import SecT  : SECTYPES Lat)
+  (Import CE    : COREEXPR Ids Op OpAux Str)
+  (Import NL    : NLUSTRE Ids Op OpAux CStr Str CIStr CE)
+  (Import Stc   : STC Ids Op OpAux Str CE)
+  (Import TransNL : NLustreToStc.Translation.TRANSLATION
+                      Ids Op CE.Syn NL.Syn Stc.Syn NL.Mem)
+  (NLStcCorr : NLustreToStc.Correctness.CORRECTNESS
+                 Ids Op OpAux CStr Str CIStr CE NL Stc TransNL)
+  (Import SIG          : SIGNATURE Ids SC)
+  (Import SIGPROOFS    : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
+  (Import NAMEGEN      : NAMEGEN Ids Op CE.Syn NL.Syn)
+  (Import SECCETYPING  : SECCETYPING Ids Op CE.Syn CE.IsF CE.Clo)
+  (NLCaus              : NLUSTRECAUSALITY Ids Op CE.Syn NL.Syn CE.IsF NL.IsF)
+  (Import SECNLUSTYPING :
+     SECNLUSTYPING Ids Op SC CE.Syn NL.Syn SIG NAMEGEN CE.IsF CE.Clo
+       SECCETYPING NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo)
+  (Import SECNLUSTYPINGCORRECTNESS :
+     SECNLUSTYPINGCORRECTNESS Ids Op SC CE.Syn NL.Syn Lat SecT SIG SIGPROOFS
+       NAMEGEN CE.IsF CE.Clo SECCETYPING NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo
+       SECNLUSTYPING)
+  (NLusSupport :
+     SECNLUSNONINTERFERENCESUPPORT Ids Lat Op OpAux SC SecT CE.Syn NL.Syn SIG
+       NAMEGEN CE.Typ CE.IsF CE.Clo SECCETYPING Str NL.Ord NL.Mem NL.IsD
+       NL.IsF NLCaus NL.Clo CE.Sem CE.Props NL.Sem SIGPROOFS SECNLUSTYPING
+       SECNLUSTYPINGCORRECTNESS)
+  (NLusNI :
+     SECNLUSNONINTERFERENCE Ids Lat Op OpAux SC SecT CE.Syn NL.Syn SIG NAMEGEN
+       CE.Typ CE.IsF CE.Clo SECCETYPING Str NL.Ord NL.Mem NL.IsD NL.IsF
+       NLCaus NL.Clo CE.Sem CE.Props NL.Sem SIGPROOFS SECNLUSTYPING
+       SECNLUSTYPINGCORRECTNESS)
+  (Import SECSTCTYPING :
+     SECSTCTYPING Ids Op SC CE.Syn Stc.Syn SIG CE.IsF CE.Clo SECCETYPING
+       Stc.Last Stc.Var Stc.Def Stc.Syst Stc.Ord Stc.Free Stc.Clo)
+  (Import SECSTCTYPINGCORRECTNESS :
+     SECSTCTYPINGCORRECTNESS Ids Op SC CE.Syn NL.Syn Stc.Syn Lat SecT SIG
+       SIGPROOFS NAMEGEN CE.IsF CE.Clo SECCETYPING Stc.Last Stc.Var Stc.Def
+       Stc.Syst Stc.Ord Stc.Free Stc.Clo Stc.Wdef SECSTCTYPING)
+  (NLusStcBridge :
+     SECNLUSSTCTRANSLATION Ids Lat Op SC SecT CE.Syn NL.Syn Stc.Syn NL.Mem
+       TransNL SIG SIGPROOFS NAMEGEN CE.IsF CE.Clo SECCETYPING NL.Ord
+       NL.IsD NL.IsF NL.Clo SECNLUSTYPING SECNLUSTYPINGCORRECTNESS Stc.Last
+       Stc.Var Stc.Def Stc.Syst Stc.Ord Stc.Free Stc.Clo Stc.Wdef SECSTCTYPING
+       SECSTCTYPINGCORRECTNESS)
+  (StcNI :
+     SECSTCNONINTERFERENCE Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc
+       TransNL NLStcCorr SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
+       SECNLUSTYPING SECNLUSTYPINGCORRECTNESS NLusSupport NLusNI SECSTCTYPING
+       SECSTCTYPINGCORRECTNESS NLusStcBridge)
+  (** The Obc side proper: syntax, semantics and the translation's own
+      correctness theorem, exactly as [NLCorrectness] wires them. *)
+  (Import Obc   : OBC Ids Op OpAux)
+  (Import TransObc : StcToObc.Translation.TRANSLATION
+                       Ids Op OpAux CE.Syn Stc.Syn Obc.Syn)
+  (Import Corres : STCMEMORYCORRES Ids Op CE.Syn Stc.Syn Stc.Last)
+  (StcObcCorr : StcToObc.Correctness.CORRECTNESS
+                  Ids Op OpAux Str CE Stc Obc TransObc Corres)
+  (** Velus's own scheduler: the Obc code the compiler emits comes from
+      the *scheduled* Stc program, which is the only one [Well_defined]
+      can hold of. *)
+  (ExtSch : EXT_STCSCHEDULER Ids Op CE.Syn Stc.Syn)
+  (Sched : STCSCHEDULE Ids Op OpAux Str CE Stc.Syn Stc.Syst Stc.Ord Stc.Sem
+             Stc.Typ Stc.Var Stc.Last Stc.Def Stc.Clo Stc.Free Stc.Wdef ExtSch).
+
+  Definition ground_instantiation : Type := NLusSupport.ground_instantiation.
+
+  (** ** Low-equivalence on Obc streams
+
+      Obc's [loop_call] carries [option val] streams: [None] where the
+      dataflow value was absent.  This is the [option]-valued reading of
+      [StcNI.tuple_stream_low_eq] -- two runs agree on every low
+      position at which both are present.  Absence is not itself
+      constrained, exactly as in the Stc statement, where an [absent]
+      slot carries no [nth_error] witness either. *)
+
+  Definition obc_stream_low_eq
+    (ty_env : local_sec_env) (dlt : ground_instantiation) (t : Lat.t)
+    (xs : list ident) (ins ins' : nat -> list (option val)) : Prop :=
+    forall k i x v v',
+      nth_error xs i = Some x ->
+      NLusSupport.low_var ty_env dlt t x ->
+      nth_error (ins k) i = Some (Some v) ->
+      nth_error (ins' k) i = Some (Some v') ->
+      v = v'.
+
+  (** ** What an Obc behaviour of a translated class is
+
+      The dataflow behaviour behind it, plus the two stream
+      correspondences [correctness_loop_call] establishes: inputs agree
+      wherever the dataflow value is present, outputs are the dataflow
+      outputs read through [value_to_option].  [xss]/[yss] stay explicit,
+      exactly as in [StcNI.translated_system_behavior] -- the clock
+      premise of the Stc theorem is stated over them, so they cannot be
+      hidden here. *)
+
+  Definition translated_class_behavior
+    (all_nodes : NL.Syn.global) (sys : Stc.Syn.system)
+    (xss yss : stream (list value)) (ins outs : nat -> list (option val))
+    : Prop :=
+    StcNI.translated_system_behavior all_nodes sys xss yss
+    /\ (forall n, Forall2 StcObcCorr.eq_if_present (xss n) (ins n))
+    /\ (forall n, outs n = List.map StcObcCorr.value_to_option (yss n))
+    /\ exists me0,
+        Obc.Sem.loop_call
+          (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
+          (Stc.Syn.s_name sys) step ins outs 0 me0.
+
+  (** And it is exactly what the compiler's own correctness theorem
+      produces.  Nothing here is new: the scheduler carries the Stc
+      behaviour over to the program [Well_defined] can hold of, and
+      [correctness_loop_call] does the rest. *)
+
+  Lemma translated_class_behavior_from_system:
+    forall all_nodes sys xss yss ins,
+      Stc.Wdef.Well_defined (Sched.schedule (TransNL.translate all_nodes)) ->
+      Stc.Clo.wc_program (Sched.schedule (TransNL.translate all_nodes)) ->
+      StcNI.translated_system_behavior all_nodes sys xss yss ->
+      (forall n, Forall2 StcObcCorr.eq_if_present (xss n) (ins n)) ->
+      (forall n, List.Exists (fun v => v <> absent) (xss n)) ->
+      translated_class_behavior all_nodes sys xss yss ins
+        (fun n => List.map StcObcCorr.value_to_option (yss n)).
+  Proof.
+    intros all_nodes sys xss yss ins Hwd Hwc Hbeh Hins Hclk.
+    pose proof Hbeh as Hbeh0.
+    destruct Hbeh0 as (M & Hmsem & Hinit & Hloop).
+    split; [exact Hbeh|].
+    split; [exact Hins|].
+    split; [intro n; reflexivity|].
+    destruct (StcObcCorr.correctness_loop_call
+                (Sched.schedule (TransNL.translate all_nodes))
+                (Stc.Syn.s_name sys) xss yss ins (M 0)
+                Hwd Hwc
+                (Sched.scheduler_initial_state _ _ _ Hinit)
+                (Sched.scheduler_loop _ _ _ _ _ _ Hloop)
+                Hins Hclk)
+      as (me0 & _ & Hloopcall & _).
+    exists me0. exact Hloopcall.
+  Qed.
+
+  (** The output side of the correspondence is exact -- [outs] is the
+      pointwise image of [yss] -- so low-equivalence crosses it in both
+      directions.  This is the direction the theorem below needs. *)
+
+  Lemma obc_stream_low_eq_of_tuple_stream_low_eq:
+    forall ty_env dlt t xs yss yss' outs outs',
+      (forall n, outs n = List.map StcObcCorr.value_to_option (yss n)) ->
+      (forall n, outs' n = List.map StcObcCorr.value_to_option (yss' n)) ->
+      StcNI.tuple_stream_low_eq ty_env dlt t xs yss yss' ->
+      obc_stream_low_eq ty_env dlt t xs outs outs'.
+  Proof.
+    intros ty_env dlt t xs yss yss' outs outs' Houts Houts' Hlow
+           k i x v v' Hnthx Hlowx Hnth Hnth'.
+    rewrite Houts in Hnth. rewrite Houts' in Hnth'.
+    destruct (nth_error (yss k) i) as [w|] eqn:Hw.
+    2:{ assert (Hnone : nth_error
+                          (List.map StcObcCorr.value_to_option (yss k)) i = None).
+        { apply nth_error_None. rewrite map_length. now apply nth_error_None. }
+        rewrite Hnone in Hnth. discriminate. }
+    destruct (nth_error (yss' k) i) as [w'|] eqn:Hw'.
+    2:{ assert (Hnone : nth_error
+                          (List.map StcObcCorr.value_to_option (yss' k)) i = None).
+        { apply nth_error_None. rewrite map_length. now apply nth_error_None. }
+        rewrite Hnone in Hnth'. discriminate. }
+    rewrite (map_nth_error _ _ _ Hw) in Hnth.
+    rewrite (map_nth_error _ _ _ Hw') in Hnth'.
+    inversion Hnth; clear Hnth.
+    inversion Hnth'; clear Hnth'.
+    assert (Heq : w = w') by (eapply Hlow; eauto).
+    subst w'. congruence.
+  Qed.
+
+  (** ** The Obc-facing theorem
+
+      Same shape as [StcNI.translated_system_noninterference_outputs],
+      with the conclusion moved onto the Obc output streams.  The input
+      hypothesis stays at the dataflow level: [eq_if_present] says
+      nothing at all about an Obc slot whose dataflow value is absent,
+      so Obc-level agreement on the inputs is strictly weaker than
+      [tuple_stream_low_eq] and cannot replace it without also assuming
+      the two runs agree on which inputs are present. *)
+
+  Theorem translated_class_noninterference_outputs:
+    forall all_nodes Gsrc Gstc envs aux_names sys ty_env
+           dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
+      NL.Clo.wc_global all_nodes ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+        = OK Gsrc ->
+      NLCaus.nl_global_causal all_nodes ->
+      find_node_env (Stc.Syn.s_name sys) envs = Some ty_env ->
+      StcNI.system_security all_nodes Gsrc Gstc envs aux_names sys
+        dlt_sig dlt_raw ->
+      translated_class_behavior all_nodes sys xss yss ins outs ->
+      translated_class_behavior all_nodes sys xss' yss' ins' outs' ->
+      eq_str (clock_of xss) (clock_of xss') ->
+      StcNI.tuple_stream_low_eq ty_env dlt_sig t
+        (List.map fst (Stc.Syn.s_in sys)) xss xss' ->
+      obc_stream_low_eq ty_env dlt_sig t
+        (List.map fst (Stc.Syn.s_out sys)) outs outs'.
+  Proof.
+    intros all_nodes Gsrc Gstc envs aux_names sys ty_env
+           dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs'
+           Henvsgen Hord Hwc Hallsrc Hcaus Hfindenv
+           Hsyssec Hbeh Hbeh' Hclock_eq Hlowin.
+    destruct Hbeh as (Hstc & _ & Houts & _).
+    destruct Hbeh' as (Hstc' & _ & Houts' & _).
+    eapply obc_stream_low_eq_of_tuple_stream_low_eq;
+      [exact Houts|exact Houts'|].
+    eapply StcNI.translated_system_noninterference_outputs;
+      [exact Henvsgen|exact Hord|exact Hwc|exact Hallsrc|exact Hcaus
+      |exact Hfindenv|exact Hsyssec|exact Hstc|exact Hstc'
+      |exact Hclock_eq|exact Hlowin].
+  Qed.
+
+End SECOBCNONINTERFERENCE.

@@ -156,3 +156,4 @@ src/SIF/SecNLusNonInterferenceHelpers.v
 src/SIF/SecNLusNonInterferenceClockedStep.v
 src/SIF/SecNLusNonInterference.v
 src/SIF/SecStcNonInterference.v
+src/SIF/SecObcNonInterference.v
