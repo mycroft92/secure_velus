@@ -4015,14 +4015,14 @@ Module Type SECSTCOBCTRANSLATION
       their node counterparts. *)
 
   Theorem generated_signatures_preserved_obc:
-    forall all_nodes P (s: SynStc.system) (G1 G2: SIG.secglobal)
+    forall P (s: SynStc.system) (G1 G2: SIG.secglobal)
            (env: Env.t ident) (aux_names: list node_aux_names)
            (stcsig obcsig: SIG.signature),
       Signature_consistent_obc_full G1 G2 ->
       SECSTCTYPINGCORRECTNESS.sys_scope_fresh_in_env s env aux_names G1 ->
       SIG.secglobal_scope_sec G2 ->
       SIG.secglobal_scoped G2 ->
-      NAMEGEN.generate_node_env all_nodes = OK (env, aux_names) ->
+      NAMEGEN.naming_env_props env aux_names ->
       CloStc.wc_system P s ->
       (** as for [generate_sys_signature_good]: a doubly-reset instance
           would give two constraints the same target *)
@@ -4035,8 +4035,10 @@ Module Type SECSTCOBCTRANSLATION
       SECSTCTYPINGCORRECTNESS.generated_sys_simplify_ready env aux_names ->
       signatures_preserved stcsig obcsig.
   Proof.
-    intros all_nodes P s G1 G2 env aux_names stcsig obcsig
-           Hcons Hfreshenv Hg2sec Hg2scoped Henvgen Hwc Hsch Hstcsig Hobcsig Hready.
+    intros P s G1 G2 env aux_names stcsig obcsig
+           Hcons Hfreshenv Hg2sec Hg2scoped
+           (Hinjp & Hsecp & Hauxsecp & Hinstp & Hdistp)
+           Hwc Hsch Hstcsig Hobcsig Hready.
     (* both generators, inverted *)
     edestruct SECSTCTYPINGCORRECTNESS.generate_sys_signature_inv as
         (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
@@ -4074,7 +4076,7 @@ Module Type SECSTCOBCTRANSLATION
       rewrite Hmap in Hout'. now inversion Hout'. }
     subst inp' out'.
     (* the instance environment is injective and made of sec_reset names *)
-    destruct (NAMEGEN.generate_node_env_inst_props _ _ _ _ _ Henvgen Hrenv)
+    destruct (Hinstp _ _ Hrenv)
       as (Hinstinj & Hinstrange).
     (* everything the two signatures share is a sec name *)
     assert (Hsec : forall ty,
@@ -4096,7 +4098,7 @@ Module Type SECSTCOBCTRANSLATION
              end.
         destruct Hin as [Heq|[Heq|[]]]; subst ty; eauto. }
       destruct Hfind as (x & Hfind).
-      eapply NAMEGEN.generate_node_env_sec_range; eauto. }
+      eapply Hsecp; eauto. }
     (* the per-block extras exist, are distinct, and avoid the raw scope *)
     destruct (tcs_obc_extras_exists reset_env s.(SynStc.s_tcs) s.(SynStc.s_subs)
                 reset_env stids) as (extras & Hextras).

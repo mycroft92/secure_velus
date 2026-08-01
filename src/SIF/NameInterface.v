@@ -1747,6 +1747,20 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   Definition aux_clk_rst_distinct (aux: list node_aux_names) : Prop :=
     Forall (fun rec => ~ (rec.(nclk) = rec.(nrst))) aux.
 
+  Lemma aux_clk_rst_distinct_get_node_aux:
+    forall aux name clk_id rst_id,
+      aux_clk_rst_distinct aux ->
+      get_node_aux name aux = Some (clk_id, rst_id) ->
+      ~ (clk_id = rst_id).
+  Proof.
+    intros aux name clk_id rst_id Hdist Haux.
+    destruct (get_node_aux_In _ _ _ _ Haux) as (rec & Hin & _ & Hclk & Hrst).
+    unfold aux_clk_rst_distinct in Hdist.
+    rewrite Forall_forall in Hdist.
+    specialize (Hdist rec Hin).
+    now rewrite Hclk, Hrst in Hdist.
+  Qed.
+
   Lemma generate_node_env'_clk_rst_distinct:
     forall ns env acc st env' aux st',
       aux_clk_rst_distinct acc ->
@@ -1794,6 +1808,100 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     rewrite Forall_forall in Hprops.
     specialize (Hprops rec Hin).
     rewrite Hclk, Hrst in Hprops. exact Hprops.
+  Qed.
+
+  (** The same fact for the per-node generator, read straight off the two
+      consecutive [fresh_ident_gen] calls: the clock name is minted at
+      [st] and the reset name at [Pos.succ st], so they cannot coincide.
+      Nothing downstream has to assume it. *)
+
+  Lemma generate_local_env_for_node_clk_rst_distinct:
+    forall n st env rec st',
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      ~ (rec.(nclk) = rec.(nrst)).
+  Proof.
+    intros n st env rec st' Hgen.
+    destruct (generate_local_env_for_node_aux_sec_names _ _ _ _ _ Hgen)
+      as [Hclk Hrst].
+    rewrite Hclk, Hrst. intro Heq.
+    apply gensym_injective in Heq as [_ Heq].
+    pose proof (Pos.lt_succ_diag_r st) as Hlt.
+    rewrite <- Heq in Hlt.
+    exact (Pos.lt_irrefl _ Hlt).
+  Qed.
+
+  Lemma generate_node_scoped_env'_clk_rst_distinct:
+    forall ns envs acc st envs' aux st',
+      aux_clk_rst_distinct acc ->
+      generate_node_scoped_env' ns envs acc st = OK ((envs', aux), st') ->
+      aux_clk_rst_distinct aux.
+  Proof.
+    induction ns as [|n ns IH]; intros envs acc st envs' aux st' Hacc Hgen.
+    - simpl in Hgen. inversion Hgen; subst. exact Hacc.
+    - simpl in Hgen.
+      eapply name_bind2_inv in Hgen as (local_env & rec & st1 & Hlocal & Hgen).
+      eapply name_bind_inv in Hgen as (envs1 & st2 & Hins & Hgen).
+      eapply name_bind2_inv in Hgen as (envs2 & aux2 & st3 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst envs2 aux2 st3.
+      eapply IH; [|exact Hrec].
+      constructor; [|exact Hacc].
+      eapply generate_local_env_for_node_clk_rst_distinct; eauto.
+  Qed.
+
+  Lemma generate_node_scoped_env_clk_rst_distinct:
+    forall all_nodes envs aux_names,
+      generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      aux_clk_rst_distinct aux_names.
+  Proof.
+    intros all_nodes envs aux_names Hgen.
+    unfold generate_node_scoped_env in Hgen.
+    destruct (generate_node_scoped_env' all_nodes (Env.empty _) nil init_state)
+      as [[[envs0 aux0] st0]|] eqn:Hgen'; try discriminate.
+    inversion Hgen; subst envs aux_names.
+    eapply generate_node_scoped_env'_clk_rst_distinct; [constructor|exact Hgen'].
+  Qed.
+
+  Lemma generate_node_scoped_env'_aux_sec_names:
+    forall ns envs acc st envs' aux st',
+      aux_sec_names acc ->
+      generate_node_scoped_env' ns envs acc st = OK ((envs', aux), st') ->
+      aux_sec_names aux.
+  Proof.
+    induction ns as [|n ns IH]; intros envs acc st envs' aux st' Hacc Hgen.
+    - simpl in Hgen. inversion Hgen; subst. exact Hacc.
+    - simpl in Hgen.
+      eapply name_bind2_inv in Hgen as (local_env & rec & st1 & Hlocal & Hgen).
+      eapply name_bind_inv in Hgen as (envs1 & st2 & Hins & Hgen).
+      eapply name_bind2_inv in Hgen as (envs2 & aux2 & st3 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst envs2 aux2 st3.
+      eapply IH; [|exact Hrec].
+      intros rec' [Heq|Hin].
+      + subst rec'.
+        destruct (generate_local_env_for_node_aux_sec_names _ _ _ _ _ Hlocal)
+          as [Hclk Hrst].
+        eauto.
+      + eapply Hacc; eauto.
+  Qed.
+
+  Lemma generate_node_scoped_env_aux_sec_names:
+    forall all_nodes envs aux_names name clk_id rst_id,
+      generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      get_node_aux name aux_names = Some (clk_id, rst_id) ->
+      exists i j,
+        clk_id = Ids.gensym Ids.sec i
+        /\ rst_id = Ids.gensym Ids.sec j.
+  Proof.
+    intros all_nodes envs aux_names name clk_id rst_id Hgen Haux.
+    unfold generate_node_scoped_env in Hgen.
+    destruct (generate_node_scoped_env' all_nodes (Env.empty _) nil init_state)
+      as [[[envs0 aux0] st0]|] eqn:Hgen'; try discriminate.
+    inversion Hgen; subst envs aux_names.
+    assert (Hprops : aux_sec_names aux0).
+    { eapply generate_node_scoped_env'_aux_sec_names; [|exact Hgen'].
+      intros rec Hin; contradiction. }
+    eapply get_node_aux_In in Haux as (rec & Hin & _ & Hclk & Hrst).
+    specialize (Hprops rec Hin) as (i & j & Hi & Hj).
+    rewrite Hclk, Hrst in *. eauto.
   Qed.
 
   Lemma generate_node_aux_sec_names:
@@ -1884,24 +1992,25 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     eapply generate_node_env'_clk_rst_distinct; [constructor|exact Hgen'].
   Qed.
 
+  (** The scoped counterpart.  The environment clauses come from the one
+      node's own [generate_local_env_for_node] run; the auxiliary-name
+      clauses range over the whole accumulated list, so they come from
+      the scoped generator that produced it.  Both halves are read off
+      the naming monad -- in particular the clock/reset distinctness,
+      which is never assumed. *)
+
   Lemma naming_env_props_from_local_env:
-    forall n st env rec st' aux_names,
+    forall all_nodes envs aux_names n st env rec st',
+      generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
       generate_local_env_for_node n st = OK ((env, rec), st') ->
-      (forall name clk_id rst_id,
-          get_node_aux name aux_names = Some (clk_id, rst_id) ->
-          exists i j, clk_id = Ids.gensym Ids.sec i
-                      /\ rst_id = Ids.gensym Ids.sec j) ->
-      (forall name ie, get_node_inst name aux_names = Some ie -> ie = rec.(ninst)) ->
-      aux_clk_rst_distinct aux_names ->
       naming_env_props env aux_names.
   Proof.
-    intros n st env rec st' aux_names Hlocal Hauxsec Hinstrec Hdist.
+    intros all_nodes envs aux_names n st env rec st' Hscoped Hlocal.
     split; [eapply generate_local_env_for_node_injective; eauto|].
     split; [intros; eapply generate_local_env_for_node_sec_range; eauto|].
-    split; [exact Hauxsec|].
-    split; [|exact Hdist].
-    intros name ie Hinst. rewrite (Hinstrec _ _ Hinst).
-    eapply generate_local_env_for_node_inst_props; eauto.
+    split; [intros; eapply generate_node_scoped_env_aux_sec_names; eauto|].
+    split; [intros; eapply generate_node_scoped_env_inst_props; eauto|].
+    eapply generate_node_scoped_env_clk_rst_distinct; eauto.
   Qed.
 
 End NAMEGEN.
