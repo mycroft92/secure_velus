@@ -228,6 +228,40 @@ Module Type SECOBCNONINTERFERENCE
     subst w'. congruence.
   Qed.
 
+  (** The input side is not exact: [eq_if_present absent o] holds for
+      *every* [o], so an Obc input slot whose dataflow value is absent
+      carries no information at all.  Obc-level agreement therefore
+      recovers the dataflow-level one only for two runs that agree on
+      which inputs are present -- which is a hypothesis about the pair of
+      runs, of the same nature as the [eq_str] one the Stc theorem
+      already carries, and is stated as such rather than derived. *)
+
+  Lemma tuple_stream_low_eq_of_obc_stream_low_eq:
+    forall ty_env dlt t xs xss xss' ins ins',
+      (forall n, Forall2 StcObcCorr.eq_if_present (xss n) (ins n)) ->
+      (forall n, Forall2 StcObcCorr.eq_if_present (xss' n) (ins' n)) ->
+      (forall k i, nth_error (xss k) i = Some absent
+                   <-> nth_error (xss' k) i = Some absent) ->
+      obc_stream_low_eq ty_env dlt t xs ins ins' ->
+      StcNI.tuple_stream_low_eq ty_env dlt t xs xss xss'.
+  Proof.
+    intros ty_env dlt t xs xss xss' ins ins' Hins Hins' Habs Hlow
+           k i x v v' Hnthx Hlowx Hnth Hnth'.
+    destruct v as [|c]; destruct v' as [|c'].
+    - reflexivity.
+    - apply Habs in Hnth. rewrite Hnth in Hnth'. discriminate.
+    - apply Habs in Hnth'. rewrite Hnth in Hnth'. discriminate.
+    - destruct (SecT.Forall2_nth_error_inv
+                  _ _ StcObcCorr.eq_if_present (xss k) (ins k) i
+                  (present c) (Hins k) Hnth) as (o & Hnto & Ho).
+      destruct (SecT.Forall2_nth_error_inv
+                  _ _ StcObcCorr.eq_if_present (xss' k) (ins' k) i
+                  (present c') (Hins' k) Hnth') as (o' & Hnto' & Ho').
+      inversion Ho; subst o.
+      inversion Ho'; subst o'.
+      f_equal. eapply Hlow; eauto.
+  Qed.
+
   (** ** The Obc-facing theorem
 
       Same shape as [StcNI.translated_system_noninterference_outputs],
@@ -272,4 +306,128 @@ Module Type SECOBCNONINTERFERENCE
       |exact Hclock_eq|exact Hlowin].
   Qed.
 
+  (** The same statement with both sides phrased over Obc streams, for a
+      caller who can supply the presence agreement. *)
+
+  Corollary translated_class_noninterference_outputs_obc:
+    forall all_nodes Gsrc Gstc envs aux_names sys ty_env
+           dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
+      NL.Clo.wc_global all_nodes ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+        = OK Gsrc ->
+      NLCaus.nl_global_causal all_nodes ->
+      find_node_env (Stc.Syn.s_name sys) envs = Some ty_env ->
+      StcNI.system_security all_nodes Gsrc Gstc envs aux_names sys
+        dlt_sig dlt_raw ->
+      translated_class_behavior all_nodes sys xss yss ins outs ->
+      translated_class_behavior all_nodes sys xss' yss' ins' outs' ->
+      eq_str (clock_of xss) (clock_of xss') ->
+      (forall k i, nth_error (xss k) i = Some absent
+                   <-> nth_error (xss' k) i = Some absent) ->
+      obc_stream_low_eq ty_env dlt_sig t
+        (List.map fst (Stc.Syn.s_in sys)) ins ins' ->
+      obc_stream_low_eq ty_env dlt_sig t
+        (List.map fst (Stc.Syn.s_out sys)) outs outs'.
+  Proof.
+    intros all_nodes Gsrc Gstc envs aux_names sys ty_env
+           dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs'
+           Henvsgen Hord Hwc Hallsrc Hcaus Hfindenv
+           Hsyssec Hbeh Hbeh' Hclock_eq Habs Hlowin.
+    pose proof Hbeh as Hbeh0. pose proof Hbeh' as Hbeh0'.
+    destruct Hbeh0 as (_ & Hins & _ & _).
+    destruct Hbeh0' as (_ & Hins' & _ & _).
+    eapply translated_class_noninterference_outputs;
+      [exact Henvsgen|exact Hord|exact Hwc|exact Hallsrc|exact Hcaus
+      |exact Hfindenv|exact Hsyssec|exact Hbeh|exact Hbeh'|exact Hclock_eq|].
+    eapply tuple_stream_low_eq_of_obc_stream_low_eq;
+      [exact Hins|exact Hins'|exact Habs|exact Hlowin].
+  Qed.
+
 End SECOBCNONINTERFERENCE.
+
+Module SecObcNonInterference
+  (Import Ids   : IDS)
+  (Import Lat   : Lattice)
+  (Import Op    : OPERATORS)
+  (Import OpAux : OPERATORS_AUX Op)
+  (Import CStr  : COINDSTREAMS Op OpAux)
+  (Import Str   : INDEXEDSTREAMS Op OpAux)
+  (Import CIStr : COINDTOINDEXED Op OpAux CStr Str)
+  (Import SC    : SECMONAD Ids)
+  (Import SecT  : SECTYPES Lat)
+  (Import CE    : COREEXPR Ids Op OpAux Str)
+  (Import NL    : NLUSTRE Ids Op OpAux CStr Str CIStr CE)
+  (Import Stc   : STC Ids Op OpAux Str CE)
+  (Import TransNL : NLustreToStc.Translation.TRANSLATION
+                      Ids Op CE.Syn NL.Syn Stc.Syn NL.Mem)
+  (NLStcCorr : NLustreToStc.Correctness.CORRECTNESS
+                 Ids Op OpAux CStr Str CIStr CE NL Stc TransNL)
+  (Import SIG          : SIGNATURE Ids SC)
+  (Import SIGPROOFS    : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
+  (Import NAMEGEN      : NAMEGEN Ids Op CE.Syn NL.Syn)
+  (Import SECCETYPING  : SECCETYPING Ids Op CE.Syn CE.IsF CE.Clo)
+  (NLCaus              : NLUSTRECAUSALITY Ids Op CE.Syn NL.Syn CE.IsF NL.IsF)
+  (Import SECNLUSTYPING :
+     SECNLUSTYPING Ids Op SC CE.Syn NL.Syn SIG NAMEGEN CE.IsF CE.Clo
+       SECCETYPING NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo)
+  (Import SECNLUSTYPINGCORRECTNESS :
+     SECNLUSTYPINGCORRECTNESS Ids Op SC CE.Syn NL.Syn Lat SecT SIG SIGPROOFS
+       NAMEGEN CE.IsF CE.Clo SECCETYPING NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo
+       SECNLUSTYPING)
+  (NLusSupport :
+     SECNLUSNONINTERFERENCESUPPORT Ids Lat Op OpAux SC SecT CE.Syn NL.Syn SIG
+       NAMEGEN CE.Typ CE.IsF CE.Clo SECCETYPING Str NL.Ord NL.Mem NL.IsD
+       NL.IsF NLCaus NL.Clo CE.Sem CE.Props NL.Sem SIGPROOFS SECNLUSTYPING
+       SECNLUSTYPINGCORRECTNESS)
+  (NLusNI :
+     SECNLUSNONINTERFERENCE Ids Lat Op OpAux SC SecT CE.Syn NL.Syn SIG NAMEGEN
+       CE.Typ CE.IsF CE.Clo SECCETYPING Str NL.Ord NL.Mem NL.IsD NL.IsF
+       NLCaus NL.Clo CE.Sem CE.Props NL.Sem SIGPROOFS SECNLUSTYPING
+       SECNLUSTYPINGCORRECTNESS)
+  (Import SECSTCTYPING :
+     SECSTCTYPING Ids Op SC CE.Syn Stc.Syn SIG CE.IsF CE.Clo SECCETYPING
+       Stc.Last Stc.Var Stc.Def Stc.Syst Stc.Ord Stc.Free Stc.Clo)
+  (Import SECSTCTYPINGCORRECTNESS :
+     SECSTCTYPINGCORRECTNESS Ids Op SC CE.Syn NL.Syn Stc.Syn Lat SecT SIG
+       SIGPROOFS NAMEGEN CE.IsF CE.Clo SECCETYPING Stc.Last Stc.Var Stc.Def
+       Stc.Syst Stc.Ord Stc.Free Stc.Clo Stc.Wdef SECSTCTYPING)
+  (NLusStcBridge :
+     SECNLUSSTCTRANSLATION Ids Lat Op SC SecT CE.Syn NL.Syn Stc.Syn NL.Mem
+       TransNL SIG SIGPROOFS NAMEGEN CE.IsF CE.Clo SECCETYPING NL.Ord
+       NL.IsD NL.IsF NL.Clo SECNLUSTYPING SECNLUSTYPINGCORRECTNESS Stc.Last
+       Stc.Var Stc.Def Stc.Syst Stc.Ord Stc.Free Stc.Clo Stc.Wdef SECSTCTYPING
+       SECSTCTYPINGCORRECTNESS)
+  (StcNI :
+     SECSTCNONINTERFERENCE Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc
+       TransNL NLStcCorr SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
+       SECNLUSTYPING SECNLUSTYPINGCORRECTNESS NLusSupport NLusNI SECSTCTYPING
+       SECSTCTYPINGCORRECTNESS NLusStcBridge)
+  (** The Obc side proper: syntax, semantics and the translation's own
+      correctness theorem, exactly as [NLCorrectness] wires them. *)
+  (Import Obc   : OBC Ids Op OpAux)
+  (Import TransObc : StcToObc.Translation.TRANSLATION
+                       Ids Op OpAux CE.Syn Stc.Syn Obc.Syn)
+  (Import Corres : STCMEMORYCORRES Ids Op CE.Syn Stc.Syn Stc.Last)
+  (StcObcCorr : StcToObc.Correctness.CORRECTNESS
+                  Ids Op OpAux Str CE Stc Obc TransObc Corres)
+  (** Velus's own scheduler: the Obc code the compiler emits comes from
+      the *scheduled* Stc program, which is the only one [Well_defined]
+      can hold of. *)
+  (ExtSch : EXT_STCSCHEDULER Ids Op CE.Syn Stc.Syn)
+  (Sched : STCSCHEDULE Ids Op OpAux Str CE Stc.Syn Stc.Syst Stc.Ord Stc.Sem
+             Stc.Typ Stc.Var Stc.Last Stc.Def Stc.Clo Stc.Free Stc.Wdef ExtSch)
+  <: SECOBCNONINTERFERENCE
+       Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc TransNL
+       NLStcCorr SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
+       SECNLUSTYPING SECNLUSTYPINGCORRECTNESS NLusSupport NLusNI
+       SECSTCTYPING SECSTCTYPINGCORRECTNESS NLusStcBridge StcNI Obc
+       TransObc Corres StcObcCorr ExtSch Sched.
+  Include SECOBCNONINTERFERENCE
+            Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc TransNL
+            NLStcCorr SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
+            SECNLUSTYPING SECNLUSTYPINGCORRECTNESS NLusSupport NLusNI
+            SECSTCTYPING SECSTCTYPINGCORRECTNESS NLusStcBridge StcNI Obc
+            TransObc Corres StcObcCorr ExtSch Sched.
+End SecObcNonInterference.
