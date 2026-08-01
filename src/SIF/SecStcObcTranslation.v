@@ -2622,6 +2622,65 @@ Module Type SECSTCOBCTRANSLATION
         rewrite Hfind in Hty0. inversion Hty0; subst ty0. exact Hinty.
     Qed.
 
+    (** Lifting the per-trconstr fact over the body's fold: the targets of
+        every translated trconstr, and of the accumulator, all land in the
+        targets of the whole body. *)
+
+    Lemma stmt_targets_fold_inv:
+      forall memset clkvars tcs acc tys,
+        SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
+          (fold_left (fun i tc => SynObc.Comp (translate_tc memset clkvars tc) i)
+             tcs acc) = Some tys ->
+        exists accty,
+          SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env acc = Some accty
+          /\ (forall d, List.In d accty -> List.In d tys)
+          /\ (forall tc, List.In tc tcs ->
+                        exists t,
+                          SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
+                            (translate_tc memset clkvars tc) = Some t
+                          /\ forall d, List.In d t -> List.In d tys).
+    Proof.
+      intros memset clkvars tcs. induction tcs as [|tc tcs IH]; intros acc tys Hfold.
+      - simpl in Hfold. exists tys. repeat split; auto.
+        intros tc Hin. inversion Hin.
+      - simpl in Hfold.
+        destruct (IH _ _ Hfold) as (accty1 & Hacc1 & Hmono1 & Hall1).
+        simpl in Hacc1.
+        destruct (SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
+                    (translate_tc memset clkvars tc)) as [t|] eqn:Ht;
+          try discriminate.
+        destruct (SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env acc)
+          as [a|] eqn:Ha; try discriminate.
+        inversion Hacc1; subst accty1.
+        exists a. repeat split.
+        + intros d Hd. apply Hmono1. apply in_or_app. now right.
+        + intros tc5 Hin5.
+          destruct Hin5 as [Heq|Hin5].
+          * subst tc5. exists t. split; [exact Ht|].
+            intros d Hd. apply Hmono1. apply in_or_app. now left.
+          * destruct (Hall1 tc5 Hin5) as (t5 & Ht5 & Hmono5).
+            exists t5. split; assumption.
+    Qed.
+
+    Lemma stmt_targets_translate_tcs_variables:
+      forall memset clkvars tcs tys x ty,
+        SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
+          (translate_tcs memset clkvars tcs) = Some tys ->
+        List.In x (variables tcs) ->
+        Env.find x env = Some ty ->
+        List.In ty tys.
+    Proof.
+      intros memset clkvars tcs tys x ty Htys Hin Hfind.
+      unfold translate_tcs in Htys.
+      destruct (stmt_targets_fold_inv _ _ _ _ _ Htys)
+        as (accty & Hacc & _ & Hall).
+      unfold variables in Hin.
+      apply in_flat_map in Hin as (tc & Hintc & Hinx).
+      destruct (Hall tc Hintc) as (t & Ht & Hmono).
+      apply Hmono.
+      eapply stmt_targets_translate_tc_variables; eauto.
+    Qed.
+
     (** ** The raw scope
 
         Everything the two constraint sets share: the signature scope,
