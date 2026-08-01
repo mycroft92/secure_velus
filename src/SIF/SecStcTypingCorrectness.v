@@ -1233,6 +1233,77 @@ Module Type SECSTCTYPINGCORRECTNESS
       [node_scope_lower_bounded_from_local_env] and
       [generated_node_sig_scope_upper_bound_from_local_env]. *)
 
+  (** ** Reordering a system's body preserves its signature
+
+      The scheduler permutes [s_tcs] and changes nothing else.  Since
+      constraint generation mints no identifiers, the raw constraints
+      permute with identical names, so the two signatures preserve each
+      other.  Only the hidden-name lists genuinely differ -- the reset
+      instances are collected in body order -- and
+      [preserves_on_simplify_bridge] allows those to be unrelated. *)
+
+  Theorem generate_sys_signature_reorder_preserved:
+    forall G s s' env aux_names sig sig',
+      s'.(SynStc.s_name) = s.(SynStc.s_name) ->
+      s'.(SynStc.s_in) = s.(SynStc.s_in) ->
+      s'.(SynStc.s_out) = s.(SynStc.s_out) ->
+      s'.(SynStc.s_vars) = s.(SynStc.s_vars) ->
+      s'.(SynStc.s_lasts) = s.(SynStc.s_lasts) ->
+      Permutation s.(SynStc.s_tcs) s'.(SynStc.s_tcs) ->
+      generated_sys_simplify_ready env aux_names ->
+      Is_well_sch (map fst s.(SynStc.s_in))
+                  (ps_from_list (map fst s.(SynStc.s_lasts))) s.(SynStc.s_tcs) ->
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      SECSTCTYPING.generate_sys_signature G s' env aux_names = OK sig' ->
+      signatures_preserved sig sig'.
+  Proof.
+    intros G s s' env aux_names sig sig'
+           Hname Hin Hout Hvars Hlasts Hperm Hready Hsch Hsig Hsig'.
+    edestruct generate_sys_signature_inv as
+        (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
+         & reset_env & rids & st_reset & sconst & st_s
+         & Haux & Hclk & Hrst & Hinp & Hout' & Hslocals & Hslasts
+         & Hrenv & Hrids & Hsconst & Hsigdef); [exact Hsig|].
+    edestruct generate_sys_signature_inv as
+        (clk_id2 & rst_id2 & clk_type2 & rst_type2 & inp2 & out2 & slocals2
+         & slasts2 & reset_env2 & rids2 & st_reset2 & sconst2 & st_s2
+         & Haux2 & Hclk2 & Hrst2 & Hinp2 & Hout2 & Hslocals2 & Hslasts2
+         & Hrenv2 & Hrids2 & Hsconst2 & Hsigdef2); [exact Hsig'|].
+    (* everything but the body is copied, so the two inversions agree *)
+    rewrite Hname in Haux2, Hrenv2.
+    rewrite Haux in Haux2. inversion Haux2; subst clk_id2 rst_id2.
+    rewrite Hclk in Hclk2. inversion Hclk2; subst clk_type2.
+    rewrite Hrst in Hrst2. inversion Hrst2; subst rst_type2.
+    rewrite Hrenv in Hrenv2. inversion Hrenv2; subst reset_env2.
+    rewrite Hin in Hinp2. rewrite Hinp in Hinp2. inversion Hinp2; subst inp2.
+    rewrite Hout in Hout2. rewrite Hout' in Hout2. inversion Hout2; subst out2.
+    (* the raw constraints permute *)
+    assert (Hpermc : Permutation sconst sconst2).
+    { eapply SECSTCTYPING.generate_trconstrs_constraints_Permutation;
+        [exact Hperm|exact Hsconst|exact Hsconst2]. }
+    edestruct Hready as (Hwf & Hdisj);
+      [exact Hsig|exact Haux|exact Hclk|exact Hrst|exact Hinp|exact Hout'
+      |exact Hslocals|exact Hslasts|exact Hrenv|exact Hrids|exact Hsconst
+      |exact Hsch|exact Hsigdef|].
+    subst sig sig'. split.
+    - repeat split; reflexivity.
+    - cbn [s_constraints].
+      eapply preserves_on_simplify_bridge
+        with (rawscope := signature_scope
+                            {| s_name := s.(SynStc.s_name);
+                               s_in := inp; s_out := out;
+                               s_reset := rst_type; s_clk := clk_type;
+                               s_constraints :=
+                                 SymTypes.simplify sconst
+                                   (SECSTCTYPING.hidden_sys_vars
+                                      slocals slasts rids) |}).
+      + exact Hwf.
+      + exact Hdisj.
+      + auto.
+      + eapply preserves_on_Permutation;
+          [apply Permutation_refl|exact Hpermc|apply preserves_on_refl].
+  Qed.
+
   (** ** Systems with a windowed environment
 
       What the scoped signature induction actually consumes, per system:
