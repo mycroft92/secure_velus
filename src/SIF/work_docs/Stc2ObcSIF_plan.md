@@ -162,14 +162,13 @@ exactly the branch conditions the pc tracks.
   with `clock_pc_from_assign` relating the walk to `assign_clk_type` by one
   `merge_assoc` per `Con`.
 
-- **B4 — Scheduling. IN PROGRESS** (phase 5; see `RESUME.md` §4d for what is
-  proved and the four remaining steps).  The recommended route below is the
-  one taken. `correctness_loop_call` needs
-  `Well_defined P`, i.e. the *scheduled* program, while the SIF STC signatures
-  are generated from the unscheduled `translate all_nodes`. Recommended route:
-  generate the Obc signatures from the scheduled program and add a small
-  STC ↔ scheduled-STC signature bridge, rather than proving `simplify` stable
-  under permutation.
+- **B4 — Scheduling. RESOLVED** (phase 5; see `RESUME.md` §4d).  The
+  recommended route below is the one taken: the Obc signatures come from the
+  scheduled program, and `generated_signatures_preserved_by_scheduling`
+  (`SecNLusStcObcEnv.v`) is the STC ↔ scheduled-STC bridge.  `simplify` was
+  never proved permutation-stable.  One premise had to move: reset uniqueness
+  is now asked for as `NoDup (map fst (resets_of s_tcs))` rather than
+  `Is_well_sch`, since B4 needs it of the *unscheduled* program.
 
 - **B5 — Reset-method writes. RESOLVED.**  Assembled in the bridge as
   `reset_shared_targets`, `reset_body_constraints_classified` and

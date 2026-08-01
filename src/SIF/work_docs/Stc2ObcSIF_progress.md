@@ -59,10 +59,10 @@ resume the work cold (with any model/person).
 | 3 | `src/SIF/SecObcTypingCorrectness.v` | **DONE** — the scope_key/scope_sec leftovers landed as `generated_sys_signature_scope_key` and `generated_sys_signature_scope_sec_from_env_props` in `SecStcTypingCorrectness.v`, plus `generate_class_signature_scoped` here |
 | 4 | `src/SIF/SecStcObcTranslation.v` (bridge) | **DONE, admit-free** — signature preservation complete, from `generated_signatures_preserved_obc` up to `generated_program_signatures_preserved_obc_global`.  Mirrors `SecNLusStcTranslation.v` member for member; the scoped induction carries its accumulator invariants rather than assuming a step predicate.  See `RESUME.md` §4 for the correspondence table |
 | 4b | `src/SIF/SecNLusStcObcEnv.v` | **DONE** — chain-level environment threading; discharges the name alignment and builds `scoped_envs_windowed`, ending in `generated_program_signatures_preserved_obc_scheduled` (the program `nl_to_cl` actually reaches).  See `RESUME.md` §4c |
-| 5 | scheduling equivalence (B4) | **IN PROGRESS** — the technical risk is gone: constraint generation mints no identifiers, so reordering `s_tcs` permutes the raw constraints with identical names.  Proved: the `state_pure` stack, `generate_trconstrs_constraints_Permutation`, `generate_sys_signature_reorder_preserved`, `sig_env_preserved`, `generate_trconstr_constraint_preserved`.  Four assembly steps remain, listed in `RESUME.md` §4d |
+| 5 | scheduling equivalence (B4) | **DONE, admit-free** — constraint generation mints no identifiers, so reordering `s_tcs` permutes the raw constraints with identical names.  Runs from the `state_pure` stack up to `generated_signatures_preserved_by_scheduling` in `SecNLusStcObcEnv.v`.  See `RESUME.md` §4d for the layer table and for the `Is_well_sch` → `NoDup (map fst (resets_of _))` premise change it forced |
 | 6 | `src/SIF/SecObcNonInterference.v` | not started |
 
-Remaining order: finish 5 (B4), then 6.
+Remaining: 6.
 
 Phase-3 slice already proved (in `SecObcTypingCorrectness.v`):
 `constraint_satisfiable_merge_split`, `join_into_satisfaction`,
@@ -525,20 +525,26 @@ section-scoped copies in `SecNLusTyping`/`SecSTCTyping`, and
 `nodup_singleton_map` exists both in `SIFSignature` (SIG) and in
 `SecNLusTyping`.
 
-## 5. Phase 5 — scheduling (B4)
+## 5. Phase 5 — scheduling (B4).  DONE
 
 `StcToObc/Correctness.correctness_loop_call` needs `Well_defined P`
-(scheduled). SIF STC signatures are generated from unscheduled
-`NLustreToStc.Translation.translate all_nodes`. Options (pick one):
-(a) prove `generate_sys_signature` of a system and of its scheduled
-permutation are `preserves_on`-equivalent (constraints permute per-tc;
-`simplify` output differs syntactically → work at `preserves_on` level);
-(b) generate the Obc signatures from the *scheduled* STC program and make
-the phase-4 bridge relate scheduled-STC ↔ Obc, then add a small
-STC ↔ scheduled-STC signature bridge. (b) is likely less total work since
-phase 4 needs the translated system's tcs list anyway and
-`Scheduler.schedule` only permutes `s_tcs` (`StcSchedule.scheduler_wc_program`
-etc. give the invariant carriers).
+(scheduled), while the SIF STC signatures the NL-Stc bridge produces come
+from the unscheduled `NLustreToStc.Translation.translate all_nodes`.
+
+Option (b) was taken: the Obc signatures are generated from the *scheduled*
+STC program, and `generated_signatures_preserved_by_scheduling`
+(`SecNLusStcObcEnv.v`) is the STC ↔ scheduled-STC bridge.  Option (a) —
+proving `simplify` itself permutation-stable — stays rejected: it eliminates
+hidden names in list order, so when one hidden name's definition mentions
+another the two results agree only up to equivalence, not syntactically.
+
+`RESUME.md` §4d has the full layer table.  The one thing that had to move
+outside phase 5: `generate_sys_signature_good` and
+`generated_sys_simplify_ready` used to take `Is_well_sch`, which the
+unscheduled program does not satisfy.  Both only used it through
+`Is_well_sch_resets_nodup`, so both now take
+`NoDup (map fst (resets_of s_tcs))` — a property of the multiset of
+transition constraints, hence one that survives the reordering.
 
 ## 6. Phase 6 — `SecObcNonInterference.v`
 
