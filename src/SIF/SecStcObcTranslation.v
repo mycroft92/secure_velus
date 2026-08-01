@@ -2910,6 +2910,48 @@ Module Type SECSTCOBCTRANSLATION
       repeat split; reflexivity.
     Qed.
 
+    (** ** Lockstep over the program
+
+        Signature environments grow in step: extending both with a
+        head-consistent pair preserves consistency, since the two
+        signatures share a name and so are found together. *)
+
+    Theorem Signature_consistent_obc_full_cons:
+      forall H1 H2 nsig ssig,
+        Signature_consistent_obc_full H1 H2 ->
+        Signature_head_consistent_obc nsig ssig ->
+        Signature_consistent_obc_full (nsig :: H1) (ssig :: H2).
+    Proof.
+      intros H1 H2 nsig ssig Hcons Hhead f n1 Hfind.
+      simpl in Hfind.
+      destruct (ident_eqb nsig.(s_name) f) eqn:Hname.
+      - destruct Hhead as (Hsgname & Hhead).
+        apply ident_eqb_eq in Hname. inversion Hfind; subst n1.
+        exists ssig. simpl. rewrite <- Hsgname, Hname, ident_eqb_refl.
+        split; [reflexivity|].
+        split; [exact Hsgname|exact Hhead].
+      - apply ident_eqb_neq in Hname.
+        destruct Hhead as (Hsgname & Hhead).
+        specialize (Hcons f n1 Hfind) as (n2 & Hfind2 & Hhead2).
+        assert (Hneqb : ident_eqb ssig.(s_name) f = false).
+        { apply ident_eqb_neq. rewrite <- Hsgname. exact Hname. }
+        exists n2. simpl. rewrite Hneqb. auto.
+    Qed.
+
+    (** One translation step: a generated signature pair that is
+        head-consistent extends a consistent pair of environments. *)
+
+    Theorem generated_signature_consistent_step:
+      forall H1 H2 s aux nsig ssig,
+        Signature_consistent_obc_full H1 H2 ->
+        SECSTCTYPING.generate_sys_signature G1 s env aux = OK nsig ->
+        SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux = OK ssig ->
+        Signature_head_consistent_obc nsig ssig ->
+        Signature_consistent_obc_full (nsig :: H1) (ssig :: H2).
+    Proof.
+      intros. eapply Signature_consistent_obc_full_cons; eauto.
+    Qed.
+
     (** ** Class-level raw preservation
 
         The Obc signature's raw constraints are the step method's, the
