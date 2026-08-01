@@ -4318,73 +4318,233 @@ Module Type SECSTCOBCTRANSLATION
     exists env. split; assumption.
   Qed.
 
-  Definition generated_signature_step_consistent_obc_scoped
-    (envs: node_scoped_env) (aux_names: list node_aux_names) : Prop :=
-    forall G1 G2 s stcsig obcsig,
-      Signature_consistent_obc_full G1 G2 ->
-      SECSTCTYPING.generate_sys_signature_scoped_env G1 s envs aux_names
-        = OK stcsig ->
-      SECOBCTYPING.generate_class_signature_scoped_env G2 (translate_system s)
-        envs aux_names = OK obcsig ->
-      Signature_head_consistent_obc stcsig obcsig.
+  (** This is the main lockstep induction for the translation layer.  It
+      runs the STC and Obc signature generators over the same
+      node-scoped environment, proves that each fresh signature pair is
+      individually well formed, and extends the accumulator with a
+      [Signature_head_consistent_obc] pair.  Nothing about the
+      accumulators is assumed: consistency, scopedness and the freshness
+      bound are carried as invariants and re-established at each step,
+      which is why there is no per-step predicate to supply.
 
-  Corollary generated_signature_step_consistent_obc_scoped_from_env:
-    forall envs aux_names,
-      (forall env, generated_signature_step_consistent_obc env aux_names) ->
-      generated_signature_step_consistent_obc_scoped envs aux_names.
-  Proof.
-    intros envs aux_names Hstep G1 G2 s stcsig obcsig Hcons Hstc Hobc.
-    destruct (scoped_env_generators_share_env _ _ _ _ _ _ _ Hstc Hobc)
-      as (env & Hstc' & Hobc').
-    eapply Hstep; eauto.
-  Qed.
+      The naming environment is generated from the NLustre nodes the
+      systems came from -- names are preserved by that translation, so
+      [Forall2] on names is all the induction needs to keep the two
+      lists aligned. *)
 
-  Theorem generate_all_signatures_consistent_obc_scoped'_abstract:
-    forall systems acc1 acc2 envs aux_names G1 G2,
+  Theorem generate_all_signatures_consistent_obc_scoped':
+    forall prefix nodes systems acc1 acc2 envs aux_names
+           envs_pref aux_pref st G1 G2,
+      NAMEGEN.generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
+        = OK ((envs_pref, aux_pref), st) ->
+      NAMEGEN.generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
+      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) nodes systems ->
+      CloStc.wc_program systems ->
+      WD.Well_scheduled systems ->
       Signature_consistent_obc_full acc1 acc2 ->
-      generated_signature_step_consistent_obc_scoped envs aux_names ->
+      SIG.secglobal_scoped acc1 ->
+      SIG.secglobal_scoped acc2 ->
+      SIG.secglobal_scope_sec acc1 ->
+      SIG.secglobal_scope_sec acc2 ->
+      SIG.secglobal_scope_bounded_above acc1 st ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env' acc1 systems envs
         aux_names = OK G1 ->
       SECOBCTYPING.generate_all_class_signatures_scoped_env' acc2
         (translate systems) envs aux_names = OK G2 ->
-      Signature_consistent_obc_full G1 G2.
+      Signature_consistent_obc_full G1 G2
+      /\ SIG.secglobal_scoped G2
+      /\ SIG.secglobal_scope_sec G2.
   Proof.
-    induction systems as [|s systems IH];
-      intros acc1 acc2 envs aux_names G1 G2 Hcons Hstep Hstc Hobc.
-    - simpl in Hstc, Hobc. inversion Hstc; inversion Hobc; subst. exact Hcons.
-    - simpl in Hstc, Hobc.
+    intros prefix nodes.
+    revert prefix.
+    induction nodes as [|n nodes IH];
+      intros prefix systems acc1 acc2 envs aux_names envs_pref aux_pref st G1 G2
+             Hprefgen Henvsgen Hnames Hwc Hsch Hcons Hacc1scoped Hacc2scoped
+             Hacc1sec Hacc2sec Hbound Hstc Hobc.
+    - inversion Hnames; subst systems.
+      simpl in Hstc, Hobc. inversion Hstc; inversion Hobc; subst.
+      repeat split; assumption.
+    - inversion Hnames as [|n' s ns systems' Hname Hnames']; subst n' ns systems.
+      inversion Hwc as [|s' systems'' Hwc_tail Hwc_head]; subst s' systems''.
+      inversion Hsch as [|s' systems'' Hsch_head Hsch_tail]; subst s' systems''.
+      simpl in Hstc, Hobc.
       destruct (SECSTCTYPING.generate_sys_signature_scoped_env acc1 s envs aux_names)
         as [stcsig|] eqn:Hstcsig; try discriminate.
       destruct (SECOBCTYPING.generate_class_signature_scoped_env acc2
                   (translate_system s) envs aux_names) as [obcsig|] eqn:Hobcsig;
         simpl in Hstc, Hobc; try discriminate.
       destruct (SECSTCTYPING.generate_all_sys_signatures_scoped_env'
-                  (stcsig :: acc1) systems envs aux_names) as [G1'|] eqn:Hstc';
+                  (stcsig :: acc1) systems' envs aux_names) as [G1'|] eqn:Hstc';
         simpl in Hstc; try discriminate.
       destruct (SECOBCTYPING.generate_all_class_signatures_scoped_env'
-                  (obcsig :: acc2) (translate systems) envs aux_names)
+                  (obcsig :: acc2) (translate systems') envs aux_names)
         as [G2'|] eqn:Hobc'; simpl in Hobc; try discriminate.
-      inversion Hstc; subst; clear Hstc.
-      inversion Hobc; subst; clear Hobc.
-      eapply IH with (acc1 := stcsig :: acc1) (acc2 := obcsig :: acc2); eauto.
-      eapply Signature_consistent_obc_full_cons; eauto.
+      inversion Hstc; subst G1'; clear Hstc.
+      inversion Hobc; subst G2'; clear Hobc.
+      (* locate this node's slice of the scoped naming run *)
+      pose proof Henvsgen as Henvsgen_full.
+      unfold NAMEGEN.generate_node_scoped_env in Henvsgen_full.
+      destruct (NAMEGEN.generate_node_scoped_env' (prefix ++ n :: nodes)
+                  (Env.empty _) nil NAMEGEN.init_state)
+        as [[[envs_full aux_full] st_full]|] eqn:Hrun; try discriminate.
+      inversion Henvsgen_full; subst envs_full aux_full; clear Henvsgen_full.
+      edestruct NAMEGEN.generate_node_scoped_env'_split_node
+        as (envs_pref' & aux_pref' & st_pref & local_env & rec & st_local
+            & envs_cur & st_cur & Hpref & Hlocal & Hins & Htail);
+        eauto.
+      rewrite Hprefgen in Hpref.
+      inversion Hpref; subst envs_pref' aux_pref' st_pref.
+      assert (Hcur : st_cur = st_local).
+      { unfold NAMEGEN.fresh_insert_node_env in Hins.
+        destruct (Env.mem n.(n_name) envs_pref) eqn:Hmem; try discriminate.
+        unfold NAMEGEN.insert_node_env, NAMEGEN.NMret in Hins.
+        inversion Hins. reflexivity. }
+      subst st_cur.
+      assert (Hfindlocal : find_node_env s.(SynStc.s_name) envs = Some local_env).
+      { rewrite Hname.
+        eapply NAMEGEN.generate_node_scoped_env'_preserves_find; eauto.
+        eapply NAMEGEN.fresh_insert_node_env_finds_new; eauto. }
+      (* both scoped generators read that same environment *)
+      unfold SECSTCTYPING.generate_sys_signature_scoped_env in Hstcsig.
+      rewrite Hfindlocal in Hstcsig.
+      unfold SECOBCTYPING.generate_class_signature_scoped_env in Hobcsig.
+      assert (Hfindlocal_cls :
+                find_node_env (translate_system s).(c_name) envs = Some local_env)
+        by (simpl; exact Hfindlocal).
+      rewrite Hfindlocal_cls in Hobcsig.
+      (* the naming facts, all read off the monad *)
+      assert (Hprops : NAMEGEN.naming_env_props local_env aux_names).
+      { eapply NAMEGEN.naming_env_props_from_local_env; eauto. }
+      assert (Henvinj : env_injective local_env) by exact (proj1 Hprops).
+      assert (Hready : SECSTCTYPINGCORRECTNESS.generated_sys_simplify_ready
+                         local_env aux_names).
+      { eapply SECSTCTYPINGCORRECTNESS.generated_sys_simplify_ready_from_naming_props;
+          exact Hprops. }
+      (* the two signatures, each scoped in its own layer *)
+      assert (Hstcscoped : SIG.signature_scoped stcsig).
+      { eapply SECSTCTYPING.generate_sys_signature_scoped
+          with (P := systems') (s := s) (env := local_env);
+          [exact Hacc1scoped|exact Henvinj|exact Hwc_head|exact Hstcsig]. }
+      assert (Hobcscoped : SIG.signature_scoped obcsig).
+      { eapply SECOBCTYPINGCORRECTNESS.generate_class_signature_scoped;
+          [exact Hacc2scoped| |exact Hobcsig].
+        eapply translate_system_well_defined; eauto. }
+      assert (Hstcgood : SIG.signature_good stcsig).
+      { eapply SECSTCTYPINGCORRECTNESS.generate_sys_signature_good
+          with (P := systems') (s := s) (env := local_env);
+          [exact Hprops|exact Hacc1scoped|exact Hwc_head|exact Hsch_head
+          |exact Hstcsig]. }
+      assert (Hstcnd : NoDup (SIG.signature_scope stcsig)).
+      { eapply SECSTCTYPINGCORRECTNESS.generate_sys_signature_scope_nodup;
+          [exact Hprops|exact Hstcsig]. }
+      (* freshness of this system's scope against the accumulator *)
+      assert (Hfreshenv : SECSTCTYPINGCORRECTNESS.sys_scope_fresh_in_env
+                            s local_env aux_names acc1).
+      { eapply SECSTCTYPINGCORRECTNESS.sys_scope_fresh_in_env_from_bounds
+          with (st := st).
+        - intros ie x ty Hinst Hfind.
+          exact (proj2 (proj1 (proj2 (proj2 (proj2 Hprops))) _ _ Hinst) _ _ Hfind).
+        - eapply SECSTCTYPINGCORRECTNESS.env_sec_lower_bounded_from_local_env;
+            eauto.
+        - exact Hbound.
+        - exact Hacc1sec. }
+      assert (Hpres : signatures_preserved stcsig obcsig).
+      { eapply generated_signatures_preserved_obc with (P := systems'); eauto. }
+      assert (Hhead : Signature_head_consistent_obc stcsig obcsig).
+      { assert (Hagree : stcsig.(s_name) = obcsig.(s_name)
+                         /\ SIG.signature_fields_agree stcsig obcsig)
+          by (eapply generated_signature_fields_agree; eauto).
+        eapply signatures_preserved_obc_full_from_good;
+          [exact (proj1 Hagree)|exact Hstcgood|exact Hstcnd
+          |exact Hobcscoped|exact Hpres]. }
+      (* re-establish every accumulator invariant *)
+      assert (Hcons' : Signature_consistent_obc_full (stcsig :: acc1)
+                         (obcsig :: acc2))
+        by (eapply Signature_consistent_obc_full_cons; eauto).
+      assert (Hacc1scoped' : SIG.secglobal_scoped (stcsig :: acc1))
+        by (eapply SIG.secglobal_scoped_cons; eauto).
+      assert (Hacc2scoped' : SIG.secglobal_scoped (obcsig :: acc2))
+        by (eapply SIG.secglobal_scoped_cons; eauto).
+      assert (Hstcsec : SIG.signature_scope_sec stcsig).
+      { eapply SECSTCTYPINGCORRECTNESS.generated_sys_signature_scope_sec_from_local_env
+          with (n := n) (st := st) (st' := st_local);
+          [exact Hlocal|exact Hstcsig]. }
+      assert (Hacc1sec' : SIG.secglobal_scope_sec (stcsig :: acc1))
+        by (eapply SIG.secglobal_scope_sec_cons; eauto).
+      assert (Hacc2sec' : SIG.secglobal_scope_sec (obcsig :: acc2)).
+      { eapply SIG.secglobal_scope_sec_cons; [|exact Hacc2sec].
+        intros ty Hin.
+        rewrite <- (SIG.signature_fields_agree_scope_eq stcsig obcsig
+                      (proj1 (proj2 Hhead))) in Hin.
+        exact (Hstcsec ty Hin). }
+      assert (Hle : (st <= st_local)%positive)
+        by (eapply NAMEGEN.generate_local_env_for_node_state_monotone; eauto).
+      assert (Hbound' : SIG.secglobal_scope_bounded_above (stcsig :: acc1) st_local).
+      { eapply SIG.secglobal_scope_bounded_above_cons.
+        - eapply SECSTCTYPINGCORRECTNESS.generated_sys_signature_scope_upper_bound_from_local_env
+            with (n := n) (st := st); [exact Hlocal|exact Hstcsig].
+        - eapply SIG.secglobal_scope_bounded_above_monotone;
+            [exact Hbound|exact Hle]. }
+      (* step the prefix by one node and recurse *)
+      assert (Hstep :
+                NAMEGEN.generate_node_scoped_env' (n :: nil) envs_pref aux_pref st
+                = OK ((envs_cur, rec :: aux_pref), st_local)).
+      { simpl. unfold NMbind2. rewrite Hlocal. simpl.
+        unfold NMbind. rewrite Hins. simpl. reflexivity. }
+      assert (Hprefgen' :
+                NAMEGEN.generate_node_scoped_env' (prefix ++ n :: nil)
+                  (Env.empty _) nil NAMEGEN.init_state
+                = OK ((envs_cur, rec :: aux_pref), st_local))
+        by (eapply NAMEGEN.generate_node_scoped_env'_app; eauto).
+      assert (Henvsgen' :
+                NAMEGEN.generate_node_scoped_env ((prefix ++ n :: nil) ++ nodes)
+                = OK (envs, aux_names)).
+      { assert (Heqlist : (prefix ++ n :: nil) ++ nodes = prefix ++ n :: nodes).
+        { clear - prefix n nodes.
+          induction prefix as [|a prefix IHprefix]; simpl;
+            [reflexivity|now f_equal]. }
+        rewrite Heqlist. exact Henvsgen. }
+      eapply IH with (prefix := prefix ++ n :: nil) (systems := systems')
+                     (acc1 := stcsig :: acc1) (acc2 := obcsig :: acc2)
+                     (envs := envs) (aux_names := aux_names)
+                     (envs_pref := envs_cur) (aux_pref := rec :: aux_pref)
+                     (st := st_local); eauto.
   Qed.
 
-  Corollary generate_all_signatures_consistent_obc_scoped_abstract:
-    forall systems envs aux_names G1 G2,
-      generated_signature_step_consistent_obc_scoped envs aux_names ->
+  Corollary generate_all_signatures_consistent_obc_scoped:
+    forall all_nodes systems envs aux_names G1 G2,
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) all_nodes systems ->
+      CloStc.wc_program systems ->
+      WD.Well_scheduled systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
         = OK G1 ->
       SECOBCTYPING.generate_all_class_signatures_scoped_env (translate systems)
         envs aux_names = OK G2 ->
-      Signature_consistent_obc_full G1 G2.
+      Signature_consistent_obc_full G1 G2
+      /\ SIG.secglobal_scoped G2
+      /\ SIG.secglobal_scope_sec G2.
   Proof.
-    intros systems envs aux_names G1 G2 Hstep Hstc Hobc.
+    intros all_nodes systems envs aux_names G1 G2 Henvsgen Hnames Hwc Hsch Hstc Hobc.
     unfold SECSTCTYPING.generate_all_sys_signatures_scoped_env in Hstc.
     unfold SECOBCTYPING.generate_all_class_signatures_scoped_env in Hobc.
-    eapply generate_all_signatures_consistent_obc_scoped'_abstract
-      with (acc1 := @nil SIG.signature) (acc2 := @nil SIG.signature); eauto.
-    apply Signature_consistent_obc_full_nil.
+    eapply generate_all_signatures_consistent_obc_scoped'
+      with (prefix := nil) (acc1 := nil) (acc2 := nil)
+           (envs_pref := Env.empty _) (aux_pref := nil)
+           (st := NAMEGEN.init_state).
+    - reflexivity.
+    - exact Henvsgen.
+    - exact Hnames.
+    - exact Hwc.
+    - exact Hsch.
+    - apply Signature_consistent_obc_full_nil.
+    - apply SIG.secglobal_scoped_nil.
+    - apply SIG.secglobal_scoped_nil.
+    - apply SIG.secglobal_scope_sec_nil.
+    - apply SIG.secglobal_scope_sec_nil.
+    - apply SIG.secglobal_scope_bounded_above_nil.
+    - exact Hstc.
+    - exact Hobc.
   Qed.
 
 End SECSTCOBCTRANSLATION.
