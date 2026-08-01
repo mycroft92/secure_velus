@@ -2462,6 +2462,48 @@ Module Type SECSTCOBCTRANSLATION
       repeat (apply in_or_app; right). simpl. now right; left.
     Qed.
 
+    Lemma clk_ty_in_raw_scope:
+      forall inp out slocals slasts rids,
+        List.In clk_ty (raw_scope inp out slocals slasts rids).
+    Proof.
+      intros. unfold raw_scope.
+      repeat (apply in_or_app; right). simpl. now left.
+    Qed.
+
+    (** A reset instance's type is inside the raw scope by construction:
+        the scope contains [rids], which is exactly the image of the
+        reset instances.  [reset_consistency] brings a reset'd call under
+        the same umbrella. *)
+
+    Lemma reset_inst_in_raw_scope:
+      forall tcs rids inp out slocals slasts tc i rinst,
+        reset_consistency tcs ->
+        get_mappings (map fst (resets_of tcs)) reset_env = Some rids ->
+        List.In tc tcs ->
+        ((exists ck g, tc = SynStc.TcReset i ck g)
+         \/ (exists ys ck g es, tc = SynStc.TcCall i ys ck true g es)) ->
+        Env.find i reset_env = Some rinst ->
+        List.In rinst (raw_scope inp out slocals slasts rids).
+    Proof.
+      intros tcs rids inp out slocals slasts tc i rinst
+             Hcons Hrids Hin Hshape Hfind.
+      assert (Hinres : List.In i (map fst (resets_of tcs))).
+      { destruct Hshape as [(ck & g & Heq)|(ys & ck & g & es & Heq)]; subst tc.
+        - apply SECSTCTYPING.Reset_in_resets_of.
+          apply Exists_exists. exists (SynStc.TcReset i ck g).
+          split; [exact Hin|constructor].
+        - apply SECSTCTYPING.Reset_in_resets_of.
+          eapply (Hcons i true).
+          apply Exists_exists. exists (SynStc.TcCall i ys ck true g es).
+          split; [exact Hin|constructor]. }
+      destruct (get_mappings_in _ _ _ _ Hinres Hrids) as (ty & Hty & Hinty).
+      rewrite Hfind in Hty. inversion Hty; subst ty.
+      unfold raw_scope.
+      apply in_or_app; right. apply in_or_app; right.
+      apply in_or_app; right. apply in_or_app; right.
+      apply in_or_app; now left.
+    Qed.
+
     Lemma sig_scope_in_raw_scope:
       forall inp out slocals slasts rids x,
         List.In x (inp ++ out ++ [clk_ty; rst_ty]) ->
@@ -2828,20 +2870,17 @@ Module Type SECSTCOBCTRANSLATION
         the bridge does not require them to agree. *)
 
     Corollary class_preserv_signature:
-      forall sigscope rawscope vars P memset clkvars tcs extras shared
+      forall sigscope inp out slocals slasts rids vars P memset clkvars
+             tcs extras shared
              nconst craw_step craw_reset hidden_stc hidden_obc st1 st1' st2 st2',
+        let rawscope := raw_scope inp out slocals slasts rids in
         Signature_consistent_obc_full G1 G2 ->
         SIG.secglobal_scope_fresh rawscope G1 ->
         wc_env vars ->
         Forall (CloStc.wc_trconstr P vars) tcs ->
         SECSTCTYPING.vars_env_scoped env vars rawscope ->
-        List.In clk_ty rawscope ->
-        (forall tc i rinst,
-            List.In tc tcs ->
-            ((exists ck g, tc = SynStc.TcReset i ck g)
-             \/ (exists ys ck g es, tc = SynStc.TcCall i ys ck true g es)) ->
-            Env.find i reset_env = Some rinst -> List.In rinst rawscope) ->
-        List.In rst_ty rawscope ->
+        reset_consistency tcs ->
+        get_mappings (map fst (resets_of tcs)) reset_env = Some rids ->
         Forall (tc_preserv_hyps_aug rawscope vars) tcs ->
         tcs_obc_extras tcs = Some extras ->
         NoDup (List.concat extras) ->
@@ -2872,8 +2911,13 @@ Module Type SECSTCOBCTRANSLATION
           (SymTypes.simplify nconst hidden_stc)
           (SymTypes.simplify (SymTypes.collapse (craw_step ++ craw_reset)) hidden_obc).
     Proof.
-      intros. eapply preserves_on_simplify_bridge with (rawscope := rawscope); eauto.
+      intros.
+      eapply preserves_on_simplify_bridge with (rawscope := rawscope); eauto.
       eapply class_preserv_raw; eauto.
+      - apply clk_ty_in_raw_scope.
+      - intros tc i rinst Hin Hshape Hfind.
+        eapply reset_inst_in_raw_scope; eauto.
+      - apply rst_ty_in_raw_scope.
     Qed.
 
   End TCPRESERV.
