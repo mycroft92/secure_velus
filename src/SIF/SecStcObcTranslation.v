@@ -2681,6 +2681,123 @@ Module Type SECSTCOBCTRANSLATION
       eapply stmt_targets_translate_tc_variables; eauto.
     Qed.
 
+    (** ** The translated class is well defined
+
+        Each clause of [class_well_defined] holds for [translate_system]:
+        the reset body assigns every memory and resets every object, and
+        the step body assigns every variable the system defines. *)
+
+    Lemma stmt_writes_reset_mems_fold:
+      forall (mems: list (ident * (const * clock))) acc,
+        (forall d, List.In d (SECOBCTYPING.stmt_writes acc) ->
+                   List.In d (SECOBCTYPING.stmt_writes
+                     (fold_left (fun s xc => SynObc.Comp s
+                        (SynObc.AssignSt (fst xc) (SynObc.Const (fst (snd xc)))))
+                        mems acc)))
+        /\ (forall x, List.In x (map fst mems) ->
+                     List.In x (SECOBCTYPING.stmt_writes
+                       (fold_left (fun s xc => SynObc.Comp s
+                          (SynObc.AssignSt (fst xc) (SynObc.Const (fst (snd xc)))))
+                          mems acc))).
+    Proof.
+      induction mems as [|xc mems IH]; intros acc; simpl.
+      - split; [auto|contradiction].
+      - destruct (IH (SynObc.Comp acc
+                        (SynObc.AssignSt (fst xc) (SynObc.Const (fst (snd xc))))))
+          as (Hmono & Hall).
+        split.
+        + intros d Hd. apply Hmono. simpl. apply in_or_app; now left.
+        + intros x Hx. destruct Hx as [Heq|Hx].
+          * subst x. apply Hmono. simpl. apply in_or_app; right. now left.
+          * now apply Hall.
+    Qed.
+
+    Lemma stmt_reset_insts_reset_insts_fold:
+      forall (objs: list (ident * ident)) acc,
+        (forall d, List.In d (SECOBCTYPING.stmt_reset_insts acc) ->
+                   List.In d (SECOBCTYPING.stmt_reset_insts
+                     (fold_left (fun s xf => SynObc.Comp s
+                        (SynObc.Call [] (snd xf) (fst xf) reset [])) objs acc)))
+        /\ (forall o, List.In o (map fst objs) ->
+                     List.In o (SECOBCTYPING.stmt_reset_insts
+                       (fold_left (fun s xf => SynObc.Comp s
+                          (SynObc.Call [] (snd xf) (fst xf) reset [])) objs acc))).
+    Proof.
+      induction objs as [|xf objs IH]; intros acc; simpl.
+      - split; [auto|contradiction].
+      - destruct (IH (SynObc.Comp acc
+                        (SynObc.Call [] (snd xf) (fst xf) reset [])))
+          as (Hmono & Hall).
+        split.
+        + intros d Hd. apply Hmono. simpl. apply in_or_app; now left.
+        + intros o Ho. destruct Ho as [Heq|Ho].
+          * subst o. apply Hmono. simpl. apply in_or_app; right.
+            rewrite ident_eqb_refl. now left.
+          * now apply Hall.
+    Qed.
+
+    Lemma stmt_writes_Control:
+      forall memset ck s d,
+        List.In d (SECOBCTYPING.stmt_writes s) ->
+        List.In d (SECOBCTYPING.stmt_writes (Control memset ck s)).
+    Proof.
+      intros memset ck. induction ck as [|ck IH x b]; intros s d Hd.
+      - exact Hd.
+      - destruct b; apply IH; cbn [SECOBCTYPING.stmt_writes];
+          apply in_or_app.
+        + now left.
+        + now right.
+    Qed.
+
+    Lemma stmt_writes_translate_cexp:
+      forall memset x ce,
+        List.In x (SECOBCTYPING.stmt_writes (translate_cexp memset x ce)).
+    Proof.
+      intros memset x ce. induction ce; simpl.
+      - apply in_or_app; now left.
+      - apply in_or_app; now left.
+      - now left.
+    Qed.
+
+    Lemma stmt_writes_translate_tc:
+      forall memset clkvars tc x,
+        List.In x (variables_tc tc) ->
+        List.In x (SECOBCTYPING.stmt_writes (translate_tc memset clkvars tc)).
+    Proof.
+      intros memset clkvars tc x Hin.
+      destruct tc as [y ck ce|y ck e|i ck g|i ys ck b g es]; simpl in Hin.
+      - destruct Hin as [Heq|[]]; subst y.
+        apply stmt_writes_Control. apply stmt_writes_translate_cexp.
+      - inversion Hin.
+      - inversion Hin.
+      - apply stmt_writes_Control.
+        destruct ys as [|y ys']; [inversion Hin|].
+        simpl. rewrite ident_eqb_refl. exact Hin.
+    Qed.
+
+    Lemma stmt_writes_translate_tcs_fold:
+      forall memset clkvars tcs acc,
+        (forall d, List.In d (SECOBCTYPING.stmt_writes acc) ->
+                   List.In d (SECOBCTYPING.stmt_writes
+                     (fold_left (fun i tc =>
+                        SynObc.Comp (translate_tc memset clkvars tc) i) tcs acc)))
+        /\ (forall x, List.In x (variables tcs) ->
+                     List.In x (SECOBCTYPING.stmt_writes
+                       (fold_left (fun i tc =>
+                          SynObc.Comp (translate_tc memset clkvars tc) i) tcs acc))).
+    Proof.
+      induction tcs as [|tc tcs IH]; intros acc; simpl.
+      - split; [auto|contradiction].
+      - destruct (IH (SynObc.Comp (translate_tc memset clkvars tc) acc))
+          as (Hmono & Hall).
+        split.
+        + intros d Hd. apply Hmono. simpl. apply in_or_app; now right.
+        + intros x Hx. apply in_app_iff in Hx as [Hx|Hx].
+          * apply Hmono. simpl. apply in_or_app; left.
+            now apply stmt_writes_translate_tc.
+          * now apply Hall.
+    Qed.
+
     (** ** The raw scope
 
         Everything the two constraint sets share: the signature scope,
