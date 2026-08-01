@@ -1959,15 +1959,22 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       and [_from_generated_env] pairs differ only in which constructor
       they invoke. *)
 
-  Definition naming_env_props
-    (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
+  (** The environment half is per node: it constrains one local
+      environment.  The auxiliary half is per program: it constrains the
+      single accumulated [aux_names] list every node shares.  Keeping
+      them apart is what lets a caller quantify the first over the
+      systems of a program while proving the second once. *)
+
+  Definition env_naming_props (env: Env.t ident) : Prop :=
     env_injective env
     /\ (forall x ty, Env.find x env = Some ty ->
-                     exists m, ty = Ids.gensym Ids.sec m)
-    /\ (forall name clk_id rst_id,
-           get_node_aux name aux_names = Some (clk_id, rst_id) ->
-           exists i j, clk_id = Ids.gensym Ids.sec i
-                       /\ rst_id = Ids.gensym Ids.sec j)
+                     exists m, ty = Ids.gensym Ids.sec m).
+
+  Definition aux_naming_props (aux_names: list node_aux_names) : Prop :=
+    (forall name clk_id rst_id,
+        get_node_aux name aux_names = Some (clk_id, rst_id) ->
+        exists i j, clk_id = Ids.gensym Ids.sec i
+                    /\ rst_id = Ids.gensym Ids.sec j)
     /\ (forall name ie,
            get_node_inst name aux_names = Some ie ->
            env_injective ie
@@ -1975,14 +1982,36 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
                             exists m, ty = Ids.gensym Ids.sec_reset m))
     /\ aux_clk_rst_distinct aux_names.
 
-  Lemma naming_env_props_from_generated_env:
+  Definition naming_env_props
+    (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
+    env_naming_props env /\ aux_naming_props aux_names.
+
+  Lemma env_naming_props_from_generated_env:
     forall all_nodes env aux_names,
       generate_node_env all_nodes = OK (env, aux_names) ->
-      naming_env_props env aux_names.
+      env_naming_props env.
   Proof.
     intros all_nodes env aux_names Hgen.
     split; [eapply generate_node_env_injective; eauto|].
-    split; [intros; eapply generate_node_env_sec_range; eauto|].
+    intros; eapply generate_node_env_sec_range; eauto.
+  Qed.
+
+  Lemma env_naming_props_from_local_env:
+    forall n st env rec st',
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      env_naming_props env.
+  Proof.
+    intros n st env rec st' Hlocal.
+    split; [eapply generate_local_env_for_node_injective; eauto|].
+    intros; eapply generate_local_env_for_node_sec_range; eauto.
+  Qed.
+
+  Lemma aux_naming_props_from_generated_env:
+    forall all_nodes env aux_names,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      aux_naming_props aux_names.
+  Proof.
+    intros all_nodes env aux_names Hgen.
     split; [intros; eapply generate_node_aux_sec_names; eauto|].
     split; [intros name ie Hinst; eapply generate_node_env_inst_props; eauto|].
     unfold generate_node_env in Hgen.
@@ -1992,12 +2021,33 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     eapply generate_node_env'_clk_rst_distinct; [constructor|exact Hgen'].
   Qed.
 
-  (** The scoped counterpart.  The environment clauses come from the one
-      node's own [generate_local_env_for_node] run; the auxiliary-name
-      clauses range over the whole accumulated list, so they come from
-      the scoped generator that produced it.  Both halves are read off
-      the naming monad -- in particular the clock/reset distinctness,
-      which is never assumed. *)
+  Lemma aux_naming_props_from_scoped_env:
+    forall all_nodes envs aux_names,
+      generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      aux_naming_props aux_names.
+  Proof.
+    intros all_nodes envs aux_names Hscoped.
+    split; [intros; eapply generate_node_scoped_env_aux_sec_names; eauto|].
+    split; [intros; eapply generate_node_scoped_env_inst_props; eauto|].
+    eapply generate_node_scoped_env_clk_rst_distinct; eauto.
+  Qed.
+
+  Lemma naming_env_props_from_generated_env:
+    forall all_nodes env aux_names,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      naming_env_props env aux_names.
+  Proof.
+    intros all_nodes env aux_names Hgen.
+    split; [eapply env_naming_props_from_generated_env
+           |eapply aux_naming_props_from_generated_env]; eauto.
+  Qed.
+
+  (** The scoped counterpart.  The environment half comes from the one
+      node's own [generate_local_env_for_node] run; the auxiliary half
+      ranges over the whole accumulated list, so it comes from the
+      scoped generator that produced it.  Both are read off the naming
+      monad -- in particular the clock/reset distinctness, which is
+      never assumed. *)
 
   Lemma naming_env_props_from_local_env:
     forall all_nodes envs aux_names n st env rec st',
@@ -2006,11 +2056,42 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
       naming_env_props env aux_names.
   Proof.
     intros all_nodes envs aux_names n st env rec st' Hscoped Hlocal.
-    split; [eapply generate_local_env_for_node_injective; eauto|].
-    split; [intros; eapply generate_local_env_for_node_sec_range; eauto|].
-    split; [intros; eapply generate_node_scoped_env_aux_sec_names; eauto|].
-    split; [intros; eapply generate_node_scoped_env_inst_props; eauto|].
-    eapply generate_node_scoped_env_clk_rst_distinct; eauto.
+    split; [eapply env_naming_props_from_local_env
+           |eapply aux_naming_props_from_scoped_env]; eauto.
+  Qed.
+
+  (** ** The freshness window of one node's environment
+
+      Every name [generate_local_env_for_node] mints lies strictly
+      between the state before the call and the state after it.  This is
+      the only thing the scoped signature induction needs from the
+      naming run: it bounds the node's signature scope above, and bounds
+      it below against everything generated earlier. *)
+
+  Definition env_sec_window (env: Env.t ident) (st st': ident) : Prop :=
+    (forall x ty,
+        Env.find x env = Some ty ->
+        exists n, ty = Ids.gensym Ids.sec n
+                  /\ (st <= n)%positive /\ (n < st')%positive)
+    /\ (st <= st')%positive.
+
+  Lemma env_sec_window_from_local_env:
+    forall n st env rec st',
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      env_sec_window env st st'.
+  Proof.
+    intros n st env rec st' Hlocal.
+    split; [|eapply generate_local_env_for_node_state_monotone; eauto].
+    intros x ty Hfind.
+    edestruct (generate_local_env_for_node_lower_bound
+                 n st env rec st' x ty Hlocal Hfind) as (m & Hm & Hlo).
+    exists m. split; [exact Hm|]. split.
+    - eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+      eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|exact Hlo].
+    - destruct (generate_local_env_for_node_bounded
+                  n st env rec st' Hlocal x ty Hfind) as (m' & Hm' & Hlt).
+      rewrite Hm in Hm'. apply gensym_injective in Hm' as [_ Heq].
+      subst m'. exact Hlt.
   Qed.
 
 End NAMEGEN.

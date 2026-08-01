@@ -3840,7 +3840,7 @@ Module Type SECSTCOBCTRANSLATION
   Proof.
     intros P s G1 G2 env aux_names stcsig obcsig
            Hcons Hfreshenv Hg2sec Hg2scoped
-           (Hinjp & Hsecp & Hauxsecp & Hinstp & Hdistp)
+           ((Hinjp & Hsecp) & (Hauxsecp & Hinstp & Hdistp))
            Hwc Hsch Hstcsig Hobcsig Hready.
     (* both generators, inverted *)
     edestruct SECSTCTYPINGCORRECTNESS.generate_sys_signature_inv as
@@ -4198,7 +4198,7 @@ Module Type SECSTCOBCTRANSLATION
       (* the naming facts, all read off the monad *)
       assert (Hprops : NAMEGEN.naming_env_props local_env aux_names).
       { eapply NAMEGEN.naming_env_props_from_local_env; eauto. }
-      assert (Henvinj : env_injective local_env) by exact (proj1 Hprops).
+      assert (Henvinj : env_injective local_env) by exact (proj1 (proj1 Hprops)).
       assert (Hready : SECSTCTYPINGCORRECTNESS.generated_sys_simplify_ready
                          local_env aux_names).
       { eapply SECSTCTYPINGCORRECTNESS.generated_sys_simplify_ready_from_naming_props;
@@ -4226,7 +4226,7 @@ Module Type SECSTCOBCTRANSLATION
       { eapply SECSTCTYPINGCORRECTNESS.sys_scope_fresh_in_env_from_bounds
           with (st := st).
         - intros ie x ty Hinst Hfind.
-          exact (proj2 (proj1 (proj2 (proj2 (proj2 Hprops))) _ _ Hinst) _ _ Hfind).
+          exact (proj2 (proj1 (proj2 (proj2 Hprops)) _ _ Hinst) _ _ Hfind).
         - eapply SECSTCTYPINGCORRECTNESS.env_sec_lower_bounded_from_local_env;
             eauto.
         - exact Hbound.

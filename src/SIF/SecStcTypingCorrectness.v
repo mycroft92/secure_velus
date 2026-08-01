@@ -753,7 +753,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       NoDup (signature_scope sig).
   Proof.
     intros G s env aux_names sig
-           (Hinjp & Hsecp & Hauxsecp & Hinstp & Hdistp) Hsig.
+           ((Hinjp & Hsecp) & (Hauxsecp & Hinstp & Hdistp)) Hsig.
     edestruct generate_sys_signature_inv as
         (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
          & reset_env & rids & st_reset & sconst & st_s
@@ -837,7 +837,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       signature_good sig.
   Proof.
     intros G P s env aux_names sig
-           (Hinjp & Hsecp & Hauxsecp & Hinstp & Hdistp) Hglobsc Hwc Hsch Hsig.
+           ((Hinjp & Hsecp) & (Hauxsecp & Hinstp & Hdistp)) Hglobsc Hwc Hsch Hsig.
     assert (Hndkeys : NoDup (map fst (resets_of s.(SynStc.s_tcs))))
       by (eapply Is_well_sch_resets_nodup; eauto).
     assert (Hinj : env_injective env) by exact Hinjp.
@@ -1133,7 +1133,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       NAMEGEN.naming_env_props env aux_names ->
       generated_sys_simplify_ready env aux_names.
   Proof.
-    intros env aux_names (Hinj0 & Hsec0 & Hauxsec & Hinstprops & _)
+    intros env aux_names ((Hinj0 & Hsec0) & (Hauxsec & Hinstprops & _))
            G s sig clk_id rst_id clk_type rst_type inp out slocals slasts
            reset_env rids raw st_reset st_s
            Hsig Haux Hclk Hrst Hinp Hout Hslocals Hslasts Hresetenv Hrids
