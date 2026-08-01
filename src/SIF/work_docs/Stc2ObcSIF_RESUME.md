@@ -117,7 +117,7 @@ all of `c_objs`.
 ## 4. Status: signature preservation is complete
 
 The whole chain is proved, admit-free, and mirrors `SecNLusStcTranslation.v`
-member for member:
+member for member, ending in a public lookup theorem:
 
 | NLustre-Stc                                                | Stc-Obc                                              |
 |------------------------------------------------------------|------------------------------------------------------|
@@ -127,17 +127,49 @@ member for member:
 | `generated_signature_step_consistent_from_bridges`           | `generated_signature_step_consistent_obc_from_bridges` |
 | `generate_all_signatures_consistent'_abstract`               | `generate_all_signatures_consistent_obc'_abstract`   |
 | `generate_all_signatures_consistent_abstract`                | `generate_all_signatures_consistent_obc_abstract`    |
-| `generate_all_signatures_consistent_scoped'`                 | `generate_all_signatures_consistent_obc_scoped'_abstract` |
+| `generate_all_signatures_consistent_scoped'`                 | `generate_all_signatures_consistent_obc_scoped'`     |
+| `generate_all_signatures_consistent_scoped`                  | `generate_all_signatures_consistent_obc_scoped`      |
+| `generate_all_signatures_consistent`                         | `generate_all_signatures_consistent_obc`             |
+| `generated_program_signatures_preserved_global`              | `generated_program_signatures_preserved_obc_global`  |
 
-Both Stc-side conditions of `generated_signatures_preserved_obc` are now
+The scoped induction takes **no** step predicate.  An earlier
+`generated_signature_step_consistent_obc_scoped` assumed
+`Signature_consistent_obc_full G1 G2` for arbitrary `G1 G2` — the very thing
+the induction has to establish — and has been deleted.  Consistency,
+`secglobal_scoped` on both sides, `secglobal_scope_sec` on both sides, and
+`secglobal_scope_bounded_above` on the STC accumulator are carried as
+invariants and re-established per system, exactly as NLustre does.
+
+Both Stc-side conditions of `generated_signatures_preserved_obc` are
 discharged, mirroring NLustre:
 
 | NLustre                                          | Stc                                              |
 |--------------------------------------------------|--------------------------------------------------|
 | `generated_node_simplify_ready_from_generated_env` | `generated_sys_simplify_ready_from_generated_env` |
+| `generated_node_simplify_ready_from_local_env`     | `generated_sys_simplify_ready_from_local_env`     |
 | `node_scope_fresh_in_env_from_bounds`              | `sys_scope_fresh_in_env_from_bounds`              |
 
-Two layer differences, both real rather than incidental:
+### 4a. The naming bundle
+
+`NAMEGEN.naming_env_props env aux_names` bundles the five facts every
+consumer needs: `env_injective env`, the `sec` range of `env`, the `sec`
+range of the auxiliary clock/reset names, injectivity plus the `sec_reset`
+range of each instance environment, and `aux_clk_rst_distinct`.  It has two
+constructors, `naming_env_props_from_generated_env` (flat whole-program
+environment) and `naming_env_props_from_local_env` (a node's own environment
+plus the scoped run that produced the auxiliary list), so a single proof
+serves both settings.  `generate_sys_signature_good`,
+`generate_sys_signature_scope_nodup`, `generated_sys_simplify_ready` and
+`generated_signatures_preserved_obc` all take the bundle rather than a
+`generate_node_env` equation.
+
+Clock/reset distinctness is *derived*, never assumed:
+`generate_local_env_for_node_clk_rst_distinct` reads it off the two
+consecutive `fresh_ident_gen` calls (`st` vs `Pos.succ st`), and
+`generate_node_scoped_env'_clk_rst_distinct` accumulates it over the scoped
+run.
+
+### 4b. Layer differences, all real rather than incidental
 
 - `generated_signatures_preserved_obc` carries `Is_well_sch`, which NLustre
   needs no counterpart for.  Two `TcReset`s for one instance would put the
@@ -147,23 +179,13 @@ Two layer differences, both real rather than incidental:
   `scope_lower_bounded` does not apply.  They are excluded from any signature
   scope by prefix instead (`sec_reset_not_in_signature_scope`), which is why
   the lemma also takes `secglobal_scope_sec G`.
-
-**What is left to make the chain fully concrete.**  The bounds hypotheses of
-`sys_scope_fresh_in_env_from_bounds` (`env_sec_lower_bounded env st` and
-`secglobal_scope_bounded_above G st`) hold per node, not for the whole
-`generate_node_env` at once: names are minted incrementally, so no single `st`
-bounds the global env below while bounding the accumulator above.  Threading
-them is the job of the *scoped* induction, exactly as in NLustre's
-`generate_all_signatures_consistent_scoped'` (`SecNLusStcTranslation.v:2370`,
-~240 lines, uses `generate_node_scoped_env'_split_node`).  The abstract
-scoped theorem `generate_all_signatures_consistent_obc_scoped'_abstract` is
-already proved and takes the step-consistency as a parameter; what remains is
-the concrete version that establishes that parameter by threading the bounds.
-
-The scoped-env variant is much shorter than NLustre's because a translated
-system's class name *is* the system's name, so both scoped generators look up
-the same per-node environment (`scoped_env_generators_share_env`).  No second
-induction over freshness bookkeeping is needed.
+- The naming environment is generated from NLustre nodes.  NLustre's bridge
+  can write `translate nodes`; this one must not depend on the NLustre-to-Stc
+  translation, so the scoped theorems relate the two lists by
+  `Forall2 (fun n s => s.(s_name) = n.(n_name)) nodes systems`.  Names are
+  preserved by that translation, so this is exactly what `translate` gives.
+- The Obc accumulator's `secglobal_scope_sec` comes from the STC one through
+  `signature_fields_agree_scope_eq`: the two signatures have the same scope.
 
 ### 4d. Later phases (out of scope for preservation)
 
