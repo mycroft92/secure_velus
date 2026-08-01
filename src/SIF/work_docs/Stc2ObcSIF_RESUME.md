@@ -187,9 +187,105 @@ run.
 - The Obc accumulator's `secglobal_scope_sec` comes from the STC one through
   `signature_fields_agree_scope_eq`: the two signatures have the same scope.
 
-### 4d. Later phases (out of scope for preservation)
+### 4c. The chain layer
 
-Scheduling equivalence (B4) and the NI transport.
+`SecNLusStcObcEnv.v` (`vfiles` after `SecStcObcTranslation.v`) threads the
+environment facts and nothing else.  It follows the convention
+`SecStcNonInterference` set: take the `CE`, `NL`, `Stc` bundles plus the
+upstream bridge as a *parameter*, not a flat list of module arguments.
+Only `OBCSYNTAX` is taken on the Obc side -- no Obc semantics or typing.
+
+It exports `scoped_envs_windowed_from_scoped_env` (the naming run, walked
+once), `translate_names` / `schedule_names` / `scheduled_translate_names`
+(alignment before and after scheduling, `schedule_names` built on Velus's
+own `Scheduler.schedule_system_name`), and
+`generated_program_signatures_preserved_obc_{chain,scheduled}`.
+
+Two module gotchas cost time here:
+
+- `STCSCHEDULE` takes a 17th parameter (`EXT_STCSCHEDULER`).  Passing 16
+  yields a *functor type*, not a module, so `Sched.schedule` will not
+  resolve.  This is why `NLCorrectness.v:58` writes
+  `Stc.Scheduler ExternalSchedule`.  Take `ExtSch` and `Sched` separately.
+- `schedule_system` builds a record with `s_name := b.(s_name)`, so `simpl`
+  reduces the projection and `auto` closes the goal before a
+  `rewrite schedule_system_name` can fire.  Use
+  `first [now rewrite Sched.schedule_system_name | exact Hname]`.
+
+### 4d. B4 -- scheduling equivalence.  IN PROGRESS
+
+The compiler does **not** hand `translate all_nodes` to the Obc pass.
+`NLCorrectness.nl_to_cl` is
+`NL2Stc.translate` -> `schedule_program` -> `Stc2Obc.translate`, and
+`Well_scheduled` holds only after that middle pass.  So the SIF STC
+signatures the NL-Stc bridge produces (from `translate all_nodes`) are not
+the ones the Stc-Obc bridge consumes (from `schedule (translate
+all_nodes)`), and the two must be related.  This is the plan doc's B4
+option (b).
+
+**The risk is gone.**  Constraint generation mints no identifier --
+`SecSTCTyping.v` and `SIFSignature.v` contain no `fresh_ident`/`gensym` on
+that path, and `generated_sys_signature_scope_key` independently confirms
+every scope element comes from `Env.find x env`.  So reordering `s_tcs`
+permutes the raw constraints *with identical names*: no renaming or
+alpha-equivalence argument is needed.  Option (a) -- proving `simplify`
+itself permutation-stable -- remains rejected: `simplify` eliminates hidden
+names in list order, and when one hidden name's definition mentions another
+the results agree only up to equivalence, not syntactically.
+
+**Done and admit-free:**
+
+| where | what |
+|---|---|
+| `SecContext.v` | `state_pure` + `_ret/_error/_bind/_mmap/_option_to_sec/_find_env/_det` |
+| `SIFSignature.v` | `state_pure_generate_constraints` and the four `subst_*` steps |
+| `SecSTCTyping.v` | `state_pure_generate_trconstr(s)_constraints`, `tc_constraints`, `generate_trconstrs_constraints_eq`, `Permutation_List_concat`, `generate_trconstrs_constraints_Permutation` |
+| `SecStcTypingCorrectness.v` | `generate_sys_signature_reorder_preserved` (fixed accumulator), `sig_env_preserved`, `call_actuals_in_scope`, `generate_trconstr_constraint_preserved` |
+
+`generate_sys_signature_reorder_preserved` is short because
+`preserves_on_simplify_bridge` already allows the two hidden-name lists to
+be *unrelated* -- and they genuinely differ, since reset instances are
+collected in body order.
+
+**Remaining, in order.**  All against lemmas that exist; no open questions.
+
+1. **Body combination.**  `preserves_on_concat_list` wants
+   `Forall2 (preserves_on scope) srcs tgts` *pointwise in the same order*,
+   so factor the permutation out first: generate both sides over the same
+   `tcs`, combine, then move to scheduled order with
+   `preserves_on_Permutation`.  Take `extras := map (fun _ => []) tcs` --
+   there are no target-side-only names at Stc-Stc -- which makes its `NoDup`
+   and freshness premises vacuous.  Its `Forall2 (fun t e =>
+   constraints_scoped (scope ++ e) t)` premise is
+   `generate_trconstr_constraint_scoped_on_keys` (`SecSTCTyping.v:735`) at
+   `G := G'`, needing `secglobal_scoped G'`.
+2. **Discharge `call_actuals_in_scope`.**  Do **not** re-derive it: the
+   `TcCall` case of `generate_trconstr_constraint_scoped_on_keys`
+   (`SecSTCTyping.v`, ~955-965) already builds exactly `Hckscope`,
+   `HinpScope : Forall (st_scoped scope) inptyp` and
+   `HoutScope : Forall (fun x => In x scope) outtyp` from `wc_trconstr` +
+   `vars_env_scoped`.  Factor that block out as its own lemma and use it on
+   both sides.
+3. **Per-system lift.**  Reuses the `preserves_on_simplify_bridge` call
+   already written in `generate_sys_signature_reorder_preserved`; only the
+   raw-level premise changes from permutation to step 1's result.
+4. **Program induction** maintaining `sig_env_preserved` pointwise.  Trivial
+   in shape: `schedule = map schedule_system` never reorders the program, so
+   the accumulators grow in lockstep and every `find_signature` matches.
+
+Coq gotchas hit while proving the above: `eq_refl` resolves to the
+`Lattice`'s -- write `Logic.eq_refl`; `state_pure_mmap` cannot infer its
+implicit `A`, so apply it to the explicit function; and
+`signatures_preserved_equal_calls_from_good` lives in `SIGPROOFS`
+(unqualified) while `call_subst_fresh_from_scope_fresh` lives in `SIG`.
+
+### 4e. Later phases
+
+The NI transport (phase 6), ~370 lines mirroring `SecStcNonInterference.v`.
+Also note nothing yet *applies* these functors to concrete arguments; there
+is no concrete `Lattice` and that is deliberate -- the proofs are for an
+arbitrary lattice, and a user extracts constraints from the pipeline and
+checks them against whatever concrete lattice they want.
 
 ## 5. Gotchas worth keeping
 
