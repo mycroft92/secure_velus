@@ -48,6 +48,7 @@ From Velus Require Import SIF.SecNLusStcTranslation.
 From Velus Require Import SIF.SecObcTyping.
 From Velus Require Import SIF.SecObcTypingCorrectness.
 From Velus Require Import SIF.SecStcObcTranslation.
+From Velus Require Import SIF.SecNLusStcObcEnv.
 From Velus Require Import SIF.SecStcNonInterference.
 From Velus Require Import Clocks.
 From compcert Require Import common.Errors.
@@ -134,7 +135,14 @@ Module Type SECOBCNONINTERFERENCE
      SECSTCOBCTRANSLATION Ids Op OpAux SC CE.Syn Stc.Syn Obc.Syn Lat SecT SIG
        SIGPROOFS CE.IsF CE.Clo SECCETYPING Stc.Last Stc.Var Stc.Def Stc.Syst
        Stc.Ord Stc.Free Stc.Clo SECSTCTYPING NL.Syn NAMEGEN Stc.Wdef
-       SECSTCTYPINGCORRECTNESS TransObc SECOBCTYPING SECOBCTYPINGCORRECTNESS).
+       SECSTCTYPINGCORRECTNESS TransObc SECOBCTYPING SECOBCTYPINGCORRECTNESS)
+  (** The chain layer, which is where the environment facts and the
+      scheduling step are discharged. *)
+  (ChainEnv :
+     SECNLUSSTCOBCENV Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc
+       ExtSch Sched Obc.Syn TransNL TransObc SIG SIGPROOFS NAMEGEN
+       SECCETYPING SECSTCTYPING SECSTCTYPINGCORRECTNESS SECOBCTYPING
+       SECOBCTYPINGCORRECTNESS StcObcBridge).
 
   Definition ground_instantiation : Type := NLusSupport.ground_instantiation.
 
@@ -462,6 +470,65 @@ Module Type SECOBCNONINTERFERENCE
       /\ SIG.find_signature (Stc.Syn.s_name sys) Gobc = Some osig
       /\ StcObcBridge.Signature_head_consistent_obc ssigs osig.
 
+  (** And it is exactly what the chain produces.  Every step is a
+      theorem proved elsewhere: the Stc witness by
+      [StcNI.system_security_from_node_security], the scheduling step by
+      [ChainEnv.generated_signatures_preserved_by_scheduling], and the
+      last leg by [ChainEnv.generated_program_signatures_preserved_obc_scheduled].
+      Nothing is reproved here. *)
+
+  Lemma class_security_from_node_security:
+    forall all_nodes Gsrc Gstc Gstcs Gobc envs aux_names n dlt_sig dlt_raw,
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Clo.wc_global all_nodes ->
+      Stc.Clo.wc_program (TransNL.translate all_nodes) ->
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+        = OK Gsrc ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env
+        (TransNL.translate all_nodes) envs aux_names = OK Gstc ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env
+        (Sched.schedule (TransNL.translate all_nodes)) envs aux_names = OK Gstcs ->
+      SECOBCTYPING.generate_all_class_signatures_scoped_env
+        (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
+        envs aux_names = OK Gobc ->
+      find_node n.(NL.Syn.n_name) all_nodes = Some n ->
+      NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw ->
+      class_security all_nodes Gsrc Gstc Gstcs Gobc envs aux_names
+        (TransNL.translate_node n) dlt_sig dlt_raw.
+  Proof.
+    intros all_nodes Gsrc Gstc Gstcs Gobc envs aux_names n dlt_sig dlt_raw
+           Henvsgen Hwcnl Hwcstc Hsch Hallsrc Hallstc Hallstcs Hallobc
+           Hfindnode Hsec.
+    assert (Hsys : StcNI.system_security all_nodes Gsrc Gstc envs aux_names
+                     (TransNL.translate_node n) dlt_sig dlt_raw)
+      by (eapply StcNI.system_security_from_node_security;
+          [exact Henvsgen|exact Hwcnl|exact Hallsrc|exact Hallstc
+          |exact Hfindnode|exact Hsec]).
+    pose proof Hsys as Hsys0.
+    destruct Hsys0 as (n0 & nsig & ssig & _ & _ & _ & Hfindstc & _ & _).
+    (* the scheduling step *)
+    assert (Hpres : sig_env_preserved Gstc Gstcs).
+    { eapply ChainEnv.generated_signatures_preserved_by_scheduling;
+        [exact Henvsgen|apply ChainEnv.translate_names|exact Hwcstc|exact Hsch
+        |exact Hallstc|exact Hallstcs]. }
+    destruct (Hpres _ _ Hfindstc)
+      as (ssigs & Hfindstcs & Hpresss & _ & _ & _).
+    (* the Stc-to-Obc leg *)
+    destruct (ChainEnv.generated_program_signatures_preserved_obc_scheduled
+                all_nodes envs aux_names Gstcs Gobc
+                Henvsgen (Sched.scheduler_wc_program _ Hwcstc) Hsch
+                Hallstcs Hallobc
+                (Stc.Syn.s_name (TransNL.translate_node n)) ssigs Hfindstcs)
+      as (osig & Hfindobc & Hhead).
+    exists ssig, ssigs, osig.
+    split; [exact Hsys|].
+    split; [exact Hfindstc|].
+    split; [exact Hfindstcs|].
+    split; [exact Hpresss|].
+    split; [exact Hfindobc|exact Hhead].
+  Qed.
+
   Lemma class_security_system:
     forall all_nodes Gsrc Gstc Gstcs Gobc envs aux_names sys dlt_sig dlt_raw,
       class_security all_nodes Gsrc Gstc Gstcs Gobc envs aux_names sys
@@ -599,18 +666,25 @@ Module SecObcNonInterference
        SIGPROOFS CE.IsF CE.Clo SECCETYPING Stc.Last Stc.Var Stc.Def Stc.Syst
        Stc.Ord Stc.Free Stc.Clo SECSTCTYPING NL.Syn NAMEGEN Stc.Wdef
        SECSTCTYPINGCORRECTNESS TransObc SECOBCTYPING SECOBCTYPINGCORRECTNESS)
+  (** The chain layer, which is where the environment facts and the
+      scheduling step are discharged. *)
+  (ChainEnv :
+     SECNLUSSTCOBCENV Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc
+       ExtSch Sched Obc.Syn TransNL TransObc SIG SIGPROOFS NAMEGEN
+       SECCETYPING SECSTCTYPING SECSTCTYPINGCORRECTNESS SECOBCTYPING
+       SECOBCTYPINGCORRECTNESS StcObcBridge)
   <: SECOBCNONINTERFERENCE
        Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc TransNL
        NLStcCorr SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
        SECNLUSTYPING SECNLUSTYPINGCORRECTNESS NLusSupport NLusNI
        SECSTCTYPING SECSTCTYPINGCORRECTNESS NLusStcBridge StcNI Obc
        TransObc Corres StcObcCorr ExtSch Sched SECOBCTYPING
-       SECOBCTYPINGCORRECTNESS StcObcBridge.
+       SECOBCTYPINGCORRECTNESS StcObcBridge ChainEnv.
   Include SECOBCNONINTERFERENCE
             Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc TransNL
             NLStcCorr SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
             SECNLUSTYPING SECNLUSTYPINGCORRECTNESS NLusSupport NLusNI
             SECSTCTYPING SECSTCTYPINGCORRECTNESS NLusStcBridge StcNI Obc
             TransObc Corres StcObcCorr ExtSch Sched SECOBCTYPING
-            SECOBCTYPINGCORRECTNESS StcObcBridge.
+            SECOBCTYPINGCORRECTNESS StcObcBridge ChainEnv.
 End SecObcNonInterference.
