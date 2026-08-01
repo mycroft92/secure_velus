@@ -1697,24 +1697,22 @@ Module Type SECSTCOBCTRANSLATION
       | SynStc.TcNext _ ck e => CEClo.wc_exp vars e ck
       | SynStc.TcReset _ _ _ => True
       | SynStc.TcCall _ _ ck true f _ =>
-          exists ckty,
-            SECCETYPING.assign_clk_type env clk_ty ck = Some ckty
-            /\ (forall n1 inptyp1 rinst outtyp,
-                    SIG.find_signature f G1 = Some n1 ->
-                    SIG.scope_fresh scope n1
-                    /\ SIG.call_subst_scoped scope inptyp1 ckty [rinst] outtyp
-                    /\ SIG.call_subst_fresh n1 inptyp1 ckty [rinst] outtyp)
+          forall ckty n1 inptyp1 rinst outtyp,
+            SECCETYPING.assign_clk_type env clk_ty ck = Some ckty ->
+            SIG.find_signature f G1 = Some n1 ->
+            SIG.scope_fresh scope n1
+            /\ SIG.call_subst_scoped scope inptyp1 ckty [rinst] outtyp
+            /\ SIG.call_subst_fresh n1 inptyp1 ckty [rinst] outtyp
       | SynStc.TcCall i _ ck false f _ =>
           List.In rst_ty scope
-          /\ exists ckty sty,
-               SECCETYPING.assign_clk_type env clk_ty ck = Some ckty
-               /\ Env.find i reset_env = Some sty
-               /\ ~ List.In sty scope
-               /\ (forall n1 n2 inptyp1 inptyp2 outtyp,
-                       SIG.find_signature f G1 = Some n1 ->
-                       SIG.find_signature f G2 = Some n2 ->
-                       call_side_conditions scope n1 n2 inptyp1 inptyp2 ckty
-                         [rst_ty] sty outtyp)
+          /\ (exists sty, Env.find i reset_env = Some sty /\ ~ List.In sty scope)
+          /\ (forall ckty sty n1 n2 inptyp1 inptyp2 outtyp,
+                  SECCETYPING.assign_clk_type env clk_ty ck = Some ckty ->
+                  Env.find i reset_env = Some sty ->
+                  SIG.find_signature f G1 = Some n1 ->
+                  SIG.find_signature f G2 = Some n2 ->
+                  call_side_conditions scope n1 n2 inptyp1 inptyp2 ckty
+                    [rst_ty] sty outtyp)
       end.
 
     Lemma tc_preserv_aug:
@@ -1740,12 +1738,29 @@ Module Type SECSTCOBCTRANSLATION
         eapply tcreset_preserv; eauto.
       - (* a reset'd call: both sides pass the same actual, no extras *)
         inversion Hextras; subst e. simpl. rewrite app_nil_r.
-        destruct Hhyps as (ckty & Hckty & Hside).
-        eapply tccall_reset_preserv_eq; eauto.
-        eapply Signature_consistent_obc_eq_from_full; eauto.
+        unfold translate_tc in Hobc.
+        destruct (generate_stmt_constraints_Control_inv
+                    G2 env reset_env rst_ty _ _ _ _ _ _ _ Hobc)
+          as (pc' & Hpc' & _).
+        edestruct clock_pc_assign_clk_type with (b := clk_ty)
+          as (ckty & Hckty); [exact Hpc'|].
+        eapply tccall_reset_preserv_eq with (ckty := ckty).
+        + exact Hckty.
+        + eapply Signature_consistent_obc_eq_from_full; exact Hcons.
+        + intros n1 inptyp1 rinst outtyp Hf1. eapply Hhyps; eauto.
+        + exact Hstc.
+        + exact Hobc.
       - (* an unreset call: the block owns the instance's state type *)
-        destruct Hhyps as (Hrstin & ckty & sty & Hckty & Hsty & Hstynotin & Hside).
+        destruct Hhyps as (Hrstin & (sty & Hsty & Hstynotin) & Hside).
         rewrite Hsty in Hextras. inversion Hextras; subst e. simpl.
+        assert (Hckex : exists ckty,
+                   SECCETYPING.assign_clk_type env clk_ty ck = Some ckty).
+        { unfold translate_tc in Hobc.
+          destruct (generate_stmt_constraints_Control_inv
+                      G2 env reset_env rst_ty _ _ _ _ _ _ _ Hobc)
+            as (pc' & Hpc' & _).
+          eapply (clock_pc_assign_clk_type env _ _ _ clk_ty); eauto. }
+        destruct Hckex as (ckty & Hckty).
         destruct xs as [|x xs'].
         + (* no outputs: both generators emit nothing *)
           simpl in Hstc. unfold ret in Hstc. inversion Hstc; subst nconst st1'.
