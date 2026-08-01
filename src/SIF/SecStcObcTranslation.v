@@ -2798,6 +2798,73 @@ Module Type SECSTCOBCTRANSLATION
           * now apply Hall.
     Qed.
 
+    (** The reset body reads nothing but the memories it assigns, and the
+        only instances it touches are the objects it resets. *)
+
+    Lemma stmt_free_reset_mems_fold:
+      forall (mems: list (ident * (const * clock))) acc x,
+        List.In x (SECOBCTYPING.stmt_free
+                     (fold_left (fun s xc => SynObc.Comp s
+                        (SynObc.AssignSt (fst xc) (SynObc.Const (fst (snd xc)))))
+                        mems acc)) ->
+        List.In x (SECOBCTYPING.stmt_free acc) \/ List.In x (map fst mems).
+    Proof.
+      induction mems as [|xc mems IH]; intros acc x Hx; simpl in Hx |- *.
+      - now left.
+      - destruct (IH _ _ Hx) as [Hin|Hin]; [|now right; right].
+        cbn [SECOBCTYPING.stmt_free] in Hin.
+        apply in_app_iff in Hin as [Hin|Hin]; [now left|].
+        cbn [SECOBCTYPING.stmt_free SECOBCTYPING.exp_free] in Hin.
+        destruct Hin as [Heq|[]]. right. now left.
+    Qed.
+
+    Lemma stmt_free_reset_insts_fold:
+      forall (objs: list (ident * ident)) acc x,
+        List.In x (SECOBCTYPING.stmt_free
+                     (fold_left (fun s xf => SynObc.Comp s
+                        (SynObc.Call [] (snd xf) (fst xf) reset [])) objs acc)) ->
+        List.In x (SECOBCTYPING.stmt_free acc).
+    Proof.
+      induction objs as [|xf objs IH]; intros acc x Hx; simpl in Hx |- *.
+      - exact Hx.
+      - specialize (IH _ _ Hx).
+        cbn [SECOBCTYPING.stmt_free] in IH.
+        apply in_app_iff in IH as [Hin|Hin]; [exact Hin|].
+        cbn [SECOBCTYPING.stmt_free] in Hin. contradiction.
+    Qed.
+
+    Lemma stmt_state_keys_reset_mems_fold:
+      forall (mems: list (ident * (const * clock))) acc o,
+        List.In o (SECOBCTYPING.stmt_state_keys
+                     (fold_left (fun s xc => SynObc.Comp s
+                        (SynObc.AssignSt (fst xc) (SynObc.Const (fst (snd xc)))))
+                        mems acc)) ->
+        List.In o (SECOBCTYPING.stmt_state_keys acc).
+    Proof.
+      induction mems as [|xc mems IH]; intros acc o Ho; simpl in Ho |- *.
+      - exact Ho.
+      - specialize (IH _ _ Ho).
+        cbn [SECOBCTYPING.stmt_state_keys] in IH.
+        apply in_app_iff in IH as [Hin|Hin]; [exact Hin|].
+        cbn [SECOBCTYPING.stmt_state_keys] in Hin. contradiction.
+    Qed.
+
+    Lemma stmt_state_keys_reset_insts_fold:
+      forall (objs: list (ident * ident)) acc o,
+        List.In o (SECOBCTYPING.stmt_state_keys
+                     (fold_left (fun s xf => SynObc.Comp s
+                        (SynObc.Call [] (snd xf) (fst xf) reset [])) objs acc)) ->
+        List.In o (SECOBCTYPING.stmt_state_keys acc) \/ List.In o (map fst objs).
+    Proof.
+      induction objs as [|xf objs IH]; intros acc o Ho; simpl in Ho |- *.
+      - now left.
+      - destruct (IH _ _ Ho) as [Hin|Hin]; [|now right; right].
+        cbn [SECOBCTYPING.stmt_state_keys] in Hin.
+        apply in_app_iff in Hin as [Hin|Hin]; [now left|].
+        cbn [SECOBCTYPING.stmt_state_keys] in Hin.
+        destruct Hin as [Heq|[]]. right. now left.
+    Qed.
+
     (** ** The raw scope
 
         Everything the two constraint sets share: the signature scope,
