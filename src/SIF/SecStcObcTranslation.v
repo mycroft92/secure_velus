@@ -1446,24 +1446,38 @@ Module Type SECSTCOBCTRANSLATION
         on the Obc side (reset-underlying preservation, its identifier a
         private extra). *)
 
+    (** Mirrors the NLustre-to-STC [Signature_head_consistent]: the two
+        callee signatures agree on name and interface, and both call
+        forms preserve.  The interface agreement is what supplies the
+        callee-side freshness conditions, its scope being the same list
+        as the source signature's. *)
+
+    Definition Signature_head_consistent_obc (n1 n2: SIG.signature) : Prop :=
+      n1.(s_name) = n2.(s_name)
+      /\ SIG.signature_fields_agree n1 n2
+      /\ Signature_call_preserves_obc_rst n1 n2
+      /\ Signature_call_preserves_obc_eq n1 n2.
+
     Definition Signature_consistent_obc_full (H1 H2: SIG.secglobal) : Prop :=
       forall f n1,
         SIG.find_signature f H1 = Some n1 ->
         exists n2,
           SIG.find_signature f H2 = Some n2
-          /\ Signature_call_preserves_obc_rst n1 n2
-          /\ Signature_call_preserves_obc_eq n1 n2.
+          /\ Signature_head_consistent_obc n1 n2.
 
     Lemma signatures_preserved_obc_full_from_good:
       forall nsig ssig,
+        nsig.(s_name) = ssig.(s_name) ->
         SIG.signature_good nsig ->
         NoDup (SIG.signature_scope nsig) ->
         SIG.signature_scoped ssig ->
         SIGPROOFS.signatures_preserved nsig ssig ->
-        Signature_call_preserves_obc_rst nsig ssig
-        /\ Signature_call_preserves_obc_eq nsig ssig.
+        Signature_head_consistent_obc nsig ssig.
     Proof.
-      intros nsig ssig Hgood Hnd Hssc Hpres. split.
+      intros nsig ssig Hname Hgood Hnd Hssc Hpres.
+      split; [exact Hname|].
+      split; [exact (proj1 Hpres)|].
+      split.
       - eapply signatures_preserved_obc_calls_from_good_rst; eauto.
       - eapply signatures_preserved_obc_equal_calls_from_good; eauto.
     Qed.
@@ -1526,7 +1540,7 @@ Module Type SECSTCOBCTRANSLATION
       { unfold SC.find_env in Hsty'. rewrite Hsty in Hsty'.
         unfold ret in Hsty'. now inversion Hsty'. }
       subst sty'.
-      destruct (Hcons f n1 Hf1) as (n2' & Hf2' & Hpresrst & _).
+      destruct (Hcons f n1 Hf1) as (n2' & Hf2' & _ & _ & Hpresrst & _).
       rewrite Hf2 in Hf2'. inversion Hf2'; subst n2'.
       eapply preserves_on_Permutation;
         [reflexivity|apply Permutation_cons_append|].
@@ -1682,7 +1696,7 @@ Module Type SECSTCOBCTRANSLATION
         Signature_consistent_obc_eq H1 H2.
     Proof.
       intros H1 H2 Hfull f n1 Hf.
-      destruct (Hfull f n1 Hf) as (n2 & Hf2 & _ & Heq).
+      destruct (Hfull f n1 Hf) as (n2 & Hf2 & _ & _ & _ & Heq).
       exists n2. split; assumption.
     Qed.
 
