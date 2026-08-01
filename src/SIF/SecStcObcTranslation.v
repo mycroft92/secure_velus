@@ -1945,7 +1945,7 @@ Module Type SECSTCOBCTRANSLATION
         + inversion Hwctcs; subst.
           eapply IH; eauto.
           intros tc5 i rinst Hin5 Hshape Hfind.
-          eapply Hresetscope; [now right|exact Hshape|exact Hfind].
+          eapply Hresetscope; [right; exact Hin5|exact Hshape|exact Hfind].
     Qed.
 
     (** Whole-body preservation against a target that also carries the
@@ -2004,11 +2004,19 @@ Module Type SECSTCOBCTRANSLATION
         by (apply Forall_rev; exact Hhyps).
       assert (Hpres : Forall2 (preserves_on scope) (rev nblocks)
                         (zip_app sblocks (rev extras))).
-      { eapply (tcs_blocks_preserv_aug scope vars P); eauto.
-        - now apply Forall_rev.
-        - intros tc5 i rinst Hin5 Hshape Hfind.
-          eapply Hresetscope; [rewrite <- in_rev in Hin5; exact Hin5
-                              |exact Hshape|exact Hfind]. }
+      { assert (Hwcrev : Forall (CloStc.wc_trconstr P vars) (rev tcs))
+          by (apply Forall_rev; exact Hwctcs).
+        assert (Hresetrev :
+                  forall tc5 i rinst,
+                    List.In tc5 (rev tcs) ->
+                    ((exists ck g, tc5 = SynStc.TcReset i ck g)
+                     \/ (exists ys ck g es, tc5 = SynStc.TcCall i ys ck true g es)) ->
+                    Env.find i reset_env = Some rinst -> List.In rinst scope).
+        { intros tc5 i rinst Hin5 Hshape Hfind.
+          rewrite <- in_rev in Hin5.
+          eapply Hresetscope; eauto. }
+        eapply (tcs_blocks_preserv_aug scope vars P memset clkvars (rev tcs)
+                  (rev nblocks) sblocks (rev extras)); eauto. }
       assert (Hscoped : Forall2 (fun t e => constraints_scoped (scope ++ e) t)
                           (zip_app sblocks (rev extras)) (rev extras)).
       { apply zip_app_Forall2_scoped.
@@ -2749,9 +2757,19 @@ Module Type SECSTCOBCTRANSLATION
         names (an extra). *)
 
     Theorem class_preserv_raw:
-      forall scope vars memset clkvars tcs extras shared
+      forall scope vars P memset clkvars tcs extras shared
              nconst craw_step craw_reset st1 st1' st2 st2',
         Signature_consistent_obc_full G1 G2 ->
+        SIG.secglobal_scope_fresh scope G1 ->
+        wc_env vars ->
+        Forall (CloStc.wc_trconstr P vars) tcs ->
+        SECSTCTYPING.vars_env_scoped env vars scope ->
+        List.In clk_ty scope ->
+        (forall tc i rinst,
+            List.In tc tcs ->
+            ((exists ck g, tc = SynStc.TcReset i ck g)
+             \/ (exists ys ck g es, tc = SynStc.TcCall i ys ck true g es)) ->
+            Env.find i reset_env = Some rinst -> List.In rinst scope) ->
         List.In rst_ty scope ->
         Forall (tc_preserv_hyps_aug scope vars) tcs ->
         tcs_obc_extras tcs = Some extras ->
@@ -2778,12 +2796,14 @@ Module Type SECSTCOBCTRANSLATION
           (translate_tcs memset clkvars tcs) st2 = OK (craw_step, st2') ->
         preserves_on scope nconst (SymTypes.collapse (craw_step ++ craw_reset)).
     Proof.
-      intros scope vars memset clkvars tcs extras shared
+      intros scope vars P memset clkvars tcs extras shared
              nconst craw_step craw_reset st1 st1' st2 st2'
-             Hcons Hrstin Hhyps Hextras Hnd Hfresh Hsc Hshared Hreset Hstc Hobc.
-      destruct (tcs_preserv_aug scope vars memset clkvars tcs extras
+             Hcons Hscopefresh Hwcenv Hwctcs Hvars Hclkin Hresetscope
+             Hrstin Hhyps Hextras Hnd Hfresh Hsc Hshared Hreset Hstc Hobc.
+      destruct (tcs_preserv_aug scope vars P memset clkvars tcs extras
                   nconst craw_step st1 st1' st2 st2'
-                  Hcons Hhyps Hextras Hnd Hfresh Hsc Hstc Hobc)
+                  Hcons Hscopefresh Hwcenv Hwctcs Hvars Hclkin Hresetscope
+                  Hhyps Hextras Hnd Hfresh Hsc Hstc Hobc)
         as (tgt & Hcovstep & Hcovextra & Hpres).
       apply preserves_on_collapse.
       eapply preserves_on_incl
@@ -2808,9 +2828,19 @@ Module Type SECSTCOBCTRANSLATION
         the bridge does not require them to agree. *)
 
     Corollary class_preserv_signature:
-      forall sigscope rawscope vars memset clkvars tcs extras shared
+      forall sigscope rawscope vars P memset clkvars tcs extras shared
              nconst craw_step craw_reset hidden_stc hidden_obc st1 st1' st2 st2',
         Signature_consistent_obc_full G1 G2 ->
+        SIG.secglobal_scope_fresh rawscope G1 ->
+        wc_env vars ->
+        Forall (CloStc.wc_trconstr P vars) tcs ->
+        SECSTCTYPING.vars_env_scoped env vars rawscope ->
+        List.In clk_ty rawscope ->
+        (forall tc i rinst,
+            List.In tc tcs ->
+            ((exists ck g, tc = SynStc.TcReset i ck g)
+             \/ (exists ys ck g es, tc = SynStc.TcCall i ys ck true g es)) ->
+            Env.find i reset_env = Some rinst -> List.In rinst rawscope) ->
         List.In rst_ty rawscope ->
         Forall (tc_preserv_hyps_aug rawscope vars) tcs ->
         tcs_obc_extras tcs = Some extras ->
