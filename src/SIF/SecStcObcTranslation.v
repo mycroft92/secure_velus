@@ -2548,6 +2548,80 @@ Module Type SECSTCOBCTRANSLATION
           intros d. rewrite Hiff. simpl. tauto.
     Qed.
 
+    Lemma stmt_targets_Control_inv:
+      forall memset ck s tys,
+        SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
+          (Control memset ck s) = Some tys ->
+        exists t,
+          SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env s = Some t
+          /\ (forall d, List.In d tys <-> List.In d t).
+    Proof.
+      intros memset ck. induction ck as [|ck IH x b]; intros s tys Htys.
+      - exists tys. split; [exact Htys|tauto].
+      - destruct b; simpl in Htys;
+          destruct (IH _ _ Htys) as (t & Ht & Hiff); simpl in Ht;
+          destruct (SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env s)
+            as [t0|] eqn:Hs; try discriminate;
+          inversion Ht; subst t; exists t0; split; try reflexivity.
+      + intros d. rewrite Hiff, app_nil_r. tauto.
+      + intros d. rewrite Hiff. simpl. tauto.
+    Qed.
+
+    Lemma stmt_targets_translate_cexp:
+      forall memset x ce tys ty,
+        SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
+          (translate_cexp memset x ce) = Some tys ->
+        Env.find x env = Some ty ->
+        List.In ty tys.
+    Proof.
+      intros memset x ce. induction ce; intros tys ty Htys Hfind; simpl in Htys.
+      - destruct (SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
+                    (translate_cexp memset x ce1)) as [t1|] eqn:H1;
+          try discriminate.
+        destruct (SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
+                    (translate_cexp memset x ce2)) as [t2|] eqn:H2;
+          try discriminate.
+        inversion Htys; subst tys.
+        apply in_or_app; left. eapply IHce1; eauto.
+      - destruct (SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
+                    (translate_cexp memset x ce1)) as [t1|] eqn:H1;
+          try discriminate.
+        destruct (SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
+                    (translate_cexp memset x ce2)) as [t2|] eqn:H2;
+          try discriminate.
+        inversion Htys; subst tys.
+        apply in_or_app; left. eapply IHce1; eauto.
+      - rewrite Hfind in Htys. inversion Htys; subst tys. now left.
+    Qed.
+
+    (** A translated trconstr writes the security type of every variable
+        the source defines. *)
+
+    Lemma stmt_targets_translate_tc_variables:
+      forall memset clkvars tc tys x ty,
+        SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
+          (translate_tc memset clkvars tc) = Some tys ->
+        List.In x (variables_tc tc) ->
+        Env.find x env = Some ty ->
+        List.In ty tys.
+    Proof.
+      intros memset clkvars tc tys x ty Htys Hin Hfind.
+      destruct tc as [y ck ce|y ck e|i ck g|i ys ck b g es]; simpl in Hin.
+      - destruct Hin as [Heq|[]]; subst y.
+        unfold translate_tc in Htys.
+        destruct (stmt_targets_Control_inv _ _ _ _ Htys) as (t & Ht & Hiff).
+        apply Hiff. eapply stmt_targets_translate_cexp; eauto.
+      - inversion Hin.
+      - inversion Hin.
+      - unfold translate_tc in Htys.
+        destruct (stmt_targets_Control_inv _ _ _ _ Htys) as (t & Ht & Hiff).
+        apply Hiff.
+        destruct ys as [|y ys']; [inversion Hin|].
+        simpl in Ht. rewrite ident_eqb_refl in Ht.
+        destruct (get_mappings_in _ _ _ _ Hin Ht) as (ty0 & Hty0 & Hinty).
+        rewrite Hfind in Hty0. inversion Hty0; subst ty0. exact Hinty.
+    Qed.
+
     (** ** The raw scope
 
         Everything the two constraint sets share: the signature scope,
