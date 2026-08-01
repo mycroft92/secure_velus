@@ -383,6 +383,67 @@ Module Type SECOBCTYPINGCORRECTNESS
         exists []. split; reflexivity.
     Qed.
 
+    (** The syntactic write sets are covered by the target list: a name a
+        statement writes has its security type among the statement's
+        targets. *)
+
+    Lemma stmt_writes_targets:
+      forall s tys x ty,
+        stmt_targets s = Some tys ->
+        List.In x (SECOBCTYPING.stmt_writes s) ->
+        Env.find x env = Some ty ->
+        List.In ty tys.
+    Proof.
+      induction s as [x0 e|x0 e|e s1 IH1 s2 IH2|s1 IH1 s2 IH2|ys cls o m es|];
+        intros tys x ty Htys Hin Hfind; simpl in Hin, Htys.
+      - destruct Hin as [Heq|[]]; subst x0.
+        rewrite Hfind in Htys. inversion Htys. now left.
+      - destruct Hin as [Heq|[]]; subst x0.
+        rewrite Hfind in Htys. inversion Htys. now left.
+      - destruct (stmt_targets s1) as [t1|] eqn:H1; try discriminate.
+        destruct (stmt_targets s2) as [t2|] eqn:H2; try discriminate.
+        inversion Htys; subst tys.
+        apply in_app_iff in Hin as [Hin|Hin]; apply in_or_app;
+          [left; eapply IH1|right; eapply IH2]; eauto.
+      - destruct (stmt_targets s1) as [t1|] eqn:H1; try discriminate.
+        destruct (stmt_targets s2) as [t2|] eqn:H2; try discriminate.
+        inversion Htys; subst tys.
+        apply in_app_iff in Hin as [Hin|Hin]; apply in_or_app;
+          [left; eapply IH1|right; eapply IH2]; eauto.
+      - destruct ys as [|y ys'].
+        + destruct (ident_eqb m Ids.step); contradiction.
+        + destruct (ident_eqb m Ids.step) eqn:Hm; [|contradiction].
+          destruct (get_mappings_in _ _ _ _ Hin Htys) as (ty0 & Hty0 & Hinty).
+          rewrite Hfind in Hty0. inversion Hty0; subst ty0. exact Hinty.
+      - inversion Hin.
+    Qed.
+
+    Lemma stmt_reset_insts_targets:
+      forall s tys o ty,
+        stmt_targets s = Some tys ->
+        List.In o (SECOBCTYPING.stmt_reset_insts s) ->
+        Env.find o state_env = Some ty ->
+        List.In ty tys.
+    Proof.
+      induction s as [x0 e|x0 e|e s1 IH1 s2 IH2|s1 IH1 s2 IH2|ys cls o0 m es|];
+        intros tys o ty Htys Hin Hfind; simpl in Hin, Htys;
+        try (inversion Hin; fail).
+      - destruct (stmt_targets s1) as [t1|] eqn:H1; try discriminate.
+        destruct (stmt_targets s2) as [t2|] eqn:H2; try discriminate.
+        inversion Htys; subst tys.
+        apply in_app_iff in Hin as [Hin|Hin]; apply in_or_app;
+          [left; eapply IH1|right; eapply IH2]; eauto.
+      - destruct (stmt_targets s1) as [t1|] eqn:H1; try discriminate.
+        destruct (stmt_targets s2) as [t2|] eqn:H2; try discriminate.
+        inversion Htys; subst tys.
+        apply in_app_iff in Hin as [Hin|Hin]; apply in_or_app;
+          [left; eapply IH1|right; eapply IH2]; eauto.
+      - destruct ys as [|y ys']; [|contradiction].
+        destruct (ident_eqb m Ids.reset) eqn:Hm; [|contradiction].
+        destruct Hin as [Heq|[]]; subst o0.
+        rewrite Hfind in Htys. inversion Htys. now left.
+    Qed.
+
     Lemma stmt_targets_defining:
       forall s pc cns st st' tys d,
         generate_stmt_constraints G env state_env rst_ty pc s st = OK (cns, st') ->
@@ -546,6 +607,139 @@ Module Type SECOBCTYPINGCORRECTNESS
       unfold ret in Hret. inversion Hret; subst.
       do 17 eexists.
       repeat split; eauto.
+    Qed.
+
+    (** Mirrors [generate_sys_signature_scoped] on the STC side, with
+        [class_well_defined] standing in for [wc_system]: an STC system
+        record carries its own invariants, an Obc class does not. *)
+
+    Theorem generate_class_signature_scoped:
+      forall c envc aux sig,
+        SIG.secglobal_scoped G ->
+        SECOBCTYPING.class_well_defined c ->
+        SECOBCTYPING.generate_class_signature G c envc aux = OK sig ->
+        signature_scoped sig.
+    Proof.
+      intros c envc aux sig Hglob Hwd Hsig.
+      edestruct generate_class_signature_inv as
+          (clk_id & rst_id & clk_type & rst_type & stepm & resetm
+           & inp & out & locals & lasts & senv & stids
+           & craw_step & craw_reset & st_state & st_step & st_raw
+           & Haux & Hclk & Hrst & Hstepm & Hresetm & Hinp & Hout
+           & Hlocals & Hlasts & Hsenv & Hstids & Hstepc & Hresetc & Hsigdef);
+        [exact Hsig|].
+      destruct (Hwd _ _ Hstepm Hresetm)
+        as (Hwstep & Hwmems & Hwobjs & Hfstep & Hfreset & Hkstep & Hkreset).
+      subst sig. unfold signature_scoped, signature_scope; simpl.
+      (* state types of the class's objects are hidden *)
+      assert (Hobjty : forall o sty, InMembers o c.(c_objs) ->
+                                     Env.find o senv = Some sty ->
+                                     List.In sty stids).
+      { intros o sty Hin Hfind.
+        destruct (get_mappings_in _ _ _ _ (proj1 (fst_InMembers _ _) Hin) Hstids)
+          as (ty & Hty & Hinty).
+        rewrite Hfind in Hty. inversion Hty; subst ty. exact Hinty. }
+      eapply simplify_scoped.
+      - apply NoDup_nodup.
+      - apply collapse_scoped.
+        unfold constraints_scoped. apply Forall_app. split.
+        + eapply (generate_stmt_constraints_scoped_on_keys G envc senv rst_type)
+            with (s := m_body stepm) (pc := [clk_type]).
+          * exact Hglob.
+          * intros x Hx. specialize (Hfstep x Hx).
+            unfold SECOBCTYPING.class_interface in Hfstep.
+            apply in_app_iff in Hfstep as [Hf|Hfstep].
+            { destruct (get_mappings_from_node_inmembers _ _ _ _ _
+                          (proj2 (fst_InMembers _ _) Hf) Hinp) as (ty & Hty & Hinty).
+              exists ty. split; [exact Hty|].
+              apply in_or_app; left. apply in_or_app; now left. }
+            apply in_app_iff in Hfstep as [Hf|Hfstep].
+            { destruct (get_mappings_from_node_inmembers _ _ _ _ _
+                          (proj2 (fst_InMembers _ _) Hf) Hlocals) as (ty & Hty & Hinty).
+              exists ty. split; [exact Hty|].
+              apply in_or_app; right.
+              unfold SECOBCTYPING.hidden_class_vars. rewrite nodup_In.
+              apply in_or_app; now left. }
+            apply in_app_iff in Hfstep as [Hf|Hf].
+            { destruct (get_mappings_from_node_inmembers _ _ _ _ _
+                          (proj2 (fst_InMembers _ _) Hf) Hout) as (ty & Hty & Hinty).
+              exists ty. split; [exact Hty|].
+              apply in_or_app; left. apply in_or_app; right.
+              apply in_or_app; now left. }
+            { destruct (get_mappings_from_node_inmembers _ _ _ _ _
+                          (proj2 (fst_InMembers _ _) Hf) Hlasts) as (ty & Hty & Hinty).
+              exists ty. split; [exact Hty|].
+              apply in_or_app; right.
+              unfold SECOBCTYPING.hidden_class_vars. rewrite nodup_In.
+              apply in_or_app; right. apply in_or_app; now left. }
+          * apply st_scoped_singleton.
+            apply in_or_app; left. apply in_or_app; right.
+            apply in_or_app; right. simpl. now left.
+          * apply in_or_app; left. apply in_or_app; right.
+            apply in_or_app; right. simpl. now right; left.
+          * intros o sty st0 st1 Hino Hfind.
+            unfold SC.find_env in Hfind.
+            destruct (Env.find o senv) as [v|] eqn:Hv; try discriminate.
+            unfold ret in Hfind. inversion Hfind; subst v st1.
+            apply in_or_app; right.
+            unfold SECOBCTYPING.hidden_class_vars. rewrite nodup_In.
+            apply in_or_app; right. apply in_or_app; right.
+            eapply Hobjty; eauto.
+          * exact Hstepc.
+        + eapply (generate_stmt_constraints_scoped_on_keys G envc senv rst_type)
+            with (s := m_body resetm) (pc := @nil ident).
+          * exact Hglob.
+          * intros x Hx. specialize (Hfreset x Hx).
+            destruct (get_mappings_from_node_inmembers _ _ _ _ _
+                        Hfreset Hlasts) as (ty & Hty & Hinty).
+            exists ty. split; [exact Hty|].
+            apply in_or_app; right.
+            unfold SECOBCTYPING.hidden_class_vars. rewrite nodup_In.
+            apply in_or_app; right. apply in_or_app; now left.
+          * intros z [].
+          * apply in_or_app; left. apply in_or_app; right.
+            apply in_or_app; right. simpl. now right; left.
+          * intros o sty st0 st1 Hino Hfind.
+            unfold SC.find_env in Hfind.
+            destruct (Env.find o senv) as [v|] eqn:Hv; try discriminate.
+            unfold ret in Hfind. inversion Hfind; subst v st1.
+            apply in_or_app; right.
+            unfold SECOBCTYPING.hidden_class_vars. rewrite nodup_In.
+            apply in_or_app; right. apply in_or_app; right.
+            eapply Hobjty; eauto.
+          * exact Hresetc.
+      - (* every hidden name has a defining constraint *)
+        destruct (generate_stmt_constraints_targets G envc senv rst_type
+                    _ _ _ _ _ Hstepc) as (tstep & Htstep & Hsndstep).
+        destruct (generate_stmt_constraints_targets G envc senv rst_type
+                    _ _ _ _ _ Hresetc) as (treset & Htreset & Hsndreset).
+        intros d Hd.
+        rewrite collapse_rhs_in.
+        rewrite map_app. apply in_or_app.
+        unfold SECOBCTYPING.hidden_class_vars in Hd. rewrite nodup_In in Hd.
+        apply in_app_iff in Hd as [Hd|Hd].
+        + (* a local: written by the step method *)
+          left.
+          destruct (get_mappings_from_node_In _ _ _ _ _ Hlocals Hd)
+            as (x & a & Hinx & Hfindx).
+          eapply (stmt_targets_defining G envc senv rst_type _ _ _ _ _ _ d
+                    Hstepc Htstep).
+          eapply stmt_writes_targets; [exact Htstep| |exact Hfindx].
+          apply Hwstep. eapply In_InMembers; eauto.
+        + apply in_app_iff in Hd as [Hd|Hd]; right.
+          * (* a memory: written by the reset method *)
+            destruct (get_mappings_from_node_In _ _ _ _ _ Hlasts Hd)
+              as (x & a & Hinx & Hfindx).
+            eapply (stmt_targets_defining G envc senv rst_type _ _ _ _ _ _ d
+                      Hresetc Htreset).
+            eapply stmt_writes_targets; [exact Htreset| |exact Hfindx].
+            apply Hwmems. eapply In_InMembers; eauto.
+          * (* an object: reset by the reset method *)
+            destruct (get_mappings_In _ _ _ _ Hstids Hd) as (o & Hino & Hfindo).
+            eapply (stmt_targets_defining G envc senv rst_type _ _ _ _ _ _ d
+                      Hresetc Htreset).
+            eapply stmt_reset_insts_targets; [exact Htreset| |exact Hfindo].
+            apply Hwobjs. now apply (proj2 (fst_InMembers _ _)).
     Qed.
 
   End CLSINV.
