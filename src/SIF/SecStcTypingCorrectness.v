@@ -1233,6 +1233,169 @@ Module Type SECSTCTYPINGCORRECTNESS
       [node_scope_lower_bounded_from_local_env] and
       [generated_node_sig_scope_upper_bound_from_local_env]. *)
 
+  (** ** Relating two signature accumulators
+
+      The scheduler is [map schedule_system], so it never reorders the
+      program: the two generator runs build their accumulators in
+      lockstep and every callee lookup on one side has a matching lookup
+      on the other.  This records that, with the shape facts the
+      call-preservation theorems need. *)
+
+  Definition sig_env_preserved (G G': secglobal) : Prop :=
+    forall f n,
+      find_signature f G = Some n ->
+      exists n', find_signature f G' = Some n'
+                 /\ signatures_preserved n n'
+                 /\ signature_good n
+                 /\ NoDup (signature_scope n)
+                 /\ signature_scoped n'.
+
+  (** The call actuals a [TcCall] hands to the callee are computed from
+      the environment alone, so both runs produce the same ones.  Stated
+      against the generator's own equations, which is the only place the
+      actuals exist. *)
+
+  Definition call_actuals_in_scope
+    (env: Env.t ident) (base_ty: ident) (scope: list ident)
+    (e: SynStc.trconstr) : Prop :=
+    forall i xs ck rst f es inptyp ckty outtyp sa sb sc sd se sf,
+      e = SynStc.TcCall i xs ck rst f es ->
+      option_to_sec (assign_clk_type env base_ty ck) sa = OK (ckty, sb) ->
+      mmap (fun x => option_to_sec (assign_exp_type env x)) es sc
+        = OK (inptyp, sd) ->
+      mmap (fun x => find_env x env) xs se = OK (outtyp, sf) ->
+      SIG.call_actuals_scoped scope inptyp ckty outtyp.
+
+  Lemma generate_trconstr_constraint_preserved:
+    forall G G' env reset_env base_ty rst_ty scope e
+           nconst sconst st1 st1' st2 st2',
+      sig_env_preserved G G' ->
+      SIG.secglobal_scope_fresh scope G ->
+      In rst_ty scope ->
+      call_actuals_in_scope env base_ty scope e ->
+      (forall i xs ck f es rinst,
+          e = SynStc.TcCall i xs ck true f es ->
+          Env.find i reset_env = Some rinst ->
+          In rinst scope) ->
+      SECSTCTYPING.generate_trconstr_constraint G env reset_env base_ty rst_ty e
+        st1 = OK (nconst, st1') ->
+      SECSTCTYPING.generate_trconstr_constraint G' env reset_env base_ty rst_ty e
+        st2 = OK (sconst, st2') ->
+      preserves_on scope nconst sconst.
+  Proof.
+    intros G G' env reset_env base_ty rst_ty scope e
+           nconst sconst st1 st1' st2 st2'
+           Hpres Hfresh Hrst Hact Hrinst Hgen1 Hgen2.
+    destruct e as [x ck ce|x ck ex|x ck f|i xs ck rst f es].
+    - assert (Heq : nconst = sconst)
+        by (eapply state_pure_det;
+            [apply SECSTCTYPING.state_pure_generate_trconstr_constraint
+             with (G := G) (env := env) (reset_env := reset_env)
+                  (base_ty := base_ty) (rst_ty := rst_ty)
+             |exact Hgen1|exact Hgen2]).
+      subst sconst. apply preserves_on_refl.
+    - assert (Heq : nconst = sconst)
+        by (eapply state_pure_det;
+            [apply SECSTCTYPING.state_pure_generate_trconstr_constraint
+             with (G := G) (env := env) (reset_env := reset_env)
+                  (base_ty := base_ty) (rst_ty := rst_ty)
+             |exact Hgen1|exact Hgen2]).
+      subst sconst. apply preserves_on_refl.
+    - assert (Heq : nconst = sconst)
+        by (eapply state_pure_det;
+            [apply SECSTCTYPING.state_pure_generate_trconstr_constraint
+             with (G := G) (env := env) (reset_env := reset_env)
+                  (base_ty := base_ty) (rst_ty := rst_ty)
+             |exact Hgen1|exact Hgen2]).
+      subst sconst. apply preserves_on_refl.
+    - simpl in Hgen1, Hgen2.
+      destruct xs as [|y ys].
+      { destruct rst; unfold ret in Hgen1, Hgen2;
+          inversion Hgen1; inversion Hgen2; subst; apply preserves_on_refl. }
+      destruct (find_signature f G) as [n|] eqn:Hfind;
+        [|destruct rst; discriminate].
+      destruct (Hpres _ _ Hfind)
+        as (n' & Hfind' & Hpresnn' & Hgood & Hnd & Hscoped').
+      rewrite Hfind' in Hgen2.
+      assert (Hsf : SIG.scope_fresh scope n) by (eapply Hfresh; eauto).
+      destruct rst.
+      + eapply sec_bind_inv in Hgen1 as (ckty & sa1 & Hck1 & Hgen1).
+        eapply sec_bind_inv in Hgen1 as (inptyp & sb1 & Hin1 & Hgen1).
+        eapply sec_bind_inv in Hgen1 as (outtyp & sc1 & Hout1 & Hgen1).
+        eapply sec_bind_inv in Hgen1 as (rinst & sd1 & Hri1 & Hgen1).
+        eapply sec_bind_inv in Hgen2 as (ckty2 & sa2 & Hck2 & Hgen2).
+        eapply sec_bind_inv in Hgen2 as (inptyp2 & sb2 & Hin2 & Hgen2).
+        eapply sec_bind_inv in Hgen2 as (outtyp2 & sc2 & Hout2 & Hgen2).
+        eapply sec_bind_inv in Hgen2 as (rinst2 & sd2 & Hri2 & Hgen2).
+        assert (ckty2 = ckty)
+          by (eapply state_pure_det;
+              [apply state_pure_option_to_sec|exact Hck2|exact Hck1]).
+        assert (inptyp2 = inptyp)
+          by (eapply state_pure_det;
+              [apply (state_pure_mmap
+                        (fun x => option_to_sec (assign_exp_type env x)));
+               intro; apply state_pure_option_to_sec
+              |exact Hin2|exact Hin1]).
+        assert (outtyp2 = outtyp)
+          by (eapply state_pure_det;
+              [apply (state_pure_mmap (fun x => find_env x env));
+               intro; apply state_pure_find_env
+              |exact Hout2|exact Hout1]).
+        assert (rinst2 = rinst)
+          by (eapply state_pure_det;
+              [apply state_pure_find_env|exact Hri2|exact Hri1]).
+        subst ckty2 inptyp2 outtyp2 rinst2.
+        destruct (Hact i (y :: ys) ck true f es inptyp ckty outtyp
+                    _ _ _ _ _ _ Logic.eq_refl Hck1 Hin1 Hout1)
+          as (Hinpsc & Hcksc & Houtsc).
+        assert (Hrisc : In rinst scope).
+        { eapply Hrinst; [reflexivity|].
+          unfold find_env in Hri1.
+          destruct (Env.find i reset_env); [now inversion Hri1|discriminate]. }
+        eapply signatures_preserved_equal_calls_from_good
+          with (nsig := n) (ssig := n') (srcrst := [rinst]);
+          [exact Hgood|exact Hnd|exact Hscoped'|exact Hpresnn'|exact Hsf| | 
+          |exact Hgen1|exact Hgen2].
+        * split; [split; [exact Hinpsc|split; [exact Hcksc|exact Houtsc]]|].
+          apply st_scoped_singleton. exact Hrisc.
+        * eapply SIG.call_subst_fresh_from_scope_fresh;
+            [exact Hsf|exact Hinpsc|exact Hcksc
+            |apply st_scoped_singleton; exact Hrisc|exact Houtsc].
+      + eapply sec_bind_inv in Hgen1 as (ckty & sa1 & Hck1 & Hgen1).
+        eapply sec_bind_inv in Hgen1 as (inptyp & sb1 & Hin1 & Hgen1).
+        eapply sec_bind_inv in Hgen1 as (outtyp & sc1 & Hout1 & Hgen1).
+        eapply sec_bind_inv in Hgen2 as (ckty2 & sa2 & Hck2 & Hgen2).
+        eapply sec_bind_inv in Hgen2 as (inptyp2 & sb2 & Hin2 & Hgen2).
+        eapply sec_bind_inv in Hgen2 as (outtyp2 & sc2 & Hout2 & Hgen2).
+        assert (ckty2 = ckty)
+          by (eapply state_pure_det;
+              [apply state_pure_option_to_sec|exact Hck2|exact Hck1]).
+        assert (inptyp2 = inptyp)
+          by (eapply state_pure_det;
+              [apply (state_pure_mmap
+                        (fun x => option_to_sec (assign_exp_type env x)));
+               intro; apply state_pure_option_to_sec
+              |exact Hin2|exact Hin1]).
+        assert (outtyp2 = outtyp)
+          by (eapply state_pure_det;
+              [apply (state_pure_mmap (fun x => find_env x env));
+               intro; apply state_pure_find_env
+              |exact Hout2|exact Hout1]).
+        subst ckty2 inptyp2 outtyp2.
+        destruct (Hact i (y :: ys) ck false f es inptyp ckty outtyp
+                    _ _ _ _ _ _ Logic.eq_refl Hck1 Hin1 Hout1)
+          as (Hinpsc & Hcksc & Houtsc).
+        eapply signatures_preserved_equal_calls_from_good
+          with (nsig := n) (ssig := n') (srcrst := [rst_ty]);
+          [exact Hgood|exact Hnd|exact Hscoped'|exact Hpresnn'|exact Hsf| | 
+          |exact Hgen1|exact Hgen2].
+        * split; [split; [exact Hinpsc|split; [exact Hcksc|exact Houtsc]]|].
+          apply st_scoped_singleton. exact Hrst.
+        * eapply SIG.call_subst_fresh_from_scope_fresh;
+            [exact Hsf|exact Hinpsc|exact Hcksc
+            |apply st_scoped_singleton; exact Hrst|exact Houtsc].
+  Qed.
+
   (** ** Reordering a system's body preserves its signature
 
       The scheduler permutes [s_tcs] and changes nothing else.  Since
