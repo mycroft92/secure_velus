@@ -1275,15 +1275,16 @@ Module Type SECSTCOBCTRANSLATION
         required and it may live in the shared scope. *)
 
     Lemma tccall_reset_preserv_eq:
-      forall scope memset clkvars i xs ck f es ckty
+      forall scope vars P memset clkvars i xs ck f es ckty
              nconst sconst st1 st1' st2 st2',
         SECCETYPING.assign_clk_type env clk_ty ck = Some ckty ->
         Signature_consistent_obc_eq G1 G2 ->
-        (forall n1 inptyp1 rinst outtyp,
-            SIG.find_signature f G1 = Some n1 ->
-            SIG.scope_fresh scope n1
-            /\ SIG.call_subst_scoped scope inptyp1 ckty [rinst] outtyp
-            /\ SIG.call_subst_fresh n1 inptyp1 ckty [rinst] outtyp) ->
+        SIG.secglobal_scope_fresh scope G1 ->
+        wc_env vars ->
+        CloStc.wc_trconstr P vars (SynStc.TcCall i xs ck true f es) ->
+        SECSTCTYPING.vars_env_scoped env vars scope ->
+        List.In clk_ty scope ->
+        (forall rinst, Env.find i reset_env = Some rinst -> List.In rinst scope) ->
         SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
           (SynStc.TcCall i xs ck true f es) st1 = OK (nconst, st1') ->
         generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
@@ -1291,8 +1292,9 @@ Module Type SECSTCOBCTRANSLATION
           = OK (sconst, st2') ->
         preserves_on scope nconst sconst.
     Proof.
-      intros scope memset clkvars i xs ck f es ckty
-             nconst sconst st1 st1' st2 st2' Hckopt Hcons Hside Hstc Hobc.
+      intros scope vars P memset clkvars i xs ck f es ckty
+             nconst sconst st1 st1' st2 st2'
+             Hckopt Hcons Hscopefresh Hwcenv Hwc Hvars Hclkin Hresetscope Hstc Hobc.
       unfold translate_tc in Hobc.
       rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
       rewrite (generate_stmt_constraints_Control_assign
@@ -1339,7 +1341,40 @@ Module Type SECSTCOBCTRANSLATION
         subst sty.
         destruct (Hcons f n1 Hf1) as (n2' & Hf2' & Hpres).
         rewrite Hf2 in Hf2'. inversion Hf2'; subst n2'.
-        destruct (Hside n1 inptyp1 rinst outtyp1 Logic.eq_refl) as (Hsf & Hcss & Hfr1).
+        (* the call side conditions, derived from the actual actuals *)
+        assert (Hsf : SIG.scope_fresh scope n1) by (eapply Hscopefresh; eauto).
+        assert (Hrinsteq : Env.find i reset_env = Some rinst).
+        { unfold SC.find_env in Hrinst.
+          destruct (Env.find i reset_env) as [v|] eqn:Hv; try discriminate.
+          unfold ret in Hrinst. congruence. }
+        inversion Hwc as [| | |i2 xs2 ck2 rst2 f2 es2 sy P' sub
+                              Hfindnode Hinputs Houtputs]; subst.
+        assert (Hckscope : st_scoped scope ckty).
+        { eapply (SECCETYPING.assign_clk_type_scoped env clk_ty scope ck ckty);
+            [exact Hclkin| |exact Hckopt].
+          intros z Hz.
+          eapply Hvars.
+          eapply (SECSTCTYPING.wc_tc_clock_free_in_vars P vars i (x :: xs') ck true f es);
+            eauto. }
+        assert (HinpScope : Forall (st_scoped scope) inptyp1).
+        { eapply (SECSTCTYPING.mmap_assign_exp_type_scoped env scope es inptyp1);
+            [|exact Hinp1].
+          eapply (SECSTCTYPING.wc_call_args_scoped env vars scope sub ck
+                    (SynStc.s_in sy) es); eauto. }
+        assert (HoutScope : Forall (fun z => List.In z scope) outtyp1).
+        { eapply (SC.mmap_find_env_scoped env scope (x :: xs') outtyp1);
+            [|exact Hout1].
+          intros y Hy.
+          eapply (SECSTCTYPING.wc_call_outs_scoped env vars scope sub ck
+                    (SynStc.s_out sy) (x :: xs')); eauto. }
+        assert (Hcss : SIG.call_subst_scoped scope inptyp1 ckty [rinst] outtyp1).
+        { split.
+          - unfold SIG.call_actuals_scoped.
+            split; [exact HinpScope|].
+            split; [exact Hckscope|assumption].
+          - apply st_scoped_singleton. exact (Hresetscope rinst Hrinsteq). }
+        assert (Hfr1 : SIG.call_subst_fresh n1 inptyp1 ckty [rinst] outtyp1)
+          by (eapply SIG.call_subst_fresh_from_scope_fresh; eauto).
         eapply (Hpres scope inptyp1 inptyp2 ckty [rinst] outtyp1
                   nconst sconst sta4 stb3 st1' st2');
           [exact Hsf|exact Hcss|exact Hfr1| |exact Hgen1|exact Hgen2].
