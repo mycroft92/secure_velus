@@ -604,16 +604,31 @@ Module Type SECOBCTYPING
         needs, stated syntactically so the Obc side stays independent of
         the translation. *)
 
+    Definition class_interface (c: class) (m: method) : list ident :=
+      map fst m.(m_in) ++ map fst m.(m_vars) ++ map fst m.(m_out)
+        ++ map fst c.(c_mems).
+
     Definition class_well_defined (c: class) : Prop :=
       forall stepm resetm,
         find_method Ids.step c.(c_methods) = Some stepm ->
         find_method Ids.reset c.(c_methods) = Some resetm ->
+        (** every hidden name is written by the class's own bodies *)
         (forall x, InMembers x stepm.(m_vars) ->
                    List.In x (stmt_writes stepm.(m_body)))
         /\ (forall x, InMembers x c.(c_mems) ->
                       List.In x (stmt_writes resetm.(m_body)))
         /\ (forall o, InMembers o c.(c_objs) ->
-                      List.In o (stmt_reset_insts resetm.(m_body))).
+                      List.In o (stmt_reset_insts resetm.(m_body)))
+        (** and neither body reads or writes outside the interface *)
+        /\ (forall x, List.In x (stmt_free stepm.(m_body)) ->
+                      List.In x (class_interface c stepm))
+        /\ (forall x, List.In x (stmt_free resetm.(m_body)) ->
+                      List.In x (class_interface c resetm))
+        (** the objects each body steps or resets are the class's own *)
+        /\ (forall o, List.In o (stmt_state_keys stepm.(m_body)) ->
+                      InMembers o c.(c_objs))
+        /\ (forall o, List.In o (stmt_state_keys resetm.(m_body)) ->
+                      InMembers o c.(c_objs)).
 
     Definition generate_class_signature (c: class) (env: Env.t ident) (aux_names: list node_aux_names) : res signature :=
       match (do (clk_id, rst_id) <- option_to_sec (get_node_aux (c.(c_name)) aux_names);
