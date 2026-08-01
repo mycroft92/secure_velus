@@ -742,6 +742,40 @@ Module Type SECSTCTYPINGCORRECTNESS
       + eapply IH; eauto.
   Qed.
 
+  (** Reset uniqueness is a property of the multiset of transition
+      constraints, so it survives a reordering.  [Is_well_sch] does not,
+      which is why the theorems above ask for this rather than for it:
+      the scheduling argument has to establish reset uniqueness of the
+      *unscheduled* program from the scheduled one. *)
+
+  Lemma resets_of_Permutation:
+    forall tcs tcs',
+      Permutation tcs tcs' ->
+      Permutation (resets_of tcs) (resets_of tcs').
+  Proof.
+    intros tcs tcs' Hperm.
+    induction Hperm as [|tc tcs tcs' Hperm IH|tc tc' tcs
+                       |tcs1 tcs2 tcs3 H1 IH1 H2 IH2].
+    - constructor.
+    - destruct tc as [x ck ce|x ck e|x ck f|i xs ck b g es]; simpl;
+        [exact IH|exact IH|now constructor|exact IH].
+    - destruct tc as [x ck ce|x ck e|x ck f|i xs ck b g es];
+        destruct tc' as [y dk de|y dk d|y dk h|j ys dk c h ds]; simpl;
+        try apply Permutation_refl; try apply perm_swap.
+    - eapply Permutation_trans; [exact IH1|exact IH2].
+  Qed.
+
+  Lemma resets_nodup_Permutation:
+    forall tcs tcs',
+      Permutation tcs tcs' ->
+      NoDup (map fst (resets_of tcs')) ->
+      NoDup (map fst (resets_of tcs)).
+  Proof.
+    intros tcs tcs' Hperm Hnd.
+    eapply Permutation_NoDup; [|exact Hnd].
+    apply Permutation_map, Permutation_sym, resets_of_Permutation, Hperm.
+  Qed.
+
   (** The public scope of a generated STC signature is duplicate-free:
       inputs and outputs are images of distinct source names under an
       injective environment, and the two auxiliary names are distinct
@@ -826,21 +860,21 @@ Module Type SECSTCTYPINGCORRECTNESS
       NAMEGEN.naming_env_props env aux_names ->
       secglobal_scoped G ->
       Clo.wc_system P s ->
-      (** Well-scheduling, which gives that the system resets each
-          instance at most once.  Two [TcReset]s for one instance would
-          emit two constraints on the same target, so some such
-          condition is genuinely needed; [Well_scheduled] is already a
-          standing assumption of the Stc-to-Obc pipeline. *)
-      Is_well_sch (map fst s.(SynStc.s_in))
-                  (ps_from_list (map fst s.(SynStc.s_lasts)))
-                  s.(SynStc.s_tcs) ->
+      (** The system resets each instance at most once.  Two [TcReset]s
+          for one instance would emit two constraints on the same
+          target, so some such condition is genuinely needed.
+          [Is_well_sch] gives it, through [Is_well_sch_resets_nodup] --
+          but only the [NoDup] is asked for here, because the scheduling
+          argument needs this of the *unscheduled* program, which is
+          well-scheduled nowhere.  Being a property of the multiset of
+          transition constraints, the [NoDup] transfers across the
+          reordering; [Is_well_sch] does not. *)
+      NoDup (map fst (resets_of s.(SynStc.s_tcs))) ->
       SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
       signature_good sig.
   Proof.
     intros G P s env aux_names sig
-           ((Hinjp & Hsecp) & (Hauxsecp & Hinstp & Hdistp)) Hglobsc Hwc Hsch Hsig.
-    assert (Hndkeys : NoDup (map fst (resets_of s.(SynStc.s_tcs))))
-      by (eapply Is_well_sch_resets_nodup; eauto).
+           ((Hinjp & Hsecp) & (Hauxsecp & Hinstp & Hdistp)) Hglobsc Hwc Hndkeys Hsig.
     assert (Hinj : env_injective env) by exact Hinjp.
     pose proof (SECSTCTYPING.generate_sys_signature_scoped
                   G P s env aux_names sig Hglobsc Hinj Hwc Hsig) as Hsigscoped.
@@ -1040,13 +1074,11 @@ Module Type SECSTCTYPINGCORRECTNESS
       get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env = Some rids ->
       SECSTCTYPING.generate_trconstrs_constraints G env reset_env clk_type rst_type
         s.(SynStc.s_tcs) st_reset = OK (raw, st_s) ->
-      (** Well-schedulability, as for [generate_sys_signature_good]: two
+      (** Reset uniqueness, as for [generate_sys_signature_good]: two
           [TcReset]s for one instance would put the same target on two
           constraints, which is exactly what [wf_constraints] forbids.
-          It is already a standing assumption of the Stc-to-Obc
-          pipeline.  NLustre needs no counterpart. *)
-      Is_well_sch (map fst s.(SynStc.s_in))
-                  (ps_from_list (map fst s.(SynStc.s_lasts))) s.(SynStc.s_tcs) ->
+          NLustre needs no counterpart. *)
+      NoDup (map fst (resets_of s.(SynStc.s_tcs))) ->
       sig = {| s_name := s.(SynStc.s_name);
                s_in := inp;
                s_out := out;
@@ -1074,8 +1106,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       env_injective reset_env ->
       (forall x ty, Env.find x reset_env = Some ty ->
                     exists m, ty = Ids.gensym Ids.sec_reset m) ->
-      Is_well_sch (map fst s.(SynStc.s_in))
-                  (ps_from_list (map fst s.(SynStc.s_lasts))) s.(SynStc.s_tcs) ->
+      NoDup (map fst (resets_of s.(SynStc.s_tcs))) ->
       get_mappings_from_node s.(SynStc.s_out) env = Some out ->
       get_mappings_from_node s.(SynStc.s_vars) env = Some slocals ->
       get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts ->
@@ -1115,7 +1146,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       as (ls & Hls).
     assert (Hndrids : NoDup rids).
     { eapply get_mappings_nodup_gen;
-        [eapply Is_well_sch_resets_nodup; exact Hsch|exact Hinstinj|exact Hrids]. }
+        [exact Hsch|exact Hinstinj|exact Hrids]. }
     exact (SECSTCTYPING.generate_trconstrs_constraints_wf
              G env reset_env clk_type rst_type s.(SynStc.s_tcs) sconst
              st_reset st_s tys Hinj Hnddef Hsconst Htys
@@ -1489,8 +1520,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       s'.(SynStc.s_lasts) = s.(SynStc.s_lasts) ->
       Permutation s.(SynStc.s_tcs) s'.(SynStc.s_tcs) ->
       generated_sys_simplify_ready env aux_names ->
-      Is_well_sch (map fst s.(SynStc.s_in))
-                  (ps_from_list (map fst s.(SynStc.s_lasts))) s.(SynStc.s_tcs) ->
+      NoDup (map fst (resets_of s.(SynStc.s_tcs))) ->
       Clo.wc_system P s ->
       secglobal_scoped G' ->
       sig_env_preserved G G' ->
@@ -1777,7 +1807,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       NAMEGEN.aux_naming_props aux_names ->
       Clo.wc_program systems ->
       Clo.wc_program systems' ->
-      WD.Well_scheduled systems ->
+      Forall (fun s => NoDup (map fst (resets_of s.(SynStc.s_tcs)))) systems ->
       sig_env_preserved acc acc' ->
       secglobal_scoped acc ->
       secglobal_scoped acc' ->
@@ -1881,7 +1911,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       NAMEGEN.aux_naming_props aux_names ->
       Clo.wc_program systems ->
       Clo.wc_program systems' ->
-      WD.Well_scheduled systems ->
+      Forall (fun s => NoDup (map fst (resets_of s.(SynStc.s_tcs)))) systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
         = OK G ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems' envs aux_names

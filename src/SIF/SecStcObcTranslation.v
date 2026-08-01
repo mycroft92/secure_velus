@@ -3973,6 +3973,8 @@ Module Type SECSTCOBCTRANSLATION
                                          \/ List.In ty (List.concat extras))).
       { eapply reset_body_constraints_classified; eauto. }
       (* both halves come from [generated_sys_simplify_ready], as in NLustre *)
+      assert (Hndrst : NoDup (map fst (resets_of s.(SynStc.s_tcs))))
+        by (eapply SECSTCTYPINGCORRECTNESS.Is_well_sch_resets_nodup; exact Hsch).
       edestruct Hready as (Hwf & Hdisjready); eauto.
       assert (Hdisj :
                 forall x, List.In x (SECSTCTYPING.hidden_sys_vars slocals slasts rids) ->
@@ -4182,7 +4184,9 @@ Module Type SECSTCOBCTRANSLATION
       assert (Hstcgood : SIG.signature_good stcsig).
       { eapply SECSTCTYPINGCORRECTNESS.generate_sys_signature_good
           with (P := systems) (s := s) (env := local_env);
-          [exact Hprops|exact Hacc1scoped|exact Hwc_head|exact Hsch_head
+          [exact Hprops|exact Hacc1scoped|exact Hwc_head
+          |eapply SECSTCTYPINGCORRECTNESS.Is_well_sch_resets_nodup;
+           exact Hsch_head
           |exact Hstcsig]. }
       assert (Hstcnd : NoDup (SIG.signature_scope stcsig)).
       { eapply SECSTCTYPINGCORRECTNESS.generate_sys_signature_scope_nodup;
