@@ -209,7 +209,10 @@ run.
     - rewrite <- Hscopeeq. exact Hout1. } (* from the n1 hypothesis *)
   ```
 
-  Do not "restore symmetry" by adding a hypothesis to `_obc_eq`.
+  Do not "restore symmetry" by adding a hypothesis to `_obc_eq`.  The
+  target-side hypothesis in `call_side_conditions` has since been narrowed
+  to just that reset component, since the three re-derived ones were
+  never consumed.
 
 - `generated_signatures_preserved_obc` carries `Is_well_sch`, which NLustre
   needs no counterpart for.  Two `TcReset`s for one instance would put the
@@ -409,11 +412,13 @@ checks them against whatever concrete lattice they want.
   `NameInterface.get_mappings_nodup_gen`.
 - ~~`get_mappings_nodup` section-local copies~~ and
   ~~`nodup_singleton_map` duplicate~~: both done.
-- `call_side_conditions` over-asks: it requires the full
-  `call_subst_fresh n2 inptyp2 ckty [sty] outtyp` where the proof uses
-  only the reset component (see §4b).  The single call site derives all
-  four from `scope_fresh scope n2` anyway, so nothing is blocked; the
-  hypothesis just reads stronger than it is.
+- ~~`call_side_conditions` over-asks~~: done.  Its last conjunct is now
+  `SIG.type_fresh (SIG.signature_scope n2) [sty]` rather than the full
+  `call_subst_fresh n2 inptyp2 ckty [sty] outtyp`, which is all either
+  proof ever used (§4b).  Fewer hypotheses means
+  `Signature_call_preserves_obc{,_rst}` -- and so
+  `Signature_head_consistent_obc` and `Signature_consistent_obc_full` --
+  are now *stronger* exported properties.
 - `Signature_call_preserves_obc` (`SecStcObcTranslation.v:959`) is
   subsumed by `_obc_rst` (1150): identical hypotheses, strictly weaker
   conclusion.  Scaffolding that outlived its use.

@@ -954,7 +954,11 @@ Module Type SECSTCOBCTRANSLATION
       /\ SIG.call_subst_scoped scope inptyp1 ckty srcrst outtyp
       /\ ~ In sty scope
       /\ SIG.call_subst_fresh n1 inptyp1 ckty srcrst outtyp
-      /\ SIG.call_subst_fresh n2 inptyp2 ckty [sty] outtyp.
+      (** Only the *reset* actual needs a target-side freshness fact: it
+          is the one component that differs between the two calls.  The
+          other three transfer from [n1] through
+          [signature_fields_agree_scope_eq], as both proofs below show. *)
+      /\ SIG.type_fresh (SIG.signature_scope n2) [sty].
 
     Definition Signature_call_preserves_obc (n1 n2: SIG.signature) : Prop :=
       forall scope inptyp1 inptyp2 ckty srcrst sty outtyp
@@ -1096,7 +1100,7 @@ Module Type SECSTCOBCTRANSLATION
       intros nsig ssig Hgood Hnd Hssc Hpres.
       intros scope inptyp1 inptyp2 ckty srcrst sty outtyp
              nconst sconst si1 si2 stA stB Hside Hincl Hgen1 Hgen2.
-      destruct Hside as (Hsf & Hcss & Hstynotin & Hfr1 & Hfr2).
+      destruct Hside as (Hsf & Hcss & Hstynotin & Hfr1 & Hrst2).
       (* the Obc callee also generates at the STC input types *)
       assert (Hlen : List.length inptyp2 = List.length inptyp1).
       { symmetry. eapply Forall2_length; eauto. }
@@ -1109,7 +1113,6 @@ Module Type SECSTCOBCTRANSLATION
       assert (Hscopeeq : SIG.signature_scope nsig = SIG.signature_scope ssig).
       { eapply SIG.signature_fields_agree_scope_eq; eauto. }
       destruct Hfr1 as (Hin1 & Hclk1 & Hrst1 & Hout1).
-      destruct Hfr2 as (Hin2 & Hclk2 & Hrst2 & Hout2).
       assert (Hfr2' : SIG.call_subst_fresh ssig inptyp1 ckty [sty] outtyp).
       { repeat split.
         - rewrite <- Hscopeeq. exact Hin1.
@@ -1167,7 +1170,7 @@ Module Type SECSTCOBCTRANSLATION
       intros nsig ssig Hgood Hnd Hssc Hpres.
       intros scope inptyp1 inptyp2 ckty srcrst sty outtyp
              nconst sconst si1 si2 stA stB Hside Hincl Hgen1 Hgen2.
-      destruct Hside as (Hsf & Hcss & Hstynotin & Hfr1 & Hfr2).
+      destruct Hside as (Hsf & Hcss & Hstynotin & Hfr1 & Hrst2).
       assert (Hlen : List.length inptyp2 = List.length inptyp1).
       { symmetry. eapply Forall2_length; eauto. }
       destruct (SIGPROOFS.generate_constraints_ok_change_inp
@@ -1178,7 +1181,6 @@ Module Type SECSTCOBCTRANSLATION
       assert (Hscopeeq : SIG.signature_scope nsig = SIG.signature_scope ssig).
       { eapply SIG.signature_fields_agree_scope_eq; eauto. }
       destruct Hfr1 as (Hin1 & Hclk1 & Hrst1 & Hout1).
-      destruct Hfr2 as (Hin2 & Hclk2 & Hrst2 & Hout2).
       assert (Hfr2' : SIG.call_subst_fresh ssig inptyp1 ckty [sty] outtyp).
       { repeat split.
         - rewrite <- Hscopeeq. exact Hin1.
@@ -1646,7 +1648,7 @@ Module Type SECSTCOBCTRANSLATION
         split; [exact Hsf|].
         split; [exact Hcss|].
         split; [exact Hstynotin|].
-        split; [exact Hfr1|exact Hfr2].
+        split; [exact Hfr1|exact (proj1 (proj2 (proj2 Hfr2)))].
       - eapply translate_args_type_incl; eauto.
       - exact Hgen1.
       - exact Hgen2.
