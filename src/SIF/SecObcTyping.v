@@ -622,8 +622,10 @@ Module Type SECOBCTYPING
         (** and neither body reads or writes outside the interface *)
         /\ (forall x, List.In x (stmt_free stepm.(m_body)) ->
                       List.In x (class_interface c stepm))
+        (** the reset method only touches the memories: its own interface
+            is empty and the signature never maps it *)
         /\ (forall x, List.In x (stmt_free resetm.(m_body)) ->
-                      List.In x (class_interface c resetm))
+                      InMembers x c.(c_mems))
         (** the objects each body steps or resets are the class's own *)
         /\ (forall o, List.In o (stmt_state_keys stepm.(m_body)) ->
                       InMembers o c.(c_objs))
