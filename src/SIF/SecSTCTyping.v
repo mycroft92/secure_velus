@@ -760,6 +760,18 @@ Module Type SECSTCTYPING
       - right. now apply IH.
     Qed.
 
+    Lemma In_trconstrs_reset_keys_call:
+      forall trs i xs ck f es,
+        In (TcCall i xs ck true f es) trs ->
+        In i (trconstrs_reset_keys trs).
+    Proof.
+      induction trs as [|tr trs IH]; intros i xs ck f es Hin; [inversion Hin|].
+      simpl. apply in_or_app.
+      destruct Hin as [Heq|Hin].
+      - subst tr. left. simpl. now left.
+      - right. eapply IH; exact Hin.
+    Qed.
+
     Lemma trconstrs_reset_keys_cases:
       forall trs x,
         In x (trconstrs_reset_keys trs) ->

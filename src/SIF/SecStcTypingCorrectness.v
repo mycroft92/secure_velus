@@ -1481,7 +1481,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       [preserves_on_simplify_bridge] allows those to be unrelated. *)
 
   Theorem generate_sys_signature_reorder_preserved:
-    forall G s s' env aux_names sig sig',
+    forall G G' P s s' env aux_names sig sig',
       s'.(SynStc.s_name) = s.(SynStc.s_name) ->
       s'.(SynStc.s_in) = s.(SynStc.s_in) ->
       s'.(SynStc.s_out) = s.(SynStc.s_out) ->
@@ -1491,12 +1491,17 @@ Module Type SECSTCTYPINGCORRECTNESS
       generated_sys_simplify_ready env aux_names ->
       Is_well_sch (map fst s.(SynStc.s_in))
                   (ps_from_list (map fst s.(SynStc.s_lasts))) s.(SynStc.s_tcs) ->
+      Clo.wc_system P s ->
+      secglobal_scoped G' ->
+      sig_env_preserved G G' ->
+      sys_scope_fresh_in_env s env aux_names G ->
       SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
-      SECSTCTYPING.generate_sys_signature G s' env aux_names = OK sig' ->
+      SECSTCTYPING.generate_sys_signature G' s' env aux_names = OK sig' ->
       signatures_preserved sig sig'.
   Proof.
-    intros G s s' env aux_names sig sig'
-           Hname Hin Hout Hvars Hlasts Hperm Hready Hsch Hsig Hsig'.
+    intros G G' P s s' env aux_names sig sig'
+           Hname Hin Hout Hvars Hlasts Hperm Hready Hsch Hwc Hscoped' Hpres
+           Hfresh Hsig Hsig'.
     edestruct generate_sys_signature_inv as
         (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
          & reset_env & rids & st_reset & sconst & st_s
@@ -1515,31 +1520,80 @@ Module Type SECSTCTYPINGCORRECTNESS
     rewrite Hrenv in Hrenv2. inversion Hrenv2; subst reset_env2.
     rewrite Hin in Hinp2. rewrite Hinp in Hinp2. inversion Hinp2; subst inp2.
     rewrite Hout in Hout2. rewrite Hout' in Hout2. inversion Hout2; subst out2.
-    (* the raw constraints permute *)
-    assert (Hpermc : Permutation sconst sconst2).
-    { eapply SECSTCTYPING.generate_trconstrs_constraints_Permutation;
-        [exact Hperm|exact Hsconst|exact Hsconst2]. }
     edestruct Hready as (Hwf & Hdisj);
       [exact Hsig|exact Haux|exact Hclk|exact Hrst|exact Hinp|exact Hout'
       |exact Hslocals|exact Hslasts|exact Hrenv|exact Hrids|exact Hsconst
       |exact Hsch|exact Hsigdef|].
+    destruct Hwc as (_ & _ & Henvvars & Hwtcs).
+    (* the scope the raw constraints live in, in the flat form the
+       freshness premise is stated over *)
+    set (rawscope := inp ++ out ++ slocals ++ slasts ++ rids
+                       ++ [clk_type; rst_type]).
+    destruct (SECSTCTYPING.sys_raw_scope_facts s env clk_type rst_type inp out
+                slocals slasts reset_env rids Hinp Hout' Hslocals Hslasts Hrids)
+      as (Hvarssc & Hbasesc & Hrstsc & Hkeyssc).
+    assert (Hincl : forall x,
+               In x (SECSTCTYPING.sys_raw_scope inp out clk_type rst_type
+                       slocals slasts rids) ->
+               In x rawscope).
+    { intros x Hx.
+      unfold SECSTCTYPING.sys_raw_scope, SECSTCTYPING.hidden_sys_vars in Hx.
+      rewrite in_app_iff, nodup_In in Hx.
+      unfold rawscope. repeat rewrite in_app_iff in *. tauto. }
+    assert (Hfr : SIG.secglobal_scope_fresh rawscope G).
+    { unfold rawscope.
+      eapply Hfresh;
+        [exact Haux|exact Hclk|exact Hrst|exact Hinp|exact Hout'
+        |exact Hslocals|exact Hslasts|exact Hrenv|exact Hrids]. }
+    assert (Hact : Forall (call_actuals_in_scope env clk_type rawscope)
+                     s.(SynStc.s_tcs)).
+    { rewrite Forall_forall. intros tc Htc.
+      eapply call_actuals_in_scope_from_wc
+        with (P := P)
+             (vars := idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars)
+                              ++ s.(SynStc.s_out)) ++ idck s.(SynStc.s_lasts)).
+      - exact Henvvars.
+      - rewrite Forall_forall in Hwtcs. exact (Hwtcs tc Htc).
+      - intros x Hmem. destruct (Hvarssc x Hmem) as (ty & Hf & Hins).
+        exists ty. split; [exact Hf|apply Hincl; exact Hins].
+      - apply Hincl; exact Hbasesc. }
+    assert (Hrinsts : forall i xs ck f es rinst,
+               In (SynStc.TcCall i xs ck true f es) s.(SynStc.s_tcs) ->
+               Env.find i reset_env = Some rinst ->
+               In rinst rawscope).
+    { intros i xs ck f es rinst Hincall Hfind.
+      apply Hincl. apply (Hkeyssc i rinst st_reset st_reset).
+      - eapply SECSTCTYPING.In_trconstrs_reset_keys_call; exact Hincall.
+      - unfold find_env. rewrite Hfind. reflexivity. }
+    (* the target run, moved back onto the original body order *)
+    destruct (SECSTCTYPING.generate_trconstrs_constraints_Permutation_ok
+                G' env reset_env clk_type rst_type
+                s'.(SynStc.s_tcs) s.(SynStc.s_tcs) st_reset2 sconst2 st_s2
+                st_reset2 (Permutation_sym Hperm) Hsconst2)
+      as (mid & Hmid & Hpermmid).
+    assert (Hscmid : constraints_scoped rawscope mid).
+    { eapply constraints_scoped_weaken; [exact Hincl|].
+      eapply SECSTCTYPING.generate_trconstrs_constraints_scoped_on_keys
+        with (P := P)
+             (vars := idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars)
+                              ++ s.(SynStc.s_out)) ++ idck s.(SynStc.s_lasts));
+        [exact Hscoped'|exact Henvvars|exact Hwtcs|exact Hvarssc
+        |exact Hbasesc|exact Hrstsc|exact Hkeyssc|exact Hmid]. }
+    assert (Hpreson : preserves_on rawscope sconst sconst2).
+    { eapply preserves_on_Permutation with (c1 := sconst) (c2 := mid);
+        [apply Permutation_refl|apply Permutation_sym; exact Hpermmid|].
+      eapply generate_trconstrs_constraints_preserved;
+        [exact Hpres|exact Hfr|apply Hincl; exact Hrstsc|exact Hact
+        |exact Hrinsts|exact Hscmid|exact Hsconst|exact Hmid]. }
     subst sig sig'. split.
     - repeat split; reflexivity.
     - cbn [s_constraints].
-      eapply preserves_on_simplify_bridge
-        with (rawscope := signature_scope
-                            {| s_name := s.(SynStc.s_name);
-                               s_in := inp; s_out := out;
-                               s_reset := rst_type; s_clk := clk_type;
-                               s_constraints :=
-                                 SymTypes.simplify sconst
-                                   (SECSTCTYPING.hidden_sys_vars
-                                      slocals slasts rids) |}).
+      eapply preserves_on_simplify_bridge with (rawscope := rawscope).
       + exact Hwf.
       + exact Hdisj.
-      + auto.
-      + eapply preserves_on_Permutation;
-          [apply Permutation_refl|exact Hpermc|apply preserves_on_refl].
+      + intros x Hx. unfold signature_scope in Hx. cbn in Hx.
+        unfold rawscope. repeat rewrite in_app_iff in *. tauto.
+      + exact Hpreson.
   Qed.
 
   (** ** Systems with a windowed environment
