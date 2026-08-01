@@ -152,6 +152,69 @@ Module Type SECSTCOBCTRANSLATION
         bare statement under [pc0 ⊔ ckty] where [ckty] is the STC clock
         type of [ck] seeded at [b]. *)
 
+    (** Converse of the previous lemma: a *successful* run on
+        [Control ck s] already implies that the clock's variables are
+        bound, hence that the clock pc exists.  This is how the [ckty] of
+        a call with no outputs is obtained, the STC generator returning
+        [ret []] there without ever consulting the clock. *)
+
+    Lemma generate_stmt_constraints_Control_inv:
+      forall memset ck s pc cns st st',
+        generate_stmt_constraints G env state_env rst_ty pc (Control memset ck s) st
+          = OK (cns, st') ->
+        exists pc',
+          clock_pc pc ck = Some pc'
+          /\ generate_stmt_constraints G env state_env rst_ty pc' s st = OK (cns, st').
+    Proof.
+      intros memset ck. induction ck as [|ck IH x b]; intros s pc cns st st' Hgen.
+      - exists pc. split; [reflexivity|exact Hgen].
+      - simpl in Hgen.
+        destruct b.
+        + destruct (IH _ _ _ _ _ Hgen) as (pcck & Hpcck & Hifte).
+          simpl in Hifte.
+          eapply sec_bind_inv in Hifte as (ety & sa & Hety & Hifte).
+          eapply sec_bind_inv in Hifte as (c1 & sb & Hc1 & Hifte).
+          eapply sec_bind_inv in Hifte as (c2 & sc & Hc2 & Hret).
+          unfold ret in Hret. inversion Hret; subst cns st'.
+          unfold option_to_sec in Hety.
+          unfold bool_var, tovar in Hety.
+          destruct (PS.mem x memset) eqn:Hmem; simpl in Hety;
+            (destruct (Env.find x env) as [ty|] eqn:Hx; try discriminate;
+             unfold ret in Hety; inversion Hety; subst ety sa;
+             simpl in Hc2; unfold ret in Hc2; inversion Hc2; subst c2 sc;
+             exists (pcck ⊔ [ty]); split;
+             [simpl; now rewrite Hpcck, Hx
+             |rewrite app_nil_r; exact Hc1]).
+        + destruct (IH _ _ _ _ _ Hgen) as (pcck & Hpcck & Hifte).
+          simpl in Hifte.
+          eapply sec_bind_inv in Hifte as (ety & sa & Hety & Hifte).
+          eapply sec_bind_inv in Hifte as (c1 & sb & Hc1 & Hifte).
+          eapply sec_bind_inv in Hifte as (c2 & sc & Hc2 & Hret).
+          unfold ret in Hret. inversion Hret; subst cns st'.
+          unfold option_to_sec in Hety.
+          unfold bool_var, tovar in Hety.
+          destruct (PS.mem x memset) eqn:Hmem; simpl in Hety;
+            (destruct (Env.find x env) as [ty|] eqn:Hx; try discriminate;
+             unfold ret in Hety; inversion Hety; subst ety sa;
+             simpl in Hc1; unfold ret in Hc1; inversion Hc1; subst c1 sb;
+             exists (pcck ⊔ [ty]); split;
+             [simpl; now rewrite Hpcck, Hx|simpl; exact Hc2]).
+    Qed.
+
+    Lemma clock_pc_assign_clk_type:
+      forall ck pc pc' b,
+        clock_pc pc ck = Some pc' ->
+        exists ckty, SECCETYPING.assign_clk_type env b ck = Some ckty.
+    Proof.
+      induction ck as [|ck IH x bb]; intros pc pc' b Hpc; simpl in Hpc.
+      - simpl. eauto.
+      - destruct (clock_pc pc ck) as [pcck|] eqn:Hck; try discriminate.
+        destruct (Env.find x env) as [ty|] eqn:Hx; try discriminate.
+        destruct (IH _ _ b Hck) as (ckty & Hckty).
+        simpl. rewrite Hckty. simpl. rewrite Hx.
+        eexists; reflexivity.
+    Qed.
+
     Corollary generate_stmt_constraints_Control_assign:
       forall memset ck s b ckty pc0 st,
         SECCETYPING.assign_clk_type env b ck = Some ckty ->
