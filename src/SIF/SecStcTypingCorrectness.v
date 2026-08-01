@@ -1031,6 +1031,13 @@ Module Type SECSTCTYPINGCORRECTNESS
       get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env = Some rids ->
       SECSTCTYPING.generate_trconstrs_constraints G env reset_env clk_type rst_type
         s.(SynStc.s_tcs) st_reset = OK (raw, st_s) ->
+      (** Well-schedulability, as for [generate_sys_signature_good]: two
+          [TcReset]s for one instance would put the same target on two
+          constraints, which is exactly what [wf_constraints] forbids.
+          It is already a standing assumption of the Stc-to-Obc
+          pipeline.  NLustre needs no counterpart. *)
+      Is_well_sch (map fst s.(SynStc.s_in))
+                  (ps_from_list (map fst s.(SynStc.s_lasts))) s.(SynStc.s_tcs) ->
       sig = {| s_name := s.(SynStc.s_name);
                s_in := inp;
                s_out := out;
@@ -1040,6 +1047,147 @@ Module Type SECSTCTYPINGCORRECTNESS
                  SymTypes.simplify raw
                    (SECSTCTYPING.hidden_sys_vars slocals slasts rids) |} ->
       wf_constraints raw.
+
+  (** ** Discharging the two side conditions
+
+      The Stc counterparts of NLustre's
+      [generated_node_simplify_ready_from_generated_env] and
+      [node_scope_fresh_in_env_from_bounds]. *)
+
+  Lemma generate_sys_signature_raw_wf:
+    forall all_nodes G s env aux_names clk_type rst_type
+           out slocals slasts reset_env rids sconst st_reset st_s,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      Is_well_sch (map fst s.(SynStc.s_in))
+                  (ps_from_list (map fst s.(SynStc.s_lasts))) s.(SynStc.s_tcs) ->
+      get_mappings_from_node s.(SynStc.s_out) env = Some out ->
+      get_mappings_from_node s.(SynStc.s_vars) env = Some slocals ->
+      get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts ->
+      get_node_inst s.(SynStc.s_name) aux_names = Some reset_env ->
+      get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env = Some rids ->
+      SECSTCTYPING.generate_trconstrs_constraints G env reset_env clk_type rst_type
+        s.(SynStc.s_tcs) st_reset = OK (sconst, st_s) ->
+      wf_constraints sconst.
+  Proof.
+    intros all_nodes G s env aux_names clk_type rst_type
+           out slocals slasts reset_env rids sconst st_reset st_s
+           Henv Hsch Hout Hslocals Hslasts Hresetenv Hrids Hsconst.
+    assert (Hinj : env_injective env)
+      by (eapply NAMEGEN.generate_node_env_injective; eauto).
+    assert (Hndvl : NoDup (variables s.(SynStc.s_tcs) ++ lasts_of s.(SynStc.s_tcs))).
+    { eapply Permutation_NoDup with
+        (l := (map fst s.(SynStc.s_vars) ++ map fst s.(SynStc.s_out))
+                ++ map fst s.(SynStc.s_lasts)).
+      - apply Permutation_app.
+        + exact (SynStc.s_vars_out_in_tcs s).
+        + exact (SynStc.s_lasts_in_tcs s).
+      - rewrite <- app_assoc.
+        pose proof s.(SynStc.s_nodup) as Hnd.
+        now apply NoDup_app_r in Hnd. }
+    assert (Hnddef : NoDup (Def.defined s.(SynStc.s_tcs)))
+      by (eapply Permutation_NoDup; [symmetry; exact (Def.s_defined s)|exact Hndvl]).
+    destruct (SECSTCTYPING.generate_trconstrs_constraints_targets
+                G env reset_env clk_type rst_type s.(SynStc.s_tcs) sconst
+                st_reset st_s Hinj Hnddef Hsconst) as (tys & Htys & Hsnd).
+    assert (Hvo : get_mappings (map fst s.(SynStc.s_vars) ++ map fst s.(SynStc.s_out))
+                    env = Some (slocals ++ out))
+      by (apply get_mappings_app; eapply get_mappings_from_node_eq; eauto).
+    destruct (get_mappings_Permutation_Some _ _ _ _ (SynStc.s_vars_out_in_tcs s) Hvo)
+      as (vs & Hvs).
+    assert (Hls0 : get_mappings (map fst s.(SynStc.s_lasts)) env = Some slasts)
+      by (eapply get_mappings_from_node_eq; eauto).
+    destruct (get_mappings_Permutation_Some _ _ _ _ (SynStc.s_lasts_in_tcs s) Hls0)
+      as (ls & Hls).
+    assert (Hsecrange : forall x ty, Env.find x env = Some ty ->
+                                     exists n, ty = Ids.gensym Ids.sec n)
+      by (intros; eapply NAMEGEN.generate_node_env_sec_range; eauto).
+    assert (Hrstrange : forall x ty, Env.find x reset_env = Some ty ->
+                                     exists n, ty = Ids.gensym Ids.sec_reset n)
+      by exact (proj2 (NAMEGEN.generate_node_env_inst_props
+                         _ _ _ _ _ Henv Hresetenv)).
+    assert (Hndrids : NoDup rids).
+    { eapply get_mappings_nodup_gen;
+        [eapply Is_well_sch_resets_nodup; exact Hsch
+        |exact (proj1 (NAMEGEN.generate_node_env_inst_props
+                         _ _ _ _ _ Henv Hresetenv))
+        |exact Hrids]. }
+    exact (SECSTCTYPING.generate_trconstrs_constraints_wf
+             G env reset_env clk_type rst_type s.(SynStc.s_tcs) sconst
+             st_reset st_s tys Hinj Hnddef Hsconst Htys
+             (targets_nodup env reset_env s.(SynStc.s_tcs) tys vs ls rids
+                Hinj Hsecrange Hrstrange Htys Hvs Hls Hrids Hndvl Hndrids)).
+  Qed.
+
+  Theorem generated_sys_simplify_ready_from_generated_env:
+    forall all_nodes env aux_names,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      generated_sys_simplify_ready env aux_names.
+  Proof.
+    intros all_nodes env aux_names Henv
+           G s sig clk_id rst_id clk_type rst_type inp out slocals slasts
+           reset_env rids raw st_reset st_s
+           Hsig Haux Hclk Hrst Hinp Hout Hslocals Hslasts Hresetenv Hrids
+           Hraw Hsch Hsigdef.
+    eapply generate_sys_signature_raw_wf; eauto.
+  Qed.
+
+  (** Every name the generator hands out is a [sec] gensym minted at or
+      after [st].  This is the Stc reading of what
+      [generate_local_env_for_node] gives NLustre. *)
+
+  Definition env_sec_lower_bounded (e: Env.t ident) (st: ident) : Prop :=
+    forall x ty,
+      Env.find x e = Some ty ->
+      exists n, ty = Ids.gensym Ids.sec n /\ (st <= n)%positive.
+
+  Lemma sys_scope_fresh_in_env_from_bounds:
+    forall all_nodes s env aux_names G st,
+      generate_node_env all_nodes = OK (env, aux_names) ->
+      env_sec_lower_bounded env st ->
+      SIG.secglobal_scope_bounded_above G st ->
+      (** the reset instances are outside the bound argument entirely:
+          they are [sec_reset] names, and a signature scope holds only
+          [sec] ones *)
+      SIG.secglobal_scope_sec G ->
+      sys_scope_fresh_in_env s env aux_names G.
+  Proof.
+    intros all_nodes s env aux_names G st Henv Hlo Hhi Hgsec
+           clk_id rst_id clk_type rst_type inp out slocals slasts reset_env rids
+           Haux Hclk Hrst Hinp Hout Hslocals Hslasts Hresetenv Hrids
+           f sig Hfind ty Hinscope Hinsig.
+    assert (Hsplit : In ty rids
+                     \/ In ty (inp ++ out ++ slocals ++ slasts
+                                 ++ [clk_type; rst_type]))
+      by (repeat rewrite in_app_iff in *; tauto).
+    destruct Hsplit as [Hinr|Hin'].
+    - (* a reset instance: wrong gensym prefix for any signature scope *)
+      destruct (get_mappings_In _ _ _ _ Hrids Hinr) as (o & _ & Hfindo).
+      eapply SIG.sec_reset_not_in_signature_scope;
+        [eapply Hgsec; exact Hfind
+        |exact (proj2 (NAMEGEN.generate_node_env_inst_props
+                         _ _ _ _ _ Henv Hresetenv) _ _ Hfindo)
+        |exact Hinsig].
+    - (* everything else: minted at or after [st], so above the accumulator *)
+      assert (Hsub : SIG.scope_lower_bounded
+                       (inp ++ out ++ slocals ++ slasts
+                          ++ [clk_type; rst_type]) st).
+      { intros ty' Hin''.
+        assert (Hfindty : exists x, Env.find x env = Some ty').
+        { repeat (apply in_app_iff in Hin'' as [Hin''|Hin'']);
+            [ apply get_mappings_from_node_eq in Hinp
+            | apply get_mappings_from_node_eq in Hout
+            | apply get_mappings_from_node_eq in Hslocals
+            | apply get_mappings_from_node_eq in Hslasts
+            | ].
+          1-4: match goal with
+               | H: get_mappings _ _ = Some _ |- _ =>
+                   destruct (get_mappings_In _ _ _ _ H Hin'') as (x & _ & Hf);
+                   now exists x
+               end.
+          destruct Hin'' as [Heq|[Heq|[]]]; subst ty'; eauto. }
+        destruct Hfindty as (x & Hfindty). exact (Hlo _ _ Hfindty). }
+      exact (SIG.scope_fresh_from_bounds _ _ _ Hsub (Hhi f sig Hfind) ty Hin' Hinsig).
+  Qed.
 
 End SECSTCTYPINGCORRECTNESS.
 

@@ -4018,6 +4018,11 @@ Module Type SECSTCOBCTRANSLATION
       SIG.secglobal_scoped G2 ->
       NAMEGEN.generate_node_env all_nodes = OK (env, aux_names) ->
       CloStc.wc_system P s ->
+      (** as for [generate_sys_signature_good]: a doubly-reset instance
+          would give two constraints the same target *)
+      WD.Is_well_sch (map fst s.(SynStc.s_in))
+                     (ps_from_list (map fst s.(SynStc.s_lasts)))
+                     s.(SynStc.s_tcs) ->
       SECSTCTYPING.generate_sys_signature G1 s env aux_names = OK stcsig ->
       SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux_names
         = OK obcsig ->
@@ -4025,7 +4030,7 @@ Module Type SECSTCOBCTRANSLATION
       signatures_preserved stcsig obcsig.
   Proof.
     intros all_nodes P s G1 G2 env aux_names stcsig obcsig
-           Hcons Hfreshenv Hg2sec Hg2scoped Henvgen Hwc Hstcsig Hobcsig Hready.
+           Hcons Hfreshenv Hg2sec Hg2scoped Henvgen Hwc Hsch Hstcsig Hobcsig Hready.
     (* both generators, inverted *)
     edestruct SECSTCTYPINGCORRECTNESS.generate_sys_signature_inv as
         (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
