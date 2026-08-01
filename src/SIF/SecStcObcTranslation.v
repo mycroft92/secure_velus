@@ -4176,6 +4176,107 @@ Module Type SECSTCOBCTRANSLATION
         eauto using sig_scope_in_raw_scope.
   Qed.
 
+  (** ** Lockstep over the whole program
+
+      The Stc-to-Obc counterpart of NLustre's
+      [generate_all_signatures_consistent'_abstract].  Both generators
+      walk the same program, the accumulators grow together, and one
+      head-consistent pair per system keeps every lookup aligned. *)
+
+  Definition generated_signature_step_consistent_obc
+    (env: Env.t ident) (aux_names: list node_aux_names) : Prop :=
+    forall G1 G2 s stcsig obcsig,
+      Signature_consistent_obc_full G1 G2 ->
+      SECSTCTYPING.generate_sys_signature G1 s env aux_names = OK stcsig ->
+      SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux_names
+        = OK obcsig ->
+      Signature_head_consistent_obc stcsig obcsig.
+
+  Lemma Signature_consistent_obc_full_nil:
+    Signature_consistent_obc_full nil nil.
+  Proof.
+    intros f n1 Hfind. simpl in Hfind. discriminate.
+  Qed.
+
+  (** One head-consistent pair per system, from the preservation bridge
+      plus the two signature-shape facts each layer proves about its own
+      generator. *)
+
+  Theorem generated_signature_step_consistent_obc_from_bridges:
+    forall env aux_names,
+      (forall G1 G2 s stcsig obcsig,
+          Signature_consistent_obc_full G1 G2 ->
+          SECSTCTYPING.generate_sys_signature G1 s env aux_names = OK stcsig ->
+          SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux_names
+            = OK obcsig ->
+          signatures_preserved stcsig obcsig) ->
+      (forall G1 s stcsig,
+          SECSTCTYPING.generate_sys_signature G1 s env aux_names = OK stcsig ->
+          SIG.signature_good stcsig /\ NoDup (SIG.signature_scope stcsig)) ->
+      (forall G2 s obcsig,
+          SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux_names
+            = OK obcsig ->
+          SIG.signature_scoped obcsig) ->
+      generated_signature_step_consistent_obc env aux_names.
+  Proof.
+    intros env aux_names Hpres Hgood Hscoped
+           G1 G2 s stcsig obcsig Hcons Hstcsig Hobcsig.
+    assert (Hagree : stcsig.(s_name) = obcsig.(s_name)
+                     /\ SIG.signature_fields_agree stcsig obcsig)
+      by (eapply generated_signature_fields_agree; eauto).
+    destruct (Hgood G1 s stcsig Hstcsig) as (Hsiggood & Hsignd).
+    eapply signatures_preserved_obc_full_from_good;
+      [apply (proj1 Hagree)|exact Hsiggood|exact Hsignd| |].
+    - eapply Hscoped; eauto.
+    - eapply Hpres; eauto.
+  Qed.
+
+  Theorem generate_all_signatures_consistent_obc'_abstract:
+    forall systems acc1 acc2 env aux_names G1 G2,
+      Signature_consistent_obc_full acc1 acc2 ->
+      generated_signature_step_consistent_obc env aux_names ->
+      SECSTCTYPING.generate_all_sys_signatures' acc1 systems env aux_names = OK G1 ->
+      SECOBCTYPING.generate_all_class_signatures' acc2 (translate systems)
+        env aux_names = OK G2 ->
+      Signature_consistent_obc_full G1 G2.
+  Proof.
+    induction systems as [|s systems IH];
+      intros acc1 acc2 env aux_names G1 G2 Hcons Hstep Hstc Hobc.
+    - simpl in Hstc, Hobc. inversion Hstc; inversion Hobc; subst. exact Hcons.
+    - simpl in Hstc, Hobc.
+      destruct (SECSTCTYPING.generate_sys_signature acc1 s env aux_names)
+        as [stcsig|] eqn:Hstcsig; try discriminate.
+      destruct (SECOBCTYPING.generate_class_signature acc2 (translate_system s)
+                  env aux_names) as [obcsig|] eqn:Hobcsig;
+        simpl in Hstc, Hobc; try discriminate.
+      destruct (SECSTCTYPING.generate_all_sys_signatures' (stcsig :: acc1)
+                  systems env aux_names) as [G1'|] eqn:Hstc';
+        simpl in Hstc; try discriminate.
+      destruct (SECOBCTYPING.generate_all_class_signatures' (obcsig :: acc2)
+                  (translate systems) env aux_names) as [G2'|] eqn:Hobc';
+        simpl in Hobc; try discriminate.
+      inversion Hstc; subst; clear Hstc.
+      inversion Hobc; subst; clear Hobc.
+      eapply IH with (acc1 := stcsig :: acc1) (acc2 := obcsig :: acc2); eauto.
+      eapply generated_signature_consistent_step; eauto.
+  Qed.
+
+  Corollary generate_all_signatures_consistent_obc_abstract:
+    forall systems env aux_names G1 G2,
+      generated_signature_step_consistent_obc env aux_names ->
+      SECSTCTYPING.generate_all_sys_signatures systems env aux_names = OK G1 ->
+      SECOBCTYPING.generate_all_class_signatures (translate systems)
+        env aux_names = OK G2 ->
+      Signature_consistent_obc_full G1 G2.
+  Proof.
+    intros systems env aux_names G1 G2 Hstep Hstc Hobc.
+    unfold SECSTCTYPING.generate_all_sys_signatures in Hstc.
+    unfold SECOBCTYPING.generate_all_class_signatures in Hobc.
+    eapply generate_all_signatures_consistent_obc'_abstract
+      with (acc1 := @nil SIG.signature) (acc2 := @nil SIG.signature); eauto.
+    apply Signature_consistent_obc_full_nil.
+  Qed.
+
 End SECSTCOBCTRANSLATION.
 
 Module SecStcObcTranslation
