@@ -32,7 +32,11 @@ From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF.NameInterface.
 From Velus Require Import SIF.SecCETyping.
+From Velus Require Import NLustre.NLSyntax.
+From Velus Require Import Stc.StcWellDefined.
+From Velus Require Import SIF.NameInterface.
 From Velus Require Import SIF.SecSTCTyping.
+From Velus Require Import SIF.SecStcTypingCorrectness.
 From Velus Require Import SIF.SecObcTyping.
 From Velus Require Import SIF.SecObcTypingCorrectness.
 
@@ -66,6 +70,14 @@ Module Type SECSTCOBCTRANSLATION
   (Import CloStc   : STCCLOCKING Ids Op CESyn SynStc LastStc VarStc DefStc SystStc OrdStc CEClo)
   (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo
                            SECCETYPING LastStc VarStc DefStc SystStc OrdStc IsFStc CloStc)
+  (Import SynNL : NLSYNTAX Ids Op CESyn)
+  (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
+  (Import WD    : STCWELLDEFINED Ids Op CESyn SynStc SystStc OrdStc VarStc
+                    LastStc DefStc CEIsF IsFStc)
+  (Import SECSTCTYPINGCORRECTNESS :
+     SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecT SIG SIGPROOFS
+       NAMEGEN CEIsF CEClo SECCETYPING LastStc VarStc DefStc SystStc OrdStc
+       IsFStc CloStc WD SECSTCTYPING)
   (Import Trans : TRANSLATION Ids Op OpAux CESyn SynStc SynObc)
   (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SIG)
   (Import SECOBCTYPINGCORRECTNESS :
@@ -2790,6 +2802,53 @@ Module Type SECSTCOBCTRANSLATION
           rewrite Hes'. eexists; reflexivity.
     Qed.
 
+    (** ** Interface agreement
+
+        Both generators read the same environment and the same auxiliary
+        names, and the translated class's step method carries the
+        system's own interface up to [idty].  So the two signatures agree
+        on name, inputs, outputs, clock and reset. *)
+
+    Lemma generated_signature_fields_agree:
+      forall s aux nsig ssig,
+        SECSTCTYPING.generate_sys_signature G1 s env aux = OK nsig ->
+        SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux = OK ssig ->
+        nsig.(s_name) = ssig.(s_name)
+        /\ SIG.signature_fields_agree nsig ssig.
+    Proof.
+      intros s aux nsig ssig Hnsig Hssig.
+      edestruct SECSTCTYPINGCORRECTNESS.generate_sys_signature_inv as
+          (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
+           & renv & rids & st_reset & sconst & st_s
+           & Haux & Hclk & Hrst & Hinp & Hout & Hslocals & Hslasts
+           & Hrenv & Hrids & Hsconst & Hnsigdef); [exact Hnsig|].
+      edestruct SECOBCTYPINGCORRECTNESS.generate_class_signature_inv as
+          (clk_id' & rst_id' & clk_type' & rst_type' & stepm & resetm
+           & inp' & out' & locals' & lasts' & senv & stids
+           & craw_step & craw_reset & st_state & st_step & st_raw
+           & Haux' & Hclk' & Hrst' & Hstepm & Hresetm & Hinp' & Hout'
+           & Hlocals' & Hlasts' & Hsenv & Hstids & Hstepc & Hresetc & Hssigdef);
+        [exact Hssig|].
+      simpl in Haux'.
+      rewrite Haux in Haux'. inversion Haux'; subst clk_id' rst_id'.
+      rewrite Hclk in Hclk'. inversion Hclk'; subst clk_type'.
+      rewrite Hrst in Hrst'. inversion Hrst'; subst rst_type'.
+      pose proof (exists_step_method s) as Hex.
+      rewrite Hstepm in Hex. inversion Hex; subst stepm.
+      assert (Hinpeq : inp' = inp).
+      { assert (Hmap : get_mappings_from_node (m_in (step_method s)) env = Some inp).
+        { eapply get_mappings_from_node_map_fst; [|exact Hinp].
+          symmetry. apply translated_class_step_in. }
+        rewrite Hmap in Hinp'. now inversion Hinp'. }
+      assert (Houteq : out' = out).
+      { assert (Hmap : get_mappings_from_node (m_out (step_method s)) env = Some out).
+        { eapply get_mappings_from_node_map_fst; [|exact Hout].
+          symmetry. apply translated_class_step_out. }
+        rewrite Hmap in Hout'. now inversion Hout'. }
+      subst inp' out' nsig ssig. simpl.
+      repeat split; reflexivity.
+    Qed.
+
     (** ** Class-level raw preservation
 
         The Obc signature's raw constraints are the step method's, the
@@ -2948,16 +3007,26 @@ Module SecStcObcTranslation
   (Import CloStc   : STCCLOCKING Ids Op CESyn SynStc LastStc VarStc DefStc SystStc OrdStc CEClo)
   (Import SECSTCTYPING : SECSTCTYPING Ids Op SC CESyn SynStc SIG CEIsF CEClo
                            SECCETYPING LastStc VarStc DefStc SystStc OrdStc IsFStc CloStc)
+  (Import SynNL : NLSYNTAX Ids Op CESyn)
+  (Import NAMEGEN : NAMEGEN Ids Op CESyn SynNL)
+  (Import WD    : STCWELLDEFINED Ids Op CESyn SynStc SystStc OrdStc VarStc
+                    LastStc DefStc CEIsF IsFStc)
+  (Import SECSTCTYPINGCORRECTNESS :
+     SECSTCTYPINGCORRECTNESS Ids Op SC CESyn SynNL SynStc Lat SecT SIG SIGPROOFS
+       NAMEGEN CEIsF CEClo SECCETYPING LastStc VarStc DefStc SystStc OrdStc
+       IsFStc CloStc WD SECSTCTYPING)
   (Import Trans : TRANSLATION Ids Op OpAux CESyn SynStc SynObc)
   (Import SECOBCTYPING : SECOBCTYPING Ids Op OpAux SC SynObc SIG)
   (Import SECOBCTYPINGCORRECTNESS :
      SECOBCTYPINGCORRECTNESS Ids Op OpAux SC SynObc Lat SecT SIG SIGPROOFS SECOBCTYPING)
   <: SECSTCOBCTRANSLATION Ids Op OpAux SC CESyn SynStc SynObc Lat SecT SIG SIGPROOFS
-       CEIsF CEClo SECCETYPING LastStc VarStc DefStc SystStc OrdStc IsFStc CloStc SECSTCTYPING Trans
+       CEIsF CEClo SECCETYPING LastStc VarStc DefStc SystStc OrdStc IsFStc CloStc SECSTCTYPING
+       SynNL NAMEGEN WD SECSTCTYPINGCORRECTNESS Trans
        SECOBCTYPING SECOBCTYPINGCORRECTNESS.
 
 Include SECSTCOBCTRANSLATION Ids Op OpAux SC CESyn SynStc SynObc Lat SecT SIG SIGPROOFS
-  CEIsF CEClo SECCETYPING LastStc VarStc DefStc SystStc OrdStc IsFStc CloStc SECSTCTYPING Trans
+  CEIsF CEClo SECCETYPING LastStc VarStc DefStc SystStc OrdStc IsFStc CloStc SECSTCTYPING
+  SynNL NAMEGEN WD SECSTCTYPINGCORRECTNESS Trans
   SECOBCTYPING SECOBCTYPINGCORRECTNESS.
 
 End SecStcObcTranslation.
