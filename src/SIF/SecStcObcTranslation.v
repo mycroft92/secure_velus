@@ -2865,6 +2865,73 @@ Module Type SECSTCOBCTRANSLATION
         destruct Hin as [Heq|[]]. right. now left.
     Qed.
 
+    (** The only instances the step body touches are those the source
+        trconstrs name. *)
+
+    Lemma stmt_state_keys_Control:
+      forall memset ck s o,
+        List.In o (SECOBCTYPING.stmt_state_keys (Control memset ck s)) ->
+        List.In o (SECOBCTYPING.stmt_state_keys s).
+    Proof.
+      intros memset ck. induction ck as [|ck IH x b]; intros s o Ho.
+      - exact Ho.
+      - destruct b; specialize (IH _ _ Ho);
+          cbn [SECOBCTYPING.stmt_state_keys] in IH;
+          apply in_app_iff in IH as [Hin|Hin]; auto;
+          cbn [SECOBCTYPING.stmt_state_keys] in Hin; try contradiction.
+    Qed.
+
+    Lemma stmt_state_keys_translate_cexp:
+      forall memset x ce o,
+        List.In o (SECOBCTYPING.stmt_state_keys (translate_cexp memset x ce)) ->
+        False.
+    Proof.
+      intros memset x ce. induction ce; intros o Ho;
+        cbn [translate_cexp SECOBCTYPING.stmt_state_keys] in Ho.
+      - apply in_app_iff in Ho as [Ho|Ho]; [eapply IHce1|eapply IHce2]; eauto.
+      - apply in_app_iff in Ho as [Ho|Ho]; [eapply IHce1|eapply IHce2]; eauto.
+      - contradiction.
+    Qed.
+
+    Lemma stmt_state_keys_translate_tc:
+      forall memset clkvars tc o,
+        List.In o (SECOBCTYPING.stmt_state_keys
+                     (translate_tc memset clkvars tc)) ->
+        (exists ck g, tc = SynStc.TcReset o ck g)
+        \/ (exists ys ck b g es, tc = SynStc.TcCall o ys ck b g es).
+    Proof.
+      intros memset clkvars tc o Ho.
+      destruct tc as [y ck ce|y ck e|i ck g|i ys ck b g es];
+        unfold translate_tc in Ho; apply stmt_state_keys_Control in Ho.
+      - exfalso. eapply stmt_state_keys_translate_cexp; eauto.
+      - cbn [SECOBCTYPING.stmt_state_keys] in Ho. contradiction.
+      - cbn [SECOBCTYPING.stmt_state_keys] in Ho.
+        destruct Ho as [Heq|[]]. subst i. left. eauto.
+      - cbn [SECOBCTYPING.stmt_state_keys] in Ho.
+        destruct Ho as [Heq|[]]. subst i. right. eauto 10.
+    Qed.
+
+    Lemma stmt_state_keys_translate_tcs_fold:
+      forall memset clkvars tcs acc o,
+        List.In o (SECOBCTYPING.stmt_state_keys
+                     (fold_left (fun i tc =>
+                        SynObc.Comp (translate_tc memset clkvars tc) i) tcs acc)) ->
+        List.In o (SECOBCTYPING.stmt_state_keys acc)
+        \/ exists tc, List.In tc tcs
+                     /\ ((exists ck g, tc = SynStc.TcReset o ck g)
+                         \/ (exists ys ck b g es, tc = SynStc.TcCall o ys ck b g es)).
+    Proof.
+      induction tcs as [|tc tcs IH]; intros acc o Ho; simpl in Ho |- *.
+      - now left.
+      - destruct (IH _ _ Ho) as [Hin|(tc5 & Hin5 & Hshape)].
+        + cbn [SECOBCTYPING.stmt_state_keys] in Hin.
+          apply in_app_iff in Hin as [Hin|Hin].
+          * right. exists tc. split; [now left|].
+            now apply stmt_state_keys_translate_tc in Hin.
+          * now left.
+        + right. exists tc5. split; [now right|exact Hshape].
+    Qed.
+
     (** ** The raw scope
 
         Everything the two constraint sets share: the signature scope,
