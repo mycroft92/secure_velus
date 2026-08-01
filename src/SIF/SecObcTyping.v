@@ -304,6 +304,25 @@ Module Type SECOBCTYPING
           else error (msg "Unsupported method call")
       end.
 
+    (** Syntactic write sets.  As with [stmt_free], these are defined
+        here rather than reusing [ObcInvariants.Can_write_in], which
+        would drag the Obc semantics into a syntax-level development. *)
+
+    Fixpoint stmt_writes (s: stmt) : list ident :=
+      match s with
+      | Assign x _ | AssignSt x _ => [x]
+      | Ifte _ s1 s2 | Comp s1 s2 => stmt_writes s1 ++ stmt_writes s2
+      | Call ys _ _ m _ => if ident_eqb m Ids.step then ys else []
+      | Skip => []
+      end.
+
+    Fixpoint stmt_reset_insts (s: stmt) : list ident :=
+      match s with
+      | Ifte _ s1 s2 | Comp s1 s2 => stmt_reset_insts s1 ++ stmt_reset_insts s2
+      | Call [] _ o m _ => if ident_eqb m Ids.reset then [o] else []
+      | _ => []
+      end.
+
     Fixpoint stmt_state_keys (s: stmt) : list ident :=
       match s with
       | Call _ _ o _ _ => [o]
@@ -577,6 +596,24 @@ Module Type SECOBCTYPING
 
   Section SECCLSTYPING.
     Variable G: secglobal.
+
+    (** A class is well defined when its own bodies write everything its
+        signature will hide: the step method assigns each local, and the
+        reset method initialises each memory and resets each object.
+        Translated classes satisfy this; it is what [simplify_scoped]
+        needs, stated syntactically so the Obc side stays independent of
+        the translation. *)
+
+    Definition class_well_defined (c: class) : Prop :=
+      forall stepm resetm,
+        find_method Ids.step c.(c_methods) = Some stepm ->
+        find_method Ids.reset c.(c_methods) = Some resetm ->
+        (forall x, InMembers x stepm.(m_vars) ->
+                   List.In x (stmt_writes stepm.(m_body)))
+        /\ (forall x, InMembers x c.(c_mems) ->
+                      List.In x (stmt_writes resetm.(m_body)))
+        /\ (forall o, InMembers o c.(c_objs) ->
+                      List.In o (stmt_reset_insts resetm.(m_body))).
 
     Definition generate_class_signature (c: class) (env: Env.t ident) (aux_names: list node_aux_names) : res signature :=
       match (do (clk_id, rst_id) <- option_to_sec (get_node_aux (c.(c_name)) aux_names);
