@@ -3526,6 +3526,94 @@ Module Type SECSTCOBCTRANSLATION
           rewrite Hes'. eexists; reflexivity.
     Qed.
 
+    (** ** The reset method's constraints
+
+        [translate_reset] emits one [rst_ty ==> ty] constraint per memory
+        and per object.  Taking [slasts ++ rids] as the shared targets,
+        every one of them is either shared or a per-block extra: a
+        memory's type is backed by the [TcNext] that defines it, a reset
+        object's by the [TcReset] that resets it, and an object the
+        system only steps is exactly what [tcs_obc_extras] collects.
+        These are the two reset-body hypotheses of
+        [class_preserv_signature]. *)
+
+    Lemma reset_shared_targets:
+      forall s inp out slocals slasts rids nconst st st',
+        get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts ->
+        get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env = Some rids ->
+        SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty
+          s.(SynStc.s_tcs) st = OK (nconst, st') ->
+        Forall (fun ty =>
+                  List.In ty (raw_scope inp out slocals slasts rids)
+                  /\ exists src, List.In (src, [ty]) nconst /\ List.In rst_ty src)
+               (slasts ++ rids).
+    Proof.
+      intros s inp out slocals slasts rids nconst st st' Hslasts Hrids Hgen.
+      apply get_mappings_from_node_eq in Hslasts.
+      apply Forall_forall. intros ty Hin.
+      apply in_app_iff in Hin as [Hin|Hin]; split.
+      - (* a memory's type lies in the [slasts] slot of the raw scope *)
+        unfold raw_scope.
+        apply in_or_app; right. apply in_or_app; right.
+        apply in_or_app; right. apply in_or_app; now left.
+      - destruct (get_mappings_In _ _ _ _ Hslasts Hin) as (x & Hinx & Hfind).
+        eapply SECSTCTYPING.generate_trconstrs_constraints_last_source;
+          [exact Hgen| |exact Hfind].
+        now rewrite <- (SynStc.s_lasts_in_tcs s).
+      - (* a reset instance's type lies in the [rids] slot *)
+        unfold raw_scope.
+        apply in_or_app; right. apply in_or_app; right.
+        apply in_or_app; right. apply in_or_app; right.
+        apply in_or_app; now left.
+      - destruct (get_mappings_In _ _ _ _ Hrids Hin) as (o & Hino & Hfind).
+        eapply SECSTCTYPING.generate_trconstrs_constraints_reset_source;
+          [exact Hgen|exact Hino|exact Hfind].
+    Qed.
+
+    Lemma reset_body_constraints_classified:
+      forall s slasts rids extras craw_reset st st',
+        reset_consistency s.(SynStc.s_tcs) ->
+        get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts ->
+        get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env = Some rids ->
+        tcs_obc_extras s.(SynStc.s_tcs) = Some extras ->
+        generate_stmt_constraints G2 env reset_env rst_ty []
+          (translate_reset s) st = OK (craw_reset, st') ->
+        forall c, List.In c craw_reset ->
+                  exists ty, c = ([rst_ty], [ty])
+                             /\ (List.In ty (slasts ++ rids)
+                                 \/ List.In ty (List.concat extras)).
+    Proof.
+      intros s slasts rids extras craw_reset st st'
+             Hcons Hslasts Hrids Hextras Hgen c Hc.
+      destruct (generate_translate_reset_blocks _ _ _ _ Hgen)
+        as (mtys & itys & Hmtys & Hitys & Hcns).
+      subst craw_reset.
+      apply in_map_iff in Hc as (ty & Heq & Hty).
+      exists ty. split; [now symmetry|].
+      apply get_mappings_from_node_eq in Hslasts.
+      apply in_app_iff in Hty as [Hty|Hty].
+      - (* a memory initialisation *)
+        left. apply in_or_app; left.
+        destruct (Forall2_in_right _ _ _ _ Hmtys Hty) as (xc & Hinxc & Hfind).
+        assert (Hinx : List.In (fst xc) (map fst s.(SynStc.s_lasts)))
+          by now apply in_map.
+        destruct (get_mappings_in _ _ _ _ Hinx Hslasts) as (ty' & Hty' & Hinty').
+        rewrite Hfind in Hty'. inversion Hty'; subst ty'. exact Hinty'.
+      - (* an instance reset: shared when the system resets it too *)
+        destruct (Forall2_in_right _ _ _ _ Hitys Hty) as (oc & Hinoc & Hfind).
+        assert (Hincalls : List.In (fst oc) (map fst (calls_of s.(SynStc.s_tcs)))).
+        { apply in_map. eapply Permutation_in;
+            [apply (SynStc.s_subs_calls_of s)|exact Hinoc]. }
+        destruct (calls_of_reset_or_unreset _ _ Hcons Hincalls) as [Hres|Hun].
+        + left. apply in_or_app; right.
+          destruct (get_mappings_in _ _ _ _ Hres Hrids) as (ty' & Hty' & Hinty').
+          rewrite Hfind in Hty'. inversion Hty'; subst ty'. exact Hinty'.
+        + right.
+          pose proof (tcs_obc_extras_concat _ _ Hextras) as Hconc.
+          destruct (get_mappings_in _ _ _ _ Hun Hconc) as (ty' & Hty' & Hinty').
+          rewrite Hfind in Hty'. inversion Hty'; subst ty'. exact Hinty'.
+    Qed.
+
     (** ** Interface agreement
 
         Both generators read the same environment and the same auxiliary
