@@ -284,6 +284,71 @@ Module Type SECNLUSSTCOBCENV
       |exact Hwc|exact Hsch|exact Hstc|exact Hobc].
   Qed.
 
+  (** ** Scheduling, in the shape the signature layer consumes
+
+      [Sched.schedule] is [map schedule_system]: the same program, the
+      same interfaces, each body permuted.  That is exactly the relation
+      the reordering theorem takes, and it is the missing link between
+      the signatures the NLustre-to-Stc bridge produces -- generated
+      from [translate all_nodes] -- and the ones the Stc-to-Obc bridge
+      consumes, generated from the scheduled program. *)
+
+  Lemma schedule_reordered:
+    forall systems,
+      Forall2 sys_reordered systems (Sched.schedule systems).
+  Proof.
+    induction systems as [|s systems IH]; simpl.
+    - constructor.
+    - constructor; [|exact IH].
+      unfold sys_reordered. simpl.
+      repeat split; try reflexivity.
+      symmetry. apply Sched.schedule_tcs_permutation.
+  Qed.
+
+  (** Reset uniqueness of the *unscheduled* program.  The scheduled one
+      is the one known to be well-scheduled, and reset uniqueness is a
+      property of the multiset of transition constraints, so it comes
+      back across the permutation. *)
+
+  Lemma scheduled_resets_nodup:
+    forall systems,
+      Stc.Wdef.Well_scheduled (Sched.schedule systems) ->
+      Forall (fun s => NoDup (List.map fst (Stc.Syn.resets_of s.(Stc.Syn.s_tcs))))
+             systems.
+  Proof.
+    induction systems as [|s systems IH]; intro Hsch; [constructor|].
+    simpl in Hsch. inversion Hsch as [|s0 systems0 Hhd Htl]; subst.
+    constructor; [|exact (IH Htl)].
+    eapply resets_nodup_Permutation
+      with (tcs' := (Sched.schedule_system s).(Stc.Syn.s_tcs)).
+    - simpl. symmetry. apply Sched.schedule_tcs_permutation.
+    - eapply Is_well_sch_resets_nodup; exact Hhd.
+  Qed.
+
+  Theorem generated_signatures_preserved_by_scheduling:
+    forall all_nodes systems envs aux_names G G',
+      generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      Forall2 (fun n s => s.(Stc.Syn.s_name) = n.(NL.Syn.n_name))
+              all_nodes systems ->
+      Stc.Clo.wc_program systems ->
+      Stc.Wdef.Well_scheduled (Sched.schedule systems) ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
+        = OK G ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env
+        (Sched.schedule systems) envs aux_names = OK G' ->
+      sig_env_preserved G G'.
+  Proof.
+    intros all_nodes systems envs aux_names G G' Hgen Hnames Hwc Hsch Hg Hg'.
+    eapply generate_all_sys_signatures_reorder_preserved_scoped;
+      [apply schedule_reordered
+      |eapply scoped_envs_windowed_from_scoped_env; [exact Hgen|exact Hnames]
+      |eapply aux_naming_props_from_scoped_env; exact Hgen
+      |exact Hwc
+      |apply Sched.scheduler_wc_program; exact Hwc
+      |apply scheduled_resets_nodup; exact Hsch
+      |exact Hg|exact Hg'].
+  Qed.
+
 End SECNLUSSTCOBCENV.
 
 Module SecNLusStcObcEnv
