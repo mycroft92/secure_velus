@@ -1,7 +1,7 @@
 # Stc→Obc SIF preservation — resume state
 
-**Branch** `Stc2ObcSIF`, HEAD `fb936db`, pushed to `origin`.
-72 commits since `constraint_gen`. **Build green, zero admits.**
+**Branch** `Stc2ObcSIF`, HEAD `f6e7645`.
+119 commits since `constraint_gen`. **Build green, zero admits.**
 
 Companion docs: `Stc2ObcSIF_plan.md` (design), `Stc2ObcSIF_progress.md`
 (worklist + design notes), `Stc2ObcSIF_tccall.md` (the call case).
@@ -19,8 +19,14 @@ docker exec funny_franklin bash -lc 'cd /workspace && bash /tmp/coqc_cmd.sh src/
 docker exec funny_franklin bash -lc 'cd /workspace && make -j8 >/dev/null 2>&1; echo $?'
 ```
 
-- **Never re-run `./configure`** — it clobbers `Archi.vo` and yields bogus
-  "inconsistent assumptions" errors.
+- `make <path>.vo` is **not** a valid target — the Makefile defines no
+  per-file rule, so it exits 0 having done nothing.  Treat any such run as
+  no evidence at all.  Only bare `make` / `make -j4` builds.
+- Re-run `./configure -clightgen x86_64-linux` whenever `vfiles` changes —
+  adding a file *or* reordering one.  `_CoqProject` is generated from
+  `vfiles` and is gitignored, so hand-edits are not picked up.  (An earlier
+  note here said never to re-run configure; that is wrong, and following it
+  makes new files silently fail to build.)
 - "inconsistent assumptions over library X" after editing X just means
   dependents are stale: run `make` to rebuild them, then recompile.
 - A new file only compiles once it is listed in `vfiles`.
