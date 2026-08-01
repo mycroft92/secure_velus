@@ -220,28 +220,34 @@ Module Type SECNLUSSTCOBCENV
 
   (** ** The chain-level statement
 
-      The Stc-to-Obc lookup theorem with its environment hypotheses
-      discharged: everything is now expressed in terms of the one naming
-      run over the source program. *)
+      Stated for any Stc program whose systems carry the source nodes'
+      names, not for [translate all_nodes] specifically.  That matters:
+      the compiler does not hand [translate all_nodes] to the Obc pass,
+      it hands over [schedule (translate all_nodes)] (see
+      [NLCorrectness.nl_to_cl]), and [Well_scheduled] holds only after
+      that pass.  Scheduling reorders a system's transition constraints
+      and keeps every other field, [s_name] included, so the alignment
+      below survives it and this statement covers both programs. *)
 
   Theorem generated_program_signatures_preserved_obc_chain:
-    forall all_nodes envs aux_names G1 G2,
+    forall all_nodes systems envs aux_names G1 G2,
       generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-      CloStc.wc_program (TransNL.translate all_nodes) ->
-      WD.Well_scheduled (TransNL.translate all_nodes) ->
-      SECSTCTYPING.generate_all_sys_signatures_scoped_env
-        (TransNL.translate all_nodes) envs aux_names = OK G1 ->
+      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) all_nodes systems ->
+      CloStc.wc_program systems ->
+      WD.Well_scheduled systems ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
+        = OK G1 ->
       SECOBCTYPING.generate_all_class_signatures_scoped_env
-        (TransObc.translate (TransNL.translate all_nodes)) envs aux_names = OK G2 ->
+        (TransObc.translate systems) envs aux_names = OK G2 ->
       forall f stcsig,
         SIG.find_signature f G1 = Some stcsig ->
         exists obcsig,
           SIG.find_signature f G2 = Some obcsig
           /\ Signature_head_consistent_obc stcsig obcsig.
   Proof.
-    intros all_nodes envs aux_names G1 G2 Hgen Hwc Hsch Hstc Hobc.
+    intros all_nodes systems envs aux_names G1 G2 Hgen Hnames Hwc Hsch Hstc Hobc.
     eapply generated_program_signatures_preserved_obc_global;
-      [eapply scoped_envs_windowed_translate; exact Hgen
+      [eapply scoped_envs_windowed_from_scoped_env; [exact Hgen|exact Hnames]
       |eapply aux_naming_props_from_scoped_env; exact Hgen
       |exact Hwc|exact Hsch|exact Hstc|exact Hobc].
   Qed.
