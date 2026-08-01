@@ -146,6 +146,84 @@ Section mmap.
     end.
 End mmap.
 
+(** ** State-pure computations
+
+    Signature and constraint generation never mints an identifier: it is
+    built entirely from [ret], [error], [bind] and [mmap], so the state
+    is threaded but never read or advanced.  [state_pure] records both
+    consequences at once -- the state comes back unchanged, and the
+    result does not depend on the state it started from.  Together they
+    are what makes a generated constraint list a function of the syntax
+    alone, which is what a permutation argument needs. *)
+
+Definition state_pure {A: Type} (m: Sec A) : Prop :=
+  forall st1 st2 a st1',
+    m st1 = OK (a, st1') ->
+    st1' = st1 /\ m st2 = OK (a, st2).
+
+Lemma state_pure_ret:
+  forall {A: Type} (a: A), state_pure (ret a).
+Proof.
+  intros A a st1 st2 a' st1' H.
+  unfold ret in *. inversion H; subst. split; reflexivity.
+Qed.
+
+Lemma state_pure_error:
+  forall {A: Type} e, state_pure (@error A e).
+Proof.
+  intros A e st1 st2 a st1' H. unfold error in H. discriminate.
+Qed.
+
+Lemma state_pure_bind:
+  forall {A B: Type} (m: Sec A) (f: A -> Sec B),
+    state_pure m ->
+    (forall a, state_pure (f a)) ->
+    state_pure (bind m f).
+Proof.
+  intros A B m f Hm Hf st1 st2 b st1' Hbind.
+  unfold bind in Hbind.
+  destruct (m st1) as [[a stm]|] eqn:Hmst; try discriminate.
+  destruct (Hm _ st2 _ _ Hmst) as [Heq Hm2]. subst stm.
+  destruct (Hf a _ st2 _ _ Hbind) as [Heq' Hf2]. subst st1'.
+  split; [reflexivity|].
+  unfold bind. rewrite Hm2. exact Hf2.
+Qed.
+
+Lemma state_pure_find_env:
+  forall x env, state_pure (find_env x env).
+Proof.
+  intros x env. unfold find_env.
+  destruct (Env.find x env); [apply state_pure_ret|apply state_pure_error].
+Qed.
+
+Lemma state_pure_mmap:
+  forall {A B: Type} (f: A -> Sec B) (l: list A),
+    (forall a, state_pure (f a)) ->
+    state_pure (mmap f l).
+Proof.
+  intros A B f l Hf.
+  induction l as [|a l IH]; simpl.
+  - apply state_pure_ret.
+  - apply state_pure_bind; [apply Hf|intro b].
+    apply state_pure_bind; [exact IH|intro bs].
+    apply state_pure_ret.
+Qed.
+
+(** The form consumers actually use: two runs of the same computation,
+    from whatever states, agree on their result. *)
+
+Lemma state_pure_det:
+  forall {A: Type} (m: Sec A) st1 st2 a1 st1' a2 st2',
+    state_pure m ->
+    m st1 = OK (a1, st1') ->
+    m st2 = OK (a2, st2') ->
+    a1 = a2.
+Proof.
+  intros A m st1 st2 a1 st1' a2 st2' Hpure H1 H2.
+  destruct (Hpure _ st2 _ _ H1) as [_ H1'].
+  rewrite H2 in H1'. now inversion H1'.
+Qed.
+
 (** Introduction rule for [mmap]: the counterpart of [sec_bind_inv],
     used when a successful run has to be *constructed* rather than
     inverted. *)
@@ -433,6 +511,14 @@ Section option_to_sec.
     | None    => error (msg "Nothing to convert")
     end.
 End option_to_sec.
+
+Lemma state_pure_option_to_sec:
+  forall {A: Type} (x: option A), state_pure (option_to_sec x).
+Proof.
+  intros A [x|]; unfold option_to_sec;
+    [apply state_pure_ret|apply state_pure_error].
+Qed.
+
 
 Lemma option_to_sec_consistent:
   forall (A: Type) (x: option A) st1 st2 y1 y2 st1' st2',

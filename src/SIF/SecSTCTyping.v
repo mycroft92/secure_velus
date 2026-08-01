@@ -529,6 +529,136 @@ Module Type SECSTCTYPING
           ret (c ++ cs)
       end.
 
+    (** ** Generation is state-pure, hence a function of the syntax
+
+        No branch above mints an identifier, so the constraints a
+        transition constraint generates depend on the constraint alone
+        and not on the state the generator happened to reach.  That is
+        what lets a reordering of [s_tcs] permute the generated list
+        instead of changing it. *)
+
+    Lemma state_pure_generate_trconstr_constraint:
+      forall e, state_pure (generate_trconstr_constraint e).
+    Proof.
+      intro e.
+      assert (Hins : forall xs, state_pure (mmap (fun x => find_env x env) xs))
+        by (intro xs; apply state_pure_mmap; intro x; apply state_pure_find_env).
+      assert (Hexps : forall es,
+                 state_pure (mmap (fun x => option_to_sec (assign_exp_type env x)) es))
+        by (intro es; apply state_pure_mmap; intro x;
+            apply state_pure_option_to_sec).
+      assert (Hbase : forall (m: Sec (list constraint)), state_pure m -> state_pure m)
+        by auto.
+      clear Hbase.
+      (* every branch is a chain of binds over pure steps; [simpl] may
+         already have reduced some of them, so accept either form *)
+      assert (Hstep : forall (B: Type) (m: Sec B) (g: B -> Sec (list constraint)),
+                 state_pure m ->
+                 (forall b, state_pure (g b)) ->
+                 state_pure (bind m g))
+        by (intros; apply state_pure_bind; auto).
+      clear Hstep.
+      destruct e as [x ck ce|x ck ex|x ck f|i xs ck rst f exps]; simpl;
+        [ | |destruct ck as [|ckr r b]; [|destruct b]; simpl
+          |destruct xs as [|y ys];
+           [destruct rst; apply state_pure_ret
+           |destruct rst; destruct (find_signature f G);
+            try apply state_pure_error]];
+        repeat (apply state_pure_bind;
+                [first [apply state_pure_option_to_sec
+                       |apply state_pure_find_env
+                       |apply Hexps
+                       |apply Hins
+                       |apply state_pure_ret
+                       |apply state_pure_error]
+                |intro]);
+        first [apply state_pure_ret
+              |apply state_pure_generate_constraints].
+    Qed.
+
+    (** The total per-constraint form.  Purity makes this a function of
+        the transition constraint alone, so a whole body's constraints
+        are [concat] of a [map] -- and a reordering of the body permutes
+        them. *)
+
+    Definition tc_constraints (e: trconstr) : list constraint :=
+      match generate_trconstr_constraint e init_state with
+      | OK (c, _) => c
+      | Error _ => []
+      end.
+
+    Lemma generate_trconstr_constraint_eq:
+      forall e st c st',
+        generate_trconstr_constraint e st = OK (c, st') ->
+        c = tc_constraints e.
+    Proof.
+      intros e st c st' Hgen.
+      unfold tc_constraints.
+      destruct (generate_trconstr_constraint e init_state)
+        as [[c0 st0]|] eqn:Hgen0.
+      - eapply state_pure_det;
+          [apply state_pure_generate_trconstr_constraint|exact Hgen|exact Hgen0].
+      - destruct (state_pure_generate_trconstr_constraint
+                    e st init_state c st' Hgen) as [_ Hgen'].
+        rewrite Hgen0 in Hgen'. discriminate.
+    Qed.
+
+    Lemma state_pure_generate_trconstrs_constraints:
+      forall es, state_pure (generate_trconstrs_constraints es).
+    Proof.
+      induction es as [|e es IH]; simpl.
+      - apply state_pure_ret.
+      - apply state_pure_bind;
+          [apply state_pure_generate_trconstr_constraint|intro c].
+        apply state_pure_bind; [exact IH|intro cs].
+        apply state_pure_ret.
+    Qed.
+
+    Lemma generate_trconstrs_constraints_eq:
+      forall es st c st',
+        generate_trconstrs_constraints es st = OK (c, st') ->
+        c = List.concat (map tc_constraints es).
+    Proof.
+      induction es as [|e es IH]; intros st c st' Hgen; simpl in *.
+      - unfold ret in Hgen. now inversion Hgen.
+      - eapply sec_bind_inv in Hgen as (ce & st1 & Hhd & Hgen).
+        eapply sec_bind_inv in Hgen as (cs & st2 & Htl & Hret).
+        unfold ret in Hret. inversion Hret; subst c st'.
+        rewrite (generate_trconstr_constraint_eq _ _ _ _ Hhd).
+        now rewrite (IH _ _ _ Htl).
+    Qed.
+
+    (** Reordering a system's transition constraints permutes the raw
+        constraints it generates.  This is what the scheduler does. *)
+
+    Lemma Permutation_List_concat:
+      forall {A: Type} (l l': list (list A)),
+        Permutation l l' ->
+        Permutation (List.concat l) (List.concat l').
+    Proof.
+      intros A l l' Hperm.
+      induction Hperm as [|x l l' Hperm IH|x y l|l1 l2 l3 H1 IH1 H2 IH2];
+        simpl.
+      - constructor.
+      - now apply Permutation_app_head.
+      - rewrite 2 app_assoc. apply Permutation_app_tail.
+        apply Permutation_app_comm.
+      - eapply Permutation_trans; eauto.
+    Qed.
+
+    Theorem generate_trconstrs_constraints_Permutation:
+      forall es es' st c st' st2 c2 st2',
+        Permutation es es' ->
+        generate_trconstrs_constraints es st = OK (c, st') ->
+        generate_trconstrs_constraints es' st2 = OK (c2, st2') ->
+        Permutation c c2.
+    Proof.
+      intros es es' st c st' st2 c2 st2' Hperm Hgen Hgen2.
+      rewrite (generate_trconstrs_constraints_eq _ _ _ _ Hgen).
+      rewrite (generate_trconstrs_constraints_eq _ _ _ _ Hgen2).
+      apply Permutation_List_concat, Permutation_map, Hperm.
+    Qed.
+
     Definition trconstr_reset_keys (tr: trconstr) : list ident :=
       match tr with
       | TcReset x _ _ => [x]

@@ -87,6 +87,54 @@ Section Type_Substitutions.
     | _, _ => error (msg "Malformed replace map")
     end.
 
+  (** ** Constraint generation is state-pure
+
+      Every step above is [ret], [error] or [mmap] over those, so the
+      generated constraints are a function of the signature and the
+      actuals alone.  Nothing here mints an identifier. *)
+
+  Lemma state_pure_subst_ident_in_constraints:
+    forall cs x v, state_pure (subst_ident_in_constraints cs x v).
+  Proof.
+    intros cs x v. unfold subst_ident_in_constraints.
+    apply state_pure_mmap. intros [ty rhs].
+    unfold subst_inp_ident_in_constraint.
+    destruct rhs as [|x' [|? ?]]; try apply state_pure_error.
+    destruct (ident_eqb x x'); [apply state_pure_error|apply state_pure_ret].
+  Qed.
+
+  Lemma state_pure_subst_constraints_inp_map:
+    forall xs cs vs, state_pure (subst_constraints_inp_map cs xs vs).
+  Proof.
+    induction xs as [|x xs IH]; intros cs [|v vs]; simpl;
+      try apply state_pure_error.
+    - apply state_pure_ret.
+    - apply state_pure_bind;
+        [apply state_pure_subst_ident_in_constraints|intro cs'; apply IH].
+  Qed.
+
+  Lemma state_pure_subst_ident_constraints:
+    forall cs x v, state_pure (subst_ident_constraints cs x v).
+  Proof.
+    intros cs x v. unfold subst_ident_constraints.
+    apply state_pure_mmap. intros [ty rhs].
+    unfold subst_ident_constraint.
+    destruct (ident_eqb x v); [apply state_pure_error|].
+    destruct rhs as [|x' [|? ?]]; try apply state_pure_error.
+    destruct (ident_eqb x x'); apply state_pure_ret.
+  Qed.
+
+  Lemma state_pure_subst_constraints_out_map:
+    forall xs cs vs, state_pure (subst_constraints_out_map cs xs vs).
+  Proof.
+    induction xs as [|x xs IH]; intros cs [|v vs]; simpl;
+      try apply state_pure_error.
+    - apply state_pure_ret.
+    - destruct (findST cs v); [apply state_pure_error|].
+      apply state_pure_bind;
+        [apply state_pure_subst_ident_constraints|intro cs'; apply IH].
+  Qed.
+
   Definition generate_constraints (sig: signature)
     (inp: list ST)
     (clk: ST)
@@ -99,6 +147,24 @@ Section Type_Substitutions.
     mmap (fun x =>
             do st <- option_to_sec (findST out_subst_constraints x);
             ret (st, [x])) out.
+
+  Lemma state_pure_generate_constraints:
+    forall sig inp clk rst out,
+      state_pure (generate_constraints sig inp clk rst out).
+  Proof.
+    intros sig inp clk rst out. unfold generate_constraints.
+    apply state_pure_bind;
+      [apply state_pure_subst_constraints_inp_map|intro c1].
+    apply state_pure_bind;
+      [apply state_pure_subst_ident_in_constraints|intro c2].
+    apply state_pure_bind;
+      [apply state_pure_subst_ident_in_constraints|intro c3].
+    apply state_pure_bind;
+      [apply state_pure_subst_constraints_out_map|intro c4].
+    apply state_pure_mmap. intro x.
+    apply state_pure_bind;
+      [apply state_pure_option_to_sec|intro t; apply state_pure_ret].
+  Qed.
 
   Definition signature_good (sig: signature) : Prop :=
     wf_constraints sig.(s_constraints)
