@@ -4277,6 +4277,102 @@ Module Type SECSTCOBCTRANSLATION
     apply Signature_consistent_obc_full_nil.
   Qed.
 
+  (** ** The scoped-environment variant
+
+      Both scoped generators look their environment up by the same key --
+      a translated system's class name is the system's name -- so they
+      always run on the same [env].  That is what makes this variant a
+      short reduction to the abstract one rather than a second
+      induction over the freshness bookkeeping. *)
+
+  Lemma scoped_env_generators_share_env:
+    forall G1 G2 s envs aux stcsig obcsig,
+      SECSTCTYPING.generate_sys_signature_scoped_env G1 s envs aux = OK stcsig ->
+      SECOBCTYPING.generate_class_signature_scoped_env G2 (translate_system s)
+        envs aux = OK obcsig ->
+      exists env,
+        SECSTCTYPING.generate_sys_signature G1 s env aux = OK stcsig
+        /\ SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux
+           = OK obcsig.
+  Proof.
+    intros G1 G2 s envs aux stcsig obcsig Hstc Hobc.
+    unfold SECSTCTYPING.generate_sys_signature_scoped_env in Hstc.
+    unfold SECOBCTYPING.generate_class_signature_scoped_env in Hobc.
+    simpl in Hobc.
+    destruct (find_node_env s.(SynStc.s_name) envs) as [env|] eqn:Henv;
+      try discriminate.
+    exists env. split; assumption.
+  Qed.
+
+  Definition generated_signature_step_consistent_obc_scoped
+    (envs: node_scoped_env) (aux_names: list node_aux_names) : Prop :=
+    forall G1 G2 s stcsig obcsig,
+      Signature_consistent_obc_full G1 G2 ->
+      SECSTCTYPING.generate_sys_signature_scoped_env G1 s envs aux_names
+        = OK stcsig ->
+      SECOBCTYPING.generate_class_signature_scoped_env G2 (translate_system s)
+        envs aux_names = OK obcsig ->
+      Signature_head_consistent_obc stcsig obcsig.
+
+  Corollary generated_signature_step_consistent_obc_scoped_from_env:
+    forall envs aux_names,
+      (forall env, generated_signature_step_consistent_obc env aux_names) ->
+      generated_signature_step_consistent_obc_scoped envs aux_names.
+  Proof.
+    intros envs aux_names Hstep G1 G2 s stcsig obcsig Hcons Hstc Hobc.
+    destruct (scoped_env_generators_share_env _ _ _ _ _ _ _ Hstc Hobc)
+      as (env & Hstc' & Hobc').
+    eapply Hstep; eauto.
+  Qed.
+
+  Theorem generate_all_signatures_consistent_obc_scoped'_abstract:
+    forall systems acc1 acc2 envs aux_names G1 G2,
+      Signature_consistent_obc_full acc1 acc2 ->
+      generated_signature_step_consistent_obc_scoped envs aux_names ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env' acc1 systems envs
+        aux_names = OK G1 ->
+      SECOBCTYPING.generate_all_class_signatures_scoped_env' acc2
+        (translate systems) envs aux_names = OK G2 ->
+      Signature_consistent_obc_full G1 G2.
+  Proof.
+    induction systems as [|s systems IH];
+      intros acc1 acc2 envs aux_names G1 G2 Hcons Hstep Hstc Hobc.
+    - simpl in Hstc, Hobc. inversion Hstc; inversion Hobc; subst. exact Hcons.
+    - simpl in Hstc, Hobc.
+      destruct (SECSTCTYPING.generate_sys_signature_scoped_env acc1 s envs aux_names)
+        as [stcsig|] eqn:Hstcsig; try discriminate.
+      destruct (SECOBCTYPING.generate_class_signature_scoped_env acc2
+                  (translate_system s) envs aux_names) as [obcsig|] eqn:Hobcsig;
+        simpl in Hstc, Hobc; try discriminate.
+      destruct (SECSTCTYPING.generate_all_sys_signatures_scoped_env'
+                  (stcsig :: acc1) systems envs aux_names) as [G1'|] eqn:Hstc';
+        simpl in Hstc; try discriminate.
+      destruct (SECOBCTYPING.generate_all_class_signatures_scoped_env'
+                  (obcsig :: acc2) (translate systems) envs aux_names)
+        as [G2'|] eqn:Hobc'; simpl in Hobc; try discriminate.
+      inversion Hstc; subst; clear Hstc.
+      inversion Hobc; subst; clear Hobc.
+      eapply IH with (acc1 := stcsig :: acc1) (acc2 := obcsig :: acc2); eauto.
+      eapply Signature_consistent_obc_full_cons; eauto.
+  Qed.
+
+  Corollary generate_all_signatures_consistent_obc_scoped_abstract:
+    forall systems envs aux_names G1 G2,
+      generated_signature_step_consistent_obc_scoped envs aux_names ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
+        = OK G1 ->
+      SECOBCTYPING.generate_all_class_signatures_scoped_env (translate systems)
+        envs aux_names = OK G2 ->
+      Signature_consistent_obc_full G1 G2.
+  Proof.
+    intros systems envs aux_names G1 G2 Hstep Hstc Hobc.
+    unfold SECSTCTYPING.generate_all_sys_signatures_scoped_env in Hstc.
+    unfold SECOBCTYPING.generate_all_class_signatures_scoped_env in Hobc.
+    eapply generate_all_signatures_consistent_obc_scoped'_abstract
+      with (acc1 := @nil SIG.signature) (acc2 := @nil SIG.signature); eauto.
+    apply Signature_consistent_obc_full_nil.
+  Qed.
+
 End SECSTCOBCTRANSLATION.
 
 Module SecStcObcTranslation
