@@ -1141,8 +1141,11 @@ Module Type SECSTCTYPINGCORRECTNESS
       exists n, ty = Ids.gensym Ids.sec n /\ (st <= n)%positive.
 
   Lemma sys_scope_fresh_in_env_from_bounds:
-    forall all_nodes s env aux_names G st,
-      generate_node_env all_nodes = OK (env, aux_names) ->
+    forall s env aux_names G st,
+      (forall ie x ty,
+          get_node_inst s.(SynStc.s_name) aux_names = Some ie ->
+          Env.find x ie = Some ty ->
+          exists n, ty = Ids.gensym Ids.sec_reset n) ->
       env_sec_lower_bounded env st ->
       SIG.secglobal_scope_bounded_above G st ->
       (** the reset instances are outside the bound argument entirely:
@@ -1151,7 +1154,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       SIG.secglobal_scope_sec G ->
       sys_scope_fresh_in_env s env aux_names G.
   Proof.
-    intros all_nodes s env aux_names G st Henv Hlo Hhi Hgsec
+    intros s env aux_names G st Hrstrange Hlo Hhi Hgsec
            clk_id rst_id clk_type rst_type inp out slocals slasts reset_env rids
            Haux Hclk Hrst Hinp Hout Hslocals Hslasts Hresetenv Hrids
            f sig Hfind ty Hinscope Hinsig.
@@ -1164,8 +1167,7 @@ Module Type SECSTCTYPINGCORRECTNESS
       destruct (get_mappings_In _ _ _ _ Hrids Hinr) as (o & _ & Hfindo).
       eapply SIG.sec_reset_not_in_signature_scope;
         [eapply Hgsec; exact Hfind
-        |exact (proj2 (NAMEGEN.generate_node_env_inst_props
-                         _ _ _ _ _ Henv Hresetenv) _ _ Hfindo)
+        |exact (Hrstrange _ _ _ Hresetenv Hfindo)
         |exact Hinsig].
     - (* everything else: minted at or after [st], so above the accumulator *)
       assert (Hsub : SIG.scope_lower_bounded
@@ -1187,6 +1189,53 @@ Module Type SECSTCTYPINGCORRECTNESS
           destruct Hin'' as [Heq|[Heq|[]]]; subst ty'; eauto. }
         destruct Hfindty as (x & Hfindty). exact (Hlo _ _ Hfindty). }
       exact (SIG.scope_fresh_from_bounds _ _ _ Hsub (Hhi f sig Hfind) ty Hin' Hinsig).
+  Qed.
+
+  (** ** Per-node bounds
+
+      In the scoped setting a system's environment is the one
+      [generate_local_env_for_node] minted for it, so its names sit
+      strictly between the state before and after that node.  These are
+      the Stc readings of NLustre's
+      [node_scope_lower_bounded_from_local_env] and
+      [generated_node_sig_scope_upper_bound_from_local_env]. *)
+
+  Lemma env_sec_lower_bounded_from_local_env:
+    forall n st env rec st',
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      env_sec_lower_bounded env st.
+  Proof.
+    intros n st env rec st' Hlocal x ty Hfind.
+    edestruct (NAMEGEN.generate_local_env_for_node_lower_bound
+                 n st env rec st' x ty Hlocal Hfind) as (m & Hm & Hlo).
+    exists m. split; [exact Hm|].
+    eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+    eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|exact Hlo].
+  Qed.
+
+  Lemma generated_sys_signature_scope_upper_bound_from_local_env:
+    forall G s n env aux_names sig st rec st',
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      SIG.signature_scope_bounded_above sig st'.
+  Proof.
+    intros G s n env aux_names sig st rec st' Hlocal Hsig ty Hin.
+    destruct (generated_sys_signature_scope_key _ _ _ _ _ _ Hsig Hin)
+      as (_ & _ & x & _ & _ & Hfind).
+    exact (NAMEGEN.generate_local_env_for_node_bounded
+             n st env rec st' Hlocal x ty Hfind).
+  Qed.
+
+  Lemma generated_sys_signature_scope_sec_from_local_env:
+    forall G s n env aux_names sig st rec st',
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      signature_scope_sec sig.
+  Proof.
+    intros G s n env aux_names sig st rec st' Hlocal Hsig ty Hin.
+    destruct (generated_sys_signature_scope_key _ _ _ _ _ _ Hsig Hin)
+      as (_ & _ & x & _ & _ & Hfind).
+    eapply NAMEGEN.generate_local_env_for_node_sec_range; eauto.
   Qed.
 
 End SECSTCTYPINGCORRECTNESS.
