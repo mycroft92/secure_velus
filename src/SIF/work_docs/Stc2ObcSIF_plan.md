@@ -162,14 +162,18 @@ exactly the branch conditions the pc tracks.
   with `clock_pc_from_assign` relating the walk to `assign_clk_type` by one
   `merge_assoc` per `Con`.
 
-- **B4 — Scheduling. STILL OPEN** (phase 5). `correctness_loop_call` needs
+- **B4 — Scheduling. IN PROGRESS** (phase 5; see `RESUME.md` §4d for what is
+  proved and the four remaining steps).  The recommended route below is the
+  one taken. `correctness_loop_call` needs
   `Well_defined P`, i.e. the *scheduled* program, while the SIF STC signatures
   are generated from the unscheduled `translate all_nodes`. Recommended route:
   generate the Obc signatures from the scheduled program and add a small
   STC ↔ scheduled-STC signature bridge, rather than proving `simplify` stable
   under permutation.
 
-- **B5 — Reset-method writes. CONFIRMED, assembly pending** (item 6).
+- **B5 — Reset-method writes. RESOLVED.**  Assembled in the bridge as
+  `reset_shared_targets`, `reset_body_constraints_classified` and
+  `preserves_on_app_reset_shared`.
   `reset_insts` emits `([rst_ty] ⊔ []) ⊑ [σ o]` for **every** instance and
   `reset_mems` emits `[rst_ty] ⊑ [τ mem]`. The STC side has no counterpart:
   those are discharged by the `dlt'` choice and by the `TcNext` source (which
