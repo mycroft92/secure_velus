@@ -146,9 +146,9 @@ src/SIF/SecStcConstraintExport.v
 src/SIF/SecStcTypingCorrectness.v
 src/SIF/SecObcTyping.v
 src/SIF/SecObcTypingCorrectness.v
-src/SIF/SecStcObcTranslation.v
 src/SIF/SecObcConstraintExport.v
 src/SIF/SecNLusStcTranslation.v
+src/SIF/SecStcObcTranslation.v
 src/SIF/NLustreCausality.v
 src/SIF/SecNLusNonInterferenceSupport.v
 src/SIF/SecNLusNonInterferenceHelpers.v

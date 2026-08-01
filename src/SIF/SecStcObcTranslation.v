@@ -1206,22 +1206,6 @@ Module Type SECSTCOBCTRANSLATION
 
     (** Dropping the head recovers the plain version. *)
 
-    Lemma Signature_call_preserves_obc_from_rst:
-      forall n1 n2,
-        Signature_call_preserves_obc_rst n1 n2 ->
-        Signature_call_preserves_obc n1 n2.
-    Proof.
-      intros n1 n2 Hrst.
-      intros scope inptyp1 inptyp2 ckty srcrst sty outtyp
-             nconst sconst si1 si2 stA stB Hside Hincl Hgen1 Hgen2.
-      intros dlt Hsat.
-      destruct (Hrst scope inptyp1 inptyp2 ckty srcrst sty outtyp
-                  nconst sconst si1 si2 stA stB Hside Hincl Hgen1 Hgen2 dlt Hsat)
-        as (dlt' & Hagree & Hsat').
-      exists dlt'. split; [exact Hagree|].
-      now inversion Hsat'.
-    Qed.
-
     (** For an instance the system *resets*, the STC call passes the
         reset instance type and the Obc call passes the instance's state
         type — and those are the same identifier.  The two calls then
@@ -1745,23 +1729,6 @@ Module Type SECSTCOBCTRANSLATION
     (** Every extra is the state type of an instance the system does not
         reset, so it is bound in the shared environment. *)
 
-    Lemma tc_obc_extras_spec:
-      forall tc e ty,
-        tc_obc_extras tc = Some e ->
-        List.In ty e ->
-        exists i, Env.find i reset_env = Some ty
-                  /\ (exists xs ck f es, tc = SynStc.TcCall i xs ck false f es).
-    Proof.
-      intros tc e ty He Hin.
-      destruct tc as [x ck ce|x ck ex|x ck f|i xs ck [|] f es];
-        simpl in He; try (inversion He; subst e; inversion Hin).
-      destruct (Env.find i reset_env) as [sty|] eqn:Hfind; try discriminate.
-      inversion He; subst e.
-      destruct Hin as [Heq|[]]. subst ty.
-      exists i. split; [exact Hfind|].
-      exists xs, ck, f, es. reflexivity.
-    Qed.
-
     (** The extras of a whole body are exactly the state types of the
         instances it steps without resetting, so their distinctness
         reduces to distinctness of those instances. *)
@@ -1792,18 +1759,6 @@ Module Type SECSTCOBCTRANSLATION
           inversion He; subst e.
           cbn [unreset_call_insts get_mappings List.concat].
           rewrite IH. reflexivity.
-    Qed.
-
-    Lemma tcs_obc_extras_nodup:
-      forall tcs es,
-        env_injective reset_env ->
-        NoDup (unreset_call_insts tcs) ->
-        tcs_obc_extras tcs = Some es ->
-        NoDup (List.concat es).
-    Proof.
-      intros tcs es Hinj Hnd Hes.
-      eapply get_mappings_nodup_gen; [exact Hnd|exact Hinj|].
-      now apply tcs_obc_extras_concat.
     Qed.
 
     Lemma Signature_consistent_obc_eq_from_full:
@@ -2128,62 +2083,6 @@ Module Type SECSTCOBCTRANSLATION
         occur only on the Obc side (the callee instance state types);
         they must be distinct and outside the shared scope. *)
 
-    Lemma tcs_preserv:
-      forall scope vars memset clkvars tcs extras nconst sconst st1 st1' st2 st2',
-        Signature_consistent_obc G1 G2 ->
-        Forall (tc_preserv_hyps scope vars) tcs ->
-        NoDup (List.concat extras) ->
-        (forall x, In x (List.concat extras) -> ~ In x scope) ->
-        Forall2 (fun tc e =>
-                   forall blk sa sb,
-                     generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
-                       (translate_tc memset clkvars tc) sa = OK (blk, sb) ->
-                     constraints_scoped (scope ++ e) blk)
-                tcs extras ->
-        SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty tcs st1
-          = OK (nconst, st1') ->
-        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
-          (translate_tcs memset clkvars tcs) st2 = OK (sconst, st2') ->
-        preserves_on scope nconst sconst.
-    Proof.
-      intros scope vars memset clkvars tcs extras nconst sconst st1 st1' st2 st2'
-             Hcons Hhyps Hnd Hfresh Hsc Hstc Hobc.
-      (* decompose both sides into per-trconstr blocks *)
-      destruct (SECSTCTYPING.generate_trconstrs_constraints_blocks
-                  G1 env reset_env clk_ty rst_ty tcs nconst st1 st1' Hstc)
-        as (nblocks & Hnconst & Hnall).
-      rewrite translate_tcs_fold_right in Hobc.
-      destruct (generate_fold_right_Comp memset clkvars [clk_ty] (rev tcs)
-                  sconst st2 st2' Hobc)
-        as (sblocks & Hsconst & Hsall).
-      subst nconst sconst.
-      (* the Obc blocks follow [rev tcs]; reverse the STC pairing to match *)
-      apply Forall2_rev in Hnall.
-      apply Forall2_rev in Hsc.
-      assert (Hhypsrev : Forall (tc_preserv_hyps scope vars) (rev tcs))
-        by (apply Forall_rev; exact Hhyps).
-      assert (Hpres : Forall2 (preserves_on scope) (rev nblocks) sblocks).
-      { eapply (Forall2_combine_with _ _ _ _ (rev tcs) (rev nblocks) sblocks
-                  Hnall Hsall Hhypsrev).
-        intros tc nblk sblk Hhyp (sa & sb & Hn) (sc & sd & Hs).
-        eapply tc_preserv; eauto. }
-      assert (Hscoped : Forall2 (fun t e => constraints_scoped (scope ++ e) t)
-                          sblocks (rev extras)).
-      { eapply (Forall2_combine _ _ _ (rev tcs) sblocks (rev extras) Hsall Hsc).
-        intros tc sblk e (sa & sb & Hs) He.
-        eapply He; eauto. }
-      (* the extras are the same set, up to the same reordering *)
-      assert (Hndrev : NoDup (List.concat (rev extras))).
-      { eapply Permutation_NoDup;
-          [symmetry; apply concat_rev_Permutation|exact Hnd]. }
-      assert (Hfreshrev : forall x, In x (List.concat (rev extras)) -> ~ In x scope).
-      { intros x Hin. apply Hfresh.
-        eapply Permutation_in; [apply concat_rev_Permutation|exact Hin]. }
-      eapply preserves_on_Permutation;
-        [apply concat_rev_Permutation|reflexivity|].
-      eapply preserves_on_concat_list; eauto.
-    Qed.
-
     (** ** The reset method
 
         [translate_reset] initialises every memory and then resets every
@@ -2241,50 +2140,8 @@ Module Type SECSTCOBCTRANSLATION
         system's lasts, and each of those is defined by a [TcNext] whose
         source contains [rst_ty]. *)
 
-    Lemma reset_mems_targets:
-      forall s scope nconst st st' mtys,
-        SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty
-          s.(SynStc.s_tcs) st = OK (nconst, st') ->
-        Forall2 (fun xc ty => Env.find (fst xc) env = Some ty) s.(SynStc.s_lasts) mtys ->
-        (forall ty, List.In ty mtys -> List.In ty scope) ->
-        Forall (fun ty =>
-                  List.In ty scope
-                  /\ exists src, List.In (src, [ty]) nconst /\ List.In rst_ty src)
-               mtys.
-    Proof.
-      intros s scope nconst st st' mtys Hgen Hall Hscope.
-      apply Forall_forall. intros ty Hin.
-      split; [now apply Hscope|].
-      destruct (Forall2_in_right _ _ _ _ Hall Hin) as (xc & Hinxc & Hfind).
-      eapply SECSTCTYPING.generate_trconstrs_constraints_last_source;
-        [exact Hgen| |exact Hfind].
-      rewrite <- (SynStc.s_lasts_in_tcs s).
-      now apply in_map with (f := fst) in Hinxc.
-    Qed.
-
     (** Likewise the instance resets, for the instances the system
         actually resets. *)
-
-    Lemma reset_insts_targets:
-      forall s scope nconst st st' (insts: list (ident * ident)) itys,
-        SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty
-          s.(SynStc.s_tcs) st = OK (nconst, st') ->
-        Forall2 (fun oc ty => Env.find (fst oc) reset_env = Some ty) insts itys ->
-        (forall oc, List.In oc insts ->
-                    List.In (fst oc) (map fst (resets_of s.(SynStc.s_tcs)))) ->
-        (forall ty, List.In ty itys -> List.In ty scope) ->
-        Forall (fun ty =>
-                  List.In ty scope
-                  /\ exists src, List.In (src, [ty]) nconst /\ List.In rst_ty src)
-               itys.
-    Proof.
-      intros s scope nconst st st' insts itys Hgen Hall Hreset Hscope.
-      apply Forall_forall. intros ty Hin.
-      split; [now apply Hscope|].
-      destruct (Forall2_in_right _ _ _ _ Hall Hin) as (oc & Hinoc & Hfind).
-      eapply SECSTCTYPING.generate_trconstrs_constraints_reset_source;
-        [exact Hgen|apply Hreset; exact Hinoc|exact Hfind].
-    Qed.
 
     (** Appending the reset method's shared-target constraints to a
         preservation result is free: they hold under any valuation that
@@ -2531,29 +2388,6 @@ Module Type SECSTCOBCTRANSLATION
         shows every hidden class variable has a defining constraint,
         which [simplify_scoped] requires. *)
 
-    Lemma stmt_targets_Control:
-      forall memset ck s tys,
-        SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env s = Some tys ->
-        exists tys',
-          SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
-            (Control memset ck s) = Some tys'
-          /\ (forall d, List.In d tys' <-> List.In d tys).
-    Proof.
-      intros memset ck. induction ck as [|ck IH x b]; intros s tys Htys.
-      - exists tys. split; [exact Htys|tauto].
-      - destruct b.
-        + destruct (IH (SynObc.Ifte (bool_var memset x) s SynObc.Skip)
-                     (tys ++ [])) as (tys' & Htys' & Hiff).
-          { simpl. rewrite Htys. reflexivity. }
-          exists tys'. split; [exact Htys'|].
-          intros d. rewrite Hiff, app_nil_r. tauto.
-        + destruct (IH (SynObc.Ifte (bool_var memset x) SynObc.Skip s)
-                     ([] ++ tys)) as (tys' & Htys' & Hiff).
-          { simpl. rewrite Htys. reflexivity. }
-          exists tys'. split; [exact Htys'|].
-          intros d. rewrite Hiff. simpl. tauto.
-    Qed.
-
     Lemma stmt_targets_Control_inv:
       forall memset ck s tys,
         SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
@@ -2666,25 +2500,6 @@ Module Type SECSTCOBCTRANSLATION
             intros d Hd. apply Hmono1. apply in_or_app. now left.
           * destruct (Hall1 tc5 Hin5) as (t5 & Ht5 & Hmono5).
             exists t5. split; assumption.
-    Qed.
-
-    Lemma stmt_targets_translate_tcs_variables:
-      forall memset clkvars tcs tys x ty,
-        SECOBCTYPINGCORRECTNESS.stmt_targets env reset_env
-          (translate_tcs memset clkvars tcs) = Some tys ->
-        List.In x (variables tcs) ->
-        Env.find x env = Some ty ->
-        List.In ty tys.
-    Proof.
-      intros memset clkvars tcs tys x ty Htys Hin Hfind.
-      unfold translate_tcs in Htys.
-      destruct (stmt_targets_fold_inv _ _ _ _ _ Htys)
-        as (accty & Hacc & _ & Hall).
-      unfold variables in Hin.
-      apply in_flat_map in Hin as (tc & Hintc & Hinx).
-      destruct (Hall tc Hintc) as (t & Ht & Hmono).
-      apply Hmono.
-      eapply stmt_targets_translate_tc_variables; eauto.
     Qed.
 
     (** ** The translated class is well defined
@@ -3412,18 +3227,6 @@ Module Type SECSTCOBCTRANSLATION
     Lemma translated_class_step_out:
       forall s, map fst (m_out (step_method s)) = map fst s.(SynStc.s_out).
     Proof. intro s. simpl. apply map_fst_idty. Qed.
-
-    Lemma translated_class_step_vars:
-      forall s, map fst (m_vars (step_method s)) = map fst s.(SynStc.s_vars).
-    Proof. intro s. simpl. apply map_fst_idty. Qed.
-
-    Lemma translated_class_mems:
-      forall s, map fst (c_mems (translate_system s)) = map fst s.(SynStc.s_lasts).
-    Proof. intro s. simpl. now rewrite map_map. Qed.
-
-    Lemma translated_class_objs:
-      forall s, c_objs (translate_system s) = s.(SynStc.s_subs).
-    Proof. reflexivity. Qed.
 
     (** Every instance the class resets is one the system either resets
         (so its type is among [rids]) or only steps (so its type is a
@@ -4291,6 +4094,17 @@ Module Type SECSTCOBCTRANSLATION
     apply Signature_consistent_obc_full_nil.
   Qed.
 
+  (** The naming environment is generated from NLustre nodes, while the
+      signatures are generated from the systems those nodes translate
+      to.  The lockstep induction therefore needs the two lists aligned:
+      at each step it looks the system's environment up by name in the
+      environment minted for the corresponding node.  Name preservation
+      by the NLustre-to-Stc translation is what supplies it. *)
+
+  Definition systems_named_after
+    (nodes: list node) (systems: list SynStc.system) : Prop :=
+    Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) nodes systems.
+
   (** This is the main lockstep induction for the translation layer.  It
       runs the STC and Obc signature generators over the same
       node-scoped environment, proves that each fresh signature pair is
@@ -4311,7 +4125,7 @@ Module Type SECSTCOBCTRANSLATION
       NAMEGEN.generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
         = OK ((envs_pref, aux_pref), st) ->
       NAMEGEN.generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
-      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) nodes systems ->
+      systems_named_after nodes systems ->
       CloStc.wc_program systems ->
       WD.Well_scheduled systems ->
       Signature_consistent_obc_full acc1 acc2 ->
@@ -4334,10 +4148,12 @@ Module Type SECSTCOBCTRANSLATION
       intros prefix systems acc1 acc2 envs aux_names envs_pref aux_pref st G1 G2
              Hprefgen Henvsgen Hnames Hwc Hsch Hcons Hacc1scoped Hacc2scoped
              Hacc1sec Hacc2sec Hbound Hstc Hobc.
-    - inversion Hnames; subst systems.
+    - unfold systems_named_after in Hnames.
+      inversion Hnames; subst systems.
       simpl in Hstc, Hobc. inversion Hstc; inversion Hobc; subst.
       repeat split; assumption.
-    - inversion Hnames as [|n' s ns systems' Hname Hnames']; subst n' ns systems.
+    - unfold systems_named_after in Hnames.
+      inversion Hnames as [|n' s ns systems' Hname Hnames']; subst n' ns systems.
       inversion Hwc as [|s' systems'' Hwc_tail Hwc_head]; subst s' systems''.
       inversion Hsch as [|s' systems'' Hsch_head Hsch_tail]; subst s' systems''.
       simpl in Hstc, Hobc.
@@ -4487,7 +4303,7 @@ Module Type SECSTCOBCTRANSLATION
   Corollary generate_all_signatures_consistent_obc_scoped:
     forall all_nodes systems envs aux_names G1 G2,
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) all_nodes systems ->
+      systems_named_after all_nodes systems ->
       CloStc.wc_program systems ->
       WD.Well_scheduled systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
@@ -4523,7 +4339,7 @@ Module Type SECSTCOBCTRANSLATION
   Corollary generate_all_signatures_consistent_obc:
     forall all_nodes systems envs aux_names G1 G2,
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) all_nodes systems ->
+      systems_named_after all_nodes systems ->
       CloStc.wc_program systems ->
       WD.Well_scheduled systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
@@ -4551,7 +4367,7 @@ Module Type SECSTCOBCTRANSLATION
     forall all_nodes systems (G1 G2: SIG.secglobal)
            (envs: node_scoped_env) (aux_names: list node_aux_names),
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-      Forall2 (fun n s => s.(SynStc.s_name) = n.(n_name)) all_nodes systems ->
+      systems_named_after all_nodes systems ->
       CloStc.wc_program systems ->
       WD.Well_scheduled systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
