@@ -659,6 +659,62 @@ Module Type SECSTCTYPING
       apply Permutation_List_concat, Permutation_map, Hperm.
     Qed.
 
+    (** Whether generation *succeeds* is a property of the syntax alone
+        too, so it also survives a reordering.  That is what lets the
+        run on the scheduled body be constructed from the run on the
+        original one instead of assumed alongside it. *)
+
+    Definition tc_generates (e: trconstr) : Prop :=
+      exists c, generate_trconstr_constraint e init_state = OK (c, init_state).
+
+    Lemma generate_trconstrs_constraints_ok_elems:
+      forall es st c st',
+        generate_trconstrs_constraints es st = OK (c, st') ->
+        Forall tc_generates es.
+    Proof.
+      induction es as [|e es IH]; intros st c st' Hgen; [constructor|].
+      simpl in Hgen.
+      eapply sec_bind_inv in Hgen as (c1 & st1 & Hhd & Hgen).
+      eapply sec_bind_inv in Hgen as (cs & st2 & Htl & _).
+      constructor; [|eapply IH; exact Htl].
+      exists c1.
+      destruct (state_pure_generate_trconstr_constraint e st init_state c1 st1 Hhd)
+        as [_ Hok]. exact Hok.
+    Qed.
+
+    Lemma generate_trconstrs_constraints_ok_from_elems:
+      forall es st,
+        Forall tc_generates es ->
+        exists c, generate_trconstrs_constraints es st = OK (c, st).
+    Proof.
+      induction es as [|e es IH]; intros st Hall.
+      - exists []. reflexivity.
+      - inversion Hall as [|e' es' Hhd0 Htl]; subst.
+        destruct Hhd0 as (c1 & Hhd).
+        destruct (IH st Htl) as (cs & Hgen).
+        destruct (state_pure_generate_trconstr_constraint
+                    e init_state st c1 init_state Hhd) as [_ Hhd'].
+        exists (c1 ++ cs). simpl. unfold bind at 1.
+        rewrite Hhd'. unfold bind. rewrite Hgen. reflexivity.
+    Qed.
+
+    Lemma generate_trconstrs_constraints_Permutation_ok:
+      forall es es' st c st' st2,
+        Permutation es es' ->
+        generate_trconstrs_constraints es st = OK (c, st') ->
+        exists c', generate_trconstrs_constraints es' st2 = OK (c', st2)
+                   /\ Permutation c c'.
+    Proof.
+      intros es es' st c st' st2 Hperm Hgen.
+      assert (Hall : Forall tc_generates es')
+        by (eapply Permutation_Forall;
+            [exact Hperm|eapply generate_trconstrs_constraints_ok_elems; exact Hgen]).
+      destruct (generate_trconstrs_constraints_ok_from_elems es' st2 Hall)
+        as (c' & Hgen').
+      exists c'. split; [exact Hgen'|].
+      eapply generate_trconstrs_constraints_Permutation; eauto.
+    Qed.
+
     Definition trconstr_reset_keys (tr: trconstr) : list ident :=
       match tr with
       | TcReset x _ _ => [x]
@@ -730,6 +786,49 @@ Module Type SECSTCTYPING
       apply Reset_in_resets_of.
       destruct (trconstrs_reset_keys_cases _ _ Hin) as [H|H]; [exact H|].
       exact (Hcons x true H).
+    Qed.
+
+    (** The scoping facts a [TcCall]'s actuals enjoy, read off the
+        clocking judgement alone.  Both branches of the case analysis
+        below need exactly this, and so does the two-accumulator
+        preservation argument, which sees the actuals only through the
+        generator's equations.  Stated over those equations for that
+        reason rather than over [assign_clk_type] and friends. *)
+
+    Lemma wc_trconstr_call_actuals_scoped:
+      forall P vars scope i xs ck rst f es ckty inptyp outtyp
+             sa sb sc sd se sf,
+        wc_env vars ->
+        Clo.wc_trconstr P vars (TcCall i xs ck rst f es) ->
+        vars_env_scoped vars scope ->
+        In base_ty scope ->
+        option_to_sec (assign_clk_type env base_ty ck) sa = OK (ckty, sb) ->
+        mmap (fun x => option_to_sec (assign_exp_type env x)) es sc
+          = OK (inptyp, sd) ->
+        mmap (fun x => find_env x env) xs se = OK (outtyp, sf) ->
+        call_actuals_scoped scope inptyp ckty outtyp.
+    Proof.
+      intros P vars scope i xs ck rst f es ckty inptyp outtyp
+             sa sb sc sd se sf Henv Hwc Hvars Hbase Hck Hinptyp Houttyp.
+      inversion Hwc as [| | |i0 xs0 ck0 rst0 f0 es0 s P0 sub
+                             Hfindsys Hinputs Houtputs]; subst.
+      assert (Hckopt : assign_clk_type env base_ty ck = Some ckty).
+      { unfold option_to_sec in Hck.
+        destruct (assign_clk_type env base_ty ck) eqn:Hck'; try discriminate.
+        inversion Hck; subst. reflexivity. }
+      repeat split.
+      - eapply (mmap_assign_exp_type_scoped scope es inptyp sc sd).
+        + eapply (wc_call_args_scoped vars scope sub ck (SynStc.s_in s) es); eauto.
+        + exact Hinptyp.
+      - eapply (assign_clk_type_scoped env base_ty scope ck ckty);
+          [exact Hbase| |exact Hckopt].
+        intros z Hz.
+        assert (Hinm : InMembers z vars) by (eapply wc_tc_clock_free_in_vars; eauto).
+        exact (Hvars z Hinm).
+      - eapply (SC.mmap_find_env_scoped env scope xs outtyp se sf).
+        + intros y Hy.
+          eapply (wc_call_outs_scoped vars scope sub ck (SynStc.s_out s) xs); eauto.
+        + exact Houttyp.
     Qed.
 
     Theorem generate_trconstr_constraint_scoped_on_keys:
@@ -941,25 +1040,11 @@ Module Type SECSTCTYPING
             eapply sec_bind_inv in Hgen as (inptyp & st2 & Hinptyp & Hgen).
             eapply sec_bind_inv in Hgen as (outtyp & st3 & Houttyp & Hgen).
             eapply sec_bind_inv in Hgen as (rst_inst & st4 & Hrstinst & Hgen).
-            inversion Hwc as [| | |i' xs'' ck' rst' f' es' s P' sub Hfindnode Hinputs Houtputs]; subst.
-            assert (Hckopt : assign_clk_type env base_ty ck = Some ckty).
-            { unfold option_to_sec in Hck.
-              destruct (assign_clk_type env base_ty ck) eqn:Hck'; try discriminate.
-              inversion Hck; subst. reflexivity. }
-            assert (Hckscope : st_scoped scope ckty).
-            { eapply (assign_clk_type_scoped env base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
-              intros z Hz.
-              assert (Hinm : InMembers z vars) by (eapply wc_tc_clock_free_in_vars; eauto).
-              exact (Hvars z Hinm). }
-            assert (HinpScope : Forall (st_scoped scope) inptyp).
-            { eapply (mmap_assign_exp_type_scoped scope exps inptyp st1 st2).
-              - eapply (wc_call_args_scoped vars scope sub ck (SynStc.s_in s) exps); eauto.
-              - exact Hinptyp. }
-            assert (HoutScope : Forall (fun x => In x scope) outtyp).
-            { eapply (SC.mmap_find_env_scoped env scope (x1 :: xs') outtyp st2 st3).
-              - intros y Hy.
-                eapply (wc_call_outs_scoped vars scope sub ck (SynStc.s_out s) (x1 :: xs')); eauto.
-              - exact Houttyp. }
+            destruct (wc_trconstr_call_actuals_scoped
+                        P vars scope x0 (x1 :: xs') ck true f exps
+                        ckty inptyp outtyp _ _ _ _ _ _
+                        Henv Hwc Hvars Hbase Hck Hinptyp Houttyp)
+              as (HinpScope & Hckscope & HoutScope).
             assert (Hrstscope : In rst_inst scope).
             { eapply Hreset; eauto.
               simpl. now left. }
@@ -977,25 +1062,11 @@ Module Type SECSTCTYPING
             eapply sec_bind_inv in Hgen as (ckty & st1 & Hck & Hgen).
             eapply sec_bind_inv in Hgen as (inptyp & st2 & Hinptyp & Hgen).
             eapply sec_bind_inv in Hgen as (outtyp & st3 & Houttyp & Hgen).
-            inversion Hwc as [| | |i' xs'' ck' rst' f' es' s P' sub Hfindnode Hinputs Houtputs]; subst.
-            assert (Hckopt : assign_clk_type env base_ty ck = Some ckty).
-            { unfold option_to_sec in Hck.
-              destruct (assign_clk_type env base_ty ck) eqn:Hck'; try discriminate.
-              inversion Hck; subst. reflexivity. }
-            assert (Hckscope : st_scoped scope ckty).
-            { eapply (assign_clk_type_scoped env base_ty scope ck ckty); [exact Hbase| |exact Hckopt].
-              intros z Hz.
-              assert (Hinm : InMembers z vars) by (eapply wc_tc_clock_free_in_vars; eauto).
-              exact (Hvars z Hinm). }
-            assert (HinpScope : Forall (st_scoped scope) inptyp).
-            { eapply (mmap_assign_exp_type_scoped scope exps inptyp st1 st2).
-              - eapply (wc_call_args_scoped vars scope sub ck (SynStc.s_in s) exps); eauto.
-              - exact Hinptyp. }
-            assert (HoutScope : Forall (fun x => In x scope) outtyp).
-            { eapply (SC.mmap_find_env_scoped env scope (x1 :: xs') outtyp st2 st3).
-              - intros y Hy.
-                eapply (wc_call_outs_scoped vars scope sub ck (SynStc.s_out s) (x1 :: xs')); eauto.
-              - exact Houttyp. }
+            destruct (wc_trconstr_call_actuals_scoped
+                        P vars scope x0 (x1 :: xs') ck false f exps
+                        ckty inptyp outtyp _ _ _ _ _ _
+                        Henv Hwc Hvars Hbase Hck Hinptyp Houttyp)
+              as (HinpScope & Hckscope & HoutScope).
             eapply (generate_constraints_scoped sig scope inptyp ckty [rst_ty] outtyp cns st3 st');
               [eapply Hscoped; eauto
               |exact HinpScope
@@ -1722,6 +1793,98 @@ Module Type SECSTCTYPING
       apply Last.lasts_of_In.
       rewrite <- s.(SynStc.s_lasts_in_tcs).
       exact Hin.
+    Qed.
+
+    (** The scope the *raw* constraints of a system live in: its
+        signature scope together with the names simplification will
+        eliminate.  Definitionally [signature_scope sig ++
+        hidden_sys_vars locals lasts rids] for the signature the
+        generator builds. *)
+
+    Definition sys_raw_scope (inp out: list ident) (clk_type rst_type: ident)
+                             (locals lasts rids: list ident) : list ident :=
+      (inp ++ out ++ [clk_type; rst_type]) ++ hidden_sys_vars locals lasts rids.
+
+    (** Everything [generate_trconstrs_constraints_scoped_on_keys] asks
+        of that scope, read off the system's clocking judgement and the
+        mappings the generator looked up.  Both the scopedness theorem
+        below and the two-accumulator preservation argument need exactly
+        this quadruple, so it is proved once. *)
+
+    Lemma sys_raw_scope_facts:
+      forall s env clk_type rst_type inp out locals lasts reset_env rids,
+        get_mappings_from_node s.(SynStc.s_in) env = Some inp ->
+        get_mappings_from_node s.(SynStc.s_out) env = Some out ->
+        get_mappings_from_node s.(SynStc.s_vars) env = Some locals ->
+        get_mappings_from_node s.(SynStc.s_lasts) env = Some lasts ->
+        get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env = Some rids ->
+        let scope := sys_raw_scope inp out clk_type rst_type locals lasts rids in
+        vars_env_scoped env
+          (idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars) ++ s.(SynStc.s_out))
+             ++ idck s.(SynStc.s_lasts)) scope
+        /\ In clk_type scope
+        /\ In rst_type scope
+        /\ (forall x ty st0 st1,
+               In x (trconstrs_reset_keys s.(SynStc.s_tcs)) ->
+               find_env x reset_env st0 = OK (ty, st1) ->
+               In ty scope).
+    Proof.
+      intros s env clk_type rst_type inp out locals lasts reset_env rids
+             Hinp0 Hout0 Hlocals0 Hlasts0 Hrids scope.
+      subst scope. unfold sys_raw_scope, hidden_sys_vars.
+      repeat split.
+      - intros x Hmem.
+        apply InMembers_app in Hmem.
+        destruct Hmem as [Hin|Hin].
+        + apply InMembers_idck in Hin.
+          apply InMembers_app in Hin.
+          destruct Hin as [Hin|Hin].
+          * destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hinp0)
+              as (ty & Hfind & Hscope).
+            exists ty. split; [exact Hfind|].
+            apply in_or_app. left.
+            apply in_or_app. left. exact Hscope.
+          * apply InMembers_app in Hin.
+            destruct Hin as [Hin|Hin].
+            -- destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hlocals0)
+                 as (ty & Hfind & Hscope).
+               exists ty. split; [exact Hfind|].
+               apply in_or_app. right.
+               rewrite nodup_In. apply in_or_app. left. exact Hscope.
+            -- destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hout0)
+                 as (ty & Hfind & Hscope).
+               exists ty. split; [exact Hfind|].
+               apply in_or_app. left.
+               apply in_or_app. right.
+               apply in_or_app. left. exact Hscope.
+        + apply InMembers_idck in Hin.
+          destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hin Hlasts0)
+            as (ty & Hfind & Hscope).
+          exists ty. split; [exact Hfind|].
+          apply in_or_app. right.
+          rewrite nodup_In. apply in_or_app. right.
+          apply in_or_app. left. exact Hscope.
+      - apply in_or_app. left.
+        apply in_or_app. right.
+        apply in_or_app. right.
+        simpl. left. reflexivity.
+      - apply in_or_app. left.
+        apply in_or_app. right.
+        apply in_or_app. right.
+        simpl. right. left. reflexivity.
+      - intros x ty st0 st1 Hkey Hfind.
+        unfold find_env in Hfind.
+        destruct (Env.find x reset_env) as [ty'|] eqn:Henv; try discriminate.
+        inversion Hfind; subst ty st1.
+        assert (Hinrid : In ty' rids).
+        { destruct (get_mappings_in _ _ _ _
+                      (trconstrs_reset_keys_in_resets _ _
+                         (s.(SynStc.s_reset_consistency)) Hkey) Hrids)
+            as (ty0 & Hfind0 & Hin0).
+          rewrite Henv in Hfind0. inversion Hfind0; subst ty0. exact Hin0. }
+        apply in_or_app. right.
+        rewrite nodup_In. apply in_or_app. right.
+        apply in_or_app. right. exact Hinrid.
     Qed.
 
     (** This lifts translated-constraint scopedness to one generated STC signature.  The global target generator reuses it at each translated system. *)

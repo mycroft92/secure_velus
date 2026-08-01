@@ -24,6 +24,7 @@ From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF.NameInterface.
 From Velus Require Import SIF.SecSTCTyping.
+From Velus Require Import Clocks.
 From Coq Require Import List.
 Import List.ListNotations.
 From Coq Require Import Sorting.Permutation.
@@ -1266,6 +1267,24 @@ Module Type SECSTCTYPINGCORRECTNESS
       mmap (fun x => find_env x env) xs se = OK (outtyp, sf) ->
       SIG.call_actuals_scoped scope inptyp ckty outtyp.
 
+  (** Which is just the clocking judgement read through the environment
+      -- the same reading the scoping theorem makes. *)
+
+  Lemma call_actuals_in_scope_from_wc:
+    forall P vars env base_ty scope e,
+      wc_env vars ->
+      Clo.wc_trconstr P vars e ->
+      SECSTCTYPING.vars_env_scoped env vars scope ->
+      In base_ty scope ->
+      call_actuals_in_scope env base_ty scope e.
+  Proof.
+    intros P vars env base_ty scope e Henv Hwc Hvars Hbase
+           i xs ck rst f es inptyp ckty outtyp sa sb sc sd se sf
+           Heq Hck Hinp Hout.
+    subst e.
+    eapply SECSTCTYPING.wc_trconstr_call_actuals_scoped; eauto.
+  Qed.
+
   Lemma generate_trconstr_constraint_preserved:
     forall G G' env reset_env base_ty rst_ty scope e
            nconst sconst st1 st1' st2 st2',
@@ -1394,6 +1413,62 @@ Module Type SECSTCTYPINGCORRECTNESS
         * eapply SIG.call_subst_fresh_from_scope_fresh;
             [exact Hsf|exact Hinpsc|exact Hcksc
             |apply st_scoped_singleton; exact Hrst|exact Houtsc].
+  Qed.
+
+  (** A whole body, generated twice from two accumulators.  The chunks
+      line up one for one -- both runs walk the same [tcs] -- so no
+      permutation is involved here; that is factored out and applied to
+      the assembled result.  There are no target-side-only names at
+      Stc-to-Stc, so every [extras] entry is empty and the freshness and
+      duplication premises of the combinator are vacuous. *)
+
+  Lemma generate_trconstrs_constraints_preserved:
+    forall G G' env reset_env base_ty rst_ty scope tcs
+           nconst sconst st1 st1' st2 st2',
+      sig_env_preserved G G' ->
+      SIG.secglobal_scope_fresh scope G ->
+      In rst_ty scope ->
+      Forall (call_actuals_in_scope env base_ty scope) tcs ->
+      (forall i xs ck f es rinst,
+          In (SynStc.TcCall i xs ck true f es) tcs ->
+          Env.find i reset_env = Some rinst ->
+          In rinst scope) ->
+      constraints_scoped scope sconst ->
+      SECSTCTYPING.generate_trconstrs_constraints G env reset_env base_ty rst_ty
+        tcs st1 = OK (nconst, st1') ->
+      SECSTCTYPING.generate_trconstrs_constraints G' env reset_env base_ty rst_ty
+        tcs st2 = OK (sconst, st2') ->
+      preserves_on scope nconst sconst.
+  Proof.
+    intros G G' env reset_env base_ty rst_ty scope tcs.
+    induction tcs as [|tc tcs IH];
+      intros nconst sconst st1 st1' st2 st2'
+             Hpres Hfresh Hrst Hact Hrinst Hsc Hgen1 Hgen2.
+    - simpl in Hgen1, Hgen2. unfold ret in Hgen1, Hgen2.
+      inversion Hgen1; inversion Hgen2; subst. apply preserves_on_nil.
+    - simpl in Hgen1, Hgen2.
+      eapply sec_bind_inv in Hgen1 as (c1 & sa1 & Hhd1 & Hgen1).
+      eapply sec_bind_inv in Hgen1 as (cs1 & sb1 & Htl1 & Hret1).
+      unfold ret in Hret1. inversion Hret1; subst nconst st1'.
+      eapply sec_bind_inv in Hgen2 as (c2 & sa2 & Hhd2 & Hgen2).
+      eapply sec_bind_inv in Hgen2 as (cs2 & sb2 & Htl2 & Hret2).
+      unfold ret in Hret2. inversion Hret2; subst sconst st2'.
+      inversion Hact as [|tc' tcs' Hacthd Hacttl]; subst.
+      apply Forall_app in Hsc as (Hsc1 & Hsc2).
+      eapply preserves_on_concat_scoped with (extras1 := []) (extras2 := []).
+      + simpl. constructor.
+      + simpl. intros x [].
+      + rewrite app_nil_r. exact Hsc1.
+      + rewrite app_nil_r. exact Hsc2.
+      + eapply generate_trconstr_constraint_preserved;
+          [exact Hpres|exact Hfresh|exact Hrst|exact Hacthd| |exact Hhd1|exact Hhd2].
+        intros i xs ck f es rinst Heq Hfind.
+        subst tc. apply (Hrinst i xs ck f es rinst); [now left|exact Hfind].
+      + eapply IH;
+          [exact Hpres|exact Hfresh|exact Hrst|exact Hacttl| |exact Hsc2
+          |exact Htl1|exact Htl2].
+        intros i xs ck f es rinst Hin Hfind.
+        apply (Hrinst i xs ck f es rinst); [now right|exact Hfind].
   Qed.
 
   (** ** Reordering a system's body preserves its signature
