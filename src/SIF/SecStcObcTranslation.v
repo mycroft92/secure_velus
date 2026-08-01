@@ -1505,11 +1505,17 @@ Module Type SECSTCOBCTRANSLATION
         callee-side freshness conditions, its scope being the same list
         as the source signature's. *)
 
+    (** Grouped exactly as NLustre's [Signature_call_preserves]: the
+        equal-call clause first, the reset-call clause second. *)
+
+    Definition Signature_call_preserves_obc_full (n1 n2: SIG.signature) : Prop :=
+      Signature_call_preserves_obc_eq n1 n2
+      /\ Signature_call_preserves_obc_rst n1 n2.
+
     Definition Signature_head_consistent_obc (n1 n2: SIG.signature) : Prop :=
       n1.(s_name) = n2.(s_name)
       /\ SIG.signature_fields_agree n1 n2
-      /\ Signature_call_preserves_obc_rst n1 n2
-      /\ Signature_call_preserves_obc_eq n1 n2.
+      /\ Signature_call_preserves_obc_full n1 n2.
 
     Definition Signature_consistent_obc_full (H1 H2: SIG.secglobal) : Prop :=
       forall f n1,
@@ -1531,8 +1537,8 @@ Module Type SECSTCOBCTRANSLATION
       split; [exact Hname|].
       split; [exact (proj1 Hpres)|].
       split.
-      - eapply signatures_preserved_obc_calls_from_good_rst; eauto.
       - eapply signatures_preserved_obc_equal_calls_from_good; eauto.
+      - eapply signatures_preserved_obc_calls_from_good_rst; eauto.
     Qed.
 
     (** The [TcCall] case for an instance the system never resets.  The
@@ -1600,7 +1606,7 @@ Module Type SECSTCOBCTRANSLATION
       { unfold SC.find_env in Hsty'. rewrite Hsty in Hsty'.
         unfold ret in Hsty'. now inversion Hsty'. }
       subst sty'.
-      destruct (Hcons f n1 Hf1) as (n2' & Hf2' & _ & Hfields & Hpresrst & _).
+      destruct (Hcons f n1 Hf1) as (n2' & Hf2' & _ & Hfields & _ & Hpresrst).
       rewrite Hf2 in Hf2'. inversion Hf2'; subst n2'.
       (* the call side conditions, from the real actuals *)
       assert (Hsf : SIG.scope_fresh scope n1) by (eapply Hscopefresh; eauto).
@@ -1806,7 +1812,7 @@ Module Type SECSTCOBCTRANSLATION
         Signature_consistent_obc_eq H1 H2.
     Proof.
       intros H1 H2 Hfull f n1 Hf.
-      destruct (Hfull f n1 Hf) as (n2 & Hf2 & _ & _ & _ & Heq).
+      destruct (Hfull f n1 Hf) as (n2 & Hf2 & _ & _ & Heq & _).
       exists n2. split; assumption.
     Qed.
 

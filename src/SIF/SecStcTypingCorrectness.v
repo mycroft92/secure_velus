@@ -1070,9 +1070,14 @@ Module Type SECSTCTYPINGCORRECTNESS
       [node_scope_fresh_in_env_from_bounds]. *)
 
   Lemma generate_sys_signature_raw_wf:
-    forall all_nodes G s env aux_names clk_type rst_type
+    forall G s env aux_names clk_type rst_type
            out slocals slasts reset_env rids sconst st_reset st_s,
-      generate_node_env all_nodes = OK (env, aux_names) ->
+      env_injective env ->
+      (forall x ty, Env.find x env = Some ty ->
+                    exists m, ty = Ids.gensym Ids.sec m) ->
+      env_injective reset_env ->
+      (forall x ty, Env.find x reset_env = Some ty ->
+                    exists m, ty = Ids.gensym Ids.sec_reset m) ->
       Is_well_sch (map fst s.(SynStc.s_in))
                   (ps_from_list (map fst s.(SynStc.s_lasts))) s.(SynStc.s_tcs) ->
       get_mappings_from_node s.(SynStc.s_out) env = Some out ->
@@ -1084,11 +1089,10 @@ Module Type SECSTCTYPINGCORRECTNESS
         s.(SynStc.s_tcs) st_reset = OK (sconst, st_s) ->
       wf_constraints sconst.
   Proof.
-    intros all_nodes G s env aux_names clk_type rst_type
+    intros G s env aux_names clk_type rst_type
            out slocals slasts reset_env rids sconst st_reset st_s
-           Henv Hsch Hout Hslocals Hslasts Hresetenv Hrids Hsconst.
-    assert (Hinj : env_injective env)
-      by (eapply NAMEGEN.generate_node_env_injective; eauto).
+           Hinj Hsecrange Hinstinj Hrstrange
+           Hsch Hout Hslocals Hslasts Hresetenv Hrids Hsconst.
     assert (Hndvl : NoDup (variables s.(SynStc.s_tcs) ++ lasts_of s.(SynStc.s_tcs))).
     { eapply Permutation_NoDup with
         (l := (map fst s.(SynStc.s_vars) ++ map fst s.(SynStc.s_out))
@@ -1113,19 +1117,9 @@ Module Type SECSTCTYPINGCORRECTNESS
       by (eapply get_mappings_from_node_eq; eauto).
     destruct (get_mappings_Permutation_Some _ _ _ _ (SynStc.s_lasts_in_tcs s) Hls0)
       as (ls & Hls).
-    assert (Hsecrange : forall x ty, Env.find x env = Some ty ->
-                                     exists n, ty = Ids.gensym Ids.sec n)
-      by (intros; eapply NAMEGEN.generate_node_env_sec_range; eauto).
-    assert (Hrstrange : forall x ty, Env.find x reset_env = Some ty ->
-                                     exists n, ty = Ids.gensym Ids.sec_reset n)
-      by exact (proj2 (NAMEGEN.generate_node_env_inst_props
-                         _ _ _ _ _ Henv Hresetenv)).
     assert (Hndrids : NoDup rids).
     { eapply get_mappings_nodup_gen;
-        [eapply Is_well_sch_resets_nodup; exact Hsch
-        |exact (proj1 (NAMEGEN.generate_node_env_inst_props
-                         _ _ _ _ _ Henv Hresetenv))
-        |exact Hrids]. }
+        [eapply Is_well_sch_resets_nodup; exact Hsch|exact Hinstinj|exact Hrids]. }
     exact (SECSTCTYPING.generate_trconstrs_constraints_wf
              G env reset_env clk_type rst_type s.(SynStc.s_tcs) sconst
              st_reset st_s tys Hinj Hnddef Hsconst Htys
@@ -1144,7 +1138,13 @@ Module Type SECSTCTYPINGCORRECTNESS
            Hsig Haux Hclk Hrst Hinp Hout Hslocals Hslasts Hresetenv Hrids
            Hraw Hsch Hsigdef.
     split.
-    - eapply generate_sys_signature_raw_wf; eauto.
+    - eapply generate_sys_signature_raw_wf; try eassumption.
+      + eapply NAMEGEN.generate_node_env_injective; eauto.
+      + intros z tz Hz. eapply NAMEGEN.generate_node_env_sec_range; eauto.
+      + exact (proj1 (NAMEGEN.generate_node_env_inst_props
+                        _ _ _ _ _ Henv Hresetenv)).
+      + exact (proj2 (NAMEGEN.generate_node_env_inst_props
+                        _ _ _ _ _ Henv Hresetenv)).
     - intros ty Hinhid. subst sig. unfold signature_scope; cbn.
       assert (Hinj0 : env_injective env)
         by (eapply NAMEGEN.generate_node_env_injective; eauto).
@@ -1266,6 +1266,54 @@ Module Type SECSTCTYPINGCORRECTNESS
     destruct (generated_sys_signature_scope_key _ _ _ _ _ _ Hsig Hin)
       as (_ & _ & x & _ & _ & Hfind).
     eapply NAMEGEN.generate_local_env_for_node_sec_range; eauto.
+  Qed.
+
+  (** The local-environment form, mirroring NLustre's
+      [generated_node_simplify_ready_from_local_env].  Same conjunction,
+      same two halves; only the source of the environment facts differs. *)
+
+  Theorem generated_sys_simplify_ready_from_local_env:
+    forall n st rec st' env aux_names,
+      generate_local_env_for_node n st = OK ((env, rec), st') ->
+      (forall name ie, get_node_inst name aux_names = Some ie -> ie = rec.(ninst)) ->
+      (forall name clk_id rst_id,
+          get_node_aux name aux_names = Some (clk_id, rst_id) ->
+          exists i j, clk_id = Ids.gensym Ids.sec i
+                      /\ rst_id = Ids.gensym Ids.sec j) ->
+      generated_sys_simplify_ready env aux_names.
+  Proof.
+    intros n st rec st' env aux_names Hlocal Hinstrec Hauxsec
+           G s sig clk_id rst_id clk_type rst_type inp out slocals slasts
+           reset_env rids raw st_reset st_s
+           Hsig Haux Hclk Hrst Hinp Hout Hslocals Hslasts Hresetenv Hrids
+           Hraw Hsch Hsigdef.
+    assert (Hinj0 : env_injective env)
+      by (eapply NAMEGEN.generate_local_env_for_node_injective; eauto).
+    assert (Hsec0 : forall x tz, Env.find x env = Some tz ->
+                                 exists m, tz = Ids.gensym Ids.sec m)
+      by (intros; eapply NAMEGEN.generate_local_env_for_node_sec_range; eauto).
+    assert (Haux0 : exists i j, clk_id = Ids.gensym Ids.sec i
+                                /\ rst_id = Ids.gensym Ids.sec j)
+      by (eapply Hauxsec; eauto).
+    assert (Hrst0 : forall x tz, Env.find x reset_env = Some tz ->
+                                 exists m, tz = Ids.gensym Ids.sec_reset m).
+    { rewrite (Hinstrec _ _ Hresetenv).
+      exact (proj2 (NAMEGEN.generate_local_env_for_node_inst_props
+                      _ _ _ _ _ Hlocal)). }
+    assert (Hinstinj0 : env_injective reset_env).
+    { rewrite (Hinstrec _ _ Hresetenv).
+      exact (proj1 (NAMEGEN.generate_local_env_for_node_inst_props
+                      _ _ _ _ _ Hlocal)). }
+    split.
+    - eapply generate_sys_signature_raw_wf;
+        [exact Hinj0|exact Hsec0|exact Hinstinj0|exact Hrst0
+        |exact Hsch|exact Hout|exact Hslocals|exact Hslasts
+        |exact Hresetenv|exact Hrids|exact Hraw].
+    - intros ty Hinhid. subst sig. unfold signature_scope; cbn.
+      eapply generated_sys_hidden_disjoint;
+        [exact Hinj0|exact Hsec0|exact Haux0|exact Haux|exact Hclk|exact Hrst
+        |exact Hinp|exact Hout|exact Hslocals|exact Hslasts|exact Hrids
+        |exact Hrst0|exact Hinhid].
   Qed.
 
 End SECSTCTYPINGCORRECTNESS.
