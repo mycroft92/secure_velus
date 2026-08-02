@@ -2488,6 +2488,74 @@ Module Type SECSTCOBCTRANSLATION
     (** The reset body reads nothing but the memories it assigns, and the
         only instances it touches are the objects it resets. *)
 
+    (** Converses for the reset body, matching the ones for the step
+        body: the memory loop writes only memories and resets nothing,
+        the instance loop resets only objects and writes nothing. *)
+
+    Lemma stmt_writes_reset_mems_fold_inv:
+      forall (mems: list (ident * (const * clock))) acc d,
+        List.In d (SECOBCTYPING.stmt_writes
+                     (fold_left (fun s xc => SynObc.Comp s
+                        (SynObc.AssignSt (fst xc) (SynObc.Const (fst (snd xc)))))
+                        mems acc)) ->
+        List.In d (SECOBCTYPING.stmt_writes acc) \/ List.In d (map fst mems).
+    Proof.
+      induction mems as [|xc mems IH]; intros acc d Hd; simpl in Hd |- *.
+      - now left.
+      - destruct (IH _ _ Hd) as [Hin|Hin]; [|now right; right].
+        cbn [SECOBCTYPING.stmt_writes] in Hin.
+        apply in_app_iff in Hin as [Hin|Hin]; [now left|].
+        cbn [SECOBCTYPING.stmt_writes] in Hin.
+        destruct Hin as [Heq|[]]. right. now left.
+    Qed.
+
+    Lemma stmt_reset_insts_reset_mems_fold_inv:
+      forall (mems: list (ident * (const * clock))) acc o,
+        List.In o (SECOBCTYPING.stmt_reset_insts
+                     (fold_left (fun s xc => SynObc.Comp s
+                        (SynObc.AssignSt (fst xc) (SynObc.Const (fst (snd xc)))))
+                        mems acc)) ->
+        List.In o (SECOBCTYPING.stmt_reset_insts acc).
+    Proof.
+      induction mems as [|xc mems IH]; intros acc o Ho; simpl in Ho |- *;
+        [exact Ho|].
+      apply IH in Ho. cbn [SECOBCTYPING.stmt_reset_insts] in Ho.
+      apply in_app_iff in Ho as [Ho|Ho]; [exact Ho|].
+      cbn [SECOBCTYPING.stmt_reset_insts] in Ho. contradiction.
+    Qed.
+
+    Lemma stmt_reset_insts_reset_insts_fold_inv:
+      forall (objs: list (ident * ident)) acc o,
+        List.In o (SECOBCTYPING.stmt_reset_insts
+                     (fold_left (fun s xf => SynObc.Comp s
+                        (SynObc.Call [] (snd xf) (fst xf) reset [])) objs acc)) ->
+        List.In o (SECOBCTYPING.stmt_reset_insts acc) \/ List.In o (map fst objs).
+    Proof.
+      induction objs as [|xf objs IH]; intros acc o Ho; simpl in Ho |- *.
+      - now left.
+      - destruct (IH _ _ Ho) as [Hin|Hin]; [|now right; right].
+        cbn [SECOBCTYPING.stmt_reset_insts] in Hin.
+        apply in_app_iff in Hin as [Hin|Hin]; [now left|].
+        cbn [SECOBCTYPING.stmt_reset_insts] in Hin.
+        rewrite ident_eqb_refl in Hin.
+        destruct Hin as [Heq|[]]. right. now left.
+    Qed.
+
+    Lemma stmt_writes_reset_insts_fold_inv:
+      forall (objs: list (ident * ident)) acc d,
+        List.In d (SECOBCTYPING.stmt_writes
+                     (fold_left (fun s xf => SynObc.Comp s
+                        (SynObc.Call [] (snd xf) (fst xf) reset [])) objs acc)) ->
+        List.In d (SECOBCTYPING.stmt_writes acc).
+    Proof.
+      induction objs as [|xf objs IH]; intros acc d Hd; simpl in Hd |- *;
+        [exact Hd|].
+      apply IH in Hd. cbn [SECOBCTYPING.stmt_writes] in Hd.
+      apply in_app_iff in Hd as [Hd|Hd]; [exact Hd|].
+      cbn [SECOBCTYPING.stmt_writes] in Hd.
+      destruct (ident_eqb reset step); contradiction.
+    Qed.
+
     Lemma stmt_free_reset_mems_fold:
       forall (mems: list (ident * (const * clock))) acc x,
         List.In x (SECOBCTYPING.stmt_free
