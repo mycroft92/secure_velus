@@ -3115,6 +3115,101 @@ Module Type SECSTCOBCTRANSLATION
         eassumption.
     Qed.
 
+    Lemma translate_tcnext_constraints_ok:
+      forall memset clkvars vars x ck e pc nconst st1 st1' st2,
+        CEClo.wc_exp vars e ck ->
+        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
+          (SynStc.TcNext x ck e) st1 = OK (nconst, st1') ->
+        exists cns,
+          generate_stmt_constraints G2 env reset_env rst_ty pc
+            (translate_tc memset clkvars (SynStc.TcNext x ck e)) st2
+          = OK (cns, st2).
+    Proof.
+      intros memset clkvars vars x ck e pc nconst st1 st1' st2 Hwc Hstc.
+      simpl in Hstc.
+      eapply sec_bind_inv in Hstc as (ckty & sa & Hck & Hstc).
+      eapply sec_bind_inv in Hstc as (ety & sb & He & Hstc).
+      eapply sec_bind_inv in Hstc as (xty & sc & Hx & _).
+      assert (Hckopt : SECCETYPING.assign_clk_type env clk_ty ck = Some ckty).
+      { unfold option_to_sec in Hck.
+        destruct (SECCETYPING.assign_clk_type env clk_ty ck); try discriminate.
+        now inversion Hck. }
+      assert (Heopt : SECCETYPING.assign_exp_type env e = Some ety).
+      { unfold option_to_sec in He.
+        destruct (SECCETYPING.assign_exp_type env e); try discriminate.
+        now inversion He. }
+      assert (Hxopt : Env.find x env = Some xty).
+      { unfold find_env in Hx.
+        destruct (Env.find x env); try discriminate. now inversion Hx. }
+      unfold translate_tc.
+      destruct (clock_pc_ok env clk_ty ck ckty pc Hckopt) as (pc' & Hpc').
+      rewrite (generate_stmt_constraints_Control G2 env reset_env rst_ty
+                 memset ck _ pc pc' st2 Hpc').
+      destruct (translate_exp_type_correspondence env memset vars e ck clk_ty
+                  ckty ety Hwc Hckopt Heopt) as (oty & Hoty & _).
+      eexists. simpl.
+      unfold option_to_sec, find_env, bind, ret.
+      rewrite Hoty, Hxopt. reflexivity.
+    Qed.
+
+    Lemma translate_tcreset_constraints_ok:
+      forall memset clkvars i ck f pc nconst st1 st1' st2,
+        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
+          (SynStc.TcReset i ck f) st1 = OK (nconst, st1') ->
+        exists cns,
+          generate_stmt_constraints G2 env reset_env rst_ty pc
+            (translate_tc memset clkvars (SynStc.TcReset i ck f)) st2
+          = OK (cns, st2).
+    Proof.
+      intros memset clkvars i ck f pc nconst st1 st1' st2 Hstc.
+      (* the STC generator has two shapes for a reset; both hand over a
+         clock type for the whole clock and the instance's entry *)
+      assert (Hdata : (exists ckty,
+                          SECCETYPING.assign_clk_type env clk_ty ck = Some ckty)
+                      /\ (exists sty, Env.find i reset_env = Some sty)).
+      { destruct ck as [|ckr r [|]];
+          cbn [SECSTCTYPING.generate_trconstr_constraint] in Hstc.
+        - eapply sec_bind_inv in Hstc as (ckty & sa & Hck & Hstc).
+          eapply sec_bind_inv in Hstc as (sty & sb & Hs & _).
+          split.
+          + eexists. reflexivity.
+          + exists sty. unfold find_env in Hs.
+            destruct (Env.find i reset_env); try discriminate.
+            now inversion Hs.
+        - eapply sec_bind_inv in Hstc as (rty & sa & Hr & Hstc).
+          eapply sec_bind_inv in Hstc as (rckty & sb & Hck & Hstc).
+          eapply sec_bind_inv in Hstc as (sty & sc & Hs & _).
+          assert (Hropt : Env.find r env = Some rty).
+          { unfold find_env in Hr.
+            destruct (Env.find r env); try discriminate. now inversion Hr. }
+          assert (Hckopt : SECCETYPING.assign_clk_type env clk_ty ckr
+                           = Some rckty).
+          { unfold option_to_sec in Hck.
+            destruct (SECCETYPING.assign_clk_type env clk_ty ckr);
+              try discriminate. now inversion Hck. }
+          split.
+          + eexists. simpl. rewrite Hckopt. simpl. rewrite Hropt. reflexivity.
+          + exists sty. unfold find_env in Hs.
+            destruct (Env.find i reset_env); try discriminate.
+            now inversion Hs.
+        - eapply sec_bind_inv in Hstc as (ckty & sa & Hck & Hstc).
+          eapply sec_bind_inv in Hstc as (sty & sb & Hs & _).
+          split.
+          + exists ckty. unfold option_to_sec in Hck.
+            destruct (SECCETYPING.assign_clk_type env clk_ty (Con ckr r false));
+              try discriminate. now inversion Hck.
+          + exists sty. unfold find_env in Hs.
+            destruct (Env.find i reset_env); try discriminate.
+            now inversion Hs. }
+      destruct Hdata as ((ckty & Hckopt) & (sty & Hsty)).
+      unfold translate_tc.
+      destruct (clock_pc_ok env clk_ty ck ckty pc Hckopt) as (pc' & Hpc').
+      rewrite (generate_stmt_constraints_Control G2 env reset_env rst_ty
+                 memset ck _ pc pc' st2 Hpc').
+      eexists. simpl. rewrite ident_eqb_refl.
+      unfold find_env, bind, ret. rewrite Hsty. reflexivity.
+    Qed.
+
     Lemma translate_system_well_defined:
       forall P s,
         wc_system P s ->
