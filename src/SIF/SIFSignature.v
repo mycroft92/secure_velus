@@ -3728,7 +3728,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
 
   Lemma findST_None_iff:
     forall cs d,
-      findST cs d = None <-> forall w, ~ In (w, [d]) cs.
+      SymTypes.findST cs d = None <-> forall w, ~ In (w, [d]) cs.
   Proof.
     induction cs as [|[t ds] cs IH]; intro d; simpl.
     - split; [intros _ w []|reflexivity].
@@ -3753,7 +3753,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
   Qed.
 
   Lemma findST_Some_In:
-    forall cs d st, findST cs d = Some st -> In (st, [d]) cs.
+    forall cs d st, SymTypes.findST cs d = Some st -> In (st, [d]) cs.
   Proof.
     exact find_correct.
   Qed.
@@ -3768,7 +3768,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       exists cs',
         subst_ident_in_constraints cs x v st = OK (cs', st)
         /\ singleton_targets cs'
-        /\ (forall d, findST cs' d = None <-> findST cs d = None).
+        /\ (forall d, SymTypes.findST cs' d = None <-> SymTypes.findST cs d = None).
   Proof.
     induction cs as [|[ty ds] cs IH]; intros x v st Hsing Hnx.
     - exists []. split; [reflexivity|]. split; [constructor|].
@@ -3795,6 +3795,138 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
         intro d0. destruct c1 as [t1 ds1]. simpl in Hc1d. subst ds1.
         simpl. destruct (ident_eqb d d0);
           [split; discriminate|exact (Hfind2 d0)].
+  Qed.
+
+  (** Substituting an *output* formal [x] by an actual [v] renames that
+      one target and leaves the others alone.  Three clauses are all the
+      output walk needs: [v] becomes a target if [x] was one, and every
+      other name keeps its status. *)
+
+  Lemma subst_ident_constraints_ok:
+    forall cs x v st,
+      x <> v ->
+      singleton_targets cs ->
+      exists cs',
+        subst_ident_constraints cs x v st = OK (cs', st)
+        /\ singleton_targets cs'
+        /\ (SymTypes.findST cs x <> None -> SymTypes.findST cs' v <> None)
+        /\ (forall d, d <> x -> d <> v ->
+                      (SymTypes.findST cs' d = None <-> SymTypes.findST cs d = None)).
+  Proof.
+    induction cs as [|[ty ds] cs IH]; intros x v st Hxv Hsing.
+    - exists []. split; [reflexivity|]. split; [constructor|].
+      split; [simpl; congruence|]. intros d _ _. reflexivity.
+    - inversion Hsing as [|c cs0 (d & Hd) Hsing']; subst. simpl in Hd. subst ds.
+      destruct (IH x v st Hxv Hsing') as (cs2 & Hcs2 & Hsing2 & Hv2 & Hoth2).
+      destruct (subst_ident_constraint (ty, [d]) x v st) as [[c1 s1]|] eqn:Hhd.
+      2:{ exfalso. unfold subst_ident_constraint in Hhd.
+          destruct (ident_eqb x v) eqn:Hxveq.
+          - apply ident_eqb_eq in Hxveq. contradiction.
+          - destruct (ident_eqb x d); discriminate. }
+      assert (Hshape : s1 = st /\ snd c1 = [if ident_eqb x d then v else d]).
+      { unfold subst_ident_constraint in Hhd.
+        destruct (ident_eqb x v) eqn:Hxveq;
+          [apply ident_eqb_eq in Hxveq; contradiction|].
+        destruct (ident_eqb x d); unfold ret in Hhd; inversion Hhd;
+          split; reflexivity. }
+      destruct Hshape as (Hs1 & Hc1d). subst s1.
+      exists (c1 :: cs2). split.
+      + unfold subst_ident_constraints in *.
+        eapply mmap_cons_ok; [exact Hhd|exact Hcs2].
+      + destruct c1 as [t1 ds1]. simpl in Hc1d. subst ds1.
+        split; [constructor; [eexists; reflexivity|exact Hsing2]|].
+        destruct (ident_eqb x d) eqn:Hxd.
+        * (* this constraint's target was [x]; it becomes [v] *)
+          apply ident_eqb_eq in Hxd. subst d.
+          split.
+          -- intros _. simpl. rewrite ident_eqb_refl. discriminate.
+          -- intros d0 Hd0x Hd0v. simpl.
+             assert (Hne : ident_eqb v d0 = false) by (apply ident_eqb_neq; congruence).
+             assert (Hne2 : ident_eqb x d0 = false) by (apply ident_eqb_neq; congruence).
+             rewrite Hne, Hne2. exact (Hoth2 d0 Hd0x Hd0v).
+        * (* target untouched.  [d = v] is still possible here -- the
+             guard against it lives in the output walk, not in this
+             lemma -- and then [v] is a target of the head already. *)
+          assert (Hdx : ident_eqb d x = false).
+          { apply ident_eqb_neq. intro Hdxe. subst d.
+            rewrite ident_eqb_refl in Hxd. discriminate. }
+          split.
+          -- intro Hx. simpl.
+             destruct (ident_eqb d v) eqn:Hdv; [discriminate|].
+             apply Hv2. simpl in Hx. rewrite Hdx in Hx. exact Hx.
+          -- intros d0 Hd0x Hd0v. simpl.
+             destruct (ident_eqb d d0); [split; discriminate|].
+             exact (Hoth2 d0 Hd0x Hd0v).
+  Qed.
+
+  (** The output walk.  The second conclusion is what makes the
+      induction go through: an actual substituted at step [k] must still
+      be a target at step [k+n], and it is, because it lies outside both
+      remaining lists. *)
+
+  Lemma subst_constraints_out_map_ok:
+    forall xs vs cs st,
+      List.length xs = List.length vs ->
+      NoDup xs ->
+      NoDup vs ->
+      (forall v, In v vs -> ~ In v xs) ->
+      (forall v, In v vs -> SymTypes.findST cs v = None) ->
+      (forall x, In x xs -> SymTypes.findST cs x <> None) ->
+      singleton_targets cs ->
+      exists cs',
+        subst_constraints_out_map cs xs vs st = OK (cs', st)
+        /\ (forall v, In v vs -> SymTypes.findST cs' v <> None)
+        /\ (forall d, ~ In d xs -> ~ In d vs ->
+                      (SymTypes.findST cs' d = None <-> SymTypes.findST cs d = None)).
+  Proof.
+    induction xs as [|x xs IH]; intros vs cs st Hlen Hndx Hndv Hdisj Hvs Hxs Hsing.
+    - destruct vs as [|v vs]; [|simpl in Hlen; discriminate].
+      exists cs. split; [reflexivity|].
+      split; [intros v []|intros d _ _; reflexivity].
+    - destruct vs as [|v vs]; [simpl in Hlen; discriminate|].
+      simpl in Hlen. injection Hlen as Hlen.
+      inversion Hndx as [|x' xs' Hnx Hndx']; subst.
+      inversion Hndv as [|v' vs' Hnv Hndv']; subst.
+      assert (Hxv : x <> v)
+        by (intro Heq; subst v; eapply (Hdisj x); [now left|now left]).
+      assert (Hvnotxs : ~ In v xs)
+        by (intro Hin; eapply (Hdisj v); [now left|now right]).
+      assert (Hguard : SymTypes.findST cs v = None) by (apply Hvs; now left).
+      destruct (subst_ident_constraints_ok cs x v st Hxv Hsing)
+        as (cs2 & Hcs2 & Hsing2 & Hv2 & Hoth2).
+      assert (Hvtgt2 : SymTypes.findST cs2 v <> None)
+        by (apply Hv2, Hxs; now left).
+      (* the three premises of the recursive call *)
+      assert (Hd1 : forall w, In w vs -> ~ In w xs)
+        by (intros w Hw Hwx; eapply (Hdisj w); [now right|now right]).
+      assert (Hd2 : forall w, In w vs -> SymTypes.findST cs2 w = None).
+      { intros w Hw. apply Hoth2.
+        - intro Heq. subst w. eapply (Hdisj x); [now right|now left].
+        - intro Heq. subst w. contradiction.
+        - apply Hvs. now right. }
+      assert (Hd3 : forall w, In w xs -> SymTypes.findST cs2 w <> None).
+      { intros w Hw Hnone.
+        assert (Hwx : w <> x) by (intro Heq; subst w; contradiction).
+        assert (Hwv : w <> v) by (intro Heq; subst w; contradiction).
+        apply (Hxs w (or_intror Hw)).
+        apply (Hoth2 w Hwx Hwv). exact Hnone. }
+      destruct (IH vs cs2 st Hlen Hndx' Hndv' Hd1 Hd2 Hd3 Hsing2)
+        as (cs' & Hcs' & Hvs' & Hoth').
+      exists cs'. split.
+      + cbn [subst_constraints_out_map].
+        destruct (SymTypes.findST cs v) as [w|] eqn:Hg;
+          [rewrite Hguard in Hg; discriminate|].
+        unfold bind. rewrite Hcs2. exact Hcs'.
+      + split.
+        * intros v0 [Heq|Hin].
+          -- subst v0. rewrite (Hoth' v Hvnotxs Hnv). exact Hvtgt2.
+          -- exact (Hvs' v0 Hin).
+        * intros d Hdx Hdv.
+          rewrite (Hoth' d (fun H => Hdx (or_intror H))
+                     (fun H => Hdv (or_intror H))).
+          apply Hoth2;
+            [intro Heq; subst d; apply Hdx; now left
+            |intro Heq; subst d; apply Hdv; now left].
   Qed.
 
   (** ** The call-preservation rules, shared by both bridges

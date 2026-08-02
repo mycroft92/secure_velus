@@ -388,6 +388,16 @@ checks them against whatever concrete lattice they want.
 - `destruct … eqn:H` rewrites the scrutinee in *other hypotheses* too;
   a `forall … find_signature f G1 = Some n1 → …` hypothesis becomes
   `Some n1 = Some n1`, so pass `Logic.eq_refl`.
+- **Aliased constants defeat `rewrite`.**  `SecTypes.findST :=
+  SymTypes.findST` is a *distinct constant*, so inside `SIGNATURE_PROOFS`
+  (which imports `SecT`) an unqualified `findST` is `SecT.findST` while
+  `subst_constraints_out_map`'s body says `SymTypes.findST`.  They are
+  definitionally equal, so `exact`/`apply` work and `rewrite` silently
+  does not -- "Found no subterm matching".  Write `SymTypes.findST`.  The
+  same trap is `constraints_scoped`, two `Definition` hops from `Forall`.
+  When a `rewrite` cannot find a term that is plainly on screen, print
+  the goal with `match goal with |- ?g => idtac g end` and compare the
+  qualified names.
 - Adding a monadic bind to a generator breaks every `name_bind_inv`
   chain that inverts it — patch each inversion site, and watch for
   lemmas whose state bounds shift (`env_sec_bounded_le`).
