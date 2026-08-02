@@ -2666,6 +2666,27 @@ Module Type SECSTCOBCTRANSLATION
         destruct Ho as [Heq|[]]. subst i. right. eauto 10.
     Qed.
 
+    (** A reset call is a call, so the instances a body resets are among
+        the instances it touches.  This is what lets the step body's
+        reset instances be classified by
+        [stmt_state_keys_translate_tcs_fold] rather than by a fold lemma
+        of their own. *)
+
+    Lemma stmt_reset_insts_state_keys:
+      forall st o,
+        List.In o (SECOBCTYPING.stmt_reset_insts st) ->
+        List.In o (SECOBCTYPING.stmt_state_keys st).
+    Proof.
+      induction st as [x e|x e|e s1 IH1 s2 IH2|s1 IH1 s2 IH2|ys cls q m es|];
+        intros o Ho; simpl in Ho |- *; try contradiction.
+      - apply in_app_iff in Ho as [Ho|Ho]; apply in_or_app;
+          [left; now apply IH1|right; now apply IH2].
+      - apply in_app_iff in Ho as [Ho|Ho]; apply in_or_app;
+          [left; now apply IH1|right; now apply IH2].
+      - destruct ys as [|y ys']; [|contradiction].
+        destruct (ident_eqb m Ids.reset); [exact Ho|contradiction].
+    Qed.
+
     Lemma stmt_state_keys_translate_tcs_fold:
       forall memset clkvars tcs acc o,
         List.In o (SECOBCTYPING.stmt_state_keys
