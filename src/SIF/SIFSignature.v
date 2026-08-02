@@ -3726,6 +3726,20 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
   Definition singleton_targets (cs: list constraint) : Prop :=
     Forall (fun c => exists d, snd c = [d]) cs.
 
+  (** The half of [signature_good] that call generation actually needs:
+      the constraint targets are exactly the outputs.  [wf_constraints]
+      plays no part in whether generation *succeeds*, only in the
+      simplify bridge, so asking for it here would be asking for more
+      than the proof uses. *)
+
+  Definition signature_targets_out (sig: signature) : Prop :=
+    Permutation (map snd sig.(s_constraints))
+                (map (fun ty => [ty]) sig.(s_out)).
+
+  Lemma signature_good_targets_out:
+    forall sig, signature_good sig -> signature_targets_out sig.
+  Proof. intros sig (_ & Hperm). exact Hperm. Qed.
+
   Lemma findST_None_iff:
     forall cs d,
       SymTypes.findST cs d = None <-> forall w, ~ In (w, [d]) cs.
@@ -3934,10 +3948,10 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
 
   Lemma good_singleton_targets:
     forall sig,
-      signature_good sig ->
+      signature_targets_out sig ->
       singleton_targets sig.(s_constraints).
   Proof.
-    intros sig (_ & Hperm).
+    intros sig Hperm. unfold signature_targets_out in Hperm.
     apply Forall_forall. intros c Hc.
     assert (Hin : In (snd c) (map snd sig.(s_constraints)))
       by (apply in_map; exact Hc).
@@ -3948,10 +3962,10 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
 
   Lemma good_targets_iff:
     forall sig d,
-      signature_good sig ->
+      signature_targets_out sig ->
       (SymTypes.findST sig.(s_constraints) d <> None <-> In d sig.(s_out)).
   Proof.
-    intros sig d (_ & Hperm). split.
+    intros sig d Hperm. unfold signature_targets_out in Hperm. split.
     - intro Hne.
       destruct (SymTypes.findST sig.(s_constraints) d) as [w|] eqn:Hf;
         [|contradiction].
@@ -4021,7 +4035,7 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
 
   Theorem generate_constraints_ok_from_good:
     forall sig inp clk rst out st,
-      signature_good sig ->
+      signature_targets_out sig ->
       NoDup (sig_scope sig) ->
       List.length sig.(s_in) = List.length inp ->
       List.length sig.(s_out) = List.length out ->
