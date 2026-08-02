@@ -3175,6 +3175,161 @@ Module Type SECSTCOBCTRANSLATION
           rewrite translate_system_objs. now apply fst_InMembers.
     Qed.
 
+    (** And conversely.  Every case but the outputs closes by
+        contradiction with "the target is not hidden": a variable, a
+        memory or an instance would all have been eliminated. *)
+
+    Lemma translate_class_target_is_out:
+      forall P s aux_names obcsig rhs,
+        NAMEGEN.naming_env_props env aux_names ->
+        SIG.secglobal_scoped G2 ->
+        CloStc.wc_system P s ->
+        SECOBCTYPING.generate_class_signature G2 (translate_system s) env
+          aux_names = OK obcsig ->
+        List.In rhs (map snd obcsig.(s_constraints)) ->
+        List.In rhs (map (fun ty => [ty]) obcsig.(s_out)).
+    Proof.
+      intros P s aux_names obcsig rhs Hprops Hglob Hwc Hsig Hin.
+      pose proof Hsig as Hsig0.
+      edestruct SECOBCTYPINGCORRECTNESS.generate_class_signature_inv as
+          (clk_id & rst_id & clk_type & rst_type & stepm & resetm
+           & inp & out & locals & lasts & state_env & stids
+           & craw_step & craw_reset & st_state & st_step & st_raw
+           & Haux & Hclk & Hrst & Hstepm & Hresetm & Hinp & Hout
+           & Hlocals & Hlasts & Hsenv & Hstids & Hstepc & Hresetc & Hsigdef);
+        [exact Hsig0|].
+      rewrite exists_step_method in Hstepm. inversion Hstepm; subst stepm.
+      rewrite exists_reset_method in Hresetm. inversion Hresetm; subst resetm.
+      simpl in Haux, Hsenv, Hstids, Hlasts.
+      rewrite step_method_ins, get_mappings_from_node_idty in Hinp.
+      rewrite step_method_vars, get_mappings_from_node_idty in Hlocals.
+      rewrite get_mappings_from_node_mems in Hlasts.
+      pose proof Hout as Hout0.
+      rewrite step_method_outs, get_mappings_from_node_idty in Hout0.
+      pose proof (fun t => translate_class_hidden_disjoint
+                    s env aux_names clk_id rst_id clk_type rst_type inp out
+                    locals lasts state_env stids t
+                    Hprops Haux Hclk Hrst Hinp Hout0 Hlocals Hlasts Hsenv Hstids)
+        as Hdisj.
+      assert (Hscoped : SIG.signature_scoped obcsig).
+      { eapply SECOBCTYPINGCORRECTNESS.generate_class_signature_scoped;
+          [exact Hglob|eapply translate_system_well_defined; exact Hwc
+          |exact Hsig]. }
+      destruct (SECOBCTYPINGCORRECTNESS.generate_stmt_constraints_targets
+                  G2 env state_env rst_type _ _ _ _ _ Hstepc)
+        as (step_tys & Hstept & _).
+      destruct (SECOBCTYPINGCORRECTNESS.generate_stmt_constraints_targets
+                  G2 env state_env rst_type _ _ _ _ _ Hresetc)
+        as (reset_tys & Hresett & _).
+      pose proof (fun r => SECOBCTYPINGCORRECTNESS.generated_class_raw_target_in
+                    G2 env state_env rst_type _ _ _ _ _ _ _ _ _ _ _ _ r
+                    Hstepc Hresetc Hstept Hresett) as Hrawin.
+      (* every raw target is an output or a hidden name *)
+      assert (Hcls : forall t, List.In t (step_tys ++ reset_tys) ->
+                     List.In t out
+                     \/ List.In t (SECOBCTYPING.hidden_class_vars
+                                     locals lasts stids)).
+      { intros t Ht.
+        unfold SECOBCTYPING.hidden_class_vars. rewrite nodup_In.
+        apply in_app_iff in Ht as [Ht|Ht].
+        - destruct (SECOBCTYPINGCORRECTNESS.stmt_targets_source
+                      env state_env _ _ _ Hstept Ht)
+            as [(x & Hx & Hfx)|(o & Ho & Hfo)].
+          + destruct (step_method_body s) as (memset & clkvars & Hb).
+            rewrite Hb in Hx. unfold translate_tcs in Hx.
+            destruct (stmt_writes_translate_tcs_fold_inv
+                        memset clkvars (SynStc.s_tcs s) SynObc.Skip x Hx)
+              as [Hsk|[Hv|Hl]].
+            * simpl in Hsk. contradiction.
+            * eapply Permutation_in in Hv;
+                [|symmetry; apply (SynStc.s_vars_out_in_tcs s)].
+              apply in_app_iff in Hv as [Hv|Hv].
+              -- right. apply in_or_app; left.
+                 destruct (get_mappings_in _ _ _ _ Hv
+                             (get_mappings_from_node_eq _ _ _ _ Hlocals))
+                   as (t' & Hf' & Hin').
+                 rewrite Hfx in Hf'. inversion Hf'; subst t'. exact Hin'.
+              -- left.
+                 destruct (get_mappings_in _ _ _ _ Hv
+                             (get_mappings_from_node_eq _ _ _ _ Hout0))
+                   as (t' & Hf' & Hin').
+                 rewrite Hfx in Hf'. inversion Hf'; subst t'. exact Hin'.
+            * right. apply in_or_app; right. apply in_or_app; left.
+              eapply Permutation_in in Hl;
+                [|symmetry; apply (SynStc.s_lasts_in_tcs s)].
+              destruct (get_mappings_in _ _ _ _ Hl
+                          (get_mappings_from_node_eq _ _ _ _ Hlasts))
+                as (t' & Hf' & Hin').
+              rewrite Hfx in Hf'. inversion Hf'; subst t'. exact Hin'.
+          + right. apply in_or_app; right. apply in_or_app; right.
+            apply stmt_reset_insts_state_keys in Ho.
+            destruct (step_method_body s) as (memset & clkvars & Hb).
+            rewrite Hb in Ho. unfold translate_tcs in Ho.
+            destruct (stmt_state_keys_translate_tcs_fold
+                        memset clkvars (SynStc.s_tcs s) SynObc.Skip o Ho)
+              as [Hsk|(tc & Htc & Hcase)]; [simpl in Hsk; contradiction|].
+            assert (Hsub : List.In o (map fst (SynStc.s_subs s))).
+            { destruct Hcase as [(ck & g & Heq)|(ys & ck & b & g & es & Heq)];
+                subst tc; apply in_map_iff; exists (o, g);
+                (split; [reflexivity|]);
+                eapply Permutation_in;
+                [symmetry; apply (SynStc.s_subs_calls_of s)
+                |apply (SynStc.s_reset_incl s);
+                 eapply SECSTCTYPING.In_resets_of; exact Htc
+                |symmetry; apply (SynStc.s_subs_calls_of s)
+                |eapply SECSTCTYPING.In_calls_of; exact Htc]. }
+            destruct (get_mappings_in _ _ _ _ Hsub Hstids) as (t' & Hf' & Hin').
+            rewrite Hfo in Hf'. inversion Hf'; subst t'. exact Hin'.
+        - right.
+          destruct (SECOBCTYPINGCORRECTNESS.stmt_targets_source
+                      env state_env _ _ _ Hresett Ht)
+            as [(x & Hx & Hfx)|(o & Ho & Hfo)].
+          + rewrite reset_method_body in Hx.
+            cbn [SECOBCTYPING.stmt_writes] in Hx.
+            apply in_app_iff in Hx as [Hx|Hx].
+            * unfold reset_mems in Hx.
+              destruct (stmt_writes_reset_mems_fold_inv _ SynObc.Skip x Hx)
+                as [Hsk|Hm]; [simpl in Hsk; contradiction|].
+              apply in_or_app; right. apply in_or_app; left.
+              destruct (get_mappings_in _ _ _ _ Hm
+                          (get_mappings_from_node_eq _ _ _ _ Hlasts))
+                as (t' & Hf' & Hin').
+              rewrite Hfx in Hf'. inversion Hf'; subst t'. exact Hin'.
+            * unfold reset_insts in Hx.
+              apply stmt_writes_reset_insts_fold_inv in Hx.
+              simpl in Hx. contradiction.
+          + rewrite reset_method_body in Ho.
+            cbn [SECOBCTYPING.stmt_reset_insts] in Ho.
+            apply in_app_iff in Ho as [Ho|Ho].
+            * unfold reset_mems in Ho.
+              apply stmt_reset_insts_reset_mems_fold_inv in Ho.
+              simpl in Ho. contradiction.
+            * unfold reset_insts in Ho.
+              destruct (stmt_reset_insts_reset_insts_fold_inv
+                          _ SynObc.Skip o Ho)
+                as [Hsk|Hb]; [simpl in Hsk; contradiction|].
+              apply in_or_app; right. apply in_or_app; right.
+              destruct (get_mappings_in _ _ _ _ Hb Hstids)
+                as (t' & Hf' & Hin').
+              rewrite Hfo in Hf'. inversion Hf'; subst t'. exact Hin'. }
+      subst obcsig. cbn in Hin |- *.
+      pose proof (SymTypes.simplify_rhs_in _ _ _ Hin) as Hinc.
+      apply (proj1 (Hrawin _)) in Hinc.
+      apply in_map_iff in Hinc as (ty & Hty & Hinty). subst rhs.
+      assert (Hnothid : ~ List.In ty (SECOBCTYPING.hidden_class_vars
+                                        locals lasts stids)).
+      { intro Hhid.
+        destruct (SymTypes.findST_of_rhs_in _ _ Hin) as (stc & Hfind).
+        apply SymTypes.find_correct in Hfind.
+        unfold SIG.signature_scoped in Hscoped. cbn in Hscoped.
+        eapply Forall_forall in Hscoped; [|exact Hfind].
+        eapply Hdisj; [exact Hhid|].
+        eapply constraint_scoped_rhs; [exact Hscoped|now left]. }
+      apply in_map_iff. exists ty. split; [reflexivity|].
+      destruct (Hcls ty Hinty) as [Hgood|Hbad]; [exact Hgood|contradiction].
+    Qed.
+
+
     (** ** The raw scope
 
         Everything the two constraint sets share: the signature scope,
