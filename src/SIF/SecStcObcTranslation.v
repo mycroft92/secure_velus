@@ -2674,6 +2674,32 @@ Module Type SECSTCOBCTRANSLATION
         inside the interface -- the single non-syntactic ingredient,
         exactly as [wc_node] is for [node_preserv_scoped]. *)
 
+    (** A translated class writes its outputs too.  [class_well_defined]
+        does not record this -- scopedness only needs the *hidden* names
+        to be defined -- but call generation does: an output that is
+        never a target cannot be read back by the closing [mmap findST].
+        It is not a property of an arbitrary class, so it is proved here,
+        for translated systems, off the same record invariant the locals
+        clause uses.  [s_vars_out_in_tcs] covers both halves; the locals
+        bullet below takes the left one and this takes the right. *)
+
+    Lemma translate_step_writes_outs:
+      forall s x,
+        InMembers x (step_method s).(m_out) ->
+        List.In x (SECOBCTYPING.stmt_writes (step_method s).(m_body)).
+    Proof.
+      intros s x Hx.
+      pose proof (SynStc.s_vars_out_in_tcs s) as Hvo.
+      rewrite step_method_outs in Hx.
+      apply fst_InMembers in Hx. rewrite map_fst_idty in Hx.
+      destruct (step_method_body s) as (memset & clkvars & Hb). rewrite Hb.
+      unfold translate_tcs.
+      apply (proj2 (stmt_writes_translate_tcs_fold
+                      memset clkvars (SynStc.s_tcs s) SynObc.Skip)).
+      eapply Permutation_in; [apply Hvo|].
+      apply in_or_app; now right.
+    Qed.
+
     Lemma translate_system_well_defined:
       forall P s,
         wc_system P s ->

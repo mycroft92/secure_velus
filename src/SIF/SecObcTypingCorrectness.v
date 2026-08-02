@@ -459,6 +459,34 @@ Module Type SECOBCTYPINGCORRECTNESS
       apply in_map_iff. exists d. split; [reflexivity|exact Hin].
     Qed.
 
+    (** The raw constraint targets of a body are exactly its statement
+        targets, read through [collapse] -- which changes the multiset
+        but not the set. *)
+
+    Lemma generated_class_raw_target_in:
+      forall s1 s2 pc1 pc2 c1 c2 t1 t2 sa sa' sb sb' rhs,
+        generate_stmt_constraints G env state_env rst_ty pc1 s1 sa = OK (c1, sa') ->
+        generate_stmt_constraints G env state_env rst_ty pc2 s2 sb = OK (c2, sb') ->
+        stmt_targets s1 = Some t1 ->
+        stmt_targets s2 = Some t2 ->
+        (In rhs (map snd (SymTypes.collapse (c1 ++ c2)))
+         <-> In rhs (map (fun ty => [ty]) (t1 ++ t2))).
+    Proof.
+      intros s1 s2 pc1 pc2 c1 c2 t1 t2 sa sa' sb sb' rhs Hg1 Hg2 Ht1 Ht2.
+      destruct (generate_stmt_constraints_targets s1 pc1 c1 sa sa' Hg1)
+        as (t1' & Ht1' & Hm1).
+      destruct (generate_stmt_constraints_targets s2 pc2 c2 sb sb' Hg2)
+        as (t2' & Ht2' & Hm2).
+      rewrite Ht1 in Ht1'. inversion Ht1'; subst t1'.
+      rewrite Ht2 in Ht2'. inversion Ht2'; subst t2'.
+      assert (Hraw : map snd (c1 ++ c2) = map (fun ty => [ty]) (t1 ++ t2)).
+      { transitivity (map snd c1 ++ map snd c2); [apply List.map_app|].
+        transitivity (map (fun ty => [ty]) t1 ++ map (fun ty => [ty]) t2);
+          [now rewrite Hm1, Hm2|].
+        symmetry. apply List.map_app. }
+      rewrite SymTypes.collapse_rhs_in, Hraw. reflexivity.
+    Qed.
+
   End TARGETS.
 
   Lemma generate_state_env'_key_from_objs:
@@ -612,6 +640,18 @@ Module Type SECOBCTYPINGCORRECTNESS
     (** Mirrors [generate_sys_signature_scoped] on the STC side, with
         [class_well_defined] standing in for [wc_system]: an STC system
         record carries its own invariants, an Obc class does not. *)
+
+    (** The generated constraint list has duplicate-free targets: the
+        raw list is collapsed, which merges the duplicates, and
+        [simplify] only removes. *)
+
+    Lemma generated_class_targets_nodup:
+      forall cs hid,
+        NoDup (map snd (SymTypes.simplify (SymTypes.collapse cs) hid)).
+    Proof.
+      intros cs hid.
+      apply SymTypes.simplify_nodup, SymTypes.collapse_rhs_nodup.
+    Qed.
 
     Theorem generate_class_signature_scoped:
       forall c envc aux sig,
