@@ -3329,6 +3329,49 @@ Module Type SECSTCOBCTRANSLATION
       destruct (Hcls ty Hinty) as [Hgood|Hbad]; [exact Hgood|contradiction].
     Qed.
 
+    (** ** The generated class signature's targets are its outputs
+
+        The two halves, closed by [NoDup_Permutation].  This is the Obc
+        reading of what [generate_sys_signature_good] proves on the STC
+        side, and it is what [generate_constraints_ok_from_good] needs of
+        a callee signature. *)
+
+    Theorem generate_class_signature_targets_out:
+      forall P s aux_names obcsig,
+        NAMEGEN.naming_env_props env aux_names ->
+        SIG.secglobal_scoped G2 ->
+        CloStc.wc_system P s ->
+        SECOBCTYPING.generate_class_signature G2 (translate_system s) env
+          aux_names = OK obcsig ->
+        SIGPROOFS.signature_targets_out obcsig.
+    Proof.
+      intros P s aux_names obcsig Hprops Hglob Hwc Hsig.
+      pose proof Hsig as Hsig0.
+      edestruct SECOBCTYPINGCORRECTNESS.generate_class_signature_inv as
+          (clk_id & rst_id & clk_type & rst_type & stepm & resetm
+           & inp & out & locals & lasts & state_env & stids
+           & craw_step & craw_reset & st_state & st_step & st_raw
+           & Haux & Hclk & Hrst & Hstepm & Hresetm & Hinp & Hout
+           & Hlocals & Hlasts & Hsenv & Hstids & Hstepc & Hresetc & Hsigdef);
+        [exact Hsig0|].
+      rewrite exists_step_method in Hstepm. inversion Hstepm; subst stepm.
+      rewrite step_method_outs, get_mappings_from_node_idty in Hout.
+      assert (Hnd1 : NoDup (map snd obcsig.(s_constraints))).
+      { rewrite Hsigdef. cbn.
+        apply SECOBCTYPINGCORRECTNESS.generated_class_targets_nodup. }
+      assert (Hnd2 : NoDup obcsig.(s_out)).
+      { rewrite Hsigdef. cbn.
+        eapply translate_class_out_nodup;
+          [exact (proj1 (proj1 Hprops))|exact Hout]. }
+      unfold SIGPROOFS.signature_targets_out.
+      apply NoDup_Permutation;
+        [exact Hnd1|apply SIG.nodup_singleton_map; exact Hnd2|].
+      intro rhs. split.
+      - intro Hin. eapply translate_class_target_is_out; eauto.
+      - intro Hin. apply in_map_iff in Hin as (ty & Heq & Hty). subst rhs.
+        eapply translate_class_out_is_target; eauto.
+    Qed.
+
 
     (** ** The raw scope
 
