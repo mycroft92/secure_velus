@@ -434,6 +434,39 @@ Module Type SECSTCOBCTRANSLATION
       - unfold tovar. destruct (PS.mem x memset); simpl; rewrite Hx; reflexivity.
     Qed.
 
+    (** Existence, as opposed to containment: wherever the STC side
+        typed the actuals, the Obc side types the translated ones. *)
+
+    Lemma translate_args_type_ok:
+      forall memset clkvars ck es tys st1 st1' st2,
+        SC.mmap (fun e => option_to_sec (SECCETYPING.assign_exp_type env e))
+          es st1 = OK (tys, st1') ->
+        exists otys,
+          SC.mmap (fun e => option_to_sec (SECOBCTYPING.assign_exp_type env e))
+            (map (translate_arg memset clkvars ck) es) st2 = OK (otys, st2).
+    Proof.
+      intros memset clkvars ck es. induction es as [|e es IH];
+        intros tys st1 st1' st2 Hce.
+      - exists []. reflexivity.
+      - simpl in Hce.
+        eapply sec_bind_inv in Hce as (ety & sta & Hhd & Hce).
+        eapply sec_bind_inv in Hce as (tys' & stb & Htl & _).
+        assert (Hetyopt : SECCETYPING.assign_exp_type env e = Some ety).
+        { unfold option_to_sec in Hhd.
+          destruct (SECCETYPING.assign_exp_type env e); try discriminate.
+          now inversion Hhd. }
+        destruct (translate_arg_type_incl memset clkvars ck e ety Hetyopt)
+          as (oty & Hoty & _).
+        destruct (IH _ _ _ st2 Htl) as (otys & Hotys).
+        exists (oty :: otys). simpl.
+        eapply (mmap_cons_ok
+                  (fun e0 => option_to_sec (SECOBCTYPING.assign_exp_type env e0))
+                  (translate_arg memset clkvars ck e)
+                  (map (translate_arg memset clkvars ck) es) st2 oty st2 otys st2).
+        + unfold option_to_sec. rewrite Hoty. reflexivity.
+        + exact Hotys.
+    Qed.
+
     Lemma translate_args_type_incl:
       forall memset clkvars ck es tys otys st1 st1' st2 st2',
         SC.mmap (fun e => option_to_sec (SECCETYPING.assign_exp_type env e))
