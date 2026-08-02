@@ -3701,6 +3701,102 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
       exact (Hscopefresh_ssig x Hin).
   Qed.
 
+  (** ** When [generate_constraints] succeeds
+
+      Reading the substitution functions, a call generation can fail in
+      four places, and each guard is closed by a hypothesis the call
+      rules already carry:
+
+      - [subst_inp_ident_in_constraint] rejects a constraint whose target
+        is not a singleton, and one whose target *is* the input being
+        substituted.  [signature_good] makes every target a singleton
+        drawn from [s_out], and [NoDup (sig_scope sig)] keeps [s_in]
+        disjoint from [s_out] -- an input is never a target, which is
+        also true syntactically since no input is ever written.
+      - [subst_ident_constraint] rejects [x = v].  [outputs_fresh] keeps
+        the incoming actuals off the signature scope, so no actual can
+        equal the formal it replaces.
+      - [subst_constraints_out_map] rejects an actual that is *already* a
+        target, checked against the evolving list: [outputs_fresh]
+        excludes the formals still to come and [NoDup out] the actuals
+        already substituted.
+      - the closing [mmap findST] needs every actual to be a target by
+        then, which is what substituting each formal has arranged. *)
+
+  Definition singleton_targets (cs: list constraint) : Prop :=
+    Forall (fun c => exists d, snd c = [d]) cs.
+
+  Lemma findST_None_iff:
+    forall cs d,
+      findST cs d = None <-> forall w, ~ In (w, [d]) cs.
+  Proof.
+    induction cs as [|[t ds] cs IH]; intro d; simpl.
+    - split; [intros _ w []|reflexivity].
+    - destruct ds as [|d' ds'].
+      + rewrite IH. split.
+        * intros H w [Heq|Hin]; [discriminate|eapply H; exact Hin].
+        * intros H w Hin. eapply H. right. exact Hin.
+      + destruct ds' as [|d'' ds''].
+        * destruct (ident_eqb d' d) eqn:Hdd.
+          -- split; [discriminate|].
+             intro H. exfalso. apply ident_eqb_eq in Hdd. subst d'.
+             eapply H. left. reflexivity.
+          -- rewrite IH. split.
+             ++ intros H w [Heq|Hin].
+                ** exfalso. inversion Heq; subst.
+                   rewrite ident_eqb_refl in Hdd. discriminate.
+                ** eapply H; exact Hin.
+             ++ intros H w Hin. eapply H. right. exact Hin.
+        * rewrite IH. split.
+          -- intros H w [Heq|Hin]; [discriminate|eapply H; exact Hin].
+          -- intros H w Hin. eapply H. right. exact Hin.
+  Qed.
+
+  Lemma findST_Some_In:
+    forall cs d st, findST cs d = Some st -> In (st, [d]) cs.
+  Proof.
+    exact find_correct.
+  Qed.
+
+  (** Substituting a *source* identifier leaves every target where it
+      was, so the whole input/clock/reset phase is target-invariant. *)
+
+  Lemma subst_ident_in_constraints_ok:
+    forall cs x v st,
+      singleton_targets cs ->
+      (forall w, ~ In (w, [x]) cs) ->
+      exists cs',
+        subst_ident_in_constraints cs x v st = OK (cs', st)
+        /\ singleton_targets cs'
+        /\ (forall d, findST cs' d = None <-> findST cs d = None).
+  Proof.
+    induction cs as [|[ty ds] cs IH]; intros x v st Hsing Hnx.
+    - exists []. split; [reflexivity|]. split; [constructor|].
+      intro d. reflexivity.
+    - inversion Hsing as [|c cs0 (d & Hd) Hsing']; subst. simpl in Hd. subst ds.
+      destruct (IH x v st Hsing') as (cs2 & Hcs2 & Hsing2 & Hfind2).
+      { intros w Hin. eapply Hnx. right. exact Hin. }
+      assert (Hdx : ident_eqb x d = false).
+      { apply ident_eqb_neq. intro Hxd. subst d.
+        eapply Hnx. left. reflexivity. }
+      (* the head substitution succeeds and keeps the target [d] *)
+      destruct (subst_inp_ident_in_constraint (ty, [d]) x v st)
+        as [[c1 s1]|] eqn:Hhd.
+      2:{ exfalso. unfold subst_inp_ident_in_constraint in Hhd.
+          rewrite Hdx in Hhd. discriminate. }
+      assert (Hc1 : snd c1 = [d] /\ s1 = st).
+      { unfold subst_inp_ident_in_constraint in Hhd. rewrite Hdx in Hhd.
+        unfold ret in Hhd. inversion Hhd. split; reflexivity. }
+      destruct Hc1 as (Hc1d & Hs1). subst s1.
+      exists (c1 :: cs2). split.
+      + unfold subst_ident_in_constraints in *.
+        eapply mmap_cons_ok; [exact Hhd|exact Hcs2].
+      + split; [constructor; [now exists d|exact Hsing2]|].
+        intro d0. destruct c1 as [t1 ds1]. simpl in Hc1d. subst ds1.
+        simpl. destruct (ident_eqb d d0);
+          [split; discriminate|exact (Hfind2 d0)].
+  Qed.
+
   (** ** The call-preservation rules, shared by both bridges
 
       A callee signature may be re-generated at input actuals pointwise
