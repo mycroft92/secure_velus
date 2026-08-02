@@ -2877,6 +2877,23 @@ Module Type SECSTCOBCTRANSLATION
           * unfold SIG.signature_scope. cbn. exact Hvis.
     Qed.
 
+    (** The outputs of a translated class are distinct: they are images
+        of distinct source names under an injective environment. *)
+
+    Lemma translate_class_out_nodup:
+      forall s out,
+        env_injective env ->
+        get_mappings_from_node (SynStc.s_out s) env = Some out ->
+        NoDup out.
+    Proof.
+      intros s out Hinj Hout.
+      eapply get_mappings_nodup_gen;
+        [|exact Hinj|exact (get_mappings_from_node_eq _ _ _ _ Hout)].
+      pose proof (SynStc.s_nodup s) as Hnd.
+      apply NoDup_app_r, NoDup_app_r in Hnd.
+      eapply NoDup_app_l; exact Hnd.
+    Qed.
+
     Lemma translate_system_well_defined:
       forall P s,
         wc_system P s ->
