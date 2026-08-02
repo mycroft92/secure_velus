@@ -418,8 +418,17 @@ Nothing outstanding.
 ## 7. Evidence the chain is not vacuous
 
 Every top-level theorem is conditioned on `generate_... = OK G`; there
-are no totality lemmas, exactly as for Velus's own passes.  So vacuity is
-ruled out empirically:
+are no totality lemmas anywhere in `src/SIF`, exactly as for Velus's own
+passes.  This is **not** specific to the Stc-to-Obc layer: the
+NLustre-to-Stc top-level theorem
+(`generated_program_signatures_preserved_global`) and the NLustre NI
+theorem carry the same hypotheses, and all three layers share the root
+one, `generate_node_scoped_env all_nodes = OK (envs, aux_names)`.  So the
+totality work is *one* gap at the NLustre naming pass rather than three:
+prove that pass succeeds and that its environment covers every name
+looked up, and the generators of all three layers follow.
+
+Vacuity is ruled out empirically:
 
 ```
 velus -dsif <file>.lus     ->  <file>.{n,s,o}.sif
@@ -435,8 +444,9 @@ through changed 32 of the 42 dumps -- by constraint *order* only, the
 sets and the simplified signatures being unaffected, exactly as B4
 predicts.)
 
-Over all 42 of `tests/ok_*.lus` that compile, the Stc and Obc
-*simplified* constraint sets are **identical** in every case (compare the
+Over all 42 of `tests/ok_*.lus` that compile, the NLustre, Stc and Obc
+*simplified* constraint sets are **identical** in every case -- all three
+legs, `.n.sif` = `.s.sif` = `.o.sif` (compare the
 constraint lines as sets -- comparing the text from `simplified
 constraints:` to end of file is wrong, it swallows the next system's
 section).  The theorem only claims `preserves_on`, so equality is
