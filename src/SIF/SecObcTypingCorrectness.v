@@ -459,6 +459,71 @@ Module Type SECOBCTYPINGCORRECTNESS
       apply in_map_iff. exists d. split; [reflexivity|exact Hin].
     Qed.
 
+    (** Every target has a source: it is the type of a name the
+        statement writes, or the state type of an instance it resets.
+        The converse of [stmt_writes_targets] and
+        [stmt_reset_insts_targets] together. *)
+
+    Lemma stmt_targets_source:
+      forall s tys ty,
+        stmt_targets s = Some tys ->
+        List.In ty tys ->
+        (exists x, List.In x (SECOBCTYPING.stmt_writes s)
+                   /\ Env.find x env = Some ty)
+        \/ (exists o, List.In o (SECOBCTYPING.stmt_reset_insts s)
+                      /\ Env.find o state_env = Some ty).
+    Proof.
+      induction s as [x e|x e|e s1 IH1 s2 IH2|s1 IH1 s2 IH2|ys cls o m es|];
+        intros tys ty Htys Hin; simpl in Htys.
+      - destruct (Env.find x env) as [t|] eqn:Hf; [|discriminate].
+        inversion Htys; subst tys. destruct Hin as [Heq|[]]; subst t.
+        left. exists x. split; [now left|exact Hf].
+      - destruct (Env.find x env) as [t|] eqn:Hf; [|discriminate].
+        inversion Htys; subst tys. destruct Hin as [Heq|[]]; subst t.
+        left. exists x. split; [now left|exact Hf].
+      - destruct (stmt_targets s1) as [t1|] eqn:H1; [|discriminate].
+        destruct (stmt_targets s2) as [t2|] eqn:H2; [|discriminate].
+        inversion Htys; subst tys.
+        apply in_app_iff in Hin as [Hin|Hin].
+        + destruct (IH1 t1 ty Logic.eq_refl Hin) as [(z & Hz & Hf)|(q & Hq & Hf)];
+            [left; exists z|right; exists q];
+            (split; [cbn [SECOBCTYPING.stmt_writes
+                          SECOBCTYPING.stmt_reset_insts];
+                     apply in_or_app; now left|exact Hf]).
+        + destruct (IH2 t2 ty Logic.eq_refl Hin) as [(z & Hz & Hf)|(q & Hq & Hf)];
+            [left; exists z|right; exists q];
+            (split; [cbn [SECOBCTYPING.stmt_writes
+                          SECOBCTYPING.stmt_reset_insts];
+                     apply in_or_app; now right|exact Hf]).
+      - destruct (stmt_targets s1) as [t1|] eqn:H1; [|discriminate].
+        destruct (stmt_targets s2) as [t2|] eqn:H2; [|discriminate].
+        inversion Htys; subst tys.
+        apply in_app_iff in Hin as [Hin|Hin].
+        + destruct (IH1 t1 ty Logic.eq_refl Hin) as [(z & Hz & Hf)|(q & Hq & Hf)];
+            [left; exists z|right; exists q];
+            (split; [cbn [SECOBCTYPING.stmt_writes
+                          SECOBCTYPING.stmt_reset_insts];
+                     apply in_or_app; now left|exact Hf]).
+        + destruct (IH2 t2 ty Logic.eq_refl Hin) as [(z & Hz & Hf)|(q & Hq & Hf)];
+            [left; exists z|right; exists q];
+            (split; [cbn [SECOBCTYPING.stmt_writes
+                          SECOBCTYPING.stmt_reset_insts];
+                     apply in_or_app; now right|exact Hf]).
+      - destruct ys as [|y ys'].
+        + destruct (ident_eqb m Ids.reset) eqn:Hm.
+          * destruct (Env.find o state_env) as [t|] eqn:Hf; [|discriminate].
+            inversion Htys; subst tys. destruct Hin as [Heq|[]]; subst t.
+            right. exists o.
+            split; [cbn [SECOBCTYPING.stmt_reset_insts]; rewrite Hm; now left
+                   |exact Hf].
+          * inversion Htys; subst tys. contradiction.
+        + destruct (ident_eqb m Ids.step) eqn:Hm; [|discriminate].
+          destruct (get_mappings_In _ _ _ _ Htys Hin) as (z & Hz & Hf).
+          left. exists z.
+          split; [cbn [SECOBCTYPING.stmt_writes]; rewrite Hm; exact Hz|exact Hf].
+      - inversion Htys; subst tys. contradiction.
+    Qed.
+
     (** The raw constraint targets of a body are exactly its statement
         targets, read through [collapse] -- which changes the multiset
         but not the set. *)
