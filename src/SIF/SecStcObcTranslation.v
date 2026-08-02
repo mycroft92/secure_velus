@@ -2390,6 +2390,78 @@ Module Type SECSTCOBCTRANSLATION
         simpl. rewrite ident_eqb_refl. exact Hin.
     Qed.
 
+    (** The converses.  A translated body writes *only* the names the
+        system defines -- its variables and its lasts -- which is what
+        lets a constraint target be traced back to an output.  The
+        forward lemmas above give containment the other way; both halves
+        are needed, one for "every output is a target" and one for "every
+        target is an output". *)
+
+    Lemma stmt_writes_Control_inv:
+      forall memset ck s d,
+        List.In d (SECOBCTYPING.stmt_writes (Control memset ck s)) ->
+        List.In d (SECOBCTYPING.stmt_writes s).
+    Proof.
+      intros memset ck. induction ck as [|ck IH x b]; intros s d Hd.
+      - exact Hd.
+      - destruct b; apply IH in Hd; cbn [SECOBCTYPING.stmt_writes] in Hd;
+          apply in_app_iff in Hd as [Hd|Hd];
+          solve [exact Hd | contradiction].
+    Qed.
+
+    Lemma stmt_writes_translate_cexp_inv:
+      forall memset x ce d,
+        List.In d (SECOBCTYPING.stmt_writes (translate_cexp memset x ce)) ->
+        d = x.
+    Proof.
+      intros memset x ce. induction ce as [y t IHt f IHf|e t IHt f IHf|le];
+        intros d Hd; simpl in Hd.
+      - apply in_app_iff in Hd as [Hd|Hd]; [now apply IHt|now apply IHf].
+      - apply in_app_iff in Hd as [Hd|Hd]; [now apply IHt|now apply IHf].
+      - destruct Hd as [Heq|[]]. now symmetry.
+    Qed.
+
+    Lemma stmt_writes_translate_tc_inv:
+      forall memset clkvars tc d,
+        List.In d (SECOBCTYPING.stmt_writes (translate_tc memset clkvars tc)) ->
+        List.In d (variables_tc tc) \/ List.In d (lasts_of [tc]).
+    Proof.
+      intros memset clkvars tc d Hd.
+      destruct tc as [y ck ce|y ck e|i ck g|i ys ck b g es];
+        unfold translate_tc in Hd; apply stmt_writes_Control_inv in Hd.
+      - left. apply stmt_writes_translate_cexp_inv in Hd. subst d. now left.
+      - right. cbn [SECOBCTYPING.stmt_writes] in Hd.
+        destruct Hd as [Heq|[]]. subst d. now left.
+      - cbn [SECOBCTYPING.stmt_writes] in Hd.
+        destruct (ident_eqb reset step); contradiction.
+      - left. cbn [SECOBCTYPING.stmt_writes] in Hd.
+        rewrite ident_eqb_refl in Hd. exact Hd.
+    Qed.
+
+    Lemma stmt_writes_translate_tcs_fold_inv:
+      forall memset clkvars tcs acc d,
+        List.In d (SECOBCTYPING.stmt_writes
+                     (fold_left (fun i tc =>
+                        SynObc.Comp (translate_tc memset clkvars tc) i) tcs acc)) ->
+        List.In d (SECOBCTYPING.stmt_writes acc)
+        \/ List.In d (variables tcs) \/ List.In d (lasts_of tcs).
+    Proof.
+      induction tcs as [|tc tcs IH]; intros acc d Hd; simpl in Hd |- *.
+      - now left.
+      - destruct (IH _ _ Hd) as [Hin|[Hin|Hin]].
+        + cbn [SECOBCTYPING.stmt_writes] in Hin.
+          apply in_app_iff in Hin as [Hin|Hin].
+          * destruct (stmt_writes_translate_tc_inv memset clkvars tc d Hin)
+              as [Hv|Hl].
+            -- right; left. apply in_or_app; now left.
+            -- right; right.
+               destruct tc as [|y ck e| |]; simpl in Hl |- *;
+                 solve [contradiction | destruct Hl as [Heq|[]]; now left].
+          * now left.
+        + right; left. apply in_or_app; now right.
+        + right; right. destruct tc as [|y ck e| |]; simpl; auto.
+    Qed.
+
     Lemma stmt_writes_translate_tcs_fold:
       forall memset clkvars tcs acc,
         (forall d, List.In d (SECOBCTYPING.stmt_writes acc) ->
