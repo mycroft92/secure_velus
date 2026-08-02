@@ -238,6 +238,25 @@ Module Type SECSTCOBCTRANSLATION
       eapply clock_pc_from_assign; eauto.
     Qed.
 
+    (** The dual of [clock_pc_assign_clk_type]: if the STC side managed
+        to type the clock, the Obc side can walk it, at whatever pc. *)
+
+    Lemma clock_pc_ok:
+      forall b ck ckty pc,
+        SECCETYPING.assign_clk_type env b ck = Some ckty ->
+        exists pc', clock_pc pc ck = Some pc'.
+    Proof.
+      intros b ck. induction ck as [|ck IH x bck];
+        intros ckty pc Hassign; simpl in *.
+      - eexists; reflexivity.
+      - destruct (SECCETYPING.assign_clk_type env b ck) as [ckty'|] eqn:Hck;
+          simpl in Hassign; try discriminate.
+        destruct (Env.find x env) as [ty|] eqn:Hx; simpl in Hassign;
+          try discriminate.
+        destruct (IH ckty' pc Logic.eq_refl) as (pc' & Hpc').
+        rewrite Hpc'. eexists; reflexivity.
+    Qed.
+
   End CONTROLPC.
 
   (** * Merge ACI helpers *)
