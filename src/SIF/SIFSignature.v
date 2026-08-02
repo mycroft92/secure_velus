@@ -3929,6 +3929,180 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
             |intro Heq; subst d; apply Hdv; now left].
   Qed.
 
+  (** Reading [signature_good] into the [findST] world: every target is
+      a singleton, and the targets are exactly the outputs. *)
+
+  Lemma good_singleton_targets:
+    forall sig,
+      signature_good sig ->
+      singleton_targets sig.(s_constraints).
+  Proof.
+    intros sig (_ & Hperm).
+    apply Forall_forall. intros c Hc.
+    assert (Hin : In (snd c) (map snd sig.(s_constraints)))
+      by (apply in_map; exact Hc).
+    pose proof (Permutation_in _ Hperm Hin) as Hin'.
+    apply in_map_iff in Hin' as (d & Hd & _).
+    exists d. now symmetry.
+  Qed.
+
+  Lemma good_targets_iff:
+    forall sig d,
+      signature_good sig ->
+      (SymTypes.findST sig.(s_constraints) d <> None <-> In d sig.(s_out)).
+  Proof.
+    intros sig d (_ & Hperm). split.
+    - intro Hne.
+      destruct (SymTypes.findST sig.(s_constraints) d) as [w|] eqn:Hf;
+        [|contradiction].
+      apply findST_Some_In in Hf.
+      assert (Hin : In [d] (map snd sig.(s_constraints))).
+      { apply in_map_iff. exists (w, [d]). split; [reflexivity|exact Hf]. }
+      pose proof (Permutation_in _ Hperm Hin) as Hin'.
+      apply in_map_iff in Hin' as (d' & Hd' & Hind').
+      inversion Hd'; subst d'. exact Hind'.
+    - intros Hin Hnone.
+      pose proof (proj1 (findST_None_iff sig.(s_constraints) d) Hnone)
+        as Hnone'.
+      assert (Hin2 : In [d] (map (fun ty => [ty]) sig.(s_out))).
+      { apply in_map_iff. exists d. split; [reflexivity|exact Hin]. }
+      pose proof (Permutation_in _ (Permutation_sym Hperm) Hin2) as Hin3.
+      apply in_map_iff in Hin3 as (c & Hc & Hinc).
+      destruct c as [w ds]. simpl in Hc. subst ds.
+      eapply Hnone'; exact Hinc.
+  Qed.
+
+  (** The input phase: iterated source substitution, target-invariant. *)
+
+  Lemma subst_constraints_inp_map_ok:
+    forall xs vs cs st,
+      List.length xs = List.length vs ->
+      singleton_targets cs ->
+      (forall x, In x xs -> SymTypes.findST cs x = None) ->
+      exists cs',
+        subst_constraints_inp_map cs xs vs st = OK (cs', st)
+        /\ singleton_targets cs'
+        /\ (forall d, SymTypes.findST cs' d = None
+                      <-> SymTypes.findST cs d = None).
+  Proof.
+    induction xs as [|x xs IH]; intros vs cs st Hlen Hsing Hnt.
+    - destruct vs as [|v vs]; [|simpl in Hlen; discriminate].
+      exists cs. split; [reflexivity|]. split; [exact Hsing|].
+      intro d. reflexivity.
+    - destruct vs as [|v vs]; [simpl in Hlen; discriminate|].
+      simpl in Hlen. injection Hlen as Hlen.
+      assert (Hnx : forall w, ~ In (w, [x]) cs).
+      { apply (proj1 (findST_None_iff cs x)). apply Hnt. now left. }
+      destruct (subst_ident_in_constraints_ok cs x v st Hsing Hnx)
+        as (cs1 & Hcs1 & Hsing1 & Hfind1).
+      destruct (IH vs cs1 st Hlen Hsing1) as (cs2 & Hcs2 & Hsing2 & Hfind2).
+      { intros y Hy. apply Hfind1. apply Hnt. now right. }
+      exists cs2. split.
+      + cbn [subst_constraints_inp_map]. unfold bind.
+        rewrite Hcs1. exact Hcs2.
+      + split; [exact Hsing2|].
+        intro d. rewrite (Hfind2 d). exact (Hfind1 d).
+  Qed.
+
+  Lemma mmap_ok_forall:
+    forall {A B: Type} (f: A -> Sec B) l st,
+      (forall a, In a l -> exists b, f a st = OK (b, st)) ->
+      exists bs, mmap f l st = OK (bs, st).
+  Proof.
+    induction l as [|a l IH]; intros st Hall.
+    - exists []. reflexivity.
+    - destruct (Hall a (or_introl Logic.eq_refl)) as (b & Hb).
+      destruct (IH st (fun y Hy => Hall y (or_intror Hy))) as (bs & Hbs).
+      exists (b :: bs). eapply mmap_cons_ok; [exact Hb|exact Hbs].
+  Qed.
+
+  (** The four phases together.  Every hypothesis is one the call rules
+      already carry; none is new. *)
+
+  Theorem generate_constraints_ok_from_good:
+    forall sig inp clk rst out st,
+      signature_good sig ->
+      NoDup (sig_scope sig) ->
+      List.length sig.(s_in) = List.length inp ->
+      List.length sig.(s_out) = List.length out ->
+      outputs_fresh (sig_scope sig) out ->
+      NoDup out ->
+      exists cns, generate_constraints sig inp clk rst out st = OK (cns, st).
+  Proof.
+    intros sig inp clk rst out st Hgood Hnd Hleni Hleno Hfresh Hndo.
+    pose proof (good_singleton_targets sig Hgood) as Hsing.
+    pose proof (fun d => good_targets_iff sig d Hgood) as Htgt.
+    unfold signature_scope in Hnd, Hfresh.
+    assert (Hndrest : NoDup (sig.(s_out) ++ [sig.(s_clk); sig.(s_reset)]))
+      by (eapply NoDup_app_r; exact Hnd).
+    assert (Hndout : NoDup sig.(s_out)) by (eapply NoDup_app_l; exact Hndrest).
+    (* inputs are never targets *)
+    assert (Hin_nt : forall x, In x sig.(s_in) ->
+                     SymTypes.findST sig.(s_constraints) x = None).
+    { intros x Hx.
+      destruct (SymTypes.findST sig.(s_constraints) x) as [w|] eqn:Hf;
+        [exfalso|reflexivity].
+      eapply (NoDup_app_In x sig.(s_in) _ Hnd Hx).
+      apply in_or_app. left. apply Htgt. rewrite Hf. discriminate. }
+    (* neither is the clock nor the reset name *)
+    assert (Hnotout : forall y, In y [sig.(s_clk); sig.(s_reset)] ->
+                      ~ In y sig.(s_out)).
+    { intros y Hy Hyo.
+      eapply (NoDup_app_In y sig.(s_out) _ Hndrest Hyo). exact Hy. }
+    (* phase 1: the inputs *)
+    destruct (subst_constraints_inp_map_ok sig.(s_in) inp sig.(s_constraints)
+                st Hleni Hsing Hin_nt) as (c1 & Hc1 & Hsing1 & Hf1).
+    (* phase 2: the clock *)
+    assert (Hclk_nt : forall w, ~ In (w, [sig.(s_clk)]) c1).
+    { apply (proj1 (findST_None_iff c1 sig.(s_clk))). apply Hf1.
+      destruct (SymTypes.findST sig.(s_constraints) sig.(s_clk)) eqn:Hf;
+        [exfalso|reflexivity].
+      eapply (Hnotout sig.(s_clk)); [now left|].
+      apply Htgt. rewrite Hf. discriminate. }
+    destruct (subst_ident_in_constraints_ok c1 sig.(s_clk) clk st Hsing1 Hclk_nt)
+      as (c2 & Hc2 & Hsing2 & Hf2).
+    (* phase 3: the reset *)
+    assert (Hrst_nt : forall w, ~ In (w, [sig.(s_reset)]) c2).
+    { apply (proj1 (findST_None_iff c2 sig.(s_reset))). apply Hf2. apply Hf1.
+      destruct (SymTypes.findST sig.(s_constraints) sig.(s_reset)) eqn:Hf;
+        [exfalso|reflexivity].
+      eapply (Hnotout sig.(s_reset)); [now right; left|].
+      apply Htgt. rewrite Hf. discriminate. }
+    destruct (subst_ident_in_constraints_ok c2 sig.(s_reset) rst st Hsing2 Hrst_nt)
+      as (c3 & Hc3 & Hsing3 & Hf3).
+    (* the three phases so far left every target where it was *)
+    assert (Hsame : forall d, SymTypes.findST c3 d = None
+                              <-> SymTypes.findST sig.(s_constraints) d = None).
+    { intro d. rewrite (Hf3 d), (Hf2 d). exact (Hf1 d). }
+    (* phase 4: the outputs *)
+    assert (Hodisj : forall v, In v out -> ~ In v sig.(s_out)).
+    { intros v Hv Hvo.
+      unfold outputs_fresh in Hfresh. rewrite Forall_forall in Hfresh.
+      apply (Hfresh v Hv). apply in_or_app. right.
+      apply in_or_app. now left. }
+    destruct (subst_constraints_out_map_ok sig.(s_out) out c3 st
+                Hleno Hndout Hndo Hodisj) as (c4 & Hc4 & Hc4tgt & _);
+      [ intros v Hv; apply (proj2 (Hsame v));
+        destruct (SymTypes.findST sig.(s_constraints) v) eqn:Hf;
+        [exfalso; apply (Hodisj v Hv); apply (proj1 (Htgt v));
+         rewrite Hf; discriminate
+        |reflexivity]
+      | intros x Hx Hnone;
+        apply (proj2 (Htgt x) Hx); exact (proj1 (Hsame x) Hnone)
+      | exact Hsing3
+      |].
+    (* phase 5: reading each output back *)
+    destruct (mmap_ok_forall
+                (fun x => do t <- option_to_sec (SymTypes.findST c4 x);
+                          ret (t, [x])) out st) as (cns & Hcns).
+    { intros a Ha.
+      destruct (SymTypes.findST c4 a) as [t|] eqn:Hfa;
+        [|exfalso; apply (Hc4tgt a Ha); exact Hfa].
+      exists (t, [a]). unfold bind, option_to_sec, ret. reflexivity. }
+    exists cns. unfold generate_constraints. unfold bind.
+    rewrite Hc1, Hc2, Hc3, Hc4. exact Hcns.
+  Qed.
+
   (** ** The call-preservation rules, shared by both bridges
 
       A callee signature may be re-generated at input actuals pointwise
