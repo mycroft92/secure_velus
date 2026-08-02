@@ -3073,6 +3073,48 @@ Module Type SECSTCOBCTRANSLATION
       apply in_or_app; right. apply in_or_app; now left.
     Qed.
 
+    (** ** Per-trconstr relative totality (non-call cases)
+
+        Where the STC generator succeeded, so does the Obc one.  Its
+        inversion hands over exactly what the translated statement needs:
+        a clock type (so [Control] reduces), an expression type, and the
+        target's entry in the environment. *)
+
+    Lemma translate_tcdef_constraints_ok:
+      forall memset clkvars vars x ck ce pc nconst st1 st1' st2,
+        CEClo.wc_cexp vars ce ck ->
+        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
+          (SynStc.TcDef x ck ce) st1 = OK (nconst, st1') ->
+        exists cns,
+          generate_stmt_constraints G2 env reset_env rst_ty pc
+            (translate_tc memset clkvars (SynStc.TcDef x ck ce)) st2
+          = OK (cns, st2).
+    Proof.
+      intros memset clkvars vars x ck ce pc nconst st1 st1' st2 Hwc Hstc.
+      simpl in Hstc.
+      eapply sec_bind_inv in Hstc as (ckty & sa & Hck & Hstc).
+      eapply sec_bind_inv in Hstc as (cety & sb & Hce & Hstc).
+      eapply sec_bind_inv in Hstc as (xty & sc & Hx & _).
+      assert (Hckopt : SECCETYPING.assign_clk_type env clk_ty ck = Some ckty).
+      { unfold option_to_sec in Hck.
+        destruct (SECCETYPING.assign_clk_type env clk_ty ck); try discriminate.
+        now inversion Hck. }
+      assert (Hceopt : SECCETYPING.assign_cexp_type env ce = Some cety).
+      { unfold option_to_sec in Hce.
+        destruct (SECCETYPING.assign_cexp_type env ce); try discriminate.
+        now inversion Hce. }
+      assert (Hxopt : Env.find x env = Some xty).
+      { unfold find_env in Hx.
+        destruct (Env.find x env); try discriminate. now inversion Hx. }
+      unfold translate_tc.
+      destruct (clock_pc_ok env clk_ty ck ckty pc Hckopt) as (pc' & Hpc').
+      rewrite (generate_stmt_constraints_Control G2 env reset_env rst_ty
+                 memset ck _ pc pc' st2 Hpc').
+      eapply (translate_cexp_constraints_ok G2 env reset_env rst_ty
+                memset vars x ce ck clk_ty pc' ckty cety xty st2);
+        eassumption.
+    Qed.
+
     Lemma translate_system_well_defined:
       forall P s,
         wc_system P s ->
