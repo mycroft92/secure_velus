@@ -2894,6 +2894,77 @@ Module Type SECSTCOBCTRANSLATION
       eapply NoDup_app_l; exact Hnd.
     Qed.
 
+    (** Every output of a translated class is a target of its generated
+        constraints: the step method writes it, so its type is among the
+        statement targets, and it is not hidden, so [simplify] keeps
+        it. *)
+
+    Lemma translate_class_out_is_target:
+      forall P s aux_names obcsig ty,
+        NAMEGEN.naming_env_props env aux_names ->
+        SIG.secglobal_scoped G2 ->
+        CloStc.wc_system P s ->
+        SECOBCTYPING.generate_class_signature G2 (translate_system s) env
+          aux_names = OK obcsig ->
+        List.In ty obcsig.(s_out) ->
+        List.In [ty] (map snd obcsig.(s_constraints)).
+    Proof.
+      intros P s aux_names obcsig ty Hprops Hglob Hwc Hsig Hty.
+      pose proof Hsig as Hsig0.
+      edestruct SECOBCTYPINGCORRECTNESS.generate_class_signature_inv as
+          (clk_id & rst_id & clk_type & rst_type & stepm & resetm
+           & inp & out & locals & lasts & state_env & stids
+           & craw_step & craw_reset & st_state & st_step & st_raw
+           & Haux & Hclk & Hrst & Hstepm & Hresetm & Hinp & Hout
+           & Hlocals & Hlasts & Hsenv & Hstids & Hstepc & Hresetc & Hsigdef);
+        [exact Hsig0|].
+      rewrite exists_step_method in Hstepm. inversion Hstepm; subst stepm.
+      rewrite exists_reset_method in Hresetm. inversion Hresetm; subst resetm.
+      simpl in Haux, Hsenv, Hstids, Hlasts.
+      rewrite step_method_ins, get_mappings_from_node_idty in Hinp.
+      rewrite step_method_vars, get_mappings_from_node_idty in Hlocals.
+      rewrite get_mappings_from_node_mems in Hlasts.
+      pose proof Hout as Hout0.
+      rewrite step_method_outs, get_mappings_from_node_idty in Hout0.
+      pose proof (fun t => translate_class_hidden_disjoint
+                    s env aux_names clk_id rst_id clk_type rst_type inp out
+                    locals lasts state_env stids t
+                    Hprops Haux Hclk Hrst Hinp Hout0 Hlocals Hlasts Hsenv Hstids)
+        as Hdisj.
+      subst obcsig. cbn in Hty |- *.
+      (* the source name behind this output type *)
+      destruct (get_mappings_In _ _ _ _
+                  (get_mappings_from_node_eq _ _ _ _ Hout) Hty)
+        as (x & Hxin & Hfx).
+      (* the step method writes it *)
+      assert (Hwr : List.In x (SECOBCTYPING.stmt_writes
+                                 (step_method s).(m_body))).
+      { apply translate_step_writes_outs. now apply fst_InMembers. }
+      (* so its type is a statement target *)
+      destruct (SECOBCTYPINGCORRECTNESS.generate_stmt_constraints_targets
+                  G2 env state_env rst_type _ _ _ _ _ Hstepc)
+        as (step_tys & Hstept & _).
+      destruct (SECOBCTYPINGCORRECTNESS.generate_stmt_constraints_targets
+                  G2 env state_env rst_type _ _ _ _ _ Hresetc)
+        as (reset_tys & Hresett & _).
+      assert (Hintys : List.In ty step_tys)
+        by (eapply SECOBCTYPINGCORRECTNESS.stmt_writes_targets;
+            [exact Hstept|exact Hwr|exact Hfx]).
+      (* hence a raw target *)
+      assert (Hraw : List.In [ty] (map snd (SymTypes.collapse
+                                              (craw_step ++ craw_reset)))).
+      { apply (SECOBCTYPINGCORRECTNESS.generated_class_raw_target_in
+                 G2 env state_env rst_type _ _ _ _ _ _ _ _ _ _ _ _ _
+                 Hstepc Hresetc Hstept Hresett).
+        apply in_map_iff. exists ty. split; [reflexivity|].
+        apply in_or_app; now left. }
+      (* and it survives simplification, not being hidden *)
+      apply SymTypes.simplify_preserves_other_rhs; [|exact Hraw].
+      intros d Hd Heq. subst d.
+      eapply Hdisj; [exact Hd|].
+      apply in_or_app; right. apply in_or_app; now left.
+    Qed.
+
     Lemma translate_system_well_defined:
       forall P s,
         wc_system P s ->
