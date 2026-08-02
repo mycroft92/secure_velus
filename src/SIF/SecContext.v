@@ -237,6 +237,19 @@ Proof.
   simpl. unfold bind. rewrite Hh, Ht. reflexivity.
 Qed.
 
+Lemma mmap_length:
+  forall {A B: Type} (f: A -> Sec B) l st ys st',
+    mmap f l st = OK (ys, st') ->
+    List.length ys = List.length l.
+Proof.
+  induction l as [|a l IH]; intros st ys st' Hm; simpl in Hm.
+  - unfold ret in Hm. inversion Hm. reflexivity.
+  - eapply sec_bind_inv in Hm as (y & s1 & Hh & Hm).
+    eapply sec_bind_inv in Hm as (ys' & s2 & Ht & Hr).
+    unfold ret in Hr. inversion Hr; subst ys st'.
+    simpl. f_equal. eapply IH; exact Ht.
+Qed.
+
 Lemma mmap_nil_ok:
   forall {A B: Type} (f: A -> Sec B) st,
     mmap f nil st = OK (nil, st).
