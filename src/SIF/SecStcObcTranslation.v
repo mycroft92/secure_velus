@@ -972,12 +972,12 @@ Module Type SECSTCOBCTRANSLATION
       SIGPROOFS.call_preserves_rst n1 n2.
 
     Theorem signatures_preserved_obc_calls_from_good_rst:
-      forall nsig ssig,
-        SIG.signature_good nsig ->
-        NoDup (SIG.signature_scope nsig) ->
-        SIG.signature_scoped ssig ->
-        SIGPROOFS.signatures_preserved nsig ssig ->
-        Signature_call_preserves_obc_rst nsig ssig.
+      forall stcsig obcsig,
+        SIG.signature_good stcsig ->
+        NoDup (SIG.signature_scope stcsig) ->
+        SIG.signature_scoped obcsig ->
+        SIGPROOFS.signatures_preserved stcsig obcsig ->
+        Signature_call_preserves_obc_rst stcsig obcsig.
     Proof.
       exact SIGPROOFS.call_preserves_rst_from_good.
     Qed.
@@ -998,12 +998,12 @@ Module Type SECSTCOBCTRANSLATION
       SIGPROOFS.call_preserves_eq n1 n2.
 
     Theorem signatures_preserved_obc_equal_calls_from_good:
-      forall nsig ssig,
-        SIG.signature_good nsig ->
-        NoDup (SIG.signature_scope nsig) ->
-        SIG.signature_scoped ssig ->
-        SIGPROOFS.signatures_preserved nsig ssig ->
-        Signature_call_preserves_obc_eq nsig ssig.
+      forall stcsig obcsig,
+        SIG.signature_good stcsig ->
+        NoDup (SIG.signature_scope stcsig) ->
+        SIG.signature_scoped obcsig ->
+        SIGPROOFS.signatures_preserved stcsig obcsig ->
+        Signature_call_preserves_obc_eq stcsig obcsig.
     Proof.
       exact SIGPROOFS.call_preserves_eq_from_good.
     Qed.
@@ -1226,15 +1226,15 @@ Module Type SECSTCOBCTRANSLATION
           /\ Signature_head_consistent_obc n1 n2.
 
     Lemma signatures_preserved_obc_full_from_good:
-      forall nsig ssig,
-        nsig.(s_name) = ssig.(s_name) ->
-        SIG.signature_good nsig ->
-        NoDup (SIG.signature_scope nsig) ->
-        SIG.signature_scoped ssig ->
-        SIGPROOFS.signatures_preserved nsig ssig ->
-        Signature_head_consistent_obc nsig ssig.
+      forall stcsig obcsig,
+        stcsig.(s_name) = obcsig.(s_name) ->
+        SIG.signature_good stcsig ->
+        NoDup (SIG.signature_scope stcsig) ->
+        SIG.signature_scoped obcsig ->
+        SIGPROOFS.signatures_preserved stcsig obcsig ->
+        Signature_head_consistent_obc stcsig obcsig.
     Proof.
-      intros nsig ssig Hname Hgood Hnd Hssc Hpres.
+      intros stcsig obcsig Hname Hgood Hnd Hssc Hpres.
       split; [exact Hname|].
       split; [exact (proj1 Hpres)|].
       split.
@@ -3306,13 +3306,13 @@ Module Type SECSTCOBCTRANSLATION
         on name, inputs, outputs, clock and reset. *)
 
     Lemma generated_signature_fields_agree:
-      forall s aux nsig ssig,
-        SECSTCTYPING.generate_sys_signature G1 s env aux = OK nsig ->
-        SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux = OK ssig ->
-        nsig.(s_name) = ssig.(s_name)
-        /\ SIG.signature_fields_agree nsig ssig.
+      forall s aux stcsig obcsig,
+        SECSTCTYPING.generate_sys_signature G1 s env aux = OK stcsig ->
+        SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux = OK obcsig ->
+        stcsig.(s_name) = obcsig.(s_name)
+        /\ SIG.signature_fields_agree stcsig obcsig.
     Proof.
-      intros s aux nsig ssig Hnsig Hssig.
+      intros s aux stcsig obcsig Hnsig Hssig.
       edestruct SECSTCTYPINGCORRECTNESS.generate_sys_signature_inv as
           (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
            & renv & rids & st_reset & sconst & st_s
@@ -3341,7 +3341,7 @@ Module Type SECSTCOBCTRANSLATION
         { eapply get_mappings_from_node_map_fst; [|exact Hout].
           symmetry. apply translated_class_step_out. }
         rewrite Hmap in Hout'. now inversion Hout'. }
-      subst inp' out' nsig ssig. simpl.
+      subst inp' out' stcsig obcsig. simpl.
       repeat split; reflexivity.
     Qed.
 
@@ -3352,23 +3352,23 @@ Module Type SECSTCOBCTRANSLATION
         signatures share a name and so are found together. *)
 
     Theorem Signature_consistent_obc_full_cons:
-      forall H1 H2 nsig ssig,
+      forall H1 H2 stcsig obcsig,
         Signature_consistent_obc_full H1 H2 ->
-        Signature_head_consistent_obc nsig ssig ->
-        Signature_consistent_obc_full (nsig :: H1) (ssig :: H2).
+        Signature_head_consistent_obc stcsig obcsig ->
+        Signature_consistent_obc_full (stcsig :: H1) (obcsig :: H2).
     Proof.
-      intros H1 H2 nsig ssig Hcons Hhead f n1 Hfind.
+      intros H1 H2 stcsig obcsig Hcons Hhead f n1 Hfind.
       simpl in Hfind.
-      destruct (ident_eqb nsig.(s_name) f) eqn:Hname.
+      destruct (ident_eqb stcsig.(s_name) f) eqn:Hname.
       - destruct Hhead as (Hsgname & Hhead).
         apply ident_eqb_eq in Hname. inversion Hfind; subst n1.
-        exists ssig. simpl. rewrite <- Hsgname, Hname, ident_eqb_refl.
+        exists obcsig. simpl. rewrite <- Hsgname, Hname, ident_eqb_refl.
         split; [reflexivity|].
         split; [exact Hsgname|exact Hhead].
       - apply ident_eqb_neq in Hname.
         destruct Hhead as (Hsgname & Hhead).
         specialize (Hcons f n1 Hfind) as (n2 & Hfind2 & Hhead2).
-        assert (Hneqb : ident_eqb ssig.(s_name) f = false).
+        assert (Hneqb : ident_eqb obcsig.(s_name) f = false).
         { apply ident_eqb_neq. rewrite <- Hsgname. exact Hname. }
         exists n2. simpl. rewrite Hneqb. auto.
     Qed.
@@ -3377,12 +3377,12 @@ Module Type SECSTCOBCTRANSLATION
         head-consistent extends a consistent pair of environments. *)
 
     Theorem generated_signature_consistent_step:
-      forall H1 H2 s aux nsig ssig,
+      forall H1 H2 s aux stcsig obcsig,
         Signature_consistent_obc_full H1 H2 ->
-        SECSTCTYPING.generate_sys_signature G1 s env aux = OK nsig ->
-        SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux = OK ssig ->
-        Signature_head_consistent_obc nsig ssig ->
-        Signature_consistent_obc_full (nsig :: H1) (ssig :: H2).
+        SECSTCTYPING.generate_sys_signature G1 s env aux = OK stcsig ->
+        SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux = OK obcsig ->
+        Signature_head_consistent_obc stcsig obcsig ->
+        Signature_consistent_obc_full (stcsig :: H1) (obcsig :: H2).
     Proof.
       intros. eapply Signature_consistent_obc_full_cons; eauto.
     Qed.

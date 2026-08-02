@@ -413,12 +413,7 @@ None of these affect what is proved.
   the Obc bridge reading the general rule and NLustre keeping its
   instance of it.
 
-- **Naming.**  The Stc-to-Obc bridge inherited `nsig`/`ssig` from the
-  NLustre-to-STC chain, where they mean *NLustre* and *STC*.  Here they
-  mean *STC* and *Obc*, which is actively misleading -- `NoDup
-  (signature_scope nsig)` reads as an NLustre fact but is an STC one.
-  Rename to `stcsig`/`obcsig`.  Pure refactor, green build either side,
-  but a large mechanical diff across a 4000-line proof file.
+Nothing outstanding.
 
 ## 7. Evidence the chain is not vacuous
 
