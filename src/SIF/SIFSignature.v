@@ -4117,6 +4117,26 @@ Module Type SIGNATURE_PROOFS (Import Ids: IDS)
     rewrite Hc1, Hc2, Hc3, Hc4. exact Hcns.
   Qed.
 
+  (** A successful call generation pins the actuals' lengths: the two
+      substitution maps walk formals and actuals in step. *)
+
+  Lemma generate_constraints_lengths:
+    forall sig inp clk rst out cns st st',
+      generate_constraints sig inp clk rst out st = OK (cns, st') ->
+      List.length sig.(s_in) = List.length inp
+      /\ List.length sig.(s_out) = List.length out.
+  Proof.
+    intros sig inp clk rst out cns st st' Hgen.
+    unfold generate_constraints in Hgen.
+    eapply sec_bind_inv in Hgen as (c1 & s1 & H1 & Hgen).
+    eapply sec_bind_inv in Hgen as (c2 & s2 & H2 & Hgen).
+    eapply sec_bind_inv in Hgen as (c3 & s3 & H3 & Hgen).
+    eapply sec_bind_inv in Hgen as (c4 & s4 & H4 & _).
+    split.
+    - eapply subst_constraints_inp_map_length; exact H1.
+    - eapply subst_constraints_out_map_length; exact H4.
+  Qed.
+
   (** ** The call-preservation rules, shared by both bridges
 
       A callee signature may be re-generated at input actuals pointwise
