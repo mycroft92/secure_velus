@@ -652,6 +652,83 @@ Module Type SECSTCOBCTRANSLATION
     Variable state_env: Env.t ident.
     Variable rst_ty: ident.
 
+    (** ** Relative totality: the Obc generator succeeds wherever the
+        STC one did
+
+        Each lemma here mirrors the corresponding constraint lemma above,
+        keeping its hypotheses and replacing the *assumed*
+        [generate_stmt_constraints ... = OK ...] by an [exists].  Nothing
+        new is assumed about the program: an STC-side [assign_*] result
+        is exactly the statement that the environment covers the names
+        the translated statement looks up, and
+        [translate_exp_type_correspondence] carries that across the
+        expression translation. *)
+
+    Lemma translate_cexp_constraints_ok:
+      forall memset vars x ce ck b pc ckty cety xty st,
+        CEClo.wc_cexp vars ce ck ->
+        SECCETYPING.assign_clk_type env b ck = Some ckty ->
+        SECCETYPING.assign_cexp_type env ce = Some cety ->
+        Env.find x env = Some xty ->
+        exists cns,
+          generate_stmt_constraints G env state_env rst_ty pc
+            (translate_cexp memset x ce) st = OK (cns, st).
+    Proof.
+      intros memset vars x ce.
+      induction ce as [y cet IHt cef IHf|e cet IHt cef IHf|le];
+        intros ck b pc ckty cety xty st Hwc Hck Hcety Hx;
+        inversion Hwc as [y' t' f' ck' Hiny Hwct Hwcf
+                         |e' t' f' ck' Hwce Hwct Hwcf
+                         |le' ck' Hwce]; subst; simpl in Hcety.
+      - (* Emerge: the scrutinee is a plain variable *)
+        destruct (Env.find y env) as [yty|] eqn:Hy; simpl in Hcety; try discriminate.
+        destruct (SECCETYPING.assign_cexp_type env cet) as [t1|] eqn:Ht;
+          simpl in Hcety; try discriminate.
+        destruct (SECCETYPING.assign_cexp_type env cef) as [t2|] eqn:Hf;
+          simpl in Hcety; try discriminate.
+        assert (Hbv : SECOBCTYPING.assign_exp_type env (bool_var memset y)
+                      = Some [yty])
+          by (unfold bool_var, tovar;
+              destruct (PS.mem y memset); simpl; now rewrite Hy).
+        (* the two branches sit at the extended clock *)
+        assert (Hckt : exists cty,
+                   SECCETYPING.assign_clk_type env b (Con ck y true) = Some cty)
+          by (simpl; rewrite Hck; simpl; rewrite Hy; eexists; reflexivity).
+        assert (Hckf : exists cty,
+                   SECCETYPING.assign_clk_type env b (Con ck y false) = Some cty)
+          by (simpl; rewrite Hck; simpl; rewrite Hy; eexists; reflexivity).
+        destruct Hckt as (ctyt & Hckt). destruct Hckf as (ctyf & Hckf).
+        destruct (IHt (Con ck y true) b (pc ⊔ [yty]) ctyt t1 xty st
+                    Hwct Hckt Logic.eq_refl Hx) as (c1 & Hc1).
+        destruct (IHf (Con ck y false) b (pc ⊔ [yty]) ctyf t2 xty st
+                    Hwcf Hckf Logic.eq_refl Hx) as (c2 & Hc2).
+        exists (c1 ++ c2). simpl.
+        unfold option_to_sec, bind, ret. rewrite Hbv. rewrite Hc1, Hc2.
+        reflexivity.
+      - (* Eite: the scrutinee is a translated expression *)
+        destruct (SECCETYPING.assign_exp_type env e) as [ety|] eqn:He;
+          simpl in Hcety; try discriminate.
+        destruct (SECCETYPING.assign_cexp_type env cet) as [t1|] eqn:Ht;
+          simpl in Hcety; try discriminate.
+        destruct (SECCETYPING.assign_cexp_type env cef) as [t2|] eqn:Hf;
+          simpl in Hcety; try discriminate.
+        destruct (translate_exp_type_correspondence env memset vars e ck b ckty ety
+                    Hwce Hck He) as (oty & Hoty & _).
+        destruct (IHt ck b (pc ⊔ oty) ckty t1 xty st
+                    Hwct Hck Logic.eq_refl Hx) as (c1 & Hc1).
+        destruct (IHf ck b (pc ⊔ oty) ckty t2 xty st
+                    Hwcf Hck Logic.eq_refl Hx) as (c2 & Hc2).
+        exists (c1 ++ c2). simpl.
+        unfold option_to_sec, bind, ret. rewrite Hoty. rewrite Hc1, Hc2.
+        reflexivity.
+      - (* Eexp: a single assignment *)
+        destruct (translate_exp_type_correspondence env memset vars le ck b ckty cety
+                    Hwce Hck Hcety) as (oty & Hoty & _).
+        eexists. simpl.
+        unfold option_to_sec, find_env, bind, ret.
+        rewrite Hoty, Hx. reflexivity.
+    Qed.
+
     Lemma translate_tcdef_constraints:
       forall memset clkvars vars x ce ck pc0 b ckty cety xty cns st st',
         CEClo.wc_cexp vars ce ck ->
