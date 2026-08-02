@@ -2772,6 +2772,111 @@ Module Type SECSTCOBCTRANSLATION
       apply in_or_app; now right.
     Qed.
 
+    (** [get_mappings_from_node] reads only the keys, so retyping the
+        interface -- which is all [idty] and the [c_mems] map do -- leaves
+        it unchanged. *)
+
+    Lemma get_mappings_from_node_idty:
+      forall (xs: list (ident * (type * clock))) e,
+        get_mappings_from_node (idty xs) e = get_mappings_from_node xs e.
+    Proof.
+      induction xs as [|(x, (t, c)) xs IH]; intros e; simpl; [reflexivity|].
+      now rewrite IH.
+    Qed.
+
+    Lemma get_mappings_from_node_mems:
+      forall (xs: list (ident * (const * clock))) e,
+        get_mappings_from_node
+          (map (fun xc => (fst xc, type_const (fst (snd xc)))) xs) e
+        = get_mappings_from_node xs e.
+    Proof.
+      induction xs as [|(x, (c, ck)) xs IH]; intros e; simpl; [reflexivity|].
+      now rewrite IH.
+    Qed.
+
+    (** The Obc hidden set avoids the signature scope.  The locals and
+        the memories go through the STC lemma -- they are literally the
+        same lists, and the STC hidden set contains them whatever its
+        reset instances are -- while the state instances are excluded by
+        prefix, being [sec_reset] gensyms where the scope holds [sec]
+        ones.  The STC key list is built from the Obc one: every reset
+        instance is a sub, so the instance environment covers it. *)
+
+    Lemma translate_class_hidden_disjoint:
+      forall s e aux_names clk_id rst_id clk_type rst_type
+             inp out locals lasts state_env stids ty,
+        NAMEGEN.naming_env_props e aux_names ->
+        get_node_aux s.(SynStc.s_name) aux_names = Some (clk_id, rst_id) ->
+        Env.find clk_id e = Some clk_type ->
+        Env.find rst_id e = Some rst_type ->
+        get_mappings_from_node (SynStc.s_in s) e = Some inp ->
+        get_mappings_from_node (SynStc.s_out s) e = Some out ->
+        get_mappings_from_node (SynStc.s_vars s) e = Some locals ->
+        get_mappings_from_node (SynStc.s_lasts s) e = Some lasts ->
+        get_node_inst s.(SynStc.s_name) aux_names = Some state_env ->
+        get_mappings (map fst (SynStc.s_subs s)) state_env = Some stids ->
+        List.In ty (SECOBCTYPING.hidden_class_vars locals lasts stids) ->
+        ~ List.In ty (inp ++ out ++ [clk_type; rst_type]).
+    Proof.
+      intros s e aux_names clk_id rst_id clk_type rst_type
+             inp out locals lasts state_env stids ty
+             Hprops Haux Hclk Hrst Hinp Hout Hlocals Hlasts Hsenv Hstids Hty.
+      destruct Hprops as ((Hinj & Hsec) & (Hauxsec & Hinstp & _)).
+      destruct (Hinstp _ _ Hsenv) as (_ & Hrstrange).
+      assert (Hauxsec' : exists i j, clk_id = Ids.gensym Ids.sec i
+                                     /\ rst_id = Ids.gensym Ids.sec j)
+        by (eapply Hauxsec; eauto).
+      (* the STC key list: the reset instances are among the subs *)
+      assert (Hrids : exists rids,
+                 get_mappings (map fst (resets_of s.(SynStc.s_tcs)))
+                   state_env = Some rids).
+      { apply (proj2 (get_mappings_Some_iff _ _)).
+        rewrite Forall_forall. intros x Hx.
+        pose proof (proj1 (get_mappings_Some_iff _ _)
+                      (ex_intro _ stids Hstids)) as Hall.
+        rewrite Forall_forall in Hall. apply Hall.
+        apply in_map_iff in Hx as ((y & f) & Hyf & Hin). simpl in Hyf. subst y.
+        apply in_map_iff. exists (x, f). split; [reflexivity|].
+        eapply Permutation_in; [symmetry; apply (SynStc.s_subs_calls_of s)|].
+        apply (SynStc.s_reset_incl s). exact Hin. }
+      destruct Hrids as (rids & Hrids).
+      unfold SECOBCTYPING.hidden_class_vars in Hty. rewrite nodup_In in Hty.
+      apply in_app_iff in Hty as [Hty|Hty].
+      - eapply (SECSTCTYPINGCORRECTNESS.generated_sys_hidden_disjoint
+                  s e aux_names clk_id rst_id clk_type rst_type inp out
+                  locals lasts state_env rids ty Hinj Hsec Hauxsec'
+                  Haux Hclk Hrst Hinp Hout Hlocals Hlasts Hrids Hrstrange).
+        unfold SECSTCTYPING.hidden_sys_vars. rewrite nodup_In.
+        apply in_or_app; now left.
+      - apply in_app_iff in Hty as [Hty|Hty].
+        + eapply (SECSTCTYPINGCORRECTNESS.generated_sys_hidden_disjoint
+                    s e aux_names clk_id rst_id clk_type rst_type inp out
+                    locals lasts state_env rids ty Hinj Hsec Hauxsec'
+                    Haux Hclk Hrst Hinp Hout Hlocals Hlasts Hrids Hrstrange).
+          unfold SECSTCTYPING.hidden_sys_vars. rewrite nodup_In.
+          apply in_or_app; right. apply in_or_app; now left.
+        + (* a state instance: a [sec_reset] gensym, the scope is [sec] *)
+          intro Hvis.
+          destruct (get_mappings_In _ _ _ _ Hstids Hty) as (o & _ & Hfo).
+          eapply (SIG.sec_reset_not_in_signature_scope
+                    {| s_name := s.(SynStc.s_name); s_in := inp; s_out := out;
+                       s_reset := rst_type; s_clk := clk_type;
+                       s_constraints := [] |} ty).
+          * intros t Ht. unfold SIG.signature_scope in Ht. cbn in Ht.
+            apply in_app_iff in Ht as [Ht|Ht].
+            -- destruct (get_mappings_In _ _ _ _
+                           (get_mappings_from_node_eq _ _ _ _ Hinp) Ht)
+                 as (z & _ & Hfz). eapply Hsec; exact Hfz.
+            -- apply in_app_iff in Ht as [Ht|Ht].
+               ++ destruct (get_mappings_In _ _ _ _
+                              (get_mappings_from_node_eq _ _ _ _ Hout) Ht)
+                    as (z & _ & Hfz). eapply Hsec; exact Hfz.
+               ++ destruct Ht as [Heq|[Heq|[]]]; subst t;
+                    [eapply Hsec; exact Hclk|eapply Hsec; exact Hrst].
+          * exact (Hrstrange _ _ Hfo).
+          * unfold SIG.signature_scope. cbn. exact Hvis.
+    Qed.
+
     Lemma translate_system_well_defined:
       forall P s,
         wc_system P s ->
