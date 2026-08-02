@@ -180,6 +180,18 @@ run.
 
 ### 4b. Layer differences, all real rather than incidental
 
+- **The Obc bridge carries three call/consistency notions, not one.**
+  `Signature_call_preserves_obc_{eq,rst}` are the two shared rules;
+  `_obc_full` is their conjunction, and only it reaches
+  `Signature_head_consistent_obc` and the exported chain.  NLustre needs
+  one two-conjunct definition because both its calls pass the same reset
+  actual; the Obc side splits them because a call to an instance the
+  system never resets passes `rst_ty` on the STC side and the instance's
+  state type on the Obc side.  (`Signature_consistent_obc_eq` is a local
+  intermediate.)  An earlier fourth notion built on a weaker rule, with
+  its own per-trconstr correspondence, was superseded by `tc_preserv_aug`
+  and has been deleted.
+
 - **The two call rules are shared, and live in `SIGNATURE_PROOFS`.**
   `call_preserves_eq` and `call_preserves_rst` (`SIFSignature.v`) are
   stated at the general actuals -- `inp_le inptyp1 inptyp2`, since an Obc
@@ -401,15 +413,6 @@ None of these affect what is proved.
   the Obc bridge reading the general rule and NLustre keeping its
   instance of it.
 
-- **`Signature_call_preserves_obc` (`SecStcObcTranslation.v:963`) is
-  subsumed** by `_obc_rst`: identical hypotheses, strictly weaker
-  conclusion.  It is *not* dead, though -- `Signature_consistent_obc`
-  (972) built on it is a live hypothesis of `tccall_preserv` (979), used
-  at 1409.  Only its producer
-  `signatures_preserved_obc_calls_from_good` (1092) is unused.  Removing
-  the cluster means re-pointing `tccall_preserv` at the `_rst` rule and
-  dropping the head constraint there instead; worth doing, but it is a
-  proof edit, not a deletion.
 - **Naming.**  The Stc-to-Obc bridge inherited `nsig`/`ssig` from the
   NLustre-to-STC chain, where they mean *NLustre* and *STC*.  Here they
   mean *STC* and *Obc*, which is actively misleading -- `NoDup

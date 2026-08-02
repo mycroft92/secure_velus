@@ -946,209 +946,26 @@ Module Type SECSTCOBCTRANSLATION
         that property for *generated* signatures is the remaining
         obligation (`Stc2ObcSIF_tccall.md` §4/§5). *)
 
-    Definition call_side_conditions
-      (scope: list ident) (n1 n2: SIG.signature)
-      (inptyp1 inptyp2: list SymTypes.ST) (ckty srcrst: SymTypes.ST)
-      (sty: ident) (outtyp: list ident) : Prop :=
-      SIG.scope_fresh scope n1
-      /\ SIG.call_subst_scoped scope inptyp1 ckty srcrst outtyp
-      /\ ~ In sty scope
-      /\ SIG.call_subst_fresh n1 inptyp1 ckty srcrst outtyp
-      (** Only the *reset* actual needs a target-side freshness fact: it
-          is the one component that differs between the two calls.  The
-          other three transfer from [n1] through
-          [signature_fields_agree_scope_eq], as both proofs below show. *)
-      /\ SIG.type_fresh (SIG.signature_scope n2) [sty].
-
-    Definition Signature_call_preserves_obc (n1 n2: SIG.signature) : Prop :=
-      forall scope inptyp1 inptyp2 ckty srcrst sty outtyp
-             nconst sconst st_init1 st_init2 stA stB,
-        call_side_conditions scope n1 n2 inptyp1 inptyp2 ckty srcrst sty outtyp ->
-        Forall2 (fun t1 t2 => forall z, In z t2 -> In z t1) inptyp1 inptyp2 ->
-        SIG.generate_constraints n1 inptyp1 ckty srcrst outtyp st_init1 = OK (nconst, stA) ->
-        SIG.generate_constraints n2 inptyp2 ckty [sty] outtyp st_init2 = OK (sconst, stB) ->
-        preserves_on scope nconst sconst.
-
-    Definition Signature_consistent_obc (H1 H2: SIG.secglobal) : Prop :=
-      forall f n1,
-        SIG.find_signature f H1 = Some n1 ->
-        exists n2,
-          SIG.find_signature f H2 = Some n2
-          /\ Signature_call_preserves_obc n1 n2.
-
-    Lemma tccall_preserv:
-      forall scope memset clkvars i xs ck rst f es ckty
-             nconst sconst st1 st1' st2 st2',
-        SECCETYPING.assign_clk_type env clk_ty ck = Some ckty ->
-        Signature_consistent_obc G1 G2 ->
-        (forall n1 n2 inptyp1 inptyp2 outtyp srcrst sty,
-            SIG.find_signature f G1 = Some n1 ->
-            SIG.find_signature f G2 = Some n2 ->
-            call_side_conditions scope n1 n2 inptyp1 inptyp2 ckty srcrst sty outtyp) ->
-        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
-          (SynStc.TcCall i xs ck rst f es) st1 = OK (nconst, st1') ->
-        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
-          (translate_tc memset clkvars (SynStc.TcCall i xs ck rst f es)) st2
-          = OK (sconst, st2') ->
-        preserves_on scope nconst sconst.
-    Proof.
-      intros scope memset clkvars i xs ck rst f es ckty
-             nconst sconst st1 st1' st2 st2' Hckopt Hcons Hside Hstc Hobc.
-      (* compile the Control wrapper away: the Obc pc is the STC clock type *)
-      unfold translate_tc in Hobc.
-      rewrite <- (MergeFacts.merge_nil2 [clk_ty]) in Hobc.
-      rewrite (generate_stmt_constraints_Control_assign
-                 G2 env reset_env rst_ty memset ck
-                 (SynObc.Call xs f i step (map (translate_arg memset clkvars ck) es))
-                 clk_ty ckty [] st2 Hckopt) in Hobc.
-      rewrite (MergeFacts.merge_nil2 ckty) in Hobc.
-      destruct xs as [|x xs'].
-      - (* no outputs: both sides emit nothing *)
-        simpl in Hstc. unfold ret in Hstc. inversion Hstc; subst nconst st1'.
-        simpl in Hobc.
-        assert (Hne : ident_eqb step reset = false).
-        { apply ident_eqb_neq. intro Heq. symmetry in Heq.
-          revert Heq. apply reset_not_step. }
-        rewrite Hne in Hobc.
-        unfold ret in Hobc. inversion Hobc; subst sconst st2'.
-        apply preserves_on_nil.
-      - (* a real call *)
-        simpl in Hobc.
-        assert (Hstep : ident_eqb step step = true) by apply ident_eqb_refl.
-        rewrite Hstep in Hobc.
-        destruct (SIG.find_signature f G2) as [n2|] eqn:Hf2; try discriminate.
-        eapply sec_bind_inv in Hobc as (inptyp2 & stb1 & Hinp2 & Hobc).
-        eapply sec_bind_inv in Hobc as (outtyp2 & stb2 & Hout2 & Hobc).
-        eapply sec_bind_inv in Hobc as (sty & stb3 & Hsty & Hgen2).
-        destruct rst.
-        + (* reset'd call: STC uses the reset instance *)
-          simpl in Hstc.
-          destruct (SIG.find_signature f G1) as [n1|] eqn:Hf1; try discriminate.
-          eapply sec_bind_inv in Hstc as (ckty1 & sta1 & Hck1 & Hstc).
-          eapply sec_bind_inv in Hstc as (inptyp1 & sta2 & Hinp1 & Hstc).
-          eapply sec_bind_inv in Hstc as (outtyp1 & sta3 & Hout1 & Hstc).
-          eapply sec_bind_inv in Hstc as (rinst & sta4 & Hrinst & Hgen1).
-          unfold option_to_sec in Hck1.
-          rewrite Hckopt in Hck1. unfold ret in Hck1.
-          inversion Hck1; subst ckty1 sta1.
-          assert (Houteq : outtyp1 = outtyp2).
-          { eapply (@mmap_consistent ident ident
-                      (fun z => SC.find_env z env) (fun z => SC.find_env z env)
-                      (x :: xs')); eauto.
-            intros. eapply SC.find_env_consistent; eauto. }
-          subst outtyp2.
-          destruct (Hcons f n1 Hf1) as (n2' & Hf2' & Hpres).
-          rewrite Hf2 in Hf2'. inversion Hf2'; subst n2'.
-          eapply (Hpres scope inptyp1 inptyp2 ckty [rinst] sty outtyp1
-                    nconst sconst sta4 stb3 st1' st2').
-          * eapply Hside; eauto.
-          * eapply translate_args_type_incl; eauto.
-          * exact Hgen1.
-          * exact Hgen2.
-        + (* unreset call: STC uses the ambient reset type *)
-          simpl in Hstc.
-          destruct (SIG.find_signature f G1) as [n1|] eqn:Hf1; try discriminate.
-          eapply sec_bind_inv in Hstc as (ckty1 & sta1 & Hck1 & Hstc).
-          eapply sec_bind_inv in Hstc as (inptyp1 & sta2 & Hinp1 & Hstc).
-          eapply sec_bind_inv in Hstc as (outtyp1 & sta3 & Hout1 & Hgen1).
-          unfold option_to_sec in Hck1.
-          rewrite Hckopt in Hck1. unfold ret in Hck1.
-          inversion Hck1; subst ckty1 sta1.
-          assert (Houteq : outtyp1 = outtyp2).
-          { eapply (@mmap_consistent ident ident
-                      (fun z => SC.find_env z env) (fun z => SC.find_env z env)
-                      (x :: xs')); eauto.
-            intros. eapply SC.find_env_consistent; eauto. }
-          subst outtyp2.
-          destruct (Hcons f n1 Hf1) as (n2' & Hf2' & Hpres).
-          rewrite Hf2 in Hf2'. inversion Hf2'; subst n2'.
-          eapply (Hpres scope inptyp1 inptyp2 ckty [rst_ty] sty outtyp1
-                    nconst sconst sta3 stb3 st1' st2').
-          * eapply Hside; eauto.
-          * eapply translate_args_type_incl; eauto.
-          * exact Hgen1.
-          * exact Hgen2.
-    Qed.
-
-
-    (** ** Closing the call obligation
-
-        The Obc side instantiates its callee at *weaker* input types (the
-        compiled arguments drop the [when] guards).  We reduce to the
-        equal-actuals case that is already proved:
-
-        - [generate_constraints_ok_change_inp] gives an Obc run at the
-          STC input types;
-        - [signatures_preserved_reset_underlying_calls_from_good] relates
-          the two runs at those inputs (its conclusion prepends the
-          reset-defining constraint, which we discard);
-        - [generate_constraints_mono_inp] plus
-          [constraints_src_le_satisfaction] descend from that run to the
-          actual, weaker one.
-
-        Note the completeness direction is only ever used with *equal*
-        actuals, so no generalisation of it is required. *)
-
-    Theorem signatures_preserved_obc_calls_from_good:
-      forall nsig ssig,
-        SIG.signature_good nsig ->
-        NoDup (SIG.signature_scope nsig) ->
-        SIG.signature_scoped ssig ->
-        SIGPROOFS.signatures_preserved nsig ssig ->
-        Signature_call_preserves_obc nsig ssig.
-    Proof.
-      intros nsig ssig Hgood Hnd Hssc Hpres.
-      intros scope inptyp1 inptyp2 ckty srcrst sty outtyp
-             nconst sconst si1 si2 stA stB Hside Hincl Hgen1 Hgen2.
-      destruct Hside as (Hsf & Hcss & Hstynotin & Hfr1 & Hrst2).
-      (* the Obc callee also generates at the STC input types *)
-      assert (Hlen : List.length inptyp2 = List.length inptyp1).
-      { symmetry. eapply Forall2_length; eauto. }
-      destruct (SIGPROOFS.generate_constraints_ok_change_inp
-                  ssig inptyp2 inptyp1 ckty [sty] outtyp sconst si2 stB si2
-                  Hlen Hgen2)
-        as (sconst1 & sB1 & Hgen2').
-      (* freshness of the STC inputs w.r.t. the Obc scope, via field agreement *)
-      destruct Hpres as [Hfields Hprescns].
-      assert (Hscopeeq : SIG.signature_scope nsig = SIG.signature_scope ssig).
-      { eapply SIG.signature_fields_agree_scope_eq; eauto. }
-      destruct Hfr1 as (Hin1 & Hclk1 & Hrst1 & Hout1).
-      assert (Hfr2' : SIG.call_subst_fresh ssig inptyp1 ckty [sty] outtyp).
-      { repeat split.
-        - rewrite <- Hscopeeq. exact Hin1.
-        - rewrite <- Hscopeeq. exact Hclk1.
-        - exact Hrst2.
-        - rewrite <- Hscopeeq. exact Hout1. }
-      (* equal-actuals case *)
-      pose proof (SIGPROOFS.signatures_preserved_reset_underlying_calls_from_good
-                    nsig ssig Hgood Hnd Hssc (conj Hfields Hprescns)
-                    scope inptyp1 ckty srcrst outtyp sty
-                    nconst sconst1 si1 si2 stA sB1
-                    Hsf Hcss Hstynotin
-                    (conj Hin1 (conj Hclk1 (conj Hrst1 Hout1)))
-                    Hfr2' Hgen1 Hgen2')
-        as Hpres1.
-      (* descend to the weaker inputs *)
-      assert (Hle : constraints_src_le sconst1 sconst).
-      { eapply SIGPROOFS.generate_constraints_mono_inp;
-          [exact Hincl|exact Hgen2'|exact Hgen2]. }
-      intros dlt Hsat.
-      destruct (Hpres1 dlt Hsat) as (dlt' & Hagree & Hsat').
-      exists dlt'. split; [exact Hagree|].
-      inversion Hsat' as [|c cs Hc Hcs]; subst.
-      eapply constraints_src_le_satisfaction; eauto.
-    Qed.
+    (** The call rules and the per-trconstr correspondence that used
+        them live in [SIGNATURE_PROOFS] and in [tc_preserv_aug]
+        respectively.  An earlier, weaker set -- [call_side_conditions],
+        [Signature_call_preserves_obc], [Signature_consistent_obc],
+        [tccall_preserv], [signatures_preserved_obc_calls_from_good],
+        [tc_preserv_hyps] and [tc_preserv] -- was superseded and has been
+        removed; see the git history if a discarded head constraint is
+        ever wanted back. *)
 
 
 
 
-    (** The reset-underlying call theorem already *produces* the
-        constraint [srcrst |- sty]; [signatures_preserved_obc_calls_from_good]
-        simply discards it.  For an instance the system never resets,
-        that discarded constraint is exactly what the Obc reset method
-        emits for it, so keeping it lets the call block own its own
-        reset-method constraint instead of leaving [sty] constrained
-        from two different blocks. *)
+
+    (** The reset-underlying call theorem *produces* the constraint
+        [srcrst |- sty].  For an instance the system never resets, that
+        constraint is exactly what the Obc reset method emits for it, so
+        keeping it lets the call block own its own reset-method
+        constraint instead of leaving [sty] constrained from two
+        different blocks.  That is why the rule below keeps the head
+        rather than dropping it. *)
 
     (** The shared rule (SIGPROOFS): identical on both bridges. *)
     Definition Signature_call_preserves_obc_rst (n1 n2: SIG.signature) : Prop :=
@@ -1375,39 +1192,6 @@ Module Type SECSTCOBCTRANSLATION
         collecting the side conditions each case needs, and then lifted
         to the whole transition-constraint list. *)
 
-    Definition tc_preserv_hyps (scope: list ident) vars (tc: SynStc.trconstr) : Prop :=
-      match tc with
-      | SynStc.TcDef _ ck ce => CEClo.wc_cexp vars ce ck
-      | SynStc.TcNext _ ck e => CEClo.wc_exp vars e ck
-      | SynStc.TcReset _ _ _ => True
-      | SynStc.TcCall _ _ ck _ f _ =>
-          exists ckty,
-            SECCETYPING.assign_clk_type env clk_ty ck = Some ckty
-            /\ (forall n1 n2 inptyp1 inptyp2 outtyp srcrst sty,
-                   SIG.find_signature f G1 = Some n1 ->
-                   SIG.find_signature f G2 = Some n2 ->
-                   call_side_conditions scope n1 n2 inptyp1 inptyp2 ckty srcrst sty outtyp)
-      end.
-
-    Lemma tc_preserv:
-      forall scope vars memset clkvars tc nconst sconst st1 st1' st2 st2',
-        Signature_consistent_obc G1 G2 ->
-        tc_preserv_hyps scope vars tc ->
-        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty tc st1
-          = OK (nconst, st1') ->
-        generate_stmt_constraints G2 env reset_env rst_ty [clk_ty]
-          (translate_tc memset clkvars tc) st2 = OK (sconst, st2') ->
-        preserves_on scope nconst sconst.
-    Proof.
-      intros scope vars memset clkvars tc nconst sconst st1 st1' st2 st2'
-             Hcons Hhyps Hstc Hobc.
-      destruct tc as [x ck ce|x ck e|s ck f|i xs ck rst f es]; simpl in Hhyps.
-      - eapply tcdef_preserv; eauto.
-      - eapply tcnext_preserv; eauto.
-      - eapply tcreset_preserv; eauto.
-      - destruct Hhyps as (ckty & Hckty & Hside).
-        eapply tccall_preserv; eauto.
-    Qed.
 
     (** Both call forms are needed at once: an instance the system resets
         is called with the same reset actual on both sides (equal-actuals
