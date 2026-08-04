@@ -1895,6 +1895,71 @@ Module Type SECSTCTYPINGCORRECTNESS
     /\ s'.(SynStc.s_lasts) = s.(SynStc.s_lasts)
     /\ Permutation s.(SynStc.s_tcs) s'.(SynStc.s_tcs).
 
+  (** A reordered system generates too: its interface is the original's,
+      its reset instances are the same multiset, and its body is a
+      permutation, which the generator does not care about. *)
+
+  Lemma generate_sys_signature_reorder_ok:
+    forall G G' s s' env aux_names sig,
+      sys_reordered s s' ->
+      (forall tc, In tc s.(SynStc.s_tcs) -> call_data_for G G' env tc) ->
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      exists sig',
+        SECSTCTYPING.generate_sys_signature G' s' env aux_names = OK sig'.
+  Proof.
+    intros G G' s s' env aux_names sig
+           (Hname & Hin' & Hout' & Hvars' & Hlasts' & Hperm) Hcalls Hsig.
+    edestruct generate_sys_signature_inv as
+        (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
+         & reset_env & rids & st_reset & sconst & st_s
+         & Haux & Hclk & Hrst & Hinp & Hout & Hslocals & Hslasts
+         & Hrenv & Hrids & Hsconst & _); [exact Hsig|].
+    (* the reset instances, as a multiset, are unchanged *)
+    assert (Hrids' : exists rids',
+               get_mappings (map fst (resets_of s'.(SynStc.s_tcs))) reset_env
+               = Some rids').
+    { eapply get_mappings_Permutation_Some; [|exact Hrids].
+      apply Permutation_map, resets_of_Permutation, Hperm. }
+    destruct Hrids' as (rids' & Hrids').
+    (* every constraint of the reordered body generates *)
+    assert (Hbody : exists sconst',
+               SECSTCTYPING.generate_trconstrs_constraints G' env reset_env
+                 clk_type rst_type s'.(SynStc.s_tcs) init_state
+               = OK (sconst', init_state)).
+    { eapply SECSTCTYPING.generate_trconstrs_constraints_ok_from_elems.
+      eapply Permutation_Forall; [exact Hperm|].
+      pose proof (SECSTCTYPING.generate_trconstrs_constraints_ok_elems
+                    G env reset_env clk_type rst_type s.(SynStc.s_tcs)
+                    st_reset sconst st_s Hsconst) as Helems.
+      rewrite Forall_forall in Helems |- *.
+      intros tc Htc.
+      destruct (Helems tc Htc) as (c & Hc).
+      eapply generate_trconstr_constraint_transfer;
+        [apply Hcalls; exact Htc|exact Hc]. }
+    destruct Hbody as (sconst' & Hsconst').
+    unfold SECSTCTYPING.generate_sys_signature.
+    match goal with
+    | |- context [match ?m with OK _ => _ | Error _ => _ end] =>
+        assert (Hrun : exists v st, m = OK (v, st))
+    end.
+    { do 2 eexists.
+      eapply sec_bind2_ok; [rewrite Hname, Haux; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hclk; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hrst; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hin', Hinp; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hout', Hout; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hvars', Hslocals; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hlasts', Hslasts; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hname, Hrenv; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hrids'; reflexivity|].
+      eapply sec_bind_ok; [exact Hsconst'|].
+      reflexivity. }
+    destruct Hrun as (v & st & Hrun).
+    rewrite Hrun.
+    destruct v as [[[[[inp2 out2] rst2] ck2] cs2] e2].
+    eexists. reflexivity.
+  Qed.
+
   Lemma generated_sys_signature_name:
     forall G s env aux_names sig,
       SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
