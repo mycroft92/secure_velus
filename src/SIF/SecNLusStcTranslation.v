@@ -3098,6 +3098,99 @@ Module Type SECNLUSSTCTRANSLATION
       exists (xty :: tys'). simpl. rewrite Hx, Htys'. reflexivity.
   Qed.
 
+  (** ** Node-level relative totality
+
+      Every lookup the Stc generator makes was already made, and
+      answered, on the NLustre side -- the interface is the node's, and
+      the locals split into two halves of it.  The instance environment
+      is the exception: the naming pass supplies it, and it must name
+      every instance the node calls. *)
+
+  Definition node_insts_named (n: node) (aux_names: list node_aux_names) : Prop :=
+    forall renv,
+      get_node_inst n.(n_name) aux_names = Some renv ->
+      forall i, InMembers i (snd (gather_eqs n.(n_eqs))) ->
+                exists sty, Env.find i renv = Some sty.
+
+  Theorem generate_sys_signature_ok:
+    forall G1 G2 env reset_env clk_ty rst_ty n aux_names clk_id rst_id nlsig,
+      get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
+      Env.find clk_id env = Some clk_ty ->
+      Env.find rst_id env = Some rst_ty ->
+      get_node_inst n.(n_name) aux_names = Some reset_env ->
+      node_insts_named n aux_names ->
+      (forall x xs ck f les r,
+          List.In (EqApp (x :: xs) ck f les r) n.(n_eqs) ->
+          exists n1 n2,
+            SIG.find_signature f G1 = Some n1
+            /\ SIG.find_signature f G2 = Some n2
+            /\ SIG.signature_fields_agree n1 n2
+            /\ SIGPROOFS.signature_targets_out n2
+            /\ NoDup (SIG.signature_scope n1)
+            /\ (forall outtyp, get_mappings (x :: xs) env = Some outtyp ->
+                               NoDup outtyp
+                               /\ SIG.outputs_fresh (SIG.signature_scope n1) outtyp)
+            /\ (forall rr ckr, r = Some (rr, ckr) ->
+                               exists sty, Env.find x reset_env = Some sty)) ->
+      SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nlsig ->
+      exists stcsig,
+        SECSTCTYPING.generate_sys_signature G2 (translate_node n) env aux_names
+        = OK stcsig.
+  Proof.
+    intros G1 G2 env reset_env clk_ty rst_ty n aux_names clk_id rst_id nlsig
+           Haux Hclk Hrst Hrenv Hinsts Hcalls Hnl.
+    edestruct SECNLUSTYPINGCORRECTNESS.generate_node_sig_inv as
+        (clk_id' & rst_id' & clk_type & rst_type & inp & out & locals
+         & nconst & st_n
+         & Haux' & Hclk' & Hrst' & Hinp & Hout & Hlocals & Hnconst & _);
+      [exact Hnl|].
+    rewrite Haux in Haux'. inversion Haux'; subst clk_id' rst_id'.
+    rewrite Hclk in Hclk'. inversion Hclk'; subst clk_type.
+    rewrite Hrst in Hrst'. inversion Hrst'; subst rst_type.
+    (* the two halves of the node's locals *)
+    destruct (get_mappings_from_node_sub _ _ (translate_node n).(SynStc.s_vars)
+                n.(n_vars) env locals
+                (translate_node_vars_in_node n) Hlocals) as (svars & Hsvars).
+    destruct (get_mappings_from_node_sub _ _ (translate_node n).(SynStc.s_lasts)
+                n.(n_vars) env locals
+                (translate_node_lasts_in_node n) Hlocals) as (slasts & Hslasts).
+    (* the instances this system resets, all named by the naming pass *)
+    assert (Hrids : exists rids,
+               get_mappings (map fst (resets_of (translate_node n).(SynStc.s_tcs)))
+                 reset_env = Some rids).
+    { apply get_mappings_Some_iff, Forall_forall.
+      intros i Hin. rewrite translate_node_tcs in Hin.
+      eapply Hinsts; [exact Hrenv|].
+      eapply resets_of_translate_eqns_subs.
+      now apply fst_InMembers. }
+    destruct Hrids as (rids & Hrids).
+    (* and the body *)
+    destruct (translate_eqns_constraints_ok G1 G2 env reset_env clk_ty rst_ty
+                n.(n_eqs) nconst init_state st_n init_state Hcalls Hnconst)
+      as (sconst & Hsconst).
+    unfold SECSTCTYPING.generate_sys_signature.
+    match goal with
+    | |- context [match ?m with OK _ => _ | Error _ => _ end] =>
+        assert (Hrun : exists v st, m = OK (v, st))
+    end.
+    { do 2 eexists.
+      eapply sec_bind2_ok; [rewrite translate_node_name, Haux; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hclk; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hrst; reflexivity|].
+      eapply sec_bind_ok; [rewrite translate_node_in, Hinp; reflexivity|].
+      eapply sec_bind_ok; [rewrite translate_node_out, Hout; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hsvars; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hslasts; reflexivity|].
+      eapply sec_bind_ok; [rewrite translate_node_name, Hrenv; reflexivity|].
+      eapply sec_bind_ok; [rewrite Hrids; reflexivity|].
+      eapply sec_bind_ok; [rewrite translate_node_tcs; exact Hsconst|].
+      reflexivity. }
+    destruct Hrun as (v & st & Hrun).
+    rewrite Hrun.
+    destruct v as [[[[[inp' out'] rst'] ck'] cs'] e'].
+    eexists. reflexivity.
+  Qed.
+
 End SECNLUSSTCTRANSLATION.
 
 Module SecNLusStcTranslation
