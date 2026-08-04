@@ -3405,6 +3405,80 @@ Module Type SECNLUSSTCTRANSLATION
               Haux Hclk Hrst Hrenv Hinsts Hcalls Hnl).
   Qed.
 
+  (** Every node of a successful naming run has its instances named.
+      The Stc-to-Obc layer needs the same fact of the translated systems,
+      where it is what makes the reset method generate. *)
+
+  Lemma generate_node_scoped_env'_insts_named:
+    forall prefix nodes envs aux_names envs_pref aux_pref st,
+      NAMEGEN.generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
+        = OK ((envs_pref, aux_pref), st) ->
+      generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
+      Forall (fun n => node_insts_named n aux_names) nodes.
+  Proof.
+    intros prefix nodes. revert prefix.
+    induction nodes as [|n nodes IH];
+      intros prefix envs aux_names envs_pref aux_pref st Hprefgen Henvsgen;
+      [constructor|].
+    pose proof Henvsgen as Henvsgen_full.
+    unfold generate_node_scoped_env in Henvsgen_full.
+    destruct (NAMEGEN.generate_node_scoped_env' (prefix ++ n :: nodes)
+                (Env.empty _) nil NAMEGEN.init_state)
+      as [[[envs_full aux_full] st_full]|] eqn:Hrun; try discriminate.
+    inversion Henvsgen_full; subst envs_full aux_full; clear Henvsgen_full.
+    edestruct NAMEGEN.generate_node_scoped_env'_split_node
+      as (envs_pref' & aux_pref' & st_pref & local_env & rec & st_local
+          & envs_cur & st_cur & Hpref & Hlocal & Hins & Htail);
+      eauto.
+    rewrite Hprefgen in Hpref.
+    inversion Hpref; subst envs_pref' aux_pref' st_pref.
+    assert (Hcur : st_cur = st_local).
+    { unfold NAMEGEN.fresh_insert_node_env in Hins.
+      destruct (Env.mem n.(n_name) envs_pref) eqn:Hmem; try discriminate.
+      unfold NAMEGEN.insert_node_env, NAMEGEN.NMret in Hins.
+      inversion Hins. reflexivity. }
+    subst st_cur.
+    assert (Hinstlocal : get_node_inst n.(n_name) aux_names = Some rec.(ninst)).
+    { eapply NAMEGEN.generate_node_scoped_env'_preserves_get_node_inst; eauto.
+      - pose proof (NAMEGEN.generate_local_env_for_node_name _ _ _ _ _ Hlocal)
+          as Hrecname.
+        unfold get_node_inst. simpl. rewrite <- Hrecname, ident_eqb_refl.
+        reflexivity.
+      - eapply NAMEGEN.fresh_insert_node_env_finds_new; eauto. }
+    assert (Hstep : NAMEGEN.generate_node_scoped_env' (n :: nil) envs_pref
+                      aux_pref st = OK ((envs_cur, rec :: aux_pref), st_local)).
+    { simpl. unfold NMbind2. rewrite Hlocal. simpl.
+      unfold NMbind. rewrite Hins. simpl. reflexivity. }
+    assert (Hprefgen' :
+              NAMEGEN.generate_node_scoped_env' (prefix ++ n :: nil)
+                (Env.empty _) nil NAMEGEN.init_state
+              = OK ((envs_cur, rec :: aux_pref), st_local))
+      by (eapply NAMEGEN.generate_node_scoped_env'_app; eauto).
+    assert (Henvsgen' : generate_node_scoped_env ((prefix ++ n :: nil) ++ nodes)
+                        = OK (envs, aux_names)).
+    { assert (Heqlist : (prefix ++ n :: nil) ++ nodes = prefix ++ n :: nodes)
+        by (clear; induction prefix as [|a prefix IHprefix]; simpl;
+            [reflexivity|now f_equal]).
+      rewrite Heqlist. exact Henvsgen. }
+    constructor.
+    - intros renv Hrenv i Hin.
+      rewrite Hinstlocal in Hrenv. inversion Hrenv; subst renv.
+      eapply generate_local_env_for_node_insts_named; [exact Hlocal|exact Hin].
+    - eapply IH; [exact Hprefgen'|exact Henvsgen'].
+  Qed.
+
+  Corollary generate_node_scoped_env_insts_named:
+    forall all_nodes envs aux_names,
+      generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      Forall (fun n => node_insts_named n aux_names) all_nodes.
+  Proof.
+    intros all_nodes envs aux_names Hgen.
+    eapply generate_node_scoped_env'_insts_named
+      with (prefix := nil) (envs_pref := Env.empty _) (aux_pref := nil)
+           (st := NAMEGEN.init_state);
+      [reflexivity|simpl; exact Hgen].
+  Qed.
+
   (** ** Program-level relative totality
 
       The same lockstep induction as
