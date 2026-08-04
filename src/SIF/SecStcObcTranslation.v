@@ -3392,6 +3392,21 @@ Module Type SECSTCOBCTRANSLATION
       rewrite Hne. reflexivity.
     Qed.
 
+    (** A call that binds something does consult the signature table, so
+        the STC side having succeeded means the callee is there. *)
+
+    Lemma generate_tccall_find_signature:
+      forall i y ys ck rst f es nconst st1 st1',
+        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
+          (SynStc.TcCall i (y :: ys) ck rst f es) st1 = OK (nconst, st1') ->
+        exists n1, SIG.find_signature f G1 = Some n1.
+    Proof.
+      intros i y ys ck rst f es nconst st1 st1' Hstc.
+      destruct rst; cbn [SECSTCTYPING.generate_trconstr_constraint] in Hstc;
+        destruct (SIG.find_signature f G1) as [n1|] eqn:Hf;
+        solve [eauto | unfold error in Hstc; discriminate].
+    Qed.
+
     (** ** The clock type every translated statement needs
 
         [Control] walks the clock, so the Obc side asks for a security
@@ -4888,6 +4903,167 @@ Module Type SECSTCOBCTRANSLATION
     Qed.
 
   End TCPRESERV.
+
+  (** ** System-level relative totality
+
+      The class generator's hypotheses, discharged from the ones the
+      preservation theorem already takes.  The single requirement with no
+      STC counterpart is that the naming pass gave every instance of the
+      system a state name: the STC layer only ever looks up the instances
+      it resets, while the translated reset method touches them all. *)
+
+  Definition sys_insts_named (s: SynStc.system)
+             (aux_names: list node_aux_names) : Prop :=
+    forall renv,
+      get_node_inst s.(SynStc.s_name) aux_names = Some renv ->
+      forall i, InMembers i s.(SynStc.s_subs) ->
+                exists sty, Env.find i renv = Some sty.
+
+  Lemma In_calls_of:
+    forall tcs i xs ck rst f es,
+      List.In (SynStc.TcCall i xs ck rst f es) tcs ->
+      List.In (i, f) (SynStc.calls_of tcs).
+  Proof.
+    induction tcs as [|tc tcs IH]; intros i xs ck rst f es Hin; [inversion Hin|].
+    destruct Hin as [Heq|Hin]; [subst tc; now left|].
+    destruct tc; simpl;
+      solve [eapply IH; exact Hin | right; eapply IH; exact Hin].
+  Qed.
+
+  (** A call's outputs are distinct, being a segment of the system's
+      variables, which [s_nodup_variables] already keeps distinct. *)
+
+  Lemma call_outputs_nodup:
+    forall s i xs ck rst f es,
+      List.In (SynStc.TcCall i xs ck rst f es) s.(SynStc.s_tcs) ->
+      NoDup xs.
+  Proof.
+    intros s i xs ck rst f es Hin.
+    pose proof (SynStc.s_nodup_variables s) as Hnd.
+    apply in_split in Hin as (l1 & l2 & Heq).
+    rewrite Heq, SynStc.variables_app in Hnd.
+    apply NoDup_app_r in Hnd.
+    cbn [SynStc.variables flat_map SynStc.variables_tc] in Hnd.
+    eapply NoDup_app_l; exact Hnd.
+  Qed.
+
+  Theorem generate_class_signature_ok_from_wc:
+    forall P (s: SynStc.system) (G1 G2: SIG.secglobal)
+           (env: Env.t ident) (aux_names: list node_aux_names) stcsig,
+      Signature_consistent_obc_full G1 G2 ->
+      SECSTCTYPINGCORRECTNESS.sys_scope_fresh_in_env s env aux_names G1 ->
+      NAMEGEN.naming_env_props env aux_names ->
+      CloStc.wc_system P s ->
+      (forall f n1, SIG.find_signature f G1 = Some n1 ->
+                    NoDup (SIG.signature_scope n1)) ->
+      (forall f n2, SIG.find_signature f G2 = Some n2 ->
+                    SIGPROOFS.signature_targets_out n2) ->
+      sys_insts_named s aux_names ->
+      SECSTCTYPING.generate_sys_signature G1 s env aux_names = OK stcsig ->
+      exists obcsig,
+        SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux_names
+        = OK obcsig.
+  Proof.
+    intros P s G1 G2 env aux_names stcsig
+           Hcons Hfreshenv ((Hinjp & Hsecp) & (Hauxsecp & Hinstp & Hdistp))
+           Hwc Hndg1 Htgtg2 Hinsts Hstcsig.
+    edestruct SECSTCTYPINGCORRECTNESS.generate_sys_signature_inv as
+        (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
+         & reset_env & rids & st_reset & sconst & st_s
+         & Haux & Hclk & Hrst & Hinp & Hout & Hslocals & Hslasts
+         & Hrenv & Hrids & Hsconst & _); [exact Hstcsig|].
+    destruct Hwc as (_ & _ & Hwcenv & Hwctcs).
+    (* the scope this system's own names live in *)
+    destruct (SECSTCTYPING.sys_raw_scope_facts s env clk_type rst_type inp out
+                slocals slasts reset_env rids Hinp Hout Hslocals Hslasts Hrids)
+      as (Hvarssc & _ & _ & _).
+    set (rawscope := inp ++ out ++ slocals ++ slasts ++ rids
+                       ++ [clk_type; rst_type]).
+    assert (Hincl : forall x,
+               List.In x (SECSTCTYPING.sys_raw_scope inp out clk_type rst_type
+                            slocals slasts rids) -> List.In x rawscope).
+    { intros x Hx.
+      unfold SECSTCTYPING.sys_raw_scope, SECSTCTYPING.hidden_sys_vars in Hx.
+      rewrite in_app_iff, nodup_In in Hx.
+      unfold rawscope. repeat rewrite in_app_iff in *. tauto. }
+    assert (Hfr : SIG.secglobal_scope_fresh rawscope G1)
+      by (eapply Hfreshenv; eassumption).
+    assert (Hvars : SECSTCTYPING.vars_env_scoped env
+                      (idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars)
+                               ++ s.(SynStc.s_out)) ++ idck s.(SynStc.s_lasts))
+                      rawscope).
+    { intros x Hmem. destruct (Hvarssc x Hmem) as (ty & Hf & Hins).
+      exists ty. split; [exact Hf|apply Hincl; exact Hins]. }
+    (* every call the body makes has all the data the Obc side wants *)
+    assert (Hcalls : forall i y ys ck rst f es,
+               List.In (SynStc.TcCall i (y :: ys) ck rst f es) s.(SynStc.s_tcs) ->
+               exists n1 n2 sty,
+                 SIG.find_signature f G1 = Some n1
+                 /\ SIG.find_signature f G2 = Some n2
+                 /\ SIG.signature_fields_agree n1 n2
+                 /\ SIGPROOFS.signature_targets_out n2
+                 /\ NoDup (SIG.signature_scope n1)
+                 /\ Env.find i reset_env = Some sty
+                 /\ (forall outtyp, get_mappings (y :: ys) env = Some outtyp ->
+                                    NoDup outtyp
+                                    /\ SIG.outputs_fresh
+                                         (SIG.signature_scope n1) outtyp)).
+    { intros i y ys ck rst f es Hin.
+      assert (Heach : Forall
+                        (fun tc => exists blk sa sb,
+                             SECSTCTYPING.generate_trconstr_constraint G1 env
+                               reset_env clk_type rst_type tc sa = OK (blk, sb))
+                        s.(SynStc.s_tcs))
+        by (eapply generate_trconstrs_constraints_each; exact Hsconst).
+      rewrite Forall_forall in Heach.
+      destruct (Heach _ Hin) as (blk & sa & sb & Htc).
+      assert (Hf1' : exists n1, SIG.find_signature f G1 = Some n1)
+        by (eapply generate_tccall_find_signature; exact Htc).
+      destruct Hf1' as (n1 & Hf1).
+      destruct (Hcons _ _ Hf1) as (n2 & Hf2 & _ & Hagree & _).
+      assert (Hsty' : exists sty, Env.find i reset_env = Some sty).
+      { eapply Hinsts; [exact Hrenv|].
+        eapply In_InMembers.
+        eapply Permutation_in;
+          [apply Permutation_sym, (SynStc.s_subs_calls_of s)|].
+        eapply In_calls_of; exact Hin. }
+      destruct Hsty' as (sty & Hsty).
+      exists n1, n2, sty.
+      split; [exact Hf1|]. split; [exact Hf2|]. split; [exact Hagree|].
+      split; [eapply Htgtg2; exact Hf2|].
+      split; [eapply Hndg1; exact Hf1|].
+      split; [exact Hsty|].
+      intros outtyp Hgm. split.
+      - eapply get_mappings_nodup_gen; [|exact Hinjp|exact Hgm].
+        eapply call_outputs_nodup; exact Hin.
+      - unfold SIG.outputs_fresh. apply Forall_forall.
+        intros ty Hty.
+        destruct (get_mappings_In _ _ _ _ Hgm Hty) as (x & Hinx & Hfx).
+        assert (Hinvar : List.In x (SynStc.variables s.(SynStc.s_tcs))).
+        { unfold SynStc.variables. apply in_flat_map.
+          exists (SynStc.TcCall i (y :: ys) ck rst f es).
+          split; [exact Hin|exact Hinx]. }
+        assert (Hinvo : List.In x (map fst s.(SynStc.s_vars)
+                                     ++ map fst s.(SynStc.s_out)))
+          by (eapply Permutation_in;
+              [apply Permutation_sym, (SynStc.s_vars_out_in_tcs s)|exact Hinvar]).
+        assert (Hmem : InMembers x
+                         (idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars)
+                                  ++ s.(SynStc.s_out))
+                            ++ idck s.(SynStc.s_lasts))).
+        { apply InMembers_app. left. apply InMembers_idck.
+          apply fst_InMembers. rewrite map_app.
+          apply in_or_app. right. rewrite map_app. exact Hinvo. }
+        destruct (Hvars x Hmem) as (ty' & Hf' & Hins).
+        rewrite Hfx in Hf'. inversion Hf'; subst ty'.
+        eapply Hfr; [exact Hf1|exact Hins]. }
+    eapply (generate_class_signature_ok G1 G2 env reset_env clk_type rst_type
+              P (idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars) ++ s.(SynStc.s_out))
+                   ++ idck s.(SynStc.s_lasts))
+              rawscope s aux_names clk_id rst_id stcsig);
+      try eassumption.
+    eapply Hinsts; exact Hrenv.
+  Qed.
 
   (** ** Signature preservation for one translated system
 
