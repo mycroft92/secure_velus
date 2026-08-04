@@ -3365,6 +3365,184 @@ Module Type SECSTCOBCTRANSLATION
           eapply Htail; [exact Hinp2|exact Hout2|exact Hgen1].
     Qed.
 
+    (** ** The clock type every translated statement needs
+
+        [Control] walks the clock, so the Obc side asks for a security
+        type on every clock the body mentions -- including a call with no
+        outputs, where the STC generator returned before looking.  A
+        well-clocked constraint always has one: its clock is built from
+        members of [vars], and the naming environment covers those. *)
+
+    Lemma assign_clk_type_ok:
+      forall (vars: list (ident * clock)) scope ck,
+        SECSTCTYPING.vars_env_scoped env vars scope ->
+        wc_clock vars ck ->
+        exists ckty, SECCETYPING.assign_clk_type env clk_ty ck = Some ckty.
+    Proof.
+      intros vars scope ck Hvars Hwc.
+      induction Hwc as [|ck x b Hwc IH Hin].
+      - exists [clk_ty]. reflexivity.
+      - destruct IH as (ckty & Hckty).
+        destruct (Hvars x ltac:(eapply In_InMembers; exact Hin))
+          as (xty & Hfind & _).
+        exists (ckty ⊔ [xty]). simpl. rewrite Hckty. simpl. now rewrite Hfind.
+    Qed.
+
+    (** A well-clocked transition constraint has a well-clocked clock.
+        For a definition it is the target's own clock, for a reset it is
+        given outright; for a call it is read off the first actual, which
+        exists because a system has at least one input ([s_ingt0]), and
+        whose clock sits on top of the call's own. *)
+
+    Lemma wc_trconstr_wc_clock:
+      forall P vars tc ck,
+        wc_env vars ->
+        CloStc.wc_trconstr P vars tc ->
+        CloStc.Has_clock_tc ck tc ->
+        wc_clock vars ck.
+    Proof.
+      intros P vars tc ck Henv Hwc Hck.
+      inversion Hwc as [x ck1 e Hin Hce|x ck1 e Hin He|i ck1 f Hck1
+                       |i xs ck1 rst f es sy P' sub Hfind Hargs Houts];
+        subst; inv Hck.
+      - eapply wc_env_var; eauto.
+      - eapply wc_env_var; eauto.
+      - exact Hck1.
+      - destruct (SynStc.s_in sy) as [|(z & zt & zck) ins] eqn:Hinps.
+        { pose proof (SynStc.s_ingt0 sy) as Hgt0. rewrite Hinps in Hgt0.
+          simpl in Hgt0. inversion Hgt0. }
+        inversion Hargs as [|? ? ? ? Hhead Htail]; subst.
+        destruct Hhead as (_ & lck & Hexp & Hinst).
+        assert (Hwclck : wc_clock vars lck) by (eapply wc_clock_exp; eauto).
+        apply instck_parent in Hinst as [Heq|Hpar]; [now subst|].
+        eapply wc_clock_parent; eauto.
+    Qed.
+
+    (** ** From the per-trconstr results to the whole body
+
+        [translate_tcs] nests the translated statements in reverse
+        execution order, and each of them leaves the state where it found
+        it, so the body generates exactly when every statement does --
+        the order the fold picks is irrelevant. *)
+
+    Lemma generate_fold_right_Comp_ok:
+      forall memset clkvars pc tcs st,
+        Forall (fun tc =>
+                  exists cns,
+                    generate_stmt_constraints G2 env reset_env rst_ty pc
+                      (translate_tc memset clkvars tc) st = OK (cns, st)) tcs ->
+        exists cns,
+          generate_stmt_constraints G2 env reset_env rst_ty pc
+            (fold_right (fun tc i => SynObc.Comp (translate_tc memset clkvars tc) i)
+               SynObc.Skip tcs) st = OK (cns, st).
+    Proof.
+      intros memset clkvars pc tcs st.
+      induction tcs as [|tc tcs IH]; intros Hall.
+      - exists []. reflexivity.
+      - inversion Hall as [|tc1 tcs1 Hhd Htl]; subst.
+        destruct Hhd as (c1 & Hc1).
+        destruct (IH Htl) as (c2 & Hc2).
+        exists (c1 ++ c2). cbn [generate_stmt_constraints].
+        eapply sec_bind_ok; [exact Hc1|].
+        eapply sec_bind_ok; [exact Hc2|].
+        reflexivity.
+    Qed.
+
+    Lemma translate_tcs_constraints_ok_from_Forall:
+      forall memset clkvars pc tcs st,
+        Forall (fun tc =>
+                  exists cns,
+                    generate_stmt_constraints G2 env reset_env rst_ty pc
+                      (translate_tc memset clkvars tc) st = OK (cns, st)) tcs ->
+        exists cns,
+          generate_stmt_constraints G2 env reset_env rst_ty pc
+            (translate_tcs memset clkvars tcs) st = OK (cns, st).
+    Proof.
+      intros memset clkvars pc tcs st Hall.
+      rewrite translate_tcs_fold_right.
+      apply generate_fold_right_Comp_ok, Forall_rev, Hall.
+    Qed.
+
+    (** The STC body generator runs each constraint in turn, so its
+        success hands over a successful run for every one of them. *)
+
+    Lemma generate_trconstrs_constraints_each:
+      forall tcs cns st st',
+        SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty
+          tcs st = OK (cns, st') ->
+        Forall (fun tc =>
+                  exists blk sa sb,
+                    SECSTCTYPING.generate_trconstr_constraint G1 env reset_env
+                      clk_ty rst_ty tc sa = OK (blk, sb)) tcs.
+    Proof.
+      induction tcs as [|tc tcs IH]; intros cns st st' Hgen; [constructor|].
+      cbn [SECSTCTYPING.generate_trconstrs_constraints] in Hgen.
+      eapply sec_bind_inv in Hgen as (c1 & sa & Htc & Hgen).
+      eapply sec_bind_inv in Hgen as (c2 & sb & Htcs & _).
+      constructor.
+      - exists c1, st, sa. exact Htc.
+      - eapply IH; exact Htcs.
+    Qed.
+
+    (** ** Body-level relative totality
+
+        Where the STC generator handled the body, so does the Obc one.
+        The clocking hypotheses are the system's own; the call data is
+        collected per callee and discharged, one level up, from the
+        signature table the generator already built. *)
+
+    Lemma translate_tcs_constraints_ok:
+      forall P vars scope memset clkvars tcs pc nconst st1 st1' st2,
+        wc_env vars ->
+        SECSTCTYPING.vars_env_scoped env vars scope ->
+        Forall (CloStc.wc_trconstr P vars) tcs ->
+        (forall i xs ck rst f es,
+            List.In (SynStc.TcCall i xs ck rst f es) tcs ->
+            exists n1 n2 sty,
+              SIG.find_signature f G1 = Some n1
+              /\ SIG.find_signature f G2 = Some n2
+              /\ SIG.signature_fields_agree n1 n2
+              /\ SIGPROOFS.signature_targets_out n2
+              /\ NoDup (SIG.signature_scope n1)
+              /\ Env.find i reset_env = Some sty
+              /\ (forall outtyp, get_mappings xs env = Some outtyp ->
+                                 NoDup outtyp
+                                 /\ SIG.outputs_fresh (SIG.signature_scope n1) outtyp)) ->
+        SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty
+          tcs st1 = OK (nconst, st1') ->
+        exists cns,
+          generate_stmt_constraints G2 env reset_env rst_ty pc
+            (translate_tcs memset clkvars tcs) st2 = OK (cns, st2).
+    Proof.
+      intros P vars scope memset clkvars tcs pc nconst st1 st1' st2
+             Henv Hvars Hwctcs Hcalls Hstc.
+      apply translate_tcs_constraints_ok_from_Forall.
+      pose proof (generate_trconstrs_constraints_each tcs nconst st1 st1' Hstc)
+        as Heach.
+      clear Hstc.
+      induction tcs as [|tc tcs IH]; [constructor|].
+      inversion Hwctcs as [|tc1 tcs1 Hwctc Hwcrest]; subst.
+      inversion Heach as [|tc2 tcs2 (blk & sa & sb & Htc) Herest]; subst.
+      constructor; [|apply IH; auto; intros; eapply Hcalls; right; eassumption].
+      destruct tc as [x ck ce|x ck e|i ck f|i xs ck rst f es].
+      - inversion Hwctc as [x1 ck1 ce1 Hin Hce| | |]; subst.
+        eapply (translate_tcdef_constraints_ok memset clkvars vars);
+          [exact Hce|exact Htc].
+      - inversion Hwctc as [|x1 ck1 e1 Hin He| |]; subst.
+        eapply (translate_tcnext_constraints_ok memset clkvars vars);
+          [exact He|exact Htc].
+      - eapply translate_tcreset_constraints_ok; exact Htc.
+      - destruct (Hcalls i xs ck rst f es ltac:(now left))
+          as (n1 & n2 & sty & Hf1 & Hf2 & Hagree & Htgt & Hnd1 & Hsty & Houts).
+        assert (Hwcck : wc_clock vars ck)
+          by (eapply wc_trconstr_wc_clock;
+              [exact Henv|exact Hwctc|constructor]).
+        destruct (assign_clk_type_ok vars scope ck Hvars Hwcck) as (ckty & Hckty).
+        eapply translate_tccall_constraints_ok;
+          [exact Hckty|exact Hf1|exact Hf2|exact Hagree|exact Htgt
+          |exact Hnd1|exact Hsty|exact Houts|exact Htc].
+    Qed.
+
     Lemma translate_system_well_defined:
       forall P s,
         wc_system P s ->

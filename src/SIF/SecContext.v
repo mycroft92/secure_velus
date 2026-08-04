@@ -58,6 +58,19 @@ Section MySecMonad.
     destruct (x st) as [[y st'']|]; eauto. inv Hbind.
   Qed.
 
+  (** The forward direction, for building a successful run rather than
+      taking one apart.  Chaining it avoids having to reduce the [do]
+      notation by hand, which is brittle under [simpl]. *)
+
+  Lemma sec_bind_ok {B} : forall (x : Sec A) (f : A -> Sec B) y st st' res,
+      x st = OK (y, st') ->
+      f y st' = res ->
+      (bind x f) st = res.
+  Proof.
+    intros * Hx Hf.
+    unfold bind. rewrite Hx. exact Hf.
+  Qed.
+
   Lemma sec_bind2_inv {A1 A2 B} : forall (x : Sec (A1 * A2)) (f : A1 -> A2 -> Sec B) res st,
       (bind2 x f) st = OK res ->
       exists y1 y2 st'',
