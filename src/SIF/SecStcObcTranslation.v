@@ -3369,6 +3369,29 @@ Module Type SECSTCOBCTRANSLATION
           eapply Htail; [exact Hinp2|exact Hout2|exact Hgen1].
     Qed.
 
+    (** A call with no outputs is a step call that binds nothing, so the
+        Obc side emits nothing for it either -- it never reaches the
+        signature table.  Only the clock has to be walked. *)
+
+    Lemma translate_tccall_nil_constraints_ok:
+      forall memset clkvars i ck rst f es pc st2 ckty,
+        SECCETYPING.assign_clk_type env clk_ty ck = Some ckty ->
+        exists cns,
+          generate_stmt_constraints G2 env reset_env rst_ty pc
+            (translate_tc memset clkvars (SynStc.TcCall i [] ck rst f es)) st2
+          = OK (cns, st2).
+    Proof.
+      intros memset clkvars i ck rst f es pc st2 ckty Hckopt.
+      unfold translate_tc.
+      destruct (clock_pc_ok env clk_ty ck ckty pc Hckopt) as (pc' & Hpc').
+      rewrite (generate_stmt_constraints_Control G2 env reset_env rst_ty
+                 memset ck _ pc pc' st2 Hpc').
+      exists []. cbn [generate_stmt_constraints].
+      assert (Hne : ident_eqb Ids.step Ids.reset = false)
+        by (apply ident_eqb_neq; intro; apply Ids.reset_not_step; auto).
+      rewrite Hne. reflexivity.
+    Qed.
+
     (** ** The clock type every translated statement needs
 
         [Control] walks the clock, so the Obc side asks for a security
@@ -3500,8 +3523,8 @@ Module Type SECSTCOBCTRANSLATION
         wc_env vars ->
         SECSTCTYPING.vars_env_scoped env vars scope ->
         Forall (CloStc.wc_trconstr P vars) tcs ->
-        (forall i xs ck rst f es,
-            List.In (SynStc.TcCall i xs ck rst f es) tcs ->
+        (forall i y ys ck rst f es,
+            List.In (SynStc.TcCall i (y :: ys) ck rst f es) tcs ->
             exists n1 n2 sty,
               SIG.find_signature f G1 = Some n1
               /\ SIG.find_signature f G2 = Some n2
@@ -3509,7 +3532,7 @@ Module Type SECSTCOBCTRANSLATION
               /\ SIGPROOFS.signature_targets_out n2
               /\ NoDup (SIG.signature_scope n1)
               /\ Env.find i reset_env = Some sty
-              /\ (forall outtyp, get_mappings xs env = Some outtyp ->
+              /\ (forall outtyp, get_mappings (y :: ys) env = Some outtyp ->
                                  NoDup outtyp
                                  /\ SIG.outputs_fresh (SIG.signature_scope n1) outtyp)) ->
         SECSTCTYPING.generate_trconstrs_constraints G1 env reset_env clk_ty rst_ty
@@ -3536,15 +3559,17 @@ Module Type SECSTCOBCTRANSLATION
         eapply (translate_tcnext_constraints_ok memset clkvars vars);
           [exact He|exact Htc].
       - eapply translate_tcreset_constraints_ok; exact Htc.
-      - destruct (Hcalls i xs ck rst f es ltac:(now left))
-          as (n1 & n2 & sty & Hf1 & Hf2 & Hagree & Htgt & Hnd1 & Hsty & Houts).
-        assert (Hwcck : wc_clock vars ck)
+      - assert (Hwcck : wc_clock vars ck)
           by (eapply wc_trconstr_wc_clock;
               [exact Henv|exact Hwctc|constructor]).
         destruct (assign_clk_type_ok vars scope ck Hvars Hwcck) as (ckty & Hckty).
-        eapply translate_tccall_constraints_ok;
-          [exact Hckty|exact Hf1|exact Hf2|exact Hagree|exact Htgt
-          |exact Hnd1|exact Hsty|exact Houts|exact Htc].
+        destruct xs as [|y ys].
+        + eapply translate_tccall_nil_constraints_ok; exact Hckty.
+        + destruct (Hcalls i y ys ck rst f es ltac:(now left))
+            as (n1 & n2 & sty & Hf1 & Hf2 & Hagree & Htgt & Hnd1 & Hsty & Houts).
+          eapply translate_tccall_constraints_ok;
+            [exact Hckty|exact Hf1|exact Hf2|exact Hagree|exact Htgt
+            |exact Hnd1|exact Hsty|exact Houts|exact Htc].
     Qed.
 
     (** ** The reset method
@@ -3662,8 +3687,8 @@ Module Type SECSTCOBCTRANSLATION
         get_node_inst (SynStc.s_name s) aux_names = Some reset_env ->
         (forall i, InMembers i (SynStc.s_subs s) ->
                    exists sty, Env.find i reset_env = Some sty) ->
-        (forall i xs ck rst f es,
-            List.In (SynStc.TcCall i xs ck rst f es) (SynStc.s_tcs s) ->
+        (forall i y ys ck rst f es,
+            List.In (SynStc.TcCall i (y :: ys) ck rst f es) (SynStc.s_tcs s) ->
             exists n1 n2 sty,
               SIG.find_signature f G1 = Some n1
               /\ SIG.find_signature f G2 = Some n2
@@ -3671,7 +3696,7 @@ Module Type SECSTCOBCTRANSLATION
               /\ SIGPROOFS.signature_targets_out n2
               /\ NoDup (SIG.signature_scope n1)
               /\ Env.find i reset_env = Some sty
-              /\ (forall outtyp, get_mappings xs env = Some outtyp ->
+              /\ (forall outtyp, get_mappings (y :: ys) env = Some outtyp ->
                                  NoDup outtyp
                                  /\ SIG.outputs_fresh (SIG.signature_scope n1) outtyp)) ->
         SECSTCTYPING.generate_sys_signature G1 s env aux_names = OK stcsig ->
