@@ -2973,6 +2973,131 @@ Module Type SECNLUSSTCTRANSLATION
 
   End EQNTOTALITY.
 
+  (** ** What the translated system's interface is made of
+
+      [translate_node] splits the node's locals into the memories it
+      gathers and the rest, so both halves are covered by whatever covers
+      [n_vars]; and the instances it resets are among the instances it
+      calls, which is what makes one naming obligation serve this phase
+      and the Obc one. *)
+
+  Lemma translate_node_name:
+    forall n, (translate_node n).(SynStc.s_name) = n.(n_name).
+  Proof. reflexivity. Qed.
+
+  Lemma translate_node_in:
+    forall n, (translate_node n).(SynStc.s_in) = n.(n_in).
+  Proof. reflexivity. Qed.
+
+  Lemma translate_node_out:
+    forall n, (translate_node n).(SynStc.s_out) = n.(n_out).
+  Proof. reflexivity. Qed.
+
+  Lemma translate_node_tcs:
+    forall n, (translate_node n).(SynStc.s_tcs) = translate_eqns n.(n_eqs).
+  Proof. reflexivity. Qed.
+
+  Lemma translate_node_subs:
+    forall n, (translate_node n).(SynStc.s_subs) = snd (gather_eqs n.(n_eqs)).
+  Proof. reflexivity. Qed.
+
+  Lemma partition_snd_In:
+    forall {A} (p: A -> bool) (l: list A) x,
+      List.In x (snd (partition p l)) -> List.In x l.
+  Proof.
+    intros A p l x Hin.
+    eapply Permutation_in; [symmetry; apply permutation_partition|].
+    apply in_or_app. right. exact Hin.
+  Qed.
+
+  Lemma partition_fst_In:
+    forall {A} (p: A -> bool) (l: list A) x,
+      List.In x (fst (partition p l)) -> List.In x l.
+  Proof.
+    intros A p l x Hin.
+    eapply Permutation_in; [symmetry; apply permutation_partition|].
+    apply in_or_app. left. exact Hin.
+  Qed.
+
+  Lemma translate_node_vars_in_node:
+    forall n x,
+      InMembers x (translate_node n).(SynStc.s_vars) ->
+      InMembers x n.(n_vars).
+  Proof.
+    intros n x Hin.
+    apply InMembers_In in Hin as (a & Hin).
+    eapply In_InMembers, partition_snd_In; exact Hin.
+  Qed.
+
+  Lemma translate_node_lasts_in_node:
+    forall n x,
+      InMembers x (translate_node n).(SynStc.s_lasts) ->
+      InMembers x n.(n_vars).
+  Proof.
+    intros n x Hin.
+    apply fst_InMembers in Hin.
+    assert (Hin' : List.In x (map fst (fst (gather_eqs n.(n_eqs)))))
+      by exact Hin.
+    eapply Permutation_in in Hin'; [|apply fst_fst_gather_eqs_var_defined].
+    eapply Permutation_in in Hin';
+      [|symmetry; apply (fst_partition_memories_var_defined n)].
+    apply in_map_iff in Hin' as ((y, a) & Heq & Hiny). simpl in Heq. subst y.
+    eapply In_InMembers, partition_fst_In; exact Hiny.
+  Qed.
+
+  Lemma resets_of_translate_eqn_incl:
+    forall e i b,
+      List.In (i, b) (resets_of (translate_eqn e)) ->
+      List.In (i, b) (gather_inst_eq e).
+  Proof.
+    intros [y ck ce|ys ck g les rr|y ck c0 ex] i b Hin; simpl in Hin;
+      try contradiction.
+    destruct ys as [|x xs]; [contradiction|].
+    destruct rr as [(r, ckr)|]; simpl in Hin; [|contradiction].
+    destruct Hin as [Heq|[]]. inversion Heq; subst. simpl. now left.
+  Qed.
+
+  Lemma resets_of_translate_eqns_incl:
+    forall eqs i b,
+      List.In (i, b) (resets_of (translate_eqns eqs)) ->
+      List.In (i, b) (gather_insts eqs).
+  Proof.
+    induction eqs as [|e eqs IH]; intros i b Hin; [contradiction|].
+    unfold translate_eqns in Hin. cbn [flat_map] in Hin.
+    rewrite resets_of_app, in_app_iff in Hin.
+    unfold gather_insts. cbn [flat_map]. apply in_or_app.
+    destruct Hin as [Hin|Hin].
+    - left. eapply resets_of_translate_eqn_incl; exact Hin.
+    - right. eapply IH; exact Hin.
+  Qed.
+
+  Lemma resets_of_translate_eqns_subs:
+    forall eqs i,
+      InMembers i (resets_of (translate_eqns eqs)) ->
+      InMembers i (snd (gather_eqs eqs)).
+  Proof.
+    intros eqs i Hin.
+    apply InMembers_In in Hin as (b & Hin).
+    eapply In_InMembers.
+    eapply Permutation_in; [symmetry; apply gather_eqs_snd_spec|].
+    eapply resets_of_translate_eqns_incl; exact Hin.
+  Qed.
+
+  Lemma get_mappings_from_node_sub:
+    forall A B (xs: list (ident * A)) (ys: list (ident * B)) e tys,
+      (forall x, InMembers x xs -> InMembers x ys) ->
+      get_mappings_from_node ys e = Some tys ->
+      exists tys', get_mappings_from_node xs e = Some tys'.
+  Proof.
+    intros A B xs ys e tys Hsub Hys.
+    revert Hsub. induction xs as [|(x, a) xs IH]; intros Hsub.
+    - exists []. reflexivity.
+    - destruct IH as (tys' & Htys'); [intros z Hz; apply Hsub; now right|].
+      destruct (get_mappings_from_node_inmembers _ ys e tys x
+                  ltac:(apply Hsub; now left) Hys) as (xty & Hx & _).
+      exists (xty :: tys'). simpl. rewrite Hx, Htys'. reflexivity.
+  Qed.
+
 End SECNLUSSTCTRANSLATION.
 
 Module SecNLusStcTranslation
