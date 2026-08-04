@@ -1742,6 +1742,140 @@ Module Type SECSTCTYPINGCORRECTNESS
     eapply NAMEGEN.naming_env_props_from_local_env; eauto.
   Qed.
 
+  (** ** Relative totality across a change of signature table
+
+      Only a call consults the table, so a transition constraint the
+      generator handled with one set of signatures it handles with
+      another -- provided the callee's new signature carries the same
+      interface and targets its own outputs.  Everything else in the
+      generator is independent of the table, and independent of the
+      state, so the run transfers wholesale. *)
+
+  Definition call_data_for (G G': secglobal) (env: Env.t ident)
+             (tc: SynStc.trconstr) : Prop :=
+    forall i y ys ck rst f es,
+      tc = SynStc.TcCall i (y :: ys) ck rst f es ->
+      forall n1,
+        find_signature f G = Some n1 ->
+        exists n2,
+          find_signature f G' = Some n2
+          /\ signature_fields_agree n1 n2
+          /\ signature_targets_out n2
+          /\ NoDup (signature_scope n1)
+          /\ (forall outtyp, get_mappings (y :: ys) env = Some outtyp ->
+                             NoDup outtyp
+                             /\ outputs_fresh (signature_scope n1) outtyp).
+
+  Lemma generate_trconstr_constraint_transfer:
+    forall G G' env reset_env clk_ty rst_ty tc cns st st' st2,
+      call_data_for G G' env tc ->
+      SECSTCTYPING.generate_trconstr_constraint G env reset_env clk_ty rst_ty
+        tc st = OK (cns, st') ->
+      exists cns',
+        SECSTCTYPING.generate_trconstr_constraint G' env reset_env clk_ty rst_ty
+          tc st2 = OK (cns', st2).
+  Proof.
+    intros G G' env reset_env clk_ty rst_ty tc cns st st' st2 Hcall Hgen.
+    destruct tc as [x ck ce|x ck e|i ck f|i xs ck rst f es].
+    - assert (Hgen' : SECSTCTYPING.generate_trconstr_constraint G' env reset_env
+                        clk_ty rst_ty (SynStc.TcDef x ck ce) st = OK (cns, st'))
+        by exact Hgen.
+      destruct (SECSTCTYPING.state_pure_generate_trconstr_constraint
+                  G' env reset_env clk_ty rst_ty (SynStc.TcDef x ck ce)
+                  st st2 cns st' Hgen') as (_ & Hok).
+      exists cns. exact Hok.
+    - assert (Hgen' : SECSTCTYPING.generate_trconstr_constraint G' env reset_env
+                        clk_ty rst_ty (SynStc.TcNext x ck e) st = OK (cns, st'))
+        by exact Hgen.
+      destruct (SECSTCTYPING.state_pure_generate_trconstr_constraint
+                  G' env reset_env clk_ty rst_ty (SynStc.TcNext x ck e)
+                  st st2 cns st' Hgen') as (_ & Hok).
+      exists cns. exact Hok.
+    - assert (Hgen' : SECSTCTYPING.generate_trconstr_constraint G' env reset_env
+                        clk_ty rst_ty (SynStc.TcReset i ck f) st = OK (cns, st'))
+        by exact Hgen.
+      destruct (SECSTCTYPING.state_pure_generate_trconstr_constraint
+                  G' env reset_env clk_ty rst_ty (SynStc.TcReset i ck f)
+                  st st2 cns st' Hgen') as (_ & Hok).
+      exists cns. exact Hok.
+    - destruct xs as [|y ys]; [exists []; reflexivity|].
+      (* a call that binds something: the only case that reads the table *)
+      cbn [SECSTCTYPING.generate_trconstr_constraint] in Hgen.
+      destruct (find_signature f G) as [n1|] eqn:Hf1;
+        [|destruct rst; unfold error in Hgen; discriminate].
+      destruct (Hcall i y ys ck rst f es Logic.eq_refl n1 Hf1)
+        as (n2 & Hf2 & Hagree & Htgt & Hnd1 & Houts).
+      assert (Hcore : forall inptyp outtyp ckty1 rst1 cns0 sA sB ckty2 rst2,
+                 SC.mmap (fun z => find_env z env) (y :: ys) st2 = OK (outtyp, st2) ->
+                 generate_constraints n1 inptyp ckty1 rst1 outtyp sA = OK (cns0, sB) ->
+                 exists cns',
+                   generate_constraints n2 inptyp ckty2 rst2 outtyp st2
+                   = OK (cns', st2)).
+      { intros inptyp outtyp ckty1 rst1 cns0 sA sB ckty2 rst2 Hout Hgen1.
+        destruct (generate_constraints_lengths
+                    n1 inptyp ckty1 rst1 outtyp cns0 sA sB Hgen1) as (Hlin & Hlout).
+        destruct (SECSTCTYPING.mmap_find_env_inv env (y :: ys) outtyp st2 st2 Hout)
+          as (_ & Hgm).
+        destruct (Houts outtyp Hgm) as (Hndout & Hfresh).
+        assert (Hscopeeq : signature_scope n1 = signature_scope n2)
+          by (eapply signature_fields_agree_scope_eq; exact Hagree).
+        destruct Hagree as (Hin' & Hout' & _ & _).
+        eapply generate_constraints_ok_from_good;
+          [exact Htgt
+          |rewrite <- Hscopeeq; exact Hnd1
+          |rewrite <- Hin'; exact Hlin
+          |rewrite <- Hout'; exact Hlout
+          |rewrite <- Hscopeeq; exact Hfresh
+          |exact Hndout]. }
+      destruct rst.
+      + eapply sec_bind_inv in Hgen as (ckty & sa & Hck & Hgen).
+        eapply sec_bind_inv in Hgen as (inptyp & sb & Hinp & Hgen).
+        eapply sec_bind_inv in Hgen as (outtyp & sc & Hout & Hgen).
+        eapply sec_bind_inv in Hgen as (rinst & sd & Hri & Hgen1).
+        destruct (state_pure_option_to_sec
+                    (SECCETYPING.assign_clk_type env clk_ty ck)
+                    st st2 ckty sa Hck) as (_ & Hck2).
+        destruct (state_pure_mmap
+                    (fun z => option_to_sec (SECCETYPING.assign_exp_type env z))
+                    es ltac:(intro; apply state_pure_option_to_sec)
+                    sa st2 inptyp sb Hinp) as (_ & Hinp2).
+        destruct (state_pure_mmap (fun z => find_env z env) (y :: ys)
+                    ltac:(intro; apply state_pure_find_env)
+                    sb st2 outtyp sc Hout) as (_ & Hout2).
+        destruct (state_pure_find_env i reset_env sc st2 rinst sd Hri)
+          as (_ & Hri2).
+        destruct (Hcore inptyp outtyp ckty [rinst] cns sd st' ckty [rinst]
+                    Hout2 Hgen1) as (cns' & Hcns).
+        exists cns'. cbn [SECSTCTYPING.generate_trconstr_constraint].
+        rewrite Hf2.
+        eapply sec_bind_ok; [exact Hck2|].
+        eapply sec_bind_ok; [exact Hinp2|].
+        eapply sec_bind_ok; [exact Hout2|].
+        eapply sec_bind_ok; [exact Hri2|].
+        exact Hcns.
+      + eapply sec_bind_inv in Hgen as (ckty & sa & Hck & Hgen).
+        eapply sec_bind_inv in Hgen as (inptyp & sb & Hinp & Hgen).
+        eapply sec_bind_inv in Hgen as (outtyp & sc & Hout & Hgen1).
+        destruct (state_pure_option_to_sec
+                    (SECCETYPING.assign_clk_type env clk_ty ck)
+                    st st2 ckty sa Hck) as (_ & Hck2).
+        destruct (state_pure_mmap
+                    (fun z => option_to_sec (SECCETYPING.assign_exp_type env z))
+                    es ltac:(intro; apply state_pure_option_to_sec)
+                    sa st2 inptyp sb Hinp) as (_ & Hinp2).
+        destruct (state_pure_mmap (fun z => find_env z env) (y :: ys)
+                    ltac:(intro; apply state_pure_find_env)
+                    sb st2 outtyp sc Hout) as (_ & Hout2).
+        destruct (Hcore inptyp outtyp ckty [rst_ty] cns sc st' ckty [rst_ty]
+                    Hout2 Hgen1) as (cns' & Hcns).
+        exists cns'. cbn [SECSTCTYPING.generate_trconstr_constraint].
+        rewrite Hf2.
+        eapply sec_bind_ok; [exact Hck2|].
+        eapply sec_bind_ok; [exact Hinp2|].
+        eapply sec_bind_ok; [exact Hout2|].
+        exact Hcns.
+  Qed.
+
   (** ** Scheduling and the signature accumulator
 
       The scheduler is [map schedule_system]: it permutes each system's
