@@ -3213,6 +3213,143 @@ Module Type SECNLUSSTCTRANSLATION
     eexists. reflexivity.
   Qed.
 
+  (** ** The node-level hypotheses, discharged
+
+      Everything [generate_sys_signature_ok] asks about a call is
+      available where the preservation theorem already looks: the callee
+      from the NLustre run, its Stc counterpart from the consistency of
+      the two environments, and the freshness of the caller's own names
+      from [node_scope_fresh_in_env]. *)
+
+  Lemma generate_eqapp_find_signature:
+    forall G1 env clk_ty rst_ty x xs ck f les r nconst st1 st1',
+      SECNLUSTYPING.generate_eqn_constraint G1 env clk_ty rst_ty
+        (EqApp (x :: xs) ck f les r) st1 = OK (nconst, st1') ->
+      exists n1, SIG.find_signature f G1 = Some n1.
+  Proof.
+    intros G1 env clk_ty rst_ty x xs ck f les r nconst st1 st1' Hnl.
+    destruct r as [(rr, ckr)|];
+      cbn [SECNLUSTYPING.generate_eqn_constraint] in Hnl;
+      destruct (SIG.find_signature f G1) as [n1|] eqn:Hf;
+      solve [eauto | unfold error in Hnl; discriminate].
+  Qed.
+
+  (** An application's targets are distinct, being a segment of what the
+      node defines, which [n_defd] and [n_nodup] keep distinct. *)
+
+  Lemma eqapp_outputs_nodup:
+    forall n x xs ck f les r,
+      List.In (EqApp (x :: xs) ck f les r) n.(n_eqs) ->
+      NoDup (x :: xs).
+  Proof.
+    intros n x xs ck f les r Hin.
+    assert (Hnd : NoDup (vars_defined n.(n_eqs))).
+    { eapply Permutation_NoDup; [symmetry; apply (n_defd n)|].
+      apply fst_NoDupMembers.
+      eapply NoDupMembers_app_r, (n_nodup n). }
+    apply in_split in Hin as (l1 & l2 & Heq).
+    rewrite Heq in Hnd.
+    unfold vars_defined in Hnd. rewrite <- flat_map_app in Hnd.
+    apply NoDup_app_r in Hnd.
+    cbn [flat_map var_defined] in Hnd.
+    eapply NoDup_app_l; exact Hnd.
+  Qed.
+
+  Theorem generate_sys_signature_ok_from_wc:
+    forall G1 G2 n env reset_env aux_names nlsig,
+      Signature_consistent G1 G2 ->
+      SECNLUSTYPINGCORRECTNESS.node_scope_fresh_in_env n env aux_names G1 ->
+      SECNLUSTYPING.env_injective env ->
+      get_node_inst n.(n_name) aux_names = Some reset_env ->
+      node_insts_named n aux_names ->
+      (forall f n1, SIG.find_signature f G1 = Some n1 ->
+                    NoDup (SIG.signature_scope n1)) ->
+      (forall f n2, SIG.find_signature f G2 = Some n2 ->
+                    SIGPROOFS.signature_targets_out n2) ->
+      SECNLUSTYPING.generate_node_sig G1 n env aux_names = OK nlsig ->
+      exists stcsig,
+        SECSTCTYPING.generate_sys_signature G2 (translate_node n) env aux_names
+        = OK stcsig.
+  Proof.
+    intros G1 G2 n env reset_env aux_names nlsig
+           Hcons Hfresh Hinj Hrenv Hinsts Hndg1 Htgtg2 Hnl.
+    edestruct SECNLUSTYPINGCORRECTNESS.generate_node_sig_inv as
+        (clk_id & rst_id & clk_type & rst_type & inp & out & locals
+         & nconst & st_n
+         & Haux & Hclk & Hrst & Hinp & Hout & Hlocals & Hnconst & _);
+      [exact Hnl|].
+    set (rawscope := inp ++ out ++ locals ++ clk_type :: rst_type :: nil).
+    assert (Hfr : SIG.secglobal_scope_fresh rawscope G1)
+      by (eapply Hfresh; eassumption).
+    assert (Hcalls : forall x xs ck f les r,
+               List.In (EqApp (x :: xs) ck f les r) n.(n_eqs) ->
+               exists n1 n2,
+                 SIG.find_signature f G1 = Some n1
+                 /\ SIG.find_signature f G2 = Some n2
+                 /\ SIG.signature_fields_agree n1 n2
+                 /\ SIGPROOFS.signature_targets_out n2
+                 /\ NoDup (SIG.signature_scope n1)
+                 /\ (forall outtyp, get_mappings (x :: xs) env = Some outtyp ->
+                                    NoDup outtyp
+                                    /\ SIG.outputs_fresh
+                                         (SIG.signature_scope n1) outtyp)
+                 /\ (forall rr ckr, r = Some (rr, ckr) ->
+                                    exists sty, Env.find x reset_env = Some sty)).
+    { intros x xs ck f les r Hin.
+      assert (Heach : Forall
+                        (fun e => exists blk sa sb,
+                             SECNLUSTYPING.generate_eqn_constraint G1 env
+                               clk_type rst_type e sa = OK (blk, sb))
+                        n.(n_eqs))
+        by (eapply generate_eqns_constraints_each; exact Hnconst).
+      rewrite Forall_forall in Heach.
+      destruct (Heach _ Hin) as (blk & sa & sb & He).
+      destruct (generate_eqapp_find_signature G1 env clk_type rst_type
+                  x xs ck f les r blk sa sb He) as (n1 & Hf1).
+      destruct (Hcons _ _ Hf1) as (n2 & Hf2 & _ & Hagree & _).
+      exists n1, n2.
+      split; [exact Hf1|]. split; [exact Hf2|]. split; [exact Hagree|].
+      split; [eapply Htgtg2; exact Hf2|].
+      split; [eapply Hndg1; exact Hf1|].
+      split.
+      - intros outtyp Hgm. split.
+        + eapply get_mappings_nodup_gen;
+            [eapply eqapp_outputs_nodup; exact Hin|exact Hinj|exact Hgm].
+        + unfold SIG.outputs_fresh. apply Forall_forall. intros ty Hty.
+          destruct (get_mappings_In _ _ _ _ Hgm Hty) as (z & Hinz & Hfz).
+          assert (Hinvd : List.In z (vars_defined n.(n_eqs))).
+          { unfold vars_defined. apply in_flat_map.
+            exists (EqApp (x :: xs) ck f les r).
+            split; [exact Hin|exact Hinz]. }
+          assert (Hinvo : List.In z (map fst (n.(n_vars) ++ n.(n_out))))
+            by (eapply Permutation_in; [apply (n_defd n)|exact Hinvd]).
+          rewrite map_app, in_app_iff in Hinvo.
+          assert (Hins : List.In ty rawscope).
+          { destruct Hinvo as [Hz|Hz].
+            - destruct (get_mappings_from_node_inmembers _ n.(n_vars) env locals z
+                          ltac:(now apply fst_InMembers) Hlocals)
+                as (ty' & Hf' & Hin').
+              rewrite Hfz in Hf'. inversion Hf'; subst ty'.
+              unfold rawscope. apply in_or_app. right.
+              apply in_or_app. right. apply in_or_app. now left.
+            - destruct (get_mappings_from_node_inmembers _ n.(n_out) env out z
+                          ltac:(now apply fst_InMembers) Hout)
+                as (ty' & Hf' & Hin').
+              rewrite Hfz in Hf'. inversion Hf'; subst ty'.
+              unfold rawscope. apply in_or_app. right.
+              apply in_or_app. now left. }
+          eapply Hfr; [exact Hf1|exact Hins].
+      - intros rr ckr Heqr. eapply Hinsts; [exact Hrenv|].
+        eapply In_InMembers.
+        eapply Permutation_in; [symmetry; apply gather_eqs_snd_spec|].
+        unfold gather_insts. apply in_flat_map.
+        exists (EqApp (x :: xs) ck f les r).
+        split; [exact Hin|]. simpl. now left. }
+    eapply (generate_sys_signature_ok G1 G2 env reset_env clk_type rst_type
+              n aux_names clk_id rst_id nlsig
+              Haux Hclk Hrst Hrenv Hinsts Hcalls Hnl).
+  Qed.
+
 End SECNLUSSTCTRANSLATION.
 
 Module SecNLusStcTranslation
