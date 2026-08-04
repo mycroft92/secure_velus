@@ -2907,6 +2907,70 @@ Module Type SECNLUSSTCTRANSLATION
         exact Hcns.
     Qed.
 
+    (** ** Body-level relative totality
+
+        Where the NLustre generator handled the equations, the Stc one
+        handles their translation.  The call data is collected per
+        callee and discharged, one level up, from the signature table the
+        generator already built. *)
+
+    Lemma translate_eqns_constraints_ok:
+      forall eqs nconst st1 st1' st,
+        (forall x xs ck f les r,
+            List.In (EqApp (x :: xs) ck f les r) eqs ->
+            exists n1 n2,
+              SIG.find_signature f G1 = Some n1
+              /\ SIG.find_signature f G2 = Some n2
+              /\ SIG.signature_fields_agree n1 n2
+              /\ SIGPROOFS.signature_targets_out n2
+              /\ NoDup (SIG.signature_scope n1)
+              /\ (forall outtyp, get_mappings (x :: xs) env = Some outtyp ->
+                                 NoDup outtyp
+                                 /\ SIG.outputs_fresh
+                                      (SIG.signature_scope n1) outtyp)
+              /\ (forall rr ckr, r = Some (rr, ckr) ->
+                                 exists sty, Env.find x reset_env = Some sty)) ->
+        SECNLUSTYPING.generate_eqns_constraints G1 env clk_ty rst_ty eqs st1
+          = OK (nconst, st1') ->
+        exists cns,
+          SECSTCTYPING.generate_trconstrs_constraints G2 env reset_env
+            clk_ty rst_ty (translate_eqns eqs) st = OK (cns, st).
+    Proof.
+      intros eqs nconst st1 st1' st Hcalls Hnl.
+      apply generate_trconstrs_constraints_ok_from_Forall.
+      pose proof (generate_eqns_constraints_each eqs nconst st1 st1' Hnl) as Heach.
+      rewrite Forall_forall in Heach.
+      apply Forall_forall. intros tc Htc.
+      unfold translate_eqns in Htc.
+      apply in_flat_map in Htc as (e & Hine & Hintc).
+      destruct (Heach e Hine) as (blk & sa & sb & He).
+      assert (Hpereq : Forall
+                         (fun t => exists cns,
+                              SECSTCTYPING.generate_trconstr_constraint G2 env
+                                reset_env clk_ty rst_ty t st = OK (cns, st))
+                         (translate_eqn e)).
+      { destruct e as [y cky ce|ys cky g les rr|y cky c0 ex].
+        - cbn [translate_eqn]. constructor; [|constructor].
+          rewrite <- (generate_trconstr_TcDef_eq y cky ce) in He.
+          destruct (SECSTCTYPING.state_pure_generate_trconstr_constraint
+                      G2 env reset_env clk_ty rst_ty (SynStc.TcDef y cky ce)
+                      sa st blk sb He) as (_ & He2).
+          exists blk. exact He2.
+        - destruct ys as [|x xs]; [apply translate_eqapp_nil_constraints_ok|].
+          destruct (Hcalls x xs cky g les rr Hine)
+            as (n1 & n2 & Hf1 & Hf2 & Hagree & Htgt & Hnd1 & Houts & Hrstname).
+          eapply translate_eqapp_constraints_ok;
+            [exact Hf1|exact Hf2|exact Hagree|exact Htgt|exact Hnd1
+            |exact Houts|exact Hrstname|exact He].
+        - cbn [translate_eqn]. constructor; [|constructor].
+          rewrite <- (generate_trconstr_TcNext_eq y cky c0 ex) in He.
+          destruct (SECSTCTYPING.state_pure_generate_trconstr_constraint
+                      G2 env reset_env clk_ty rst_ty (SynStc.TcNext y cky ex)
+                      sa st blk sb He) as (_ & He2).
+          exists blk. exact He2. }
+      rewrite Forall_forall in Hpereq. exact (Hpereq tc Hintc).
+    Qed.
+
   End EQNTOTALITY.
 
 End SECNLUSSTCTRANSLATION.
