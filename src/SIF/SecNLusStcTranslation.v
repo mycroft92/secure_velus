@@ -3255,6 +3255,61 @@ Module Type SECNLUSSTCTRANSLATION
     eapply NoDup_app_l; exact Hnd.
   Qed.
 
+  (** The translated system resets each instance at most once: a reset
+      application contributes its first target, and a node's targets are
+      distinct.  This is what [generate_sys_signature_good] asks of the
+      unscheduled system, and it holds by construction. *)
+
+  Lemma resets_of_translate_eqns_defined:
+    forall eqs i,
+      List.In i (map fst (resets_of (translate_eqns eqs))) ->
+      List.In i (vars_defined eqs).
+  Proof.
+    induction eqs as [|e eqs IH]; intros i Hin; [contradiction|].
+    unfold translate_eqns in Hin. cbn [flat_map] in Hin.
+    rewrite resets_of_app, map_app, in_app_iff in Hin.
+    unfold vars_defined. cbn [flat_map]. apply in_or_app.
+    destruct Hin as [Hin|Hin]; [left|right; eapply IH; exact Hin].
+    destruct e as [y ck ce|ys ck g les rr|y ck c0 ex]; simpl in Hin;
+      try contradiction.
+    destruct ys as [|x xs]; [contradiction|].
+    destruct rr as [(r, ckr)|]; simpl in Hin; [|contradiction].
+    destruct Hin as [Heq|[]]. subst i. simpl. now left.
+  Qed.
+
+  Lemma resets_of_translate_eqns_nodup_gen:
+    forall eqs,
+      NoDup (vars_defined eqs) ->
+      NoDup (map fst (resets_of (translate_eqns eqs))).
+  Proof.
+    induction eqs as [|e eqs IH]; intros Hnd; [constructor|].
+    unfold vars_defined in Hnd. cbn [flat_map] in Hnd.
+    assert (Hnd' : NoDup (vars_defined eqs)) by (eapply NoDup_app_r; exact Hnd).
+    unfold translate_eqns. cbn [flat_map].
+    rewrite resets_of_app, map_app.
+    destruct e as [y ck ce|ys ck g les rr|y ck c0 ex];
+      try (cbn [translate_eqn resets_of map app]; now apply IH).
+    destruct ys as [|x xs];
+      [cbn [translate_eqn resets_of map app]; now apply IH|].
+    destruct rr as [(r, ckr)|];
+      [|cbn [translate_eqn resets_of map app]; now apply IH].
+    cbn [translate_eqn resets_of map app].
+    constructor; [|now apply IH].
+    intro Hin. apply resets_of_translate_eqns_defined in Hin.
+    eapply NoDup_app_In; [exact Hnd| |exact Hin].
+    cbn [var_defined]. now left.
+  Qed.
+
+  Lemma translate_node_resets_nodup:
+    forall n, NoDup (map fst (resets_of (translate_node n).(SynStc.s_tcs))).
+  Proof.
+    intro n. rewrite translate_node_tcs.
+    apply resets_of_translate_eqns_nodup_gen.
+    eapply Permutation_NoDup; [symmetry; apply (n_defd n)|].
+    apply fst_NoDupMembers.
+    eapply NoDupMembers_app_r, (n_nodup n).
+  Qed.
+
   Theorem generate_sys_signature_ok_from_wc:
     forall G1 G2 n env reset_env aux_names nlsig,
       Signature_consistent G1 G2 ->
