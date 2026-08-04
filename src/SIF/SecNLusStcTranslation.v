@@ -2682,6 +2682,233 @@ Module Type SECNLUSSTCTRANSLATION
 
   End NODESYSPRES.
 
+  (** * Relative totality: NLustre success implies Stc success
+
+      The counterpart of the Stc-to-Obc totality results.  [translate_eqn]
+      carries each equation to transition constraints that recompute
+      exactly what the NLustre generator computed -- for a definition and
+      for a delay, literally the same monadic expression -- so every
+      lookup the Stc side makes was already made, and answered, on the
+      NLustre side.  The one exception is the reset instance of a reset
+      application, which has no NLustre counterpart at all: it comes from
+      the naming pass, and is the same obligation the Obc layer needs for
+      its reset method. *)
+
+  Section EQNTOTALITY.
+
+    Variable G1: secglobal.            (* NLustre signatures *)
+    Variable G2: secglobal.            (* Stc signatures *)
+    Variable env: Env.t ident.
+    Variable reset_env: Env.t ident.
+    Variable clk_ty rst_ty: ident.
+
+    (** A body generates when each of its constraints does; nothing in
+        the fold touches the state. *)
+
+    Lemma generate_trconstrs_constraints_ok_from_Forall:
+      forall tcs st,
+        Forall (fun tc =>
+                  exists cns,
+                    SECSTCTYPING.generate_trconstr_constraint G2 env reset_env
+                      clk_ty rst_ty tc st = OK (cns, st)) tcs ->
+        exists cns,
+          SECSTCTYPING.generate_trconstrs_constraints G2 env reset_env
+            clk_ty rst_ty tcs st = OK (cns, st).
+    Proof.
+      induction tcs as [|tc tcs IH]; intros st Hall.
+      - exists []. reflexivity.
+      - inversion Hall as [|tc1 tcs1 Hhd Htl]; subst.
+        destruct Hhd as (c1 & Hc1).
+        destruct (IH st Htl) as (c2 & Hc2).
+        exists (c1 ++ c2).
+        cbn [SECSTCTYPING.generate_trconstrs_constraints].
+        eapply sec_bind_ok; [exact Hc1|].
+        eapply sec_bind_ok; [exact Hc2|].
+        reflexivity.
+    Qed.
+
+    (** The NLustre body generator runs each equation in turn, so its
+        success hands over a successful run for every one of them. *)
+
+    Lemma generate_eqns_constraints_each:
+      forall eqs cns st st',
+        SECNLUSTYPING.generate_eqns_constraints G1 env clk_ty rst_ty eqs st
+          = OK (cns, st') ->
+        Forall (fun e =>
+                  exists blk sa sb,
+                    SECNLUSTYPING.generate_eqn_constraint G1 env clk_ty rst_ty
+                      e sa = OK (blk, sb)) eqs.
+    Proof.
+      induction eqs as [|e eqs IH]; intros cns st st' Hgen; [constructor|].
+      cbn [SECNLUSTYPING.generate_eqns_constraints] in Hgen.
+      eapply sec_bind_inv in Hgen as (c1 & sa & He & Hgen).
+      eapply sec_bind_inv in Hgen as (c2 & sb & Heqs & _).
+      constructor; [exists c1, st, sa; exact He|eapply IH; exact Heqs].
+    Qed.
+
+    (** A definition and a delay are carried across untouched: the two
+        generators run the very same computation on them. *)
+
+    Lemma generate_trconstr_TcDef_eq:
+      forall x ck ce,
+        SECSTCTYPING.generate_trconstr_constraint G2 env reset_env clk_ty rst_ty
+          (SynStc.TcDef x ck ce)
+        = SECNLUSTYPING.generate_eqn_constraint G1 env clk_ty rst_ty
+            (EqDef x ck ce).
+    Proof. reflexivity. Qed.
+
+    Lemma generate_trconstr_TcNext_eq:
+      forall x ck c0 e,
+        SECSTCTYPING.generate_trconstr_constraint G2 env reset_env clk_ty rst_ty
+          (SynStc.TcNext x ck e)
+        = SECNLUSTYPING.generate_eqn_constraint G1 env clk_ty rst_ty
+            (EqFby x ck c0 e).
+    Proof. reflexivity. Qed.
+
+    (** An application that binds nothing translates to no transition
+        constraint at all, so there is nothing to generate. *)
+
+    Lemma translate_eqapp_nil_constraints_ok:
+      forall ck f les r st,
+        Forall (fun tc =>
+                  exists cns,
+                    SECSTCTYPING.generate_trconstr_constraint G2 env reset_env
+                      clk_ty rst_ty tc st = OK (cns, st))
+               (translate_eqn (EqApp [] ck f les r)).
+    Proof. intros. destruct r as [(rr, ckr)|]; constructor. Qed.
+
+    (** The call case.  The actuals and the targets are the equation's
+        own, so the only thing to re-establish is that the callee's Stc
+        signature accepts the same substitution its NLustre signature
+        did -- which is what [generate_constraints_ok_from_good] gives,
+        the two signatures agreeing on their interfaces.  A reset
+        application additionally names its instance, which is where the
+        naming pass comes in. *)
+
+    Lemma translate_eqapp_constraints_ok:
+      forall x xs ck f les r nconst st1 st1' st n1 n2,
+        SIG.find_signature f G1 = Some n1 ->
+        SIG.find_signature f G2 = Some n2 ->
+        SIG.signature_fields_agree n1 n2 ->
+        SIGPROOFS.signature_targets_out n2 ->
+        NoDup (SIG.signature_scope n1) ->
+        (forall outtyp, get_mappings (x :: xs) env = Some outtyp ->
+                        NoDup outtyp
+                        /\ SIG.outputs_fresh (SIG.signature_scope n1) outtyp) ->
+        (forall rr ckr, r = Some (rr, ckr) ->
+                        exists sty, Env.find x reset_env = Some sty) ->
+        SECNLUSTYPING.generate_eqn_constraint G1 env clk_ty rst_ty
+          (EqApp (x :: xs) ck f les r) st1 = OK (nconst, st1') ->
+        Forall (fun tc =>
+                  exists cns,
+                    SECSTCTYPING.generate_trconstr_constraint G2 env reset_env
+                      clk_ty rst_ty tc st = OK (cns, st))
+               (translate_eqn (EqApp (x :: xs) ck f les r)).
+    Proof.
+      intros x xs ck f les r nconst st1 st1' st n1 n2
+             Hf1 Hf2 Hagree Htgt Hnd1 Houts Hrstname Hnl.
+      (* the callee's Stc signature accepts whatever its NLustre one did *)
+      assert (Hcore : forall inptyp outtyp ckty1 rst1 cns0 sA sB ckty2 rst2,
+                 SC.mmap (fun z => find_env z env) (x :: xs) st = OK (outtyp, st) ->
+                 SIG.generate_constraints n1 inptyp ckty1 rst1 outtyp sA
+                   = OK (cns0, sB) ->
+                 exists cns,
+                   SIG.generate_constraints n2 inptyp ckty2 rst2 outtyp st
+                   = OK (cns, st)).
+      { intros inptyp outtyp ckty1 rst1 cns0 sA sB ckty2 rst2 Hout Hgen1.
+        destruct (SIGPROOFS.generate_constraints_lengths
+                    n1 inptyp ckty1 rst1 outtyp cns0 sA sB Hgen1) as (Hlin & Hlout).
+        destruct (SECSTCTYPING.mmap_find_env_inv env (x :: xs) outtyp st st Hout)
+          as (_ & Hgm).
+        destruct (Houts outtyp Hgm) as (Hndout & Hfresh).
+        assert (Hscopeeq : SIG.signature_scope n1 = SIG.signature_scope n2)
+          by (eapply SIG.signature_fields_agree_scope_eq; exact Hagree).
+        destruct Hagree as (Hin' & Hout' & _ & _).
+        eapply SIGPROOFS.generate_constraints_ok_from_good;
+          [exact Htgt
+          |rewrite <- Hscopeeq; exact Hnd1
+          |rewrite <- Hin'; exact Hlin
+          |rewrite <- Hout'; exact Hlout
+          |rewrite <- Hscopeeq; exact Hfresh
+          |exact Hndout]. }
+      destruct r as [(rr, ckr)|].
+      - (* a reset application *)
+        cbn [SECNLUSTYPING.generate_eqn_constraint] in Hnl.
+        rewrite Hf1 in Hnl.
+        eapply sec_bind_inv in Hnl as (ckty & sa & Hck & Hnl).
+        eapply sec_bind_inv in Hnl as (rty & sb & Hrty & Hnl).
+        eapply sec_bind_inv in Hnl as (rstty & sc & Hrstty & Hnl).
+        eapply sec_bind_inv in Hnl as (inptyp & sd & Hinp & Hnl).
+        eapply sec_bind_inv in Hnl as (outtyp & se & Hout & Hgen1).
+        assert (Hckopt : SECCETYPING.assign_clk_type env clk_ty ck = Some ckty).
+        { unfold option_to_sec in Hck.
+          destruct (SECCETYPING.assign_clk_type env clk_ty ck); try discriminate.
+          now inversion Hck. }
+        assert (Hrstopt : SECCETYPING.assign_clk_type env clk_ty ckr = Some rstty).
+        { unfold option_to_sec in Hrstty.
+          destruct (SECCETYPING.assign_clk_type env clk_ty ckr); try discriminate.
+          now inversion Hrstty. }
+        assert (Hrtyopt : Env.find rr env = Some rty).
+        { unfold find_env in Hrty.
+          destruct (Env.find rr env); try discriminate. now inversion Hrty. }
+        destruct (state_pure_mmap
+                    (fun z => option_to_sec (SECCETYPING.assign_exp_type env z))
+                    les ltac:(intro; apply state_pure_option_to_sec)
+                    sc st inptyp sd Hinp) as (_ & Hinp2).
+        destruct (state_pure_mmap (fun z => find_env z env) (x :: xs)
+                    ltac:(intro; apply state_pure_find_env)
+                    sd st outtyp se Hout) as (_ & Hout2).
+        destruct (Hrstname rr ckr Logic.eq_refl) as (sty & Hsty).
+        assert (Hsty2 : find_env x reset_env st = OK (sty, st))
+          by (unfold find_env; now rewrite Hsty).
+        destruct (Hcore inptyp outtyp ckty
+                    ([rst_ty] ⊔ ([rty] ⊔ rstty)) nconst se st1'
+                    ckty [sty] Hout2 Hgen1) as (cns & Hcns).
+        cbn [translate_eqn]. constructor; [|constructor; [|constructor]].
+        + (* the instance reset *)
+          eexists. cbn [SECSTCTYPING.generate_trconstr_constraint].
+          eapply sec_bind_ok; [unfold find_env; now rewrite Hrtyopt|].
+          eapply sec_bind_ok; [rewrite Hrstopt; reflexivity|].
+          eapply sec_bind_ok; [exact Hsty2|].
+          reflexivity.
+        + (* the step call *)
+          exists cns. cbn [SECSTCTYPING.generate_trconstr_constraint].
+          rewrite Hf2.
+          eapply sec_bind_ok; [rewrite Hckopt; reflexivity|].
+          eapply sec_bind_ok; [exact Hinp2|].
+          eapply sec_bind_ok; [exact Hout2|].
+          eapply sec_bind_ok; [exact Hsty2|].
+          exact Hcns.
+      - (* an unreset application *)
+        cbn [SECNLUSTYPING.generate_eqn_constraint] in Hnl.
+        rewrite Hf1 in Hnl.
+        eapply sec_bind_inv in Hnl as (ckty & sa & Hck & Hnl).
+        eapply sec_bind_inv in Hnl as (inptyp & sb & Hinp & Hnl).
+        eapply sec_bind_inv in Hnl as (outtyp & sc & Hout & Hgen1).
+        assert (Hckopt : SECCETYPING.assign_clk_type env clk_ty ck = Some ckty).
+        { unfold option_to_sec in Hck.
+          destruct (SECCETYPING.assign_clk_type env clk_ty ck); try discriminate.
+          now inversion Hck. }
+        destruct (state_pure_mmap
+                    (fun z => option_to_sec (SECCETYPING.assign_exp_type env z))
+                    les ltac:(intro; apply state_pure_option_to_sec)
+                    sa st inptyp sb Hinp) as (_ & Hinp2).
+        destruct (state_pure_mmap (fun z => find_env z env) (x :: xs)
+                    ltac:(intro; apply state_pure_find_env)
+                    sb st outtyp sc Hout) as (_ & Hout2).
+        destruct (Hcore inptyp outtyp ckty [rst_ty] nconst sc st1'
+                    ckty [rst_ty] Hout2 Hgen1) as (cns & Hcns).
+        cbn [translate_eqn]. constructor; [|constructor].
+        exists cns. cbn [SECSTCTYPING.generate_trconstr_constraint].
+        rewrite Hf2.
+        eapply sec_bind_ok; [rewrite Hckopt; reflexivity|].
+        eapply sec_bind_ok; [exact Hinp2|].
+        eapply sec_bind_ok; [exact Hout2|].
+        exact Hcns.
+    Qed.
+
+  End EQNTOTALITY.
+
 End SECNLUSSTCTRANSLATION.
 
 Module SecNLusStcTranslation
