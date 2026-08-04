@@ -3112,6 +3112,28 @@ Module Type SECNLUSSTCTRANSLATION
       forall i, InMembers i (snd (gather_eqs n.(n_eqs))) ->
                 exists sty, Env.find i renv = Some sty.
 
+  (** It is not an assumption: the naming pass builds a node's instance
+      environment from exactly the instances the node calls, and
+      [gather_eqs] collects the same ones. *)
+
+  Lemma generate_local_env_for_node_insts_named:
+    forall n st lenv rec st',
+      NAMEGEN.generate_local_env_for_node n st = OK ((lenv, rec), st') ->
+      forall i, InMembers i (snd (gather_eqs n.(n_eqs))) ->
+                exists sty, Env.find i rec.(ninst) = Some sty.
+  Proof.
+    intros n st lenv rec st' Hlocal i Hin.
+    unfold NAMEGEN.generate_local_env_for_node in Hlocal.
+    eapply NAMEGEN.name_bind_inv in Hlocal as (clk & s1 & _ & Hlocal).
+    eapply NAMEGEN.name_bind_inv in Hlocal as (rst & s2 & _ & Hlocal).
+    eapply NAMEGEN.name_bind_inv in Hlocal as (env' & s3 & _ & Hlocal).
+    eapply NAMEGEN.name_bind_inv in Hlocal as (ie & s4 & Hie & Hret).
+    unfold NAMEGEN.NMret in Hret. inversion Hret; subst lenv rec st'. simpl.
+    eapply NAMEGEN.fresh_inst_map_list_binds; [exact Hie|].
+    eapply Permutation_in; [apply Permutation_map, gather_eqs_snd_spec|].
+    now apply fst_InMembers.
+  Qed.
+
   Theorem generate_sys_signature_ok:
     forall G1 G2 env reset_env clk_ty rst_ty n aux_names clk_id rst_id nlsig,
       get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
