@@ -3543,6 +3543,99 @@ Module Type SECSTCOBCTRANSLATION
           |exact Hnd1|exact Hsty|exact Houts|exact Htc].
     Qed.
 
+    (** ** The reset method
+
+        Both halves of [translate_reset] are left folds of [Comp], so the
+        same piecewise argument applies; only the leaf obligations
+        differ.  Resetting a memory needs the memory's name in [env],
+        resetting an instance needs the instance's name in [reset_env].
+        Neither leaf touches the state, so the fold does not either. *)
+
+    Lemma generate_fold_left_Comp_ok:
+      forall (A: Type) (g: A -> SynObc.stmt) pc (l: list A) acc st cacc,
+        generate_stmt_constraints G2 env reset_env rst_ty pc acc st = OK (cacc, st) ->
+        Forall (fun a =>
+                  exists cns,
+                    generate_stmt_constraints G2 env reset_env rst_ty pc (g a) st
+                    = OK (cns, st)) l ->
+        exists cns,
+          generate_stmt_constraints G2 env reset_env rst_ty pc
+            (fold_left (fun s a => SynObc.Comp s (g a)) l acc) st = OK (cns, st).
+    Proof.
+      intros A g pc l.
+      induction l as [|a l IH]; intros acc st cacc Hacc Hall.
+      - exists cacc. exact Hacc.
+      - inversion Hall as [|a1 l1 Hhd Htl]; subst.
+        destruct Hhd as (c1 & Hc1).
+        cbn [fold_left].
+        eapply (IH (SynObc.Comp acc (g a)) st (cacc ++ c1)); [|exact Htl].
+        cbn [generate_stmt_constraints].
+        eapply sec_bind_ok; [exact Hacc|].
+        eapply sec_bind_ok; [exact Hc1|].
+        reflexivity.
+    Qed.
+
+    Lemma generate_reset_mems_ok:
+      forall (lasts: list (ident * (const * clock))) pc st tys,
+        get_mappings_from_node lasts env = Some tys ->
+        exists cns,
+          generate_stmt_constraints G2 env reset_env rst_ty pc
+            (reset_mems lasts) st = OK (cns, st).
+    Proof.
+      intros lasts pc st tys Hmap.
+      unfold reset_mems.
+      eapply (generate_fold_left_Comp_ok _ _ pc lasts SynObc.Skip st []);
+        [reflexivity|].
+      apply Forall_forall. intros (x, (c, ck)) Hin.
+      destruct (get_mappings_from_node_inmembers _ lasts env tys x
+                  ltac:(eapply In_InMembers; exact Hin) Hmap) as (xty & Hx & _).
+      eexists. cbn [generate_stmt_constraints].
+      eapply sec_bind_ok; [reflexivity|].
+      eapply sec_bind_ok; [unfold find_env; cbn; now rewrite Hx|].
+      reflexivity.
+    Qed.
+
+    Lemma generate_reset_insts_ok:
+      forall (insts: list (ident * ident)) pc st,
+        (forall i, InMembers i insts ->
+                   exists sty, Env.find i reset_env = Some sty) ->
+        exists cns,
+          generate_stmt_constraints G2 env reset_env rst_ty pc
+            (reset_insts insts) st = OK (cns, st).
+    Proof.
+      intros insts pc st Hcov.
+      unfold reset_insts.
+      eapply (generate_fold_left_Comp_ok _ _ pc insts SynObc.Skip st []);
+        [reflexivity|].
+      apply Forall_forall. intros (i, f) Hin.
+      destruct (Hcov i ltac:(eapply In_InMembers; exact Hin)) as (sty & Hsty).
+      eexists. cbn [generate_stmt_constraints].
+      rewrite ident_eqb_refl. cbv iota.
+      eapply sec_bind_ok; [unfold find_env; cbn; now rewrite Hsty|].
+      reflexivity.
+    Qed.
+
+    Lemma generate_translate_reset_ok:
+      forall s pc st tys,
+        get_mappings_from_node (SynStc.s_lasts s) env = Some tys ->
+        (forall i, InMembers i (SynStc.s_subs s) ->
+                   exists sty, Env.find i reset_env = Some sty) ->
+        exists cns,
+          generate_stmt_constraints G2 env reset_env rst_ty pc
+            (translate_reset s) st = OK (cns, st).
+    Proof.
+      intros s pc st tys Hmems Hinsts.
+      destruct (generate_reset_mems_ok (SynStc.s_lasts s) pc st tys Hmems)
+        as (c1 & Hc1).
+      destruct (generate_reset_insts_ok (SynStc.s_subs s) pc st Hinsts)
+        as (c2 & Hc2).
+      exists (c1 ++ c2). unfold translate_reset.
+      cbn [generate_stmt_constraints].
+      eapply sec_bind_ok; [exact Hc1|].
+      eapply sec_bind_ok; [exact Hc2|].
+      reflexivity.
+    Qed.
+
     Lemma translate_system_well_defined:
       forall P s,
         wc_system P s ->
