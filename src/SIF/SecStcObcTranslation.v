@@ -3243,6 +3243,128 @@ Module Type SECSTCOBCTRANSLATION
       unfold find_env, bind, ret. rewrite Hsty. reflexivity.
     Qed.
 
+    (** The call case.  A call with no outputs emits nothing on either
+        side, but the Obc side still has to walk the clock, which the STC
+        side never looked at -- hence the clock type is a hypothesis
+        rather than something inverted out of [Hstc].  It is discharged
+        one level up, where the environment is known to cover the
+        system's variables. *)
+
+    Lemma translate_tccall_constraints_ok:
+      forall memset clkvars i xs ck rst f es pc nconst st1 st1' st2
+             n1 n2 sty ckty,
+        SECCETYPING.assign_clk_type env clk_ty ck = Some ckty ->
+        SIG.find_signature f G1 = Some n1 ->
+        SIG.find_signature f G2 = Some n2 ->
+        SIG.signature_fields_agree n1 n2 ->
+        SIGPROOFS.signature_targets_out n2 ->
+        NoDup (SIG.signature_scope n1) ->
+        Env.find i reset_env = Some sty ->
+        (forall outtyp, get_mappings xs env = Some outtyp ->
+                        NoDup outtyp
+                        /\ SIG.outputs_fresh (SIG.signature_scope n1) outtyp) ->
+        SECSTCTYPING.generate_trconstr_constraint G1 env reset_env clk_ty rst_ty
+          (SynStc.TcCall i xs ck rst f es) st1 = OK (nconst, st1') ->
+        exists cns,
+          generate_stmt_constraints G2 env reset_env rst_ty pc
+            (translate_tc memset clkvars (SynStc.TcCall i xs ck rst f es)) st2
+          = OK (cns, st2).
+    Proof.
+      intros memset clkvars i xs ck rst f es pc nconst st1 st1' st2
+             n1 n2 sty ckty Hckopt Hf1 Hf2 Hagree Htgt Hnd1 Hsty Houts Hstc.
+      unfold translate_tc.
+      destruct (clock_pc_ok env clk_ty ck ckty pc Hckopt) as (pc' & Hpc').
+      rewrite (generate_stmt_constraints_Control G2 env reset_env rst_ty
+                 memset ck _ pc pc' st2 Hpc').
+      destruct xs as [|y ys].
+      - (* no outputs: nothing is emitted, whichever way the method test goes *)
+        simpl. destruct (ident_eqb step reset).
+        + eexists. unfold find_env, bind, ret. rewrite Hsty. reflexivity.
+        + eexists. reflexivity.
+      - (* the construction, once the STC data is in hand *)
+        assert (Htail : forall inptyp1 outtyp rstty cns0 sA sB,
+                   SC.mmap (fun x =>
+                              option_to_sec (SECCETYPING.assign_exp_type env x))
+                     es st2 = OK (inptyp1, st2) ->
+                   SC.mmap (fun x => find_env x env) (y :: ys) st2
+                     = OK (outtyp, st2) ->
+                   SIG.generate_constraints n1 inptyp1 ckty rstty outtyp sA
+                     = OK (cns0, sB) ->
+                   exists cns,
+                     generate_stmt_constraints G2 env reset_env rst_ty pc'
+                       (SynObc.Call (y :: ys) f i step
+                          (map (translate_arg memset clkvars ck) es)) st2
+                     = OK (cns, st2)).
+        { intros inptyp1 outtyp rstty cns0 sA sB Hinp2 Hout2 Hgen1.
+          destruct (translate_args_type_ok env memset clkvars ck es inptyp1
+                      st2 st2 st2 Hinp2) as (otys & Hotys).
+          assert (Hsty2 : find_env i reset_env st2 = OK (sty, st2))
+            by (unfold find_env; now rewrite Hsty).
+          destruct (SIGPROOFS.generate_constraints_lengths
+                      n1 inptyp1 ckty rstty outtyp cns0 sA sB Hgen1)
+            as (Hlin & Hlout).
+          assert (Hscopeeq : SIG.signature_scope n1 = SIG.signature_scope n2)
+            by (eapply SIG.signature_fields_agree_scope_eq; exact Hagree).
+          assert (Hgm : get_mappings (y :: ys) env = Some outtyp)
+            by (eapply (SECOBCTYPINGCORRECTNESS.mmap_find_env_inv env);
+                exact Hout2).
+          destruct (Houts outtyp Hgm) as (Hndout & Hfresh).
+          destruct Hagree as (Hin' & Hout' & _ & _).
+          assert (Hli : List.length n2.(s_in) = List.length otys).
+          { rewrite <- Hin', Hlin.
+            rewrite (mmap_length _ _ _ _ _ Hinp2).
+            rewrite (mmap_length _ _ _ _ _ Hotys), map_length. reflexivity. }
+          assert (Hlo : List.length n2.(s_out) = List.length outtyp)
+            by (rewrite <- Hout'; exact Hlout).
+          destruct (SIGPROOFS.generate_constraints_ok_from_good
+                      n2 otys pc' [sty] outtyp st2 Htgt
+                      ltac:(rewrite <- Hscopeeq; exact Hnd1) Hli Hlo
+                      ltac:(rewrite <- Hscopeeq; exact Hfresh) Hndout)
+            as (cns & Hcns).
+          exists cns. cbn [generate_stmt_constraints].
+          rewrite ident_eqb_refl, Hf2.
+          unfold bind.
+          rewrite Hotys. cbv iota.
+          rewrite Hout2. cbv iota.
+          rewrite Hsty2. cbv iota.
+          exact Hcns. }
+        (* now supply that data, from either reset flag *)
+        cbn [SECSTCTYPING.generate_trconstr_constraint] in Hstc.
+        rewrite Hf1 in Hstc.
+        destruct rst.
+        + eapply sec_bind_inv in Hstc as (c1 & sa & Hck1 & Hstc).
+          eapply sec_bind_inv in Hstc as (inptyp1 & sb & Hinp1 & Hstc).
+          eapply sec_bind_inv in Hstc as (outtyp & sc & Hout1 & Hstc).
+          eapply sec_bind_inv in Hstc as (rinst & sd & Hri & Hgen1).
+          assert (c1 = ckty).
+          { unfold option_to_sec in Hck1. rewrite Hckopt in Hck1.
+            unfold ret in Hck1. now inversion Hck1. }
+          subst c1.
+          destruct (state_pure_mmap
+                      (fun x => option_to_sec (SECCETYPING.assign_exp_type env x))
+                      es ltac:(intro; apply state_pure_option_to_sec)
+                      sa st2 inptyp1 sb Hinp1) as (_ & Hinp2).
+          destruct (state_pure_mmap (fun x => find_env x env) (y :: ys)
+                      ltac:(intro; apply state_pure_find_env)
+                      sb st2 outtyp sc Hout1) as (_ & Hout2).
+          eapply Htail; [exact Hinp2|exact Hout2|exact Hgen1].
+        + eapply sec_bind_inv in Hstc as (c1 & sa & Hck1 & Hstc).
+          eapply sec_bind_inv in Hstc as (inptyp1 & sb & Hinp1 & Hstc).
+          eapply sec_bind_inv in Hstc as (outtyp & sc & Hout1 & Hgen1).
+          assert (c1 = ckty).
+          { unfold option_to_sec in Hck1. rewrite Hckopt in Hck1.
+            unfold ret in Hck1. now inversion Hck1. }
+          subst c1.
+          destruct (state_pure_mmap
+                      (fun x => option_to_sec (SECCETYPING.assign_exp_type env x))
+                      es ltac:(intro; apply state_pure_option_to_sec)
+                      sa st2 inptyp1 sb Hinp1) as (_ & Hinp2).
+          destruct (state_pure_mmap (fun x => find_env x env) (y :: ys)
+                      ltac:(intro; apply state_pure_find_env)
+                      sb st2 outtyp sc Hout1) as (_ & Hout2).
+          eapply Htail; [exact Hinp2|exact Hout2|exact Hgen1].
+    Qed.
+
     Lemma translate_system_well_defined:
       forall P s,
         wc_system P s ->
