@@ -71,6 +71,16 @@ Section MySecMonad.
     unfold bind. rewrite Hx. exact Hf.
   Qed.
 
+  Lemma sec_bind2_ok {A1 A2 B} :
+    forall (x : Sec (A1 * A2)) (f : A1 -> A2 -> Sec B) y1 y2 st st' res,
+      x st = OK ((y1, y2), st') ->
+      f y1 y2 st' = res ->
+      (bind2 x f) st = res.
+  Proof.
+    intros * Hx Hf.
+    unfold bind2. rewrite Hx. exact Hf.
+  Qed.
+
   Lemma sec_bind2_inv {A1 A2 B} : forall (x : Sec (A1 * A2)) (f : A1 -> A2 -> Sec B) res st,
       (bind2 x f) st = OK res ->
       exists y1 y2 st'',

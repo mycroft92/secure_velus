@@ -2855,6 +2855,10 @@ Module Type SECSTCOBCTRANSLATION
       forall s, (translate_system s).(c_objs) = SynStc.s_subs s.
     Proof. reflexivity. Qed.
 
+    Lemma translate_system_name:
+      forall s, (translate_system s).(c_name) = SynStc.s_name s.
+    Proof. reflexivity. Qed.
+
     Lemma step_method_vars:
       forall s, (step_method s).(m_vars) = idty (SynStc.s_vars s).
     Proof. reflexivity. Qed.
@@ -3634,6 +3638,105 @@ Module Type SECSTCOBCTRANSLATION
       eapply sec_bind_ok; [exact Hc1|].
       eapply sec_bind_ok; [exact Hc2|].
       reflexivity.
+    Qed.
+
+    (** ** Class-level relative totality
+
+        The two generators read the same environment and the same
+        auxiliary names, and the translated class's methods carry the
+        system's own interface up to [idty], so every lookup the Obc side
+        makes was already made -- and answered -- on the STC side.  The
+        two steps with no STC counterpart are the reset method and the
+        object table; both are covered by the naming pass giving every
+        instance of the system a state variable, which is the same fact
+        the call constraints already need. *)
+
+    Theorem generate_class_signature_ok:
+      forall P vars scope s aux_names clk_id rst_id stcsig,
+        wc_env vars ->
+        SECSTCTYPING.vars_env_scoped env vars scope ->
+        Forall (CloStc.wc_trconstr P vars) (SynStc.s_tcs s) ->
+        get_node_aux (SynStc.s_name s) aux_names = Some (clk_id, rst_id) ->
+        Env.find clk_id env = Some clk_ty ->
+        Env.find rst_id env = Some rst_ty ->
+        get_node_inst (SynStc.s_name s) aux_names = Some reset_env ->
+        (forall i, InMembers i (SynStc.s_subs s) ->
+                   exists sty, Env.find i reset_env = Some sty) ->
+        (forall i xs ck rst f es,
+            List.In (SynStc.TcCall i xs ck rst f es) (SynStc.s_tcs s) ->
+            exists n1 n2 sty,
+              SIG.find_signature f G1 = Some n1
+              /\ SIG.find_signature f G2 = Some n2
+              /\ SIG.signature_fields_agree n1 n2
+              /\ SIGPROOFS.signature_targets_out n2
+              /\ NoDup (SIG.signature_scope n1)
+              /\ Env.find i reset_env = Some sty
+              /\ (forall outtyp, get_mappings xs env = Some outtyp ->
+                                 NoDup outtyp
+                                 /\ SIG.outputs_fresh (SIG.signature_scope n1) outtyp)) ->
+        SECSTCTYPING.generate_sys_signature G1 s env aux_names = OK stcsig ->
+        exists obcsig,
+          SECOBCTYPING.generate_class_signature G2 (translate_system s) env aux_names
+          = OK obcsig.
+    Proof.
+      intros P vars scope s aux_names clk_id rst_id stcsig
+             Henv Hvars Hwctcs Haux Hclk Hrst Hrenv Hsubs Hcalls Hstc.
+      edestruct SECSTCTYPINGCORRECTNESS.generate_sys_signature_inv as
+          (clk_id' & rst_id' & clk_type & rst_type & inp & out & slocals & slasts
+           & renv & rids & st_reset & sconst & st_s
+           & Haux' & Hclk' & Hrst' & Hinp & Hout & Hslocals & Hslasts
+           & Hrenv' & Hrids & Hsconst & _); [exact Hstc|].
+      rewrite Haux in Haux'. inversion Haux'; subst clk_id' rst_id'.
+      rewrite Hclk in Hclk'. inversion Hclk'; subst clk_type.
+      rewrite Hrst in Hrst'. inversion Hrst'; subst rst_type.
+      rewrite Hrenv in Hrenv'. inversion Hrenv'; subst renv.
+      (* the object table, which the STC side never needed in full *)
+      assert (Hstids : exists stids,
+                 get_mappings (map fst (SynStc.s_subs s)) reset_env = Some stids).
+      { apply get_mappings_Some_iff, Forall_forall.
+        intros i Hin. apply Hsubs. now apply fst_InMembers. }
+      destruct Hstids as (stids & Hstids).
+      (* the two method bodies *)
+      destruct (step_method_body s) as (memset & clkvars & Hbody).
+      destruct (translate_tcs_constraints_ok P vars scope memset clkvars
+                  (SynStc.s_tcs s) [clk_ty] sconst st_reset st_s init_state
+                  Henv Hvars Hwctcs Hcalls Hsconst) as (craw_step & Hstep).
+      destruct (generate_translate_reset_ok s [] init_state slasts Hslasts Hsubs)
+        as (craw_reset & Hreset).
+      (* now every lookup the class generator makes has an answer *)
+      unfold SECOBCTYPING.generate_class_signature.
+      match goal with
+      | |- context [match ?m with OK _ => _ | Error _ => _ end] =>
+          assert (Hrun : exists v st, m = OK (v, st))
+      end.
+      { do 2 eexists.
+        eapply sec_bind2_ok; [rewrite translate_system_name, Haux; reflexivity|].
+        eapply sec_bind_ok; [rewrite Hclk; reflexivity|].
+        eapply sec_bind_ok; [rewrite Hrst; reflexivity|].
+        eapply sec_bind_ok; [rewrite exists_step_method; reflexivity|].
+        eapply sec_bind_ok; [rewrite exists_reset_method; reflexivity|].
+        eapply sec_bind_ok;
+          [rewrite step_method_ins, get_mappings_from_node_idty, Hinp;
+           reflexivity|].
+        eapply sec_bind_ok;
+          [rewrite step_method_outs, get_mappings_from_node_idty, Hout;
+           reflexivity|].
+        eapply sec_bind_ok;
+          [rewrite step_method_vars, get_mappings_from_node_idty, Hslocals;
+           reflexivity|].
+        eapply sec_bind_ok;
+          [rewrite translate_system_mems, get_mappings_from_node_mems, Hslasts;
+           reflexivity|].
+        eapply sec_bind_ok; [rewrite translate_system_name, Hrenv; reflexivity|].
+        eapply sec_bind_ok;
+          [rewrite translate_system_objs, Hstids; reflexivity|].
+        eapply sec_bind_ok; [rewrite Hbody; exact Hstep|].
+        eapply sec_bind_ok; [rewrite reset_method_body; exact Hreset|].
+        reflexivity. }
+      destruct Hrun as (v & st & Hrun).
+      rewrite Hrun.
+      destruct v as [[[[[inp' out'] rst'] ck'] cs'] e'].
+      eexists. reflexivity.
     Qed.
 
     Lemma translate_system_well_defined:
