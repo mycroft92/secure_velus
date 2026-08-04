@@ -5499,6 +5499,203 @@ Module Type SECSTCOBCTRANSLATION
         eauto.
   Qed.
 
+  (** ** Program-level relative totality
+
+      The same lockstep induction as
+      [generate_all_signatures_consistent_obc_scoped'], run to produce
+      the Obc signature environment rather than to compare it.  Two
+      invariants are carried beyond that theorem's: distinctness of each
+      STC signature's scope, and each Obc signature targeting its own
+      outputs.  Both are re-established from the generators themselves,
+      so nothing about the accumulators is assumed. *)
+
+  Theorem generate_all_class_signatures_scoped_env_ok':
+    forall systems acc1 acc2 envs aux_names st G1,
+      SECSTCTYPINGCORRECTNESS.scoped_envs_windowed envs st systems ->
+      NAMEGEN.aux_naming_props aux_names ->
+      CloStc.wc_program systems ->
+      WD.Well_scheduled systems ->
+      Forall (fun s => sys_insts_named s aux_names) systems ->
+      Signature_consistent_obc_full acc1 acc2 ->
+      SIG.secglobal_scoped acc1 ->
+      SIG.secglobal_scoped acc2 ->
+      SIG.secglobal_scope_sec acc1 ->
+      SIG.secglobal_scope_sec acc2 ->
+      SIG.secglobal_scope_bounded_above acc1 st ->
+      (forall f n1, SIG.find_signature f acc1 = Some n1 ->
+                    NoDup (SIG.signature_scope n1)) ->
+      (forall f n2, SIG.find_signature f acc2 = Some n2 ->
+                    SIGPROOFS.signature_targets_out n2) ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env' acc1 systems envs
+        aux_names = OK G1 ->
+      exists G2,
+        SECOBCTYPING.generate_all_class_signatures_scoped_env' acc2
+          (translate systems) envs aux_names = OK G2.
+  Proof.
+    induction systems as [|s systems IH];
+      intros acc1 acc2 envs aux_names st G1
+             Hwindow Haux Hwc Hsch Hinsts Hcons Hacc1scoped Hacc2scoped
+             Hacc1sec Hacc2sec Hbound Hacc1nd Hacc2tgt Hstc.
+    - eexists. reflexivity.
+    - inversion Hwindow as [|st0 st' s0 systems0 local_env
+                             Hfindlocal Henvprops Hwin Htail];
+        subst st0 s0 systems0.
+      inversion Hwc as [|s' systems'' Hwc_tail Hwc_head]; subst s' systems''.
+      inversion Hsch as [|s' systems'' Hsch_head Hsch_tail]; subst s' systems''.
+      inversion Hinsts as [|s' systems'' Hinsts_head Hinsts_tail];
+        subst s' systems''.
+      simpl in Hstc.
+      destruct (SECSTCTYPING.generate_sys_signature_scoped_env acc1 s envs aux_names)
+        as [stcsig|] eqn:Hstcsig; simpl in Hstc; try discriminate.
+      (* the head system, through both generators *)
+      unfold SECSTCTYPING.generate_sys_signature_scoped_env in Hstcsig.
+      rewrite Hfindlocal in Hstcsig.
+      assert (Hprops : NAMEGEN.naming_env_props local_env aux_names)
+        by exact (conj Henvprops Haux).
+      assert (Hfreshenv : SECSTCTYPINGCORRECTNESS.sys_scope_fresh_in_env
+                            s local_env aux_names acc1).
+      { eapply SECSTCTYPINGCORRECTNESS.sys_scope_fresh_in_env_from_bounds
+          with (st := st).
+        - intros ie x ty Hinst Hfind.
+          exact (proj2 (proj1 (proj2 Haux) _ _ Hinst) _ _ Hfind).
+        - eapply SECSTCTYPINGCORRECTNESS.env_sec_lower_bounded_from_window;
+            exact Hwin.
+        - exact Hbound.
+        - exact Hacc1sec. }
+      destruct (generate_class_signature_ok_from_wc systems s acc1 acc2 local_env
+                  aux_names stcsig Hcons Hfreshenv Hprops Hwc_head Hacc1nd
+                  Hacc2tgt Hinsts_head Hstcsig) as (obcsig & Hobcsig).
+      assert (Hobcsig' : SECOBCTYPING.generate_class_signature_scoped_env acc2
+                           (translate_system s) envs aux_names = OK obcsig).
+      { unfold SECOBCTYPING.generate_class_signature_scoped_env.
+        rewrite translate_system_name, Hfindlocal. exact Hobcsig. }
+      (* every invariant, re-established for the extended pair *)
+      assert (Hready : SECSTCTYPINGCORRECTNESS.generated_sys_simplify_ready
+                         local_env aux_names)
+        by (eapply
+              SECSTCTYPINGCORRECTNESS.generated_sys_simplify_ready_from_naming_props;
+            exact Hprops).
+      assert (Henvinj : env_injective local_env) by exact (proj1 Henvprops).
+      assert (Hstcscoped : SIG.signature_scoped stcsig)
+        by (eapply SECSTCTYPING.generate_sys_signature_scoped
+              with (P := systems) (s := s) (env := local_env);
+            [exact Hacc1scoped|exact Henvinj|exact Hwc_head|exact Hstcsig]).
+      assert (Hobcscoped : SIG.signature_scoped obcsig).
+      { eapply SECOBCTYPINGCORRECTNESS.generate_class_signature_scoped;
+          [exact Hacc2scoped| |exact Hobcsig].
+        eapply translate_system_well_defined; eauto. }
+      assert (Hstcgood : SIG.signature_good stcsig)
+        by (eapply SECSTCTYPINGCORRECTNESS.generate_sys_signature_good
+              with (P := systems) (s := s) (env := local_env);
+            [exact Hprops|exact Hacc1scoped|exact Hwc_head
+            |eapply SECSTCTYPINGCORRECTNESS.Is_well_sch_resets_nodup;
+             exact Hsch_head
+            |exact Hstcsig]).
+      assert (Hstcnd : NoDup (SIG.signature_scope stcsig))
+        by (eapply SECSTCTYPINGCORRECTNESS.generate_sys_signature_scope_nodup;
+            [exact Hprops|exact Hstcsig]).
+      assert (Hpres : signatures_preserved stcsig obcsig)
+        by (eapply generated_signatures_preserved_obc with (P := systems); eauto).
+      assert (Hhead : Signature_head_consistent_obc stcsig obcsig).
+      { assert (Hagree : stcsig.(s_name) = obcsig.(s_name)
+                         /\ SIG.signature_fields_agree stcsig obcsig)
+          by (eapply generated_signature_fields_agree; eauto).
+        eapply signatures_preserved_obc_full_from_good;
+          [exact (proj1 Hagree)|exact Hstcgood|exact Hstcnd
+          |exact Hobcscoped|exact Hpres]. }
+      assert (Hcons' : Signature_consistent_obc_full (stcsig :: acc1)
+                         (obcsig :: acc2))
+        by (eapply Signature_consistent_obc_full_cons; eauto).
+      assert (Hacc1scoped' : SIG.secglobal_scoped (stcsig :: acc1))
+        by (eapply SIG.secglobal_scoped_cons; eauto).
+      assert (Hacc2scoped' : SIG.secglobal_scoped (obcsig :: acc2))
+        by (eapply SIG.secglobal_scoped_cons; eauto).
+      assert (Hstcsec : SIG.signature_scope_sec stcsig)
+        by (eapply
+              SECSTCTYPINGCORRECTNESS.generated_sys_signature_scope_sec_from_env_props;
+            [exact Henvprops|exact Hstcsig]).
+      assert (Hacc1sec' : SIG.secglobal_scope_sec (stcsig :: acc1))
+        by (eapply SIG.secglobal_scope_sec_cons; eauto).
+      assert (Hacc2sec' : SIG.secglobal_scope_sec (obcsig :: acc2)).
+      { eapply SIG.secglobal_scope_sec_cons; [|exact Hacc2sec].
+        intros ty Hin.
+        rewrite <- (SIG.signature_fields_agree_scope_eq stcsig obcsig
+                      (proj1 (proj2 Hhead))) in Hin.
+        exact (Hstcsec ty Hin). }
+      assert (Hbound' : SIG.secglobal_scope_bounded_above (stcsig :: acc1) st').
+      { eapply SIG.secglobal_scope_bounded_above_cons.
+        - eapply
+            SECSTCTYPINGCORRECTNESS.generated_sys_signature_scope_bounded_from_window;
+            [exact Hwin|exact Hstcsig].
+        - eapply SIG.secglobal_scope_bounded_above_monotone;
+            [exact Hbound|exact (proj2 Hwin)]. }
+      assert (Hacc1nd' : forall f n1,
+                 SIG.find_signature f (stcsig :: acc1) = Some n1 ->
+                 NoDup (SIG.signature_scope n1)).
+      { intros f n1 Hfind. simpl in Hfind.
+        destruct (ident_eqb stcsig.(s_name) f).
+        - inversion Hfind; subst n1. exact Hstcnd.
+        - eapply Hacc1nd; exact Hfind. }
+      assert (Hacc2tgt' : forall f n2,
+                 SIG.find_signature f (obcsig :: acc2) = Some n2 ->
+                 SIGPROOFS.signature_targets_out n2).
+      { intros f n2 Hfind. simpl in Hfind.
+        destruct (ident_eqb obcsig.(s_name) f).
+        - inversion Hfind; subst n2.
+          eapply generate_class_signature_targets_out;
+            [exact Hprops|exact Hacc2scoped|exact Hwc_head|exact Hobcsig].
+        - eapply Hacc2tgt; exact Hfind. }
+      destruct (SECSTCTYPING.generate_all_sys_signatures_scoped_env'
+                  (stcsig :: acc1) systems envs aux_names) as [G1'|] eqn:Hstc';
+        simpl in Hstc; try discriminate.
+      destruct (IH (stcsig :: acc1) (obcsig :: acc2) envs aux_names st' G1'
+                  Htail Haux Hwc_tail Hsch_tail Hinsts_tail Hcons'
+                  Hacc1scoped' Hacc2scoped' Hacc1sec' Hacc2sec' Hbound'
+                  Hacc1nd' Hacc2tgt' Hstc') as (G2 & HG2).
+      exists G2. simpl. rewrite Hobcsig'. simpl. exact HG2.
+  Qed.
+
+  (** The Stc-to-Obc half of the chain, closed: on a well-clocked,
+      well-scheduled, scheduled program whose naming run covered every
+      instance, the Obc signature generator succeeds wherever the STC one
+      did.  Composed with
+      [generate_all_signatures_consistent_obc_scoped], the two
+      environments are then consistent. *)
+
+  Corollary generate_all_class_signatures_scoped_env_ok:
+    forall systems envs aux_names G1,
+      SECSTCTYPINGCORRECTNESS.scoped_envs_windowed envs NAMEGEN.init_state systems ->
+      NAMEGEN.aux_naming_props aux_names ->
+      CloStc.wc_program systems ->
+      WD.Well_scheduled systems ->
+      Forall (fun s => sys_insts_named s aux_names) systems ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
+        = OK G1 ->
+      exists G2,
+        SECOBCTYPING.generate_all_class_signatures_scoped_env (translate systems)
+          envs aux_names = OK G2.
+  Proof.
+    intros systems envs aux_names G1 Hwindow Haux Hwc Hsch Hinsts Hstc.
+    unfold SECSTCTYPING.generate_all_sys_signatures_scoped_env in Hstc.
+    unfold SECOBCTYPING.generate_all_class_signatures_scoped_env.
+    eapply generate_all_class_signatures_scoped_env_ok'
+      with (acc1 := nil) (acc2 := nil) (st := NAMEGEN.init_state).
+    - exact Hwindow.
+    - exact Haux.
+    - exact Hwc.
+    - exact Hsch.
+    - exact Hinsts.
+    - apply Signature_consistent_obc_full_nil.
+    - apply SIG.secglobal_scoped_nil.
+    - apply SIG.secglobal_scoped_nil.
+    - apply SIG.secglobal_scope_sec_nil.
+    - apply SIG.secglobal_scope_sec_nil.
+    - apply SIG.secglobal_scope_bounded_above_nil.
+    - intros f n1 Hfind. discriminate.
+    - intros f n2 Hfind. discriminate.
+    - exact Hstc.
+  Qed.
+
   Corollary generate_all_signatures_consistent_obc_scoped:
     forall systems envs aux_names G1 G2,
       SECSTCTYPINGCORRECTNESS.scoped_envs_windowed envs NAMEGEN.init_state systems ->
