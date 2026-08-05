@@ -37,6 +37,7 @@ From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SecCETyping.
 From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF.SecTypes.
+From Velus Require NLustreToStc.NL2StcClocking.
 From Velus Require Import SIF.SecNLusTyping.
 From Velus Require Import SIF.SecNLusTypingCorrectness.
 From Velus Require Import SIF.NLustreCausality.
@@ -69,6 +70,10 @@ Module Type SECOBCNONINTERFERENCE
   (Import TransNL : NLustreToStc.Translation.TRANSLATION
                       Ids Op CE.Syn NL.Syn Stc.Syn NL.Mem)
   (NLStcCorr : NLustreToStc.Correctness.CORRECTNESS
+                 Ids Op OpAux CStr Str CIStr CE NL Stc TransNL)
+  (** The translation's own clocking theorem, so that the Stc program's
+      well-clockedness is derived from the source's rather than assumed. *)
+  (NL2StcClo : NLustreToStc.NL2StcClocking.NL2STCCLOCKING
                  Ids Op OpAux CStr Str CIStr CE NL Stc TransNL)
   (Import SIG          : SIGNATURE Ids SC)
   (Import SIGPROOFS    : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
@@ -755,6 +760,65 @@ Module Type SECOBCNONINTERFERENCE
       |exact Hstc|exact Hstcs|exact Hobc|exact Hfindnode|exact Hsec].
   Qed.
 
+  (** The translated program's clocking is not an assumption either: it
+      is the NLustre-to-Stc pass's own theorem.  What is left is exactly
+      what the compiler cannot prove and therefore checks -- that the
+      scheduled program is well-scheduled -- alongside the source-level
+      facts. *)
+
+  Corollary generate_all_signatures_chain_ok_from_source:
+    forall all_nodes envs aux_names Gsrc,
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Clo.wc_global all_nodes ->
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+        = OK Gsrc ->
+      exists Gstc Gstcs Gobc,
+        SECSTCTYPING.generate_all_sys_signatures_scoped_env
+          (TransNL.translate all_nodes) envs aux_names = OK Gstc
+        /\ SECSTCTYPING.generate_all_sys_signatures_scoped_env
+             (Sched.schedule (TransNL.translate all_nodes)) envs aux_names
+           = OK Gstcs
+        /\ SECOBCTYPING.generate_all_class_signatures_scoped_env
+             (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
+             envs aux_names = OK Gobc.
+  Proof.
+    intros all_nodes envs aux_names Gsrc Henvsgen Hwcnl Hsch Hsrc.
+    eapply generate_all_signatures_chain_ok;
+      [exact Henvsgen|exact Hwcnl
+      |apply NL2StcClo.translate_wc; exact Hwcnl
+      |exact Hsch|exact Hsrc].
+  Qed.
+
+  Corollary class_security_from_node_security_source:
+    forall all_nodes Gsrc envs aux_names n dlt_sig dlt_raw,
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Clo.wc_global all_nodes ->
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+        = OK Gsrc ->
+      find_node n.(NL.Syn.n_name) all_nodes = Some n ->
+      NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw ->
+      exists Gstc Gstcs Gobc,
+        SECSTCTYPING.generate_all_sys_signatures_scoped_env
+          (TransNL.translate all_nodes) envs aux_names = OK Gstc
+        /\ SECSTCTYPING.generate_all_sys_signatures_scoped_env
+             (Sched.schedule (TransNL.translate all_nodes)) envs aux_names
+           = OK Gstcs
+        /\ SECOBCTYPING.generate_all_class_signatures_scoped_env
+             (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
+             envs aux_names = OK Gobc
+        /\ class_security all_nodes Gsrc Gstc Gstcs Gobc envs aux_names
+             (TransNL.translate_node n) dlt_sig dlt_raw.
+  Proof.
+    intros all_nodes Gsrc envs aux_names n dlt_sig dlt_raw
+           Henvsgen Hwcnl Hsch Hsrc Hfindnode Hsec.
+    eapply class_security_from_node_security_total;
+      [exact Henvsgen|exact Hwcnl
+      |apply NL2StcClo.translate_wc; exact Hwcnl
+      |exact Hsch|exact Hsrc|exact Hfindnode|exact Hsec].
+  Qed.
+
 End SECOBCNONINTERFERENCE.
 
 Module SecObcNonInterference
@@ -773,6 +837,10 @@ Module SecObcNonInterference
   (Import TransNL : NLustreToStc.Translation.TRANSLATION
                       Ids Op CE.Syn NL.Syn Stc.Syn NL.Mem)
   (NLStcCorr : NLustreToStc.Correctness.CORRECTNESS
+                 Ids Op OpAux CStr Str CIStr CE NL Stc TransNL)
+  (** The translation's own clocking theorem, so that the Stc program's
+      well-clockedness is derived from the source's rather than assumed. *)
+  (NL2StcClo : NLustreToStc.NL2StcClocking.NL2STCCLOCKING
                  Ids Op OpAux CStr Str CIStr CE NL Stc TransNL)
   (Import SIG          : SIGNATURE Ids SC)
   (Import SIGPROOFS    : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
@@ -849,14 +917,14 @@ Module SecObcNonInterference
        SECOBCTYPINGCORRECTNESS StcObcBridge)
   <: SECOBCNONINTERFERENCE
        Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc TransNL
-       NLStcCorr SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
+       NLStcCorr NL2StcClo SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
        SECNLUSTYPING SECNLUSTYPINGCORRECTNESS NLusSupport NLusNI
        SECSTCTYPING SECSTCTYPINGCORRECTNESS NLusStcBridge StcNI Obc
        TransObc Corres StcObcCorr ExtSch Sched SECOBCTYPING
        SECOBCTYPINGCORRECTNESS StcObcBridge ChainEnv.
   Include SECOBCNONINTERFERENCE
             Ids Lat Op OpAux CStr Str CIStr SC SecT CE NL Stc TransNL
-            NLStcCorr SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
+            NLStcCorr NL2StcClo SIG SIGPROOFS NAMEGEN SECCETYPING NLCaus
             SECNLUSTYPING SECNLUSTYPINGCORRECTNESS NLusSupport NLusNI
             SECSTCTYPING SECSTCTYPINGCORRECTNESS NLusStcBridge StcNI Obc
             TransObc Corres StcObcCorr ExtSch Sched SECOBCTYPING
