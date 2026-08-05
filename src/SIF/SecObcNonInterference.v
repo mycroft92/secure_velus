@@ -819,6 +819,128 @@ Module Type SECOBCNONINTERFERENCE
       |exact Hsch|exact Hsrc|exact Hfindnode|exact Hsec].
   Qed.
 
+  (** ** Noninterference for the emitted class, from the source alone
+
+      Everything above is indexed by signature environments the caller
+      has to supply.  With the generators shown total along the chain,
+      they need not be: a secure NLustre node is enough.  What is left in
+      the statement is the source program's own well-formedness, the
+      well-scheduledness the compiler checks, the node's security
+      witness, and the two behaviours being compared. *)
+
+  Theorem translated_node_noninterference_outputs_step:
+    forall all_nodes Gsrc envs aux_names n cls stepm ty_env
+           dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
+      cls = TransObc.translate_system
+              (Sched.schedule_system (TransNL.translate_node n)) ->
+      Obc.Syn.find_method step cls.(Obc.Syn.c_methods) = Some stepm ->
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
+      NL.Clo.wc_global all_nodes ->
+      NLCaus.nl_global_causal all_nodes ->
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+        = OK Gsrc ->
+      find_node n.(NL.Syn.n_name) all_nodes = Some n ->
+      NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw ->
+      find_node_env n.(NL.Syn.n_name) envs = Some ty_env ->
+      translated_class_behavior all_nodes (TransNL.translate_node n)
+        xss yss ins outs ->
+      translated_class_behavior all_nodes (TransNL.translate_node n)
+        xss' yss' ins' outs' ->
+      eq_str (clock_of xss) (clock_of xss') ->
+      same_low_presence ty_env dlt_sig t
+        (List.map fst stepm.(Obc.Syn.m_in)) xss xss' ->
+      obc_stream_low_eq ty_env dlt_sig t
+        (List.map fst stepm.(Obc.Syn.m_in)) ins ins' ->
+      obc_stream_low_eq ty_env dlt_sig t
+        (List.map fst stepm.(Obc.Syn.m_out)) outs outs'.
+  Proof.
+    intros all_nodes Gsrc envs aux_names n cls stepm ty_env
+           dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs'
+           Hcls Hstepm Henvsgen Hord Hwc Hcaus Hsch Hallsrc Hfindnode Hsec
+           Hfindenv Hbeh Hbeh' Hclock_eq Habs Hlowin.
+    destruct (class_security_from_node_security_source all_nodes Gsrc envs
+                aux_names n dlt_sig dlt_raw
+                Henvsgen Hwc Hsch Hallsrc Hfindnode Hsec)
+      as (Gstc & Gstcs & Gobc & _ & _ & _ & Hclssec).
+    eapply class_noninterference_outputs;
+      [exact Hcls|exact Hstepm|exact Henvsgen|exact Hord|exact Hwc|exact Hallsrc
+      |exact Hcaus|exact Hfindenv|exact Hclssec
+      |exact Hbeh|exact Hbeh'|exact Hclock_eq|exact Habs|exact Hlowin].
+  Qed.
+
+  (** ** The same, with the behaviours built rather than assumed
+
+      A behaviour of the emitted class is what
+      [StcToObc.Correctness.correctness_loop_call] produces from a
+      dataflow run, so the caller need only exhibit the two NLustre runs.
+      [Well_defined] of the scheduled program is the compiler's own
+      precondition for emitting code at all, and it carries the
+      well-scheduledness the signature chain needs. *)
+
+  Corollary translated_node_noninterference_outputs_from_msem:
+    forall all_nodes Gsrc envs aux_names n cls stepm ty_env
+           dlt_sig dlt_raw t xss xss' M M' yss yss' ins ins',
+      cls = TransObc.translate_system
+              (Sched.schedule_system (TransNL.translate_node n)) ->
+      Obc.Syn.find_method step cls.(Obc.Syn.c_methods) = Some stepm ->
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
+      NL.Clo.wc_global all_nodes ->
+      NLCaus.nl_global_causal all_nodes ->
+      Stc.Wdef.Well_defined (Sched.schedule (TransNL.translate all_nodes)) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+        = OK Gsrc ->
+      find_node n.(NL.Syn.n_name) all_nodes = Some n ->
+      NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw ->
+      find_node_env n.(NL.Syn.n_name) envs = Some ty_env ->
+      NL.MemSem.msem_node all_nodes n.(NL.Syn.n_name) xss M yss ->
+      NL.MemSem.msem_node all_nodes n.(NL.Syn.n_name) xss' M' yss' ->
+      (forall k, Forall2 StcObcCorr.eq_if_present (xss k) (ins k)) ->
+      (forall k, Forall2 StcObcCorr.eq_if_present (xss' k) (ins' k)) ->
+      (forall k, List.Exists (fun v => v <> absent) (xss k)) ->
+      (forall k, List.Exists (fun v => v <> absent) (xss' k)) ->
+      eq_str (clock_of xss) (clock_of xss') ->
+      same_low_presence ty_env dlt_sig t
+        (List.map fst stepm.(Obc.Syn.m_in)) xss xss' ->
+      obc_stream_low_eq ty_env dlt_sig t
+        (List.map fst stepm.(Obc.Syn.m_in)) ins ins' ->
+      obc_stream_low_eq ty_env dlt_sig t
+        (List.map fst stepm.(Obc.Syn.m_out))
+        (fun k => List.map StcObcCorr.value_to_option (yss k))
+        (fun k => List.map StcObcCorr.value_to_option (yss' k)).
+  Proof.
+    intros all_nodes Gsrc envs aux_names n cls stepm ty_env
+           dlt_sig dlt_raw t xss xss' M M' yss yss' ins ins'
+           Hcls Hstepm Henvsgen Hord Hwc Hcaus Hwd Hallsrc Hfindnode Hsec
+           Hfindenv Hmsem Hmsem' Hins Hins' Hpres Hpres' Hclock_eq Habs Hlowin.
+    assert (Hwcstcs : Stc.Clo.wc_program
+                        (Sched.schedule (TransNL.translate all_nodes)))
+      by (apply Sched.scheduler_wc_program, NL2StcClo.translate_wc; exact Hwc).
+    assert (Hbeh : translated_class_behavior all_nodes
+                     (TransNL.translate_node n) xss yss ins
+                     (fun k => List.map StcObcCorr.value_to_option (yss k))).
+    { eapply translated_class_behavior_from_system;
+        [exact Hwd|exact Hwcstcs
+        |eapply StcNI.translated_system_behavior_from_msem;
+         [exact Hord|exact Hwc|exact Hmsem]
+        |exact Hins|exact Hpres]. }
+    assert (Hbeh' : translated_class_behavior all_nodes
+                      (TransNL.translate_node n) xss' yss' ins'
+                      (fun k => List.map StcObcCorr.value_to_option (yss' k))).
+    { eapply translated_class_behavior_from_system;
+        [exact Hwd|exact Hwcstcs
+        |eapply StcNI.translated_system_behavior_from_msem;
+         [exact Hord|exact Hwc|exact Hmsem']
+        |exact Hins'|exact Hpres']. }
+    eapply translated_node_noninterference_outputs_step;
+      [exact Hcls|exact Hstepm|exact Henvsgen|exact Hord|exact Hwc|exact Hcaus
+      |exact (proj1 (proj2 Hwd))|exact Hallsrc|exact Hfindnode|exact Hsec
+      |exact Hfindenv|exact Hbeh|exact Hbeh'|exact Hclock_eq|exact Habs
+      |exact Hlowin].
+  Qed.
+
 End SECOBCNONINTERFERENCE.
 
 Module SecObcNonInterference
