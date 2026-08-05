@@ -1999,6 +1999,95 @@ Module Type SECSTCTYPINGCORRECTNESS
     - exact (Hpres f n Hfind).
   Qed.
 
+  (** ** Program-level relative totality across a reordering
+
+      The accumulator relation the induction carries: every signature the
+      first run produced has a counterpart with the same interface, one
+      that targets its own outputs, and whose original had a distinct
+      scope.  That is exactly what a call needs in order to regenerate,
+      and it is re-established from the generators themselves. *)
+
+  Definition sig_env_agrees (G G': secglobal) : Prop :=
+    forall f n1,
+      find_signature f G = Some n1 ->
+      exists n2,
+        find_signature f G' = Some n2
+        /\ signature_fields_agree n1 n2
+        /\ signature_targets_out n2
+        /\ NoDup (signature_scope n1).
+
+  (** A call's targets are distinct, being a segment of the system's
+      variables. *)
+
+  Lemma sys_call_outputs_nodup:
+    forall s i xs ck rst f es,
+      In (SynStc.TcCall i xs ck rst f es) s.(SynStc.s_tcs) ->
+      NoDup xs.
+  Proof.
+    intros s i xs ck rst f es Hin.
+    pose proof (SynStc.s_nodup_variables s) as Hnd.
+    apply in_split in Hin as (l1 & l2 & Heq).
+    rewrite Heq, SynStc.variables_app in Hnd.
+    apply NoDup_app_r in Hnd.
+    cbn [SynStc.variables flat_map SynStc.variables_tc] in Hnd.
+    eapply NoDup_app_l; exact Hnd.
+  Qed.
+
+  (** The call data for one system, assembled from the accumulator
+      relation and the system's own freshness. *)
+
+  Lemma call_data_for_from_agrees:
+    forall G G' s env scope clk_type rst_type inp out slocals slasts
+           reset_env rids,
+      sig_env_agrees G G' ->
+      env_injective env ->
+      get_mappings_from_node s.(SynStc.s_in) env = Some inp ->
+      get_mappings_from_node s.(SynStc.s_out) env = Some out ->
+      get_mappings_from_node s.(SynStc.s_vars) env = Some slocals ->
+      get_mappings_from_node s.(SynStc.s_lasts) env = Some slasts ->
+      get_mappings (map fst (resets_of s.(SynStc.s_tcs))) reset_env = Some rids ->
+      scope = inp ++ out ++ slocals ++ slasts ++ rids ++ [clk_type; rst_type] ->
+      SIG.secglobal_scope_fresh scope G ->
+      forall tc, In tc s.(SynStc.s_tcs) -> call_data_for G G' env tc.
+  Proof.
+    intros G G' s env scope clk_type rst_type inp out slocals slasts
+           reset_env rids Hagrees Hinj Hinp Hout Hslocals Hslasts Hrids
+           Hscope Hfr tc Htc i y ys ck rst f es Heqtc n1 Hf1.
+    subst tc scope.
+    destruct (Hagrees f n1 Hf1) as (n2 & Hf2 & Hfields & Htgt & Hnd1).
+    exists n2. repeat (split; [assumption|]).
+    intros outtyp Hgm. split.
+    - eapply get_mappings_nodup_gen;
+        [eapply sys_call_outputs_nodup; exact Htc|exact Hinj|exact Hgm].
+    - unfold outputs_fresh. apply Forall_forall. intros ty Hty.
+      destruct (get_mappings_In _ _ _ _ Hgm Hty) as (z & Hinz & Hfz).
+      (* z is a variable of the system, so its type is in the scope *)
+      destruct (SECSTCTYPING.sys_raw_scope_facts s env clk_type rst_type inp out
+                  slocals slasts reset_env rids Hinp Hout Hslocals Hslasts Hrids)
+        as (Hvarssc & _ & _ & _).
+      assert (Hinvar : In z (SynStc.variables s.(SynStc.s_tcs))).
+      { unfold SynStc.variables. apply in_flat_map.
+        exists (SynStc.TcCall i (y :: ys) ck rst f es).
+        split; [exact Htc|exact Hinz]. }
+      assert (Hinvo : In z (map fst s.(SynStc.s_vars)
+                              ++ map fst s.(SynStc.s_out)))
+        by (eapply Permutation_in;
+            [apply Permutation_sym, (SynStc.s_vars_out_in_tcs s)|exact Hinvar]).
+      assert (Hmem : InMembers z
+                       (idck (s.(SynStc.s_in) ++ s.(SynStc.s_vars)
+                                ++ s.(SynStc.s_out))
+                          ++ idck s.(SynStc.s_lasts))).
+      { apply InMembers_app. left. apply InMembers_idck.
+        apply fst_InMembers. rewrite map_app.
+        apply in_or_app. right. rewrite map_app. exact Hinvo. }
+      destruct (Hvarssc z Hmem) as (ty' & Hf' & Hins).
+      rewrite Hfz in Hf'. inversion Hf'; subst ty'.
+      eapply Hfr; [exact Hf1|].
+      unfold SECSTCTYPING.sys_raw_scope, SECSTCTYPING.hidden_sys_vars in Hins.
+      rewrite in_app_iff, nodup_In in Hins.
+      repeat rewrite in_app_iff in *. tauto.
+  Qed.
+
   Theorem generate_all_sys_signatures_reorder_preserved_scoped':
     forall systems systems' acc acc' envs aux_names st G G',
       Forall2 sys_reordered systems systems' ->
