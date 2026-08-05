@@ -2088,6 +2088,244 @@ Module Type SECSTCTYPINGCORRECTNESS
       repeat rewrite in_app_iff in *. tauto.
   Qed.
 
+  (** The same, read off a successful run: the run itself supplies the
+      environment images, and the freshness comes from the accumulator's
+      bounds. *)
+
+  Lemma call_data_for_from_agrees_run:
+    forall G G' s env aux_names sig,
+      sig_env_agrees G G' ->
+      env_injective env ->
+      sys_scope_fresh_in_env s env aux_names G ->
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      forall tc, In tc s.(SynStc.s_tcs) -> call_data_for G G' env tc.
+  Proof.
+    intros G G' s env aux_names sig Hagrees Hinj Hfr Hsig.
+    edestruct generate_sys_signature_inv as
+        (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
+         & reset_env & rids & st_reset & sconst & st_s
+         & Haux & Hclk & Hrst & Hinp & Hout & Hslocals & Hslasts
+         & Hrenv & Hrids & _ & _); [exact Hsig|].
+    eapply call_data_for_from_agrees;
+      [exact Hagrees|exact Hinj|exact Hinp|exact Hout|exact Hslocals
+      |exact Hslasts|exact Hrids|reflexivity|].
+    eapply Hfr;
+      [exact Haux|exact Hclk|exact Hrst|exact Hinp|exact Hout|exact Hslocals
+      |exact Hslasts|exact Hrenv|exact Hrids].
+  Qed.
+
+  (** The interface a run computes depends on the system's interface
+      alone, and a reordering leaves that untouched. *)
+
+  Lemma generate_sys_signature_reorder_fields:
+    forall G G' s s' env aux_names sig sig',
+      sys_reordered s s' ->
+      SECSTCTYPING.generate_sys_signature G s env aux_names = OK sig ->
+      SECSTCTYPING.generate_sys_signature G' s' env aux_names = OK sig' ->
+      signature_fields_agree sig sig'.
+  Proof.
+    intros G G' s s' env aux_names sig sig'
+           (Hname & Hin' & Hout' & _ & _ & _) Hsig Hsig'.
+    edestruct generate_sys_signature_inv with (s := s) as
+        (clk_id & rst_id & clk_type & rst_type & inp & out & slocals & slasts
+         & reset_env & rids & st_reset & sconst & st_s
+         & Haux & Hclk & Hrst & Hinp & Hout & _ & _ & _ & _ & _ & Hdef);
+      [exact Hsig|].
+    edestruct generate_sys_signature_inv with (s := s') as
+        (clk_id2 & rst_id2 & clk_type2 & rst_type2 & inp2 & out2 & slocals2
+         & slasts2 & reset_env2 & rids2 & st_reset2 & sconst2 & st_s2
+         & Haux2 & Hclk2 & Hrst2 & Hinp2 & Hout2 & _ & _ & _ & _ & _ & Hdef2);
+      [exact Hsig'|].
+    rewrite Hname, Haux in Haux2. inversion Haux2; subst clk_id2 rst_id2.
+    rewrite Hclk in Hclk2. inversion Hclk2; subst clk_type2.
+    rewrite Hrst in Hrst2. inversion Hrst2; subst rst_type2.
+    rewrite Hin', Hinp in Hinp2. inversion Hinp2; subst inp2.
+    rewrite Hout', Hout in Hout2. inversion Hout2; subst out2.
+    subst sig sig'. unfold signature_fields_agree; simpl.
+    repeat split; reflexivity.
+  Qed.
+
+  (** A reordering permutes the reset instances, so their distinctness
+      travels with it. *)
+
+  Lemma sys_reordered_resets_nodup:
+    forall s s',
+      sys_reordered s s' ->
+      NoDup (map fst (resets_of s.(SynStc.s_tcs))) ->
+      NoDup (map fst (resets_of s'.(SynStc.s_tcs))).
+  Proof.
+    intros s s' (_ & _ & _ & _ & _ & Hperm) Hnd.
+    eapply Permutation_NoDup; [|exact Hnd].
+    apply Permutation_map, resets_of_Permutation, Hperm.
+  Qed.
+
+  Lemma sig_env_agrees_nil:
+    sig_env_agrees [] [].
+  Proof.
+    intros f n Hfind. discriminate.
+  Qed.
+
+  Lemma sig_env_agrees_cons:
+    forall G G' sig sig',
+      sig_env_agrees G G' ->
+      sig'.(s_name) = sig.(s_name) ->
+      signature_fields_agree sig sig' ->
+      signature_targets_out sig' ->
+      NoDup (signature_scope sig) ->
+      sig_env_agrees (sig :: G) (sig' :: G').
+  Proof.
+    intros G G' sig sig' Hagrees Hname Hfields Htgt Hnd f n Hfind.
+    simpl in Hfind. simpl. rewrite Hname.
+    destruct (ident_eqb sig.(s_name) f) eqn:Heq.
+    - inversion Hfind; subst n.
+      exists sig'. split; [reflexivity|].
+      split; [exact Hfields|]. split; [exact Htgt|exact Hnd].
+    - exact (Hagrees f n Hfind).
+  Qed.
+
+  (** ** Program-level relative totality across a reordering
+
+      Where the unscheduled program's signatures generate, the scheduled
+      one's do too.  The accumulators are built in lockstep, so the
+      induction only has to re-establish [sig_env_agrees] at each step,
+      which the per-system theorems supply. *)
+
+  Theorem generate_all_sys_signatures_reorder_ok_scoped':
+    forall systems systems' acc acc' envs aux_names st G,
+      Forall2 sys_reordered systems systems' ->
+      scoped_envs_windowed envs st systems ->
+      NAMEGEN.aux_naming_props aux_names ->
+      Clo.wc_program systems ->
+      Clo.wc_program systems' ->
+      Forall (fun s => NoDup (map fst (resets_of s.(SynStc.s_tcs)))) systems ->
+      sig_env_agrees acc acc' ->
+      secglobal_scoped acc ->
+      secglobal_scoped acc' ->
+      SIG.secglobal_scope_sec acc ->
+      SIG.secglobal_scope_bounded_above acc st ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env' acc systems envs
+        aux_names = OK G ->
+      exists G',
+        SECSTCTYPING.generate_all_sys_signatures_scoped_env' acc' systems' envs
+          aux_names = OK G'.
+  Proof.
+    induction systems as [|s systems IH];
+      intros systems' acc acc' envs aux_names st G
+             Hreord Hwindow Haux Hwc Hwc' Hsch Hagrees Haccsc Hacc'sc Haccsec
+             Hbound Hgen.
+    - inversion Hreord; subst systems'. exists acc'. reflexivity.
+    - inversion Hreord as [|s0 s' systems0 systems'0 Hss' Hreordtl]; subst.
+      inversion Hwindow as [|st0 st2 s0 systems0 local_env
+                             Hfindlocal Henvprops Hwin Htail]; subst.
+      inversion Hwc as [|s0 systems0 Hwctl Hwchd]; subst.
+      inversion Hwc' as [|s0 systems0 Hwctl' Hwchd']; subst.
+      inversion Hsch as [|s0 systems0 Hschhd Hschtl]; subst.
+      simpl in Hgen.
+      destruct (SECSTCTYPING.generate_sys_signature_scoped_env acc s envs
+                  aux_names) as [sig|] eqn:Hsig;
+        simpl in Hgen; try discriminate.
+      unfold SECSTCTYPING.generate_sys_signature_scoped_env in Hsig.
+      rewrite Hfindlocal in Hsig.
+      assert (Hprops : NAMEGEN.naming_env_props local_env aux_names)
+        by exact (conj Henvprops Haux).
+      assert (Hfreshenv : sys_scope_fresh_in_env s local_env aux_names acc).
+      { eapply sys_scope_fresh_in_env_from_bounds with (st := st).
+        - intros ie x ty Hinst Hfind.
+          exact (proj2 (proj1 (proj2 Haux) _ _ Hinst) _ _ Hfind).
+        - eapply env_sec_lower_bounded_from_window; exact Hwin.
+        - exact Hbound.
+        - exact Haccsec. }
+      (* the reordered system generates too *)
+      destruct (generate_sys_signature_reorder_ok acc acc' s s' local_env
+                  aux_names sig Hss'
+                  (call_data_for_from_agrees_run acc acc' s local_env aux_names
+                     sig Hagrees (proj1 Henvprops) Hfreshenv Hsig))
+        as (sig' & Hsig'); [exact Hsig|].
+      destruct Hss' as (Hname & Hin' & Hout' & Hvars' & Hlasts' & Hperm).
+      assert (Hsigsc : signature_scoped sig).
+      { eapply SECSTCTYPING.generate_sys_signature_scoped
+          with (P := systems) (s := s) (env := local_env);
+          [exact Haccsc|exact (proj1 Henvprops)|exact Hwchd|exact Hsig]. }
+      assert (Hsigsc' : signature_scoped sig').
+      { eapply SECSTCTYPING.generate_sys_signature_scoped
+          with (P := systems'0) (s := s') (env := local_env);
+          [exact Hacc'sc|exact (proj1 Henvprops)|exact Hwchd'|exact Hsig']. }
+      assert (Hgood' : signature_good sig').
+      { eapply generate_sys_signature_good
+          with (P := systems'0) (s := s') (env := local_env);
+          [exact Hprops|exact Hacc'sc|exact Hwchd'
+          |eapply sys_reordered_resets_nodup;
+           [split; [exact Hname|split; [exact Hin'|split; [exact Hout'|
+             split; [exact Hvars'|split; [exact Hlasts'|exact Hperm]]]]]
+           |exact Hschhd]
+          |exact Hsig']. }
+      assert (Hnd : NoDup (signature_scope sig))
+        by (eapply generate_sys_signature_scope_nodup; [exact Hprops|exact Hsig]).
+      assert (Hsigname : sig'.(s_name) = sig.(s_name)).
+      { rewrite (generated_sys_signature_name _ _ _ _ _ Hsig).
+        rewrite (generated_sys_signature_name _ _ _ _ _ Hsig').
+        exact Hname. }
+      assert (Hfields : signature_fields_agree sig sig').
+      { eapply generate_sys_signature_reorder_fields
+          with (s := s) (s' := s') (env := local_env);
+          [split; [exact Hname|split; [exact Hin'|split; [exact Hout'|
+             split; [exact Hvars'|split; [exact Hlasts'|exact Hperm]]]]]
+          |exact Hsig|exact Hsig']. }
+      simpl.
+      unfold SECSTCTYPING.generate_sys_signature_scoped_env.
+      rewrite Hname, Hfindlocal, Hsig'. simpl.
+      eapply IH with (systems' := systems'0) (acc := sig :: acc)
+                     (acc' := sig' :: acc') (st := st2) (envs := envs)
+                     (aux_names := aux_names).
+      + exact Hreordtl.
+      + exact Htail.
+      + exact Haux.
+      + exact Hwctl.
+      + exact Hwctl'.
+      + exact Hschtl.
+      + eapply sig_env_agrees_cons;
+          [exact Hagrees|exact Hsigname|exact Hfields
+          |eapply signature_good_targets_out; exact Hgood'|exact Hnd].
+      + eapply SIG.secglobal_scoped_cons; [exact Hsigsc|exact Haccsc].
+      + eapply SIG.secglobal_scoped_cons; [exact Hsigsc'|exact Hacc'sc].
+      + eapply SIG.secglobal_scope_sec_cons; [|exact Haccsec].
+        eapply generated_sys_signature_scope_sec_from_env_props;
+          [exact Henvprops|exact Hsig].
+      + eapply SIG.secglobal_scope_bounded_above_cons.
+        * eapply generated_sys_signature_scope_bounded_from_window;
+            [exact Hwin|exact Hsig].
+        * eapply SIG.secglobal_scope_bounded_above_monotone;
+            [exact Hbound|exact (proj2 Hwin)].
+      + exact Hgen.
+  Qed.
+
+  Corollary generate_all_sys_signatures_reorder_ok_scoped:
+    forall systems systems' envs aux_names G,
+      Forall2 sys_reordered systems systems' ->
+      scoped_envs_windowed envs NAMEGEN.init_state systems ->
+      NAMEGEN.aux_naming_props aux_names ->
+      Clo.wc_program systems ->
+      Clo.wc_program systems' ->
+      Forall (fun s => NoDup (map fst (resets_of s.(SynStc.s_tcs)))) systems ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
+        = OK G ->
+      exists G',
+        SECSTCTYPING.generate_all_sys_signatures_scoped_env systems' envs
+          aux_names = OK G'.
+  Proof.
+    intros systems systems' envs aux_names G
+           Hreord Hwindow Haux Hwc Hwc' Hsch Hgen.
+    unfold SECSTCTYPING.generate_all_sys_signatures_scoped_env in Hgen |- *.
+    eapply generate_all_sys_signatures_reorder_ok_scoped'
+      with (systems := systems) (systems' := systems')
+           (acc := @nil signature) (acc' := @nil signature)
+           (st := NAMEGEN.init_state);
+      [exact Hreord|exact Hwindow|exact Haux|exact Hwc|exact Hwc'
+      |exact Hsch|apply sig_env_agrees_nil|apply SIG.secglobal_scoped_nil
+      |apply SIG.secglobal_scoped_nil|apply SIG.secglobal_scope_sec_nil
+      |apply SIG.secglobal_scope_bounded_above_nil|exact Hgen].
+  Qed.
+
   Theorem generate_all_sys_signatures_reorder_preserved_scoped':
     forall systems systems' acc acc' envs aux_names st G G',
       Forall2 sys_reordered systems systems' ->
