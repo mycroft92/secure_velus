@@ -605,6 +605,156 @@ Module Type SECOBCNONINTERFERENCE
       |exact Hbeh|exact Hbeh'|exact Hclock_eq|exact Habs|exact Hlowin].
   Qed.
 
+  (** ** The signature chain, closed
+
+      Everything above takes the four signature environments as given.
+      They are not given: each is produced by the phase's own generator,
+      and each generator succeeds wherever the previous one did.  This is
+      where that is assembled -- the only place that sees the NLustre-to-Stc
+      bridge, the scheduling step and the Stc-to-Obc bridge at once.
+
+      The two facts about the compiler's own passes -- that the
+      translated program is well-clocked, and that the scheduled one is
+      well-scheduled -- are the same hypotheses [class_security_from_node_security]
+      already takes, and are Velus's to discharge. *)
+
+  (** [translate_node] carries the node's name over, and its instances
+      are exactly the ones [gather_eqs] collects. *)
+
+  Lemma translate_node_insts_named:
+    forall n aux_names,
+      NLusStcBridge.node_insts_named n aux_names ->
+      StcObcBridge.sys_insts_named (TransNL.translate_node n) aux_names.
+  Proof.
+    intros n aux_names Hn renv Hrenv i Hin.
+    exact (Hn renv Hrenv i Hin).
+  Qed.
+
+  (** The scheduler keeps every field but the body. *)
+
+  Lemma schedule_system_insts_named:
+    forall s aux_names,
+      StcObcBridge.sys_insts_named s aux_names ->
+      StcObcBridge.sys_insts_named (Sched.schedule_system s) aux_names.
+  Proof.
+    intros s aux_names Hs renv Hrenv i Hin.
+    rewrite Sched.schedule_system_name in Hrenv.
+    exact (Hs renv Hrenv i Hin).
+  Qed.
+
+  Lemma scheduled_translate_insts_named:
+    forall all_nodes aux_names,
+      Forall (fun n => NLusStcBridge.node_insts_named n aux_names) all_nodes ->
+      Forall (fun s => StcObcBridge.sys_insts_named s aux_names)
+             (Sched.schedule (TransNL.translate all_nodes)).
+  Proof.
+    intros all_nodes aux_names Hall.
+    induction Hall as [|n nodes Hn Hall IH]; simpl; constructor.
+    - apply schedule_system_insts_named, translate_node_insts_named; exact Hn.
+    - exact IH.
+  Qed.
+
+  (** Where the NLustre generator succeeded, so do the Stc generator on
+      the translated program, on the scheduled one, and the Obc generator
+      on the classes the compiler emits. *)
+
+  Theorem generate_all_signatures_chain_ok:
+    forall all_nodes envs aux_names Gsrc,
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Clo.wc_global all_nodes ->
+      Stc.Clo.wc_program (TransNL.translate all_nodes) ->
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+        = OK Gsrc ->
+      exists Gstc Gstcs Gobc,
+        SECSTCTYPING.generate_all_sys_signatures_scoped_env
+          (TransNL.translate all_nodes) envs aux_names = OK Gstc
+        /\ SECSTCTYPING.generate_all_sys_signatures_scoped_env
+             (Sched.schedule (TransNL.translate all_nodes)) envs aux_names
+           = OK Gstcs
+        /\ SECOBCTYPING.generate_all_class_signatures_scoped_env
+             (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
+             envs aux_names = OK Gobc.
+  Proof.
+    intros all_nodes envs aux_names Gsrc Henvsgen Hwcnl Hwcstc Hsch Hsrc.
+    assert (Haux : NAMEGEN.aux_naming_props aux_names)
+      by (eapply NAMEGEN.aux_naming_props_from_scoped_env; exact Henvsgen).
+    assert (Hwcstcs : Stc.Clo.wc_program
+                        (Sched.schedule (TransNL.translate all_nodes)))
+      by (apply Sched.scheduler_wc_program; exact Hwcstc).
+    (* the NLustre-to-Stc leg *)
+    destruct (NLusStcBridge.generate_all_sys_signatures_scoped_env_ok
+                all_nodes envs aux_names Gsrc Henvsgen Hwcnl Hsrc)
+      as (Gstc & Hstc).
+    (* the scheduling step *)
+    assert (Hstcs : exists Gstcs,
+               SECSTCTYPING.generate_all_sys_signatures_scoped_env
+                 (Sched.schedule (TransNL.translate all_nodes)) envs aux_names
+               = OK Gstcs).
+    { eapply generate_all_sys_signatures_reorder_ok_scoped;
+        [apply ChainEnv.schedule_reordered
+        |eapply ChainEnv.scoped_envs_windowed_from_scoped_env;
+         [exact Henvsgen|apply ChainEnv.translate_names]
+        |exact Haux|exact Hwcstc|exact Hwcstcs
+        |apply ChainEnv.scheduled_resets_nodup; exact Hsch
+        |exact Hstc]. }
+    destruct Hstcs as (Gstcs & Hstcs).
+    (* the Stc-to-Obc leg *)
+    assert (Hobc : exists Gobc,
+               SECOBCTYPING.generate_all_class_signatures_scoped_env
+                 (TransObc.translate
+                    (Sched.schedule (TransNL.translate all_nodes)))
+                 envs aux_names = OK Gobc).
+    { eapply StcObcBridge.generate_all_class_signatures_scoped_env_ok;
+        [eapply ChainEnv.scoped_envs_windowed_from_scoped_env;
+         [exact Henvsgen|apply ChainEnv.scheduled_translate_names]
+        |exact Haux|exact Hwcstcs|exact Hsch
+        |apply scheduled_translate_insts_named;
+         eapply NLusStcBridge.generate_node_scoped_env_insts_named;
+         exact Henvsgen
+        |exact Hstcs]. }
+    destruct Hobc as (Gobc & Hobc).
+    exists Gstc, Gstcs, Gobc.
+    split; [exact Hstc|split; [exact Hstcs|exact Hobc]].
+  Qed.
+
+  (** The chain end to end: a node with a security witness gives a class
+      with one, and no signature environment has to be supplied. *)
+
+  Corollary class_security_from_node_security_total:
+    forall all_nodes Gsrc envs aux_names n dlt_sig dlt_raw,
+      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NL.Clo.wc_global all_nodes ->
+      Stc.Clo.wc_program (TransNL.translate all_nodes) ->
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+        = OK Gsrc ->
+      find_node n.(NL.Syn.n_name) all_nodes = Some n ->
+      NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw ->
+      exists Gstc Gstcs Gobc,
+        SECSTCTYPING.generate_all_sys_signatures_scoped_env
+          (TransNL.translate all_nodes) envs aux_names = OK Gstc
+        /\ SECSTCTYPING.generate_all_sys_signatures_scoped_env
+             (Sched.schedule (TransNL.translate all_nodes)) envs aux_names
+           = OK Gstcs
+        /\ SECOBCTYPING.generate_all_class_signatures_scoped_env
+             (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
+             envs aux_names = OK Gobc
+        /\ class_security all_nodes Gsrc Gstc Gstcs Gobc envs aux_names
+             (TransNL.translate_node n) dlt_sig dlt_raw.
+  Proof.
+    intros all_nodes Gsrc envs aux_names n dlt_sig dlt_raw
+           Henvsgen Hwcnl Hwcstc Hsch Hsrc Hfindnode Hsec.
+    destruct (generate_all_signatures_chain_ok all_nodes envs aux_names Gsrc
+                Henvsgen Hwcnl Hwcstc Hsch Hsrc)
+      as (Gstc & Gstcs & Gobc & Hstc & Hstcs & Hobc).
+    exists Gstc, Gstcs, Gobc.
+    split; [exact Hstc|]. split; [exact Hstcs|]. split; [exact Hobc|].
+    eapply class_security_from_node_security;
+      [exact Henvsgen|exact Hwcnl|exact Hwcstc|exact Hsch|exact Hsrc
+      |exact Hstc|exact Hstcs|exact Hobc|exact Hfindnode|exact Hsec].
+  Qed.
+
 End SECOBCNONINTERFERENCE.
 
 Module SecObcNonInterference
