@@ -135,12 +135,14 @@ src/SIF/SecLattice.v
 src/SIF/SymTypes.v
 src/SIF/SIFSignature.v
 src/SIF/NameInterface.v
+src/SIF/SecNamingTotality.v
 src/SIF/SecContext.v
 src/SIF/SecCETyping.v
 src/SIF/SecTypes.v
 src/SIF/SecNLusTyping.v
 src/SIF/SecNLusConstraintExport.v
 src/SIF/SecNLusTypingCorrectness.v
+src/SIF/SecNLusTypingTotality.v
 src/SIF/SecSTCTyping.v
 src/SIF/SecStcConstraintExport.v
 src/SIF/SecStcTypingCorrectness.v
