@@ -623,4 +623,73 @@ Module Type SECNLUSTYPINGTOTALITY
 
   End NODETOTALITY.
 
+  (** * The whole program
+
+      The generator walks a list in which a callee precedes its caller
+      and pushes each fresh signature onto the accumulator, so when a
+      node is reached, the signatures of every node before it are
+      available.  [Ordered_nodes] orders a program the other way -- a
+      callee comes *after* its caller -- which is exactly why the driver
+      reverses the list before generating
+      ([SecNLusConstraintExport.generate_nlustre_constraint_dump]). *)
+
+  Section PROGRAMTOTALITY.
+
+    (** A node of a duplicate-free program is what [find_node] finds
+        under its own name. *)
+
+    Lemma In_find_node:
+      forall (G: global) n,
+        NoDup (map n_name G) ->
+        In n G ->
+        find_node n.(n_name) G = Some n.
+    Proof.
+      induction G as [|nd G IH]; intros n Hnd Hin; [inversion Hin|].
+      simpl in Hnd. inversion Hnd as [|x xs Hnotin Hnd']; subst x xs.
+      destruct Hin as [Heq|Hin].
+      - subst nd. simpl. rewrite ident_eqb_refl. reflexivity.
+      - simpl.
+        destruct (ident_eqb nd.(n_name) n.(n_name)) eqn:Hname.
+        + exfalso. apply ident_eqb_eq in Hname.
+          apply Hnotin. rewrite Hname. now apply in_map.
+        + apply IH; assumption.
+    Qed.
+
+    (** Every node a body calls is named further along the program. *)
+
+    Lemma Ordered_nodes_calls_later:
+      forall prefix nd suffix f,
+        Ordered_nodes (prefix ++ nd :: suffix) ->
+        Is_node_in f nd.(n_eqs) ->
+        Exists (fun n' => f = n'.(n_name)) suffix.
+    Proof.
+      intros prefix nd suffix f Hord Hin.
+      apply Ordered_nodes_append in Hord.
+      inversion Hord as [|nd' nds Hord' Hcalls Hdist]; subst nd' nds.
+      apply Hcalls, Hin.
+    Qed.
+
+    (** Read on the reversed list, "further along" becomes "already
+        seen": a callee is named by one of the nodes the generator has
+        processed. *)
+
+    Lemma rev_calls_precede:
+      forall all_nodes prefix n suffix f,
+        Ordered_nodes all_nodes ->
+        rev all_nodes = prefix ++ n :: suffix ->
+        Is_node_in f n.(n_eqs) ->
+        exists n', In n' prefix /\ n'.(n_name) = f.
+    Proof.
+      intros all_nodes prefix n suffix f Hord Hsplit Hin.
+      assert (Hall : all_nodes = rev suffix ++ n :: rev prefix).
+      { rewrite <- (rev_involutive all_nodes), Hsplit.
+        rewrite rev_app_distr. simpl. rewrite <- app_assoc. reflexivity. }
+      rewrite Hall in Hord.
+      pose proof (Ordered_nodes_calls_later _ _ _ _ Hord Hin) as Hex.
+      apply Exists_exists in Hex as (n' & Hn' & Heq).
+      exists n'. split; [apply in_rev in Hn'; exact Hn'|now symmetry].
+    Qed.
+
+  End PROGRAMTOTALITY.
+
 End SECNLUSTYPINGTOTALITY.
