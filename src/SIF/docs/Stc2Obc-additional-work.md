@@ -208,7 +208,11 @@ notion.
 For the exported noninterference theorem to require no signature environment
 from its caller, each generator must be shown to succeed wherever the previous
 one did.  This was proved for the whole chain -- and, because the Obc leg needed
-it, back-ported to the NLustre leg as well:
+it, back-ported to the NLustre leg as well.  (The chain's base case -- that the
+naming pass and the NLustre generator succeed at all -- was later proved too,
+separately, in `SecNamingTotality.v` and `SecNLusTypingTotality.v`; see
+`docs/signature-generation-totality.md`.  It is not part of the Stc-to-Obc work
+described here.)
 `generate_constraints_ok_from_good` at the signature level,
 `generate_class_signature_ok_from_wc` per system,
 `generate_all_class_signatures_scoped_env_ok` per program, with the NLustre-side
@@ -257,3 +261,4 @@ in `SecObcTypingCorrectness.v` and the reordering half of
 - Reordering and scheduling: `src/SIF/SecStcTypingCorrectness.v`,
   `src/SIF/SecNLusStcObcEnv.v`
 - The first bridge, for comparison: `src/SIF/docs/SecNLusStcTranslation.md`
+- The chain's base case: `src/SIF/docs/signature-generation-totality.md`

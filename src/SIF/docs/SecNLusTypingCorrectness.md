@@ -59,3 +59,16 @@ This file derives that freshness from the ordering and bounds supplied by
   instance names outside the shared visible scope.
 - The NLustre noninterference files use these theorems when they replay
   satisfiability from stored signatures back to raw generated constraints.
+- `SecNLusTypingTotality.v` uses `generate_node_sig_good_from_local_env`,
+  `generate_node_sig_scope_nodup_from_local_env` and
+  `node_scope_fresh_in_env_from_bounds` in the other direction: not to describe
+  a signature that was generated, but to show the *next* one can be.  The
+  accumulator invariant of its program walk is exactly the conjunction of the
+  first two, and the freshness lemma is what makes a caller's outputs fresh for
+  the callee it calls.
+
+## A note on direction
+
+Everything here is conditioned on a successful generator run -- these are facts
+*about* generated signatures, not evidence that any exist.  That second question
+is answered separately, in `docs/signature-generation-totality.md`.

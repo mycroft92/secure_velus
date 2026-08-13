@@ -122,3 +122,7 @@ Together these results say:
   caller/callee separation and reset-name side conditions.
 - The NLustre noninterference proof uses the same lookup and bound lemmas to
   recover the exact generated environment of a secure node and of its callees.
+- `SecNamingTotality.v` proves the allocation itself never fails, and that the
+  environment it returns answers every one of those lookups.  Its two per-node
+  obligations need nothing beyond the `node` record; only the node-name guard
+  needs anything of the program.  See `docs/signature-generation-totality.md`.

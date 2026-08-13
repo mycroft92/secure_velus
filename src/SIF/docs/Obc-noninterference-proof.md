@@ -103,8 +103,8 @@ them to Obc.  Both are assembled by
 
 ### Signature Generation Totality
 
-New, and the reason the exported theorem needs no signature environment.  Where
-one phase's generator succeeded, the next one's does too:
+The reason the exported theorem needs no signature environment.  Where one
+phase's generator succeeded, the next one's does too:
 
 - `NLusStcBridge.generate_all_sys_signatures_scoped_env_ok`
   NLustre success implies STC success on `translate all_nodes`.
@@ -119,6 +119,16 @@ one phase's generator succeeded, the next one's does too:
   `generate_all_signatures_chain_ok_from_source` additionally derives the
   translated program's clocking from the source's, via the translation's own
   `NL2StcClocking.translate_wc`.
+
+The chain is *relative* -- it starts from NLustre success.  That base case is
+proved too, in `SecNamingTotality.v` and `SecNLusTypingTotality.v`:
+`source_signature_generation_total` says an ordered, well-clocked source program
+has a naming run and a successful NLustre generator run.  See
+`docs/signature-generation-totality.md`.  The theorems below still *take* the
+two `generate_... = OK` hypotheses rather than discharging them internally --
+composing them needs the `all_nodes` / `rev all_nodes` mismatch settled first --
+but they are now provable rather than merely assumed, so nothing here is
+vacuous.
 
 The Obc leg's one side condition with no STC counterpart -- that the naming pass
 gave every instance of a system a state name, since the translated reset method
@@ -179,3 +189,7 @@ then the outputs of the emitted `step` method are low-equivalent.
 
 No signature environment for STC, for the scheduled STC program, or for Obc has
 to be supplied by the caller: the generators are proved total along the chain.
+The two source-side hypotheses that remain -- the naming run and the NLustre
+generator run -- are provable for any ordered, well-clocked program
+(`source_signature_generation_total`), so the statement is not vacuous; they are
+discharged by the caller rather than inside the theorem.
