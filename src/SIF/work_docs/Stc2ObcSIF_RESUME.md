@@ -423,22 +423,83 @@ None of these affect what is proved.
   the Obc bridge reading the general rule and NLustre keeping its
   instance of it.
 
-Nothing outstanding.
+- **Discharging the `= OK` hypotheses in the top-level statements.**  The
+  totality results of §7 make them provable, but the theorems still take
+  them.  Composing needs a decision first: the chain is phrased over
+  `all_nodes`, totality delivers `rev all_nodes`, so either the
+  generators get a reversal-invariance lemma or the chain is restated
+  over the reversed list.  Nothing is unsound meanwhile -- the caller
+  supplies what it can now prove.
 
-## 7. Evidence the chain is not vacuous
+## 7. The chain is not vacuous
 
-Every top-level theorem is conditioned on `generate_... = OK G`; there
-are no totality lemmas anywhere in `src/SIF`, exactly as for Velus's own
-passes.  This is **not** specific to the Stc-to-Obc layer: the
-NLustre-to-Stc top-level theorem
-(`generated_program_signatures_preserved_global`) and the NLustre NI
-theorem carry the same hypotheses, and all three layers share the root
-one, `generate_node_scoped_env all_nodes = OK (envs, aux_names)`.  So the
-totality work is *one* gap at the NLustre naming pass rather than three:
-prove that pass succeeds and that its environment covers every name
-looked up, and the generators of all three layers follow.
+**This section used to say the totality gap was open.  It is closed.**
 
-Vacuity is ruled out empirically:
+Every top-level theorem is still *stated* with `generate_... = OK G` as a
+hypothesis, exactly as for Velus's own passes, and all three layers share
+the root one, `generate_node_scoped_env all_nodes = OK (envs, aux_names)`.
+What changed is that those hypotheses are now *provable* rather than
+merely assumed, so nothing in the chain can be vacuously true.
+
+The two halves live in the two files added for the purpose:
+
+- `SIF/SecNamingTotality.v` -- the naming pass.  Its three failure modes
+  are all `Env.mem` guards.  The two per-node ones need nothing beyond
+  what the `node` record already carries (`n_nodup` for the declared
+  variables, `n_defd` + `n_nodup` for the gathered instances, `n_good`
+  with `sec_not_in_gensym_prefs` to keep the minted clock and reset names
+  off the declared ones), so `generate_local_env_for_node_ok` is
+  hypothesis-free.  The third needs only distinct node names, which
+  `Ordered_nodes` gives.  The file also proves *coverage*: the
+  environment produced answers every lookup -- clock, reset, the three
+  interface lists, and every gathered instance
+  (`naming_run_total_and_covering`, and `..._rev` on the list the driver
+  actually uses).
+
+- `SIF/SecNLusTypingTotality.v` -- the NLustre generator.  Every
+  `Env.find` it performs is discharged from well-clocking plus that
+  coverage; a call's callee data comes from the accumulator; and a call's
+  outputs are fresh for the callee's scope because they are variables the
+  body defines, hence inside the node's own name window, which
+  `node_scope_fresh_in_env` keeps disjoint from every earlier signature.
+
+Composed:
+
+```coq
+Theorem source_signature_generation_total:
+  forall all_nodes,
+    Ordered_nodes all_nodes ->
+    wc_global all_nodes ->
+    exists envs aux_names G,
+      generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names)
+      /\ generate_all_signatures_scoped_env (rev all_nodes) envs aux_names
+         = OK G.
+```
+
+That is the head of the totality chain; `generate_all_signatures_chain_ok`
+in `SecObcNonInterference.v` already carries it from there to Stc, to the
+scheduled Stc program, and to Obc.
+
+**Note the `rev`.**  `Ordered_nodes` places a callee *after* its caller,
+while the generator's accumulator grows front-to-back, so the driver
+reverses the program before generating
+(`SecNLusConstraintExport.generate_nlustre_constraint_dump`).  That is not
+cosmetic: without it no callee signature would ever be found.
+`rev_calls_precede` is the lemma that turns "further along the program"
+into "already in the accumulator".
+
+**Still to do.**  The top-level theorems have not been *restated* without
+their `= OK` hypotheses.  Doing so means composing them with
+`source_signature_generation_total`, and the chain is phrased over
+`all_nodes` while totality delivers `rev all_nodes` -- so it needs either
+a reversal-invariance lemma for the generators or the chain restated over
+the reversed list.  Until that is settled the hypotheses stay in the
+statements, discharged by the caller rather than internally.
+
+### Corroboration: what the generators actually emit
+
+Independently of the proofs, the dumps show the constraint sets are
+non-trivial and agree across the three legs:
 
 ```
 velus -dsif <file>.lus     ->  <file>.{n,s,o}.sif
