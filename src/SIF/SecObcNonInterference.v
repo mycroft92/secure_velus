@@ -323,6 +323,41 @@ Module Type SECOBCNONINTERFERENCE
       [tuple_stream_low_eq] and cannot replace it without also assuming
       the two runs agree on which inputs are present. *)
 
+  (** ** How to read these statements
+
+      Every theorem below runs *source to target*: the hypotheses
+      constrain runs of the NLustre node (or of the Stc system behind
+      it), and the conclusion constrains the Obc code the compiler
+      emits.  None of them assumes anything about Obc that is not
+      derived from the source.
+
+      Two things can make that look reversed.
+
+      First, the *input* hypothesis is often stated over Obc streams
+      ([obc_stream_low_eq ... ins ins']), so Obc appears among the
+      premises.  That is deliberate: [eq_if_present] says nothing about
+      an Obc slot whose dataflow value is absent, so Obc-level input
+      agreement is strictly weaker than the dataflow-level
+      [tuple_stream_low_eq] the Stc theorem consumes.  The gap is closed
+      by the extra [same_low_presence] premise; the variants that state
+      the input hypothesis at the dataflow level instead need no such
+      premise.
+
+      Second, the *proofs* are transports, and transports read inward.
+      [translated_class_behavior] bundles an Obc behaviour together with
+      the dataflow behaviour behind it; a proof reads the dataflow half
+      out, runs the Stc theorem on it, and converts the resulting output
+      low-equivalence back through [value_to_option].  That is proof
+      structure, not the direction of the statement.  The underlying
+      transport, [StcToObc.Correctness.correctness_loop_call], goes Stc
+      to Obc as expected -- it is what
+      [translated_class_behavior_from_system] uses to *build* the class
+      behaviours out of dataflow runs. *)
+
+
+  (** Direction: dataflow hypotheses in, Obc conclusion out.  The inputs
+      are compared at the dataflow level ([tuple_stream_low_eq] on [xss],
+      [xss']); only the outputs are Obc-level. *)
   Theorem translated_class_noninterference_outputs:
     forall all_nodes Gsrc Gstc envs aux_names sys ty_env
            dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
@@ -360,6 +395,8 @@ Module Type SECOBCNONINTERFERENCE
   (** The same statement with both sides phrased over Obc streams, for a
       caller who can supply the presence agreement. *)
 
+  (** Direction unchanged.  The input hypothesis moves to the Obc level,
+      which is precisely why [same_low_presence] has to appear. *)
   Corollary translated_class_noninterference_outputs_obc:
     forall all_nodes Gsrc Gstc envs aux_names sys ty_env
            dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
@@ -431,6 +468,9 @@ Module Type SECOBCNONINTERFERENCE
   (** The Obc-facing statement proper: both stream hypotheses and the
       conclusion are indexed by the emitted class's [step] method. *)
 
+  (** Direction unchanged.  Both stream hypotheses and the conclusion are
+      now indexed by the emitted class's [step] method rather than by the
+      Stc system's interface. *)
   Corollary translated_class_noninterference_outputs_step:
     forall all_nodes Gsrc Gstc envs aux_names sys cls stepm ty_env
            dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
@@ -575,6 +615,9 @@ Module Type SECOBCNONINTERFERENCE
       Same content as [translated_class_noninterference_outputs_step],
       stated against the class-level witness. *)
 
+  (** Direction unchanged.  The security input is the class-level witness
+      [class_security] instead of the Stc-level [system_security]; the
+      witness still originates at the source node. *)
   Theorem class_noninterference_outputs:
     forall all_nodes Gsrc Gstc Gstcs Gobc envs aux_names sys cls stepm ty_env
            dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
@@ -663,6 +706,9 @@ Module Type SECOBCNONINTERFERENCE
       the translated program, on the scheduled one, and the Obc generator
       on the classes the compiler emits. *)
 
+  (** Not a noninterference statement: relative totality.  Direction:
+      NLustre generator success in, Stc / scheduled-Stc / Obc generator
+      success out.  No behaviour is involved. *)
   Theorem generate_all_signatures_chain_ok:
     forall all_nodes envs aux_names Gsrc,
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
@@ -726,6 +772,9 @@ Module Type SECOBCNONINTERFERENCE
   (** The chain end to end: a node with a security witness gives a class
       with one, and no signature environment has to be supplied. *)
 
+  (** Direction: a source node's security witness in, the emitted class's
+      witness out -- with the three signature environments produced by the
+      chain rather than supplied by the caller. *)
   Corollary class_security_from_node_security_total:
     forall all_nodes Gsrc envs aux_names n dlt_sig dlt_raw,
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
@@ -766,6 +815,9 @@ Module Type SECOBCNONINTERFERENCE
       scheduled program is well-scheduled -- alongside the source-level
       facts. *)
 
+  (** As [generate_all_signatures_chain_ok], with the translated
+      program's clocking derived from the source's rather than assumed.
+      What is left is what the compiler checks instead of proving. *)
   Corollary generate_all_signatures_chain_ok_from_source:
     forall all_nodes envs aux_names Gsrc,
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
@@ -790,6 +842,8 @@ Module Type SECOBCNONINTERFERENCE
       |exact Hsch|exact Hsrc].
   Qed.
 
+  (** As [class_security_from_node_security_total], with the translated
+      program's clocking likewise derived from the source's. *)
   Corollary class_security_from_node_security_source:
     forall all_nodes Gsrc envs aux_names n dlt_sig dlt_raw,
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
@@ -828,6 +882,10 @@ Module Type SECOBCNONINTERFERENCE
       well-scheduledness the compiler checks, the node's security
       witness, and the two behaviours being compared. *)
 
+  (** **The exported theorem.**  Direction: a secure source node in, the
+      emitted class's [step] method out.  Only [Gsrc] appears -- [Gstc],
+      [Gstcs] and [Gobc] are produced internally by the totality chain --
+      and the security input is [node_security] on the NLustre node. *)
   Theorem translated_node_noninterference_outputs_step:
     forall all_nodes Gsrc envs aux_names n cls stepm ty_env
            dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
@@ -879,6 +937,11 @@ Module Type SECOBCNONINTERFERENCE
       precondition for emitting code at all, and it carries the
       well-scheduledness the signature chain needs. *)
 
+  (** The most usable form, and the one to quote as the headline result.
+      Direction: two NLustre [msem_node] runs in, Obc-level
+      low-equivalence of the [step] method's outputs out.  The two
+      [translated_class_behavior] hypotheses are *built* here rather than
+      assumed, so the caller exhibits only source runs. *)
   Corollary translated_node_noninterference_outputs_from_msem:
     forall all_nodes Gsrc envs aux_names n cls stepm ty_env
            dlt_sig dlt_raw t xss xss' M M' yss yss' ins ins',

@@ -238,6 +238,12 @@ Module Type SECSTCNONINTERFERENCE
   Qed.
 
   (** This is the final STC-facing theorem.  It takes a translated system together with the source security witness behind it, runs the NLustre noninterference theorem on the matching source node, and transports the conclusion back to the translated STC input and output streams.  The statement is exactly about translated behaviors, which is the target property proved by this development. *)
+  (** Direction: source to target, like the Obc layer above it.  The
+      hypotheses constrain runs of the Stc system the compiler emits for
+      a secure NLustre node, and the conclusion is low-equivalence of
+      that system's outputs.  This is the theorem the Obc layer runs on
+      the dataflow behaviour it reads out of a
+      [translated_class_behavior]. *)
   Theorem translated_system_noninterference_outputs:
     forall all_nodes Gsrc Gstc envs aux_names sys ty_env
            dlt_sig dlt_raw t xss xss' yss yss',
