@@ -540,6 +540,87 @@ Module Type SECNLUSTYPINGTOTALITY
         apply in_or_app; right. apply in_or_app; now left.
     Qed.
 
+    (** The per-node theorem.  Everything the generator looks up is now
+        accounted for: the interface through the naming run, the
+        equations through well-clocking, and the callees through the
+        accumulator. *)
+
+    Theorem generate_node_sig_ok:
+      forall P G n env rec aux_names st st',
+        generate_local_env_for_node n st = OK ((env, rec), st') ->
+        get_node_aux n.(n_name) aux_names = Some (rec.(nclk), rec.(nrst)) ->
+        wc_node P n ->
+        SIG.secglobal_scope_bounded_above G st ->
+        (forall f, Is_node_in f n.(n_eqs) ->
+           exists sig n',
+             SIG.find_signature f G = Some sig
+             /\ SIG.signature_good sig
+             /\ NoDup (SIG.signature_scope sig)
+             /\ find_node f P = Some n'
+             /\ List.length sig.(SIG.s_in) = List.length n'.(n_in)
+             /\ List.length sig.(SIG.s_out) = List.length n'.(n_out)) ->
+        exists sig, SECNLUSTYPING.generate_node_sig G n env aux_names = OK sig.
+    Proof.
+      intros P G n env rec aux_names st st'
+             Hlocal Haux Hwc Hbound Hcalls.
+      destruct (generate_local_env_for_node_covers _ _ _ _ _ Hlocal)
+        as ((clk_type & Hclk) & (rst_type & Hrst)
+            & (inp & Hinp) & (locals & Hlocals) & (out & Hout)).
+      assert (Henvinj : SECNLUSTYPING.env_injective env)
+        by (eapply generate_local_env_for_node_injective; eauto).
+      assert (Hfresh : node_scope_fresh_in_env n env aux_names G)
+        by (eapply node_scope_fresh_in_env_from_bounds; eauto).
+      destruct Hwc as (_ & _ & Hwcenv & Hwceqs).
+      (* the node's declared variables are all bound *)
+      assert (Hbnd : vars_bound env
+                       (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
+      { intros x Hx.
+        apply InMembers_idck, fst_InMembers in Hx.
+        eapply generate_local_env_for_node_binds; [exact Hlocal|].
+        right. right. exact Hx. }
+      (* and every call has its callee's data *)
+      assert (Hcd : forall eq xs ck f les r,
+                 In eq n.(n_eqs) -> eq = EqApp xs ck f les r -> xs <> [] ->
+                 call_data G env P
+                   (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) f les xs).
+      { intros eq xs ck f les r Hin Hshape Hxs. subst eq.
+        destruct (Hcalls f) as (sig & n' & Hfsig & Hgood & Hndsc
+                                & Hfnode & Hlenin & Hlenout).
+        { unfold Is_node_in. apply Exists_exists.
+          exists (EqApp xs ck f les r). split; [exact Hin|constructor]. }
+        rewrite Forall_forall in Hwceqs.
+        pose proof (Hwceqs _ Hin) as Hwceq.
+        inversion Hwceq as [|xs' ck' f' les' r' n0 sub Hfn0 Hins Houts Hr|];
+          subst.
+        rewrite Hfnode in Hfn0. inversion Hfn0; subst n0.
+        exists sig.
+        split; [exact Hfsig|].
+        split; [apply SIGPROOFS.signature_good_targets_out, Hgood|].
+        split; [exact Hndsc|].
+        split; [rewrite Hlenin; eapply Forall2_length; exact Hins|].
+        split; [rewrite Hlenout; eapply Forall2_length; exact Houts|].
+        intros otys Hotys.
+        split.
+        - eapply SECNLUSTYPING.get_mappings_nodup;
+            [eapply eqapp_outputs_nodup; exact Hin|exact Henvinj|exact Hotys].
+        - eapply call_outputs_fresh with (n := n) (les := les) (r := r);
+            eauto. }
+      destruct (generate_eqns_constraints_ok G env clk_type rst_type
+                  P (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                  n.(n_eqs) init_state Hwcenv Hwceqs Hbnd Hcd)
+        as (cns & st_n & Hcns).
+      eexists.
+      unfold SECNLUSTYPING.generate_node_sig.
+      cbn [bind bind2 option_to_sec ret].
+      rewrite Haux. cbn [bind bind2 option_to_sec ret].
+      rewrite Hclk. cbn [bind bind2 option_to_sec ret].
+      rewrite Hrst. cbn [bind bind2 option_to_sec ret].
+      rewrite Hinp. cbn [bind bind2 option_to_sec ret].
+      rewrite Hout. cbn [bind bind2 option_to_sec ret].
+      rewrite Hlocals. cbn [bind bind2 option_to_sec ret].
+      unfold bind, ret. rewrite Hcns. simpl. reflexivity.
+    Qed.
+
   End NODETOTALITY.
 
 End SECNLUSTYPINGTOTALITY.
