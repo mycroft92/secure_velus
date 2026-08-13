@@ -350,19 +350,24 @@ is what the differing hidden sets require.  Composing the two gives
 `class_preserv_signature`, relating the *stored* signature constraints of an
 STC system and its translated Obc class.
 
-## What is established, and what is not
+## What is established
 
-Proved: the per-transition results for `TcDef`, `TcNext`, `TcReset` and all
-three call forms; the whole-body result; the reset method; the raw scope and
-the freshness of the extras; that the free names of a translated transition
-constraint are free or defined in the source; `class_preserv_raw`; the
-`simplify` bridge; and `class_preserv_signature`.
+The per-transition results for `TcDef`, `TcNext`, `TcReset` and all three call
+forms; the whole-body result; the reset method; the raw scope and the freshness
+of the extras; that the free names of a translated transition constraint are
+free or defined in the source; `class_preserv_raw`; the `simplify` bridge; and
+`class_preserv_signature`.
 
-Not yet done: instantiating `class_preserv_signature` at the *generated*
-signatures — the per-block scopedness obligation, the field agreement
-between the two signatures, and the program-level lockstep yielding
-`Signature_consistent`.  These are instantiation and a port of the existing
-NLustre-to-STC induction; no open mathematical question remains.
+`class_preserv_signature` is then instantiated at the *generated* signatures:
+the per-block scopedness obligation is discharged
+(`translated_tcs_constraints_scoped`), the two signatures are shown to agree on
+their visible fields (`generated_signature_fields_agree`), and the per-system
+result `generated_signatures_preserved_obc` is lifted by a program-level
+lockstep to `Signature_consistent_obc_full`, exported as
+`generated_program_signatures_preserved_obc_global`.  The Obc generator is also
+proved total wherever the STC one succeeded
+(`generate_all_class_signatures_scoped_env_ok`).  See
+`docs/SecStcObcTranslation.md` for the proof structure.
 
 ## Source pointers
 
