@@ -690,6 +690,271 @@ Module Type SECNLUSTYPINGTOTALITY
       exists n'. split; [apply in_rev in Hn'; exact Hn'|now symmetry].
     Qed.
 
+    (** The induction's invariant on the accumulator: every node already
+        walked has a signature in it, well formed and with the arity of
+        its node.  That is exactly the data a call site needs. *)
+
+    Definition acc_covers (acc: SIG.secglobal) (ns: list node) : Prop :=
+      forall n', In n' ns ->
+        exists sig,
+          SIG.find_signature n'.(n_name) acc = Some sig
+          /\ SIG.signature_good sig
+          /\ NoDup (SIG.signature_scope sig)
+          /\ List.length sig.(SIG.s_in) = List.length n'.(n_in)
+          /\ List.length sig.(SIG.s_out) = List.length n'.(n_out).
+
+    Lemma get_mappings_from_node_length:
+      forall {A: Type} (xs: list (ident * A)) env tys,
+        get_mappings_from_node xs env = Some tys ->
+        List.length xs = List.length tys.
+    Proof.
+      induction xs as [|[x a] xs IH]; intros env tys Hmap.
+      - simpl in Hmap. inversion Hmap. reflexivity.
+      - simpl in Hmap.
+        destruct (Env.find x env) as [ty|] eqn:Hx; simpl in Hmap;
+          try discriminate.
+        destruct (get_mappings_from_node xs env) as [tys'|] eqn:Htys;
+          simpl in Hmap; try discriminate.
+        inversion Hmap; subst tys. simpl. f_equal.
+        eapply IH; exact Htys.
+    Qed.
+
+    (** The walk.  [prefix] is what has been generated, [nodes] what is
+        left; the naming run is split at the same point, so the state
+        [st] bounds every name the accumulator mentions and every name
+        the next node will mint lies above it. *)
+
+    Theorem generate_all_signatures_scoped_env'_ok:
+      forall P nodes prefix acc envs aux_names envs_pref aux_pref st,
+        generate_node_scoped_env' prefix (Env.empty _) nil init_state
+          = OK ((envs_pref, aux_pref), st) ->
+        generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
+        Forall (wc_node P) nodes ->
+        NoDup (map n_name P) ->
+        NoDup (map n_name (prefix ++ nodes)) ->
+        (forall n, In n (prefix ++ nodes) -> In n P) ->
+        (forall pre n suf,
+            prefix ++ nodes = pre ++ n :: suf ->
+            forall f, Is_node_in f n.(n_eqs) ->
+                      exists n', In n' pre /\ n'.(n_name) = f) ->
+        acc_covers acc prefix ->
+        SIG.secglobal_scoped acc ->
+        SIG.secglobal_scope_bounded_above acc st ->
+        exists G,
+          SECNLUSTYPING.generate_all_signatures_scoped_env' acc nodes envs
+            aux_names = OK G.
+    Proof.
+      intros P nodes. induction nodes as [|n nodes IH];
+        intros prefix acc envs aux_names envs_pref aux_pref st
+               Hprefgen Henvsgen Hwc Hndp Hnd Hinp Hcp Hcov Hsc Hbound.
+      - eexists. reflexivity.
+      - inversion Hwc as [|n' ns Hwcn Hwctl]; subst n' ns.
+        pose proof Henvsgen as Hfull.
+        unfold generate_node_scoped_env in Hfull.
+        destruct (generate_node_scoped_env' (prefix ++ n :: nodes)
+                    (Env.empty _) nil init_state)
+          as [[[envs_full aux_full] st_full]|] eqn:Hrun; try discriminate.
+        inversion Hfull; subst envs_full aux_full; clear Hfull.
+        edestruct generate_node_scoped_env'_split_node
+          as (envs_pref' & aux_pref' & st_pref & local_env & rec & st_local
+              & envs_cur & st_cur & Hpref & Hlocal & Hins & Htail);
+          [exact Hrun|].
+        rewrite Hprefgen in Hpref.
+        inversion Hpref; subst envs_pref' aux_pref' st_pref.
+        assert (Hcureq : st_cur = st_local).
+        { unfold fresh_insert_node_env in Hins.
+          destruct (Env.mem n.(n_name) envs_pref) eqn:Hmem; try discriminate.
+          unfold insert_node_env, NMret in Hins. now inversion Hins. }
+        subst st_cur.
+        pose proof (generate_local_env_for_node_name _ _ _ _ _ Hlocal) as Hrecname.
+        assert (Hfindlocal : find_node_env n.(n_name) envs = Some local_env).
+        { eapply generate_node_scoped_env'_preserves_find; [exact Htail|].
+          eapply fresh_insert_node_env_finds_new; exact Hins. }
+        assert (Hauxlocal : get_node_aux n.(n_name) aux_names
+                            = Some (rec.(nclk), rec.(nrst))).
+        { eapply generate_node_scoped_env'_preserves_get_node_aux;
+            [exact Htail| |eapply fresh_insert_node_env_finds_new; exact Hins].
+          unfold get_node_aux. simpl.
+          rewrite <- Hrecname, ident_eqb_refl. reflexivity. }
+        assert (Henvinj : SECNLUSTYPING.env_injective local_env)
+          by (eapply generate_local_env_for_node_injective; eauto).
+        assert (Hcalls : forall f, Is_node_in f n.(n_eqs) ->
+                   exists sig n',
+                     SIG.find_signature f acc = Some sig
+                     /\ SIG.signature_good sig
+                     /\ NoDup (SIG.signature_scope sig)
+                     /\ find_node f P = Some n'
+                     /\ List.length sig.(SIG.s_in) = List.length n'.(n_in)
+                     /\ List.length sig.(SIG.s_out) = List.length n'.(n_out)).
+        { intros f Hnodein.
+          destruct (Hcp prefix n nodes Logic.eq_refl f Hnodein)
+            as (n' & Hn'in & Hn'name).
+          destruct (Hcov n' Hn'in)
+            as (sig & Hfsig & Hgood & Hndsc & Hleni & Hleno).
+          exists sig, n'. rewrite <- Hn'name.
+          split; [exact Hfsig|].
+          split; [exact Hgood|].
+          split; [exact Hndsc|].
+          split; [apply In_find_node;
+                  [exact Hndp|apply Hinp, in_or_app; now left]|].
+          split; [exact Hleni|exact Hleno]. }
+        destruct (generate_node_sig_ok P acc n local_env rec aux_names st st_local
+                    Hlocal Hauxlocal Hwcn Hbound Hcalls) as (sig & Hsig).
+        edestruct generate_node_sig_inv
+          as (clk_id & rst_id & clk_type & rst_type & inp & out & locals
+              & nconst & st_n & Haux' & Hclk & Hrst & Hinp' & Hout' & Hloc'
+              & Hraw & Hsigdef); [exact Hsig|].
+        rewrite Hauxlocal in Haux'. inversion Haux'; subst clk_id rst_id.
+        assert (Hgood : SIG.signature_good sig).
+        { rewrite Hsigdef.
+          eapply generate_node_sig_good_from_local_env; eauto. }
+        assert (Hndsc : NoDup (SIG.signature_scope sig)).
+        { rewrite Hsigdef.
+          eapply (generate_node_sig_scope_nodup_from_local_env
+                    n local_env rec st st_local clk_type rst_type inp out);
+            eauto. }
+        assert (Hsigsc : SIG.signature_scoped sig)
+          by (eapply SECNLUSTYPING.generate_node_sig_scoped; eauto).
+        assert (Hname : sig.(SIG.s_name) = n.(n_name))
+          by (rewrite Hsigdef; reflexivity).
+        assert (Hleni : List.length sig.(SIG.s_in) = List.length n.(n_in)).
+        { rewrite Hsigdef. simpl. symmetry.
+          eapply get_mappings_from_node_length; exact Hinp'. }
+        assert (Hleno : List.length sig.(SIG.s_out) = List.length n.(n_out)).
+        { rewrite Hsigdef. simpl. symmetry.
+          eapply get_mappings_from_node_length; exact Hout'. }
+        assert (Hle : (st <= st_local)%positive)
+          by (eapply generate_local_env_for_node_state_monotone; eauto).
+        assert (Hbound' : SIG.secglobal_scope_bounded_above (sig :: acc) st_local).
+        { eapply SIG.secglobal_scope_bounded_above_cons.
+          - intros ty Hty.
+            eapply generated_node_sig_scope_upper_bound_from_local_env;
+              [exact Hlocal|exact Hsig|exact Hty].
+          - eapply SIG.secglobal_scope_bounded_above_monotone; eauto. }
+        assert (Hnotin : ~ In n.(n_name) (map n_name prefix)).
+        { rewrite map_app in Hnd. simpl in Hnd.
+          intro Hmem. eapply NoDup_app_In in Hnd; [|exact Hmem].
+          apply Hnd. now left. }
+        assert (Hcov' : acc_covers (sig :: acc) (prefix ++ [n])).
+        { intros n'' Hn''.
+          apply in_app_iff in Hn'' as [Hn''|Hn''].
+          - destruct (Hcov n'' Hn'')
+              as (sig'' & Hf'' & Hg'' & Hnd'' & Hli'' & Hlo'').
+            exists sig''.
+            split.
+            { unfold SIG.find_signature. simpl.
+              destruct (ident_eqb sig.(SIG.s_name) n''.(n_name)) eqn:Heq.
+              - exfalso. apply ident_eqb_eq in Heq.
+                apply Hnotin. rewrite Hname in Heq. rewrite Heq.
+                now apply in_map.
+              - exact Hf''. }
+            split; [exact Hg''|].
+            split; [exact Hnd''|].
+            split; [exact Hli''|exact Hlo''].
+          - destruct Hn'' as [Heq|[]]. subst n''.
+            exists sig.
+            split.
+            { unfold SIG.find_signature. simpl.
+              rewrite Hname, ident_eqb_refl. reflexivity. }
+            split; [exact Hgood|].
+            split; [exact Hndsc|].
+            split; [exact Hleni|exact Hleno]. }
+        assert (Hstep : SECNLUSTYPING.generate_node_sig_scoped_env acc n envs
+                          aux_names = OK sig).
+        { unfold SECNLUSTYPING.generate_node_sig_scoped_env.
+          rewrite Hfindlocal. exact Hsig. }
+        edestruct (IH (prefix ++ [n]) (sig :: acc) envs aux_names
+                     envs_cur (rec :: aux_pref) st_local)
+          as (G & HG).
+        + eapply generate_node_scoped_env'_app; [exact Hprefgen|].
+          cbn [generate_node_scoped_env'].
+          eapply NMbind2_ok; [exact Hlocal|].
+          eapply NMbind_ok; [exact Hins|].
+          eapply NMbind2_ok; [reflexivity|reflexivity].
+        + rewrite <- app_assoc. exact Henvsgen.
+        + exact Hwctl.
+        + exact Hndp.
+        + rewrite <- app_assoc. exact Hnd.
+        + rewrite <- app_assoc. exact Hinp.
+        + rewrite <- app_assoc. exact Hcp.
+        + exact Hcov'.
+        + eapply SIG.secglobal_scoped_cons; eauto.
+        + exact Hbound'.
+        + exists G. simpl. rewrite Hstep. exact HG.
+    Qed.
+
+    (** A well-clocked ordered program is well-clocked node by node
+        against the *whole* program, which is the form the walk wants.
+        [wc_global] only relates each node to the tail below it. *)
+
+    Lemma wc_global_Forall_wc_node:
+      forall G, Ordered_nodes G -> wc_global G -> Forall (wc_node G) G.
+    Proof.
+      intros G Hord Hwc. apply Forall_forall. intros n Hin.
+      eapply wc_find_node'; [exact Hord|exact Hwc|].
+      apply In_find_node;
+        [eapply Ordered_nodes_NoDup_names; exact Hord|exact Hin].
+    Qed.
+
+    (** The generator succeeds on the list the driver hands it. *)
+
+    Corollary generate_all_signatures_scoped_env_ok:
+      forall all_nodes envs aux_names,
+        Ordered_nodes all_nodes ->
+        wc_global all_nodes ->
+        generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
+        exists G,
+          SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs
+            aux_names = OK G.
+    Proof.
+      intros all_nodes envs aux_names Hord Hwc Hnaming.
+      assert (Hnd : NoDup (map n_name all_nodes))
+        by (eapply Ordered_nodes_NoDup_names; exact Hord).
+      pose proof (wc_global_Forall_wc_node all_nodes Hord Hwc) as Hall.
+      unfold SECNLUSTYPING.generate_all_signatures_scoped_env.
+      eapply (generate_all_signatures_scoped_env'_ok all_nodes (rev all_nodes)
+                nil nil envs aux_names (Env.empty _) nil init_state).
+      - reflexivity.
+      - simpl. exact Hnaming.
+      - apply Forall_forall. intros n Hin.
+        rewrite Forall_forall in Hall. apply Hall.
+        apply in_rev. exact Hin.
+      - exact Hnd.
+      - simpl. rewrite map_rev.
+        eapply Permutation_NoDup; [apply Permutation_rev|exact Hnd].
+      - simpl. intros n Hin. apply in_rev. exact Hin.
+      - simpl. intros pre n suf Hsplit f Hf.
+        eapply rev_calls_precede; eauto.
+      - intros n' [].
+      - apply SIG.secglobal_scoped_nil.
+      - apply SIG.secglobal_scope_bounded_above_nil.
+    Qed.
+
+    (** ** The root hypothesis, discharged
+
+        Both halves together: an ordered, well-clocked source program has
+        a naming run, and the NLustre signature generator succeeds on it.
+        This is the hypothesis every SIF layer's top-level theorem
+        carries, and the head of the totality chain in
+        [SecObcNonInterference.generate_all_signatures_chain_ok]. *)
+
+    Theorem source_signature_generation_total:
+      forall all_nodes,
+        Ordered_nodes all_nodes ->
+        wc_global all_nodes ->
+        exists envs aux_names G,
+          generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names)
+          /\ SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes)
+               envs aux_names = OK G.
+    Proof.
+      intros all_nodes Hord Hwc.
+      destruct (generate_node_scoped_env_ok_rev all_nodes Hord)
+        as (envs & aux_names & Hnaming).
+      destruct (generate_all_signatures_scoped_env_ok all_nodes envs aux_names
+                  Hord Hwc Hnaming) as (G & HG).
+      exists envs, aux_names, G. split; assumption.
+    Qed.
+
   End PROGRAMTOTALITY.
 
 End SECNLUSTYPINGTOTALITY.
