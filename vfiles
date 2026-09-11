@@ -133,6 +133,7 @@ src/VelusCorrectness.v
 src/SIF/Helpers.v
 src/SIF/SecLattice.v
 src/SIF/SymTypes.v
+src/SIF/SymLusTypes.v
 src/SIF/SIFSignature.v
 src/SIF/NameInterface.v
 src/SIF/SecNamingTotality.v
