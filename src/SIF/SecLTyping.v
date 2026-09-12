@@ -36,6 +36,7 @@ From Velus Require Import SIF.SymLusTypes.
 From Velus Require Import SIF.SecCETyping.
 From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SIFSignature.
+From Velus Require Import SIF.NameInterface.
 
 From compcert Require Import common.Errors.
 
@@ -50,6 +51,7 @@ Module Type SECLTYPING
   (CESyn         : CESYNTAX     Op)
   (NLSyn         : NLSYNTAX Ids Op CESyn)
   (Import SIG    : SIGNATURE  Ids SC)
+  (Import NAMEGEN : NAMEGEN Ids Op CESyn NLSyn)
   (CEIsF         : CEISFREE Ids Op CESyn)
   (CEClo         : CECLOCKING Ids Op CESyn)
   (Import SECCET : SECCETYPING Ids Op CESyn CEIsF CEClo)
@@ -195,6 +197,201 @@ Module Type SECLTYPING
                         ret (t ++ r)
          end) es.
 
+    (** * Equations
+
+        One case per shape of [to_equation], so that on the normalized
+        fragment each emits exactly the constraint the NLustre generator emits
+        for the transcribed equation -- in particular the call cases pass the
+        *declared* output variables' security names straight to
+        [generate_constraints] rather than routing them through minted names,
+        which is what an equality rather than a mere refinement needs.
+
+        The final case is the general rule (LTeq) for equations that are not
+        yet normalized; the fby-initialisation and unnesting legs need it. *)
+
+    Variable cenv : Env.t (type * clock).   (* declared clocks, as to_equation reads them *)
+
+    Definition res_to_sec {A : Type} (r : res A) : Sec A :=
+      match r with
+      | OK a => ret a
+      | Error e => error e
+      end.
+
+    Definition eqn_clock_type (x : ident) : Sec ST :=
+      do ck <- res_to_sec (find_clock cenv x);
+      option_to_sec (assign_clk_type env base_ty ck).
+
+    (** The ambient contribution every defined variable carries: the reset
+        level joined with the level of the clock it is defined on. *)
+    Definition ambient (ckty : ST) : LST :=
+      ljoin (lvar rst_ty) (ckty, []).
+
+    Fixpoint generate_lvars_constraints
+      (xs : list ident) (bs : list ident) (ts : list LST) : Sec (list constraint) :=
+      match xs, bs, ts with
+      | [], [], [] => ret []
+      | x :: xs', b :: bs', t :: ts' =>
+          do ckty <- eqn_clock_type x;
+          do rest <- generate_lvars_constraints xs' bs' ts';
+          ret (lconstrain (ljoin (ambient ckty) t) b ++ rest)
+      | _, _, _ => error (msg "security typing: equation arity mismatch")
+      end.
+
+    Definition generate_lcall_constraint
+      (xs : list ident) (f : ident) (es : list exp) (rstty : LST)
+      : Sec (list constraint) :=
+      do argts <- assign_lexps es;
+      do ckty  <- option_to_sec
+                    (assign_clk_type env base_ty
+                       (find_base_clock (LSyn.clocksof es)));
+      do outs  <- option_to_sec (get_mappings xs env);
+      match find_signature f G with
+      | None => error (MSG "Signature not found for: " :: [CTX f])
+      | Some sg =>
+          do cs <- generate_constraints sg (map fst argts) ckty (fst rstty) outs;
+          ret (cmerge cs (cmerge (carried argts) (snd rstty)))
+      end.
+
+    Definition generate_leqn_constraint (eq : equation) : Sec (list constraint) :=
+      match eq with
+      (** an ordinary call at the head of an equation *)
+      | (xs, [Eapp f es None _]) =>
+          generate_lcall_constraint xs f es (lvar rst_ty)
+
+      (** a reset call; the reset variable's level and the level of the clock
+          it is sampled on stack onto the ambient reset, exactly as (NTrc) *)
+      | (xs, [Eapp f es (Some (Evar r (_, (ckr, _)))) _]) =>
+          do rty   <- find_env r env;
+          do rstck <- option_to_sec (assign_clk_type env base_ty ckr);
+          generate_lcall_constraint xs f es
+            (ljoin (lvar rst_ty) (merge [rty] rstck, []))
+
+      (** a delayed definition; the initial value is a constant, so it
+          contributes nothing, as (NTfb) *)
+      | ([x], [Efby [_] [e] [_]]) =>
+          do ts   <- assign_lexp_type e;
+          do t    <- single ts;
+          do ckty <- eqn_clock_type x;
+          do b    <- find_env x env;
+          ret (lconstrain (ljoin (ambient ckty) t) b)
+
+      (** an ordinary definition *)
+      | ([x], [e]) =>
+          do ts   <- assign_lexp_type e;
+          do t    <- single ts;
+          do ckty <- eqn_clock_type x;
+          do b    <- find_env x env;
+          ret (lconstrain (ljoin (ambient ckty) t) b)
+
+      (** the general rule, for equations not yet normalized *)
+      | (xs, es) =>
+          do ts <- assign_lexps es;
+          do bs <- option_to_sec (get_mappings xs env);
+          generate_lvars_constraints xs bs ts
+      end.
+
+    Fixpoint generate_leqns_constraints (eqs : list equation) : Sec (list constraint) :=
+      match eqs with
+      | [] => ret []
+      | eq :: eqs' =>
+          do c  <- generate_leqn_constraint eq;
+          do cs <- generate_leqns_constraints eqs';
+          ret (c ++ cs)
+      end.
+
   End SECLEXPTYPING.
+
+
+
+
+  (** * Nodes and programs
+
+      The naming pass runs once and this reads the environment it produced,
+      rather than allocating its own.  That is the discipline the Stc and Obc
+      generators already follow, and it is what makes the interface fields of
+      a generated Lustre signature and of the corresponding NLustre signature
+      equal by computation instead of by hypothesis: each field is a function
+      of the node's name, inputs and outputs -- which transcription preserves
+      definitionally and normalisation preserves by [node_iface_eq] -- and of
+      this one environment.
+
+      Unlike the NLustre generator, which is [state_pure], this one threads the
+      state: a nested call mints one name per result flow.  Two consequences
+      are handled here.  Starting the run from the naming pass's final state
+      keeps those names clear of every program variable's, since both draw
+      [gensym] from [Ids.sec].  And [minted] reads them back off the state the
+      run consumed, so [simplify] can eliminate them alongside the declared
+      locals: a call-output name is local to the node's body exactly as a
+      declared local is, and neither may reach the interface. *)
+
+  Fixpoint sec_span (st : sec_state) (k : nat) : list ident :=
+    match k with
+    | O => []
+    | S k' => Ids.gensym Ids.sec st :: sec_span (Pos.succ st) k'
+    end.
+
+  Definition minted (st0 st1 : sec_state) : list ident :=
+    sec_span st0 (Pos.to_nat st1 - Pos.to_nat st0).
+
+  (** The declared clocks, built the way [to_node] builds them. *)
+  Definition lnode_clock_env (n : node) : Env.t (type * clock) :=
+    Env.adds' n.(n_vars) (Env.adds' n.(n_in) (Env.from_list n.(n_out))).
+
+  Definition generate_lnode_sig (G : secglobal) (n : node)
+    (env : Env.t ident) (aux_names : list node_aux_names) (st0 : sec_state)
+    : res (signature * sec_state) :=
+    match (do (clk_id, rst_id) <- option_to_sec (get_node_aux n.(n_name) aux_names);
+           do clk_type <- option_to_sec (Env.find clk_id env);
+           do rst_type <- option_to_sec (Env.find rst_id env);
+           do inp      <- option_to_sec (get_mappings_from_node n.(n_in) env);
+           do out      <- option_to_sec (get_mappings_from_node n.(n_out) env);
+           do locals   <- option_to_sec (get_mappings_from_node n.(n_vars) env);
+           do cs       <- generate_leqns_constraints G env clk_type rst_type
+                            (lnode_clock_env n) n.(n_eqs);
+           ret (inp, out, rst_type, clk_type, locals, cs)) st0 with
+    | Error e => Error e
+    | OK ((inp, out, rst_type, clk_type, locals, cs), st1) =>
+        OK ({| s_name  := n.(n_name);
+               s_in    := inp;
+               s_out   := out;
+               s_reset := rst_type;
+               s_clk   := clk_type;
+               s_constraints := simplify cs (locals ++ minted st0 st1) |}, st1)
+    end.
+
+  Definition generate_lnode_sig_scoped_env (G : secglobal) (n : node)
+    (envs : node_scoped_env) (aux_names : list node_aux_names) (st0 : sec_state)
+    : res (signature * sec_state) :=
+    match find_node_env n.(n_name) envs with
+    | None =>
+        Error (MSG "Missing node-local security environment " :: [CTX n.(n_name)])
+    | Some env => generate_lnode_sig G n env aux_names st0
+    end.
+
+  (** As on the NLustre side, the accumulator grows front-to-back while
+      [Ordered_nodes] places a callee after its caller, so the drivers
+      generate over [rev nodes]: that is what puts a callee's signature in the
+      accumulator before its caller needs it. *)
+
+  Fixpoint generate_all_lsignatures' (acc : list signature) (ns : list node)
+    (envs : node_scoped_env) (aux_names : list node_aux_names) (st0 : sec_state)
+    : res (list signature * sec_state) :=
+    match ns with
+    | [] => OK (acc, st0)
+    | n :: ns' =>
+        match generate_lnode_sig_scoped_env acc n envs aux_names st0 with
+        | Error e => Error e
+        | OK (sig, st1) =>
+            generate_all_lsignatures' (sig :: acc) ns' envs aux_names st1
+        end
+    end.
+
+  Definition generate_all_lsignatures_scoped_env
+    (ns : list node) (envs : node_scoped_env) (aux_names : list node_aux_names)
+    (st0 : sec_state) : res (list signature) :=
+    match generate_all_lsignatures' [] ns envs aux_names st0 with
+    | OK (sigs, _) => OK sigs
+    | Error e => Error e
+    end.
 
 End SECLTYPING.

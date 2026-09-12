@@ -84,6 +84,70 @@ NI stack through exactly one door: it builds a `node_security` witness for the
 transcribed NLustre node and hands it to the existing theorem. Nothing
 downstream has to learn that Lustre exists.
 
+### Decision: one naming pass (option A), 2026-09-12
+
+Signature preservation needs the Lustre and NLustre signatures to have the
+same interface fields. Reading `generate_node_sig`, each of those fields is a
+function of exactly two things: the node's `n_name`/`n_in`/`n_out`, and the
+naming environment. The first is preserved -- definitionally by
+`to_node_name`/`to_node_in`/`to_node_out`, and by `node_iface_eq` through
+`normalize_global_iface_eq`. So everything turns on the environment.
+
+**Two ways to make the environment agree, and the choice between them.**
+
+*Interface-first allocation alone is not enough.* The reorder committed today
+makes an interface variable's name independent of *its own node's* locals, but
+`generate_node_scoped_env'` threads one counter through the program, so a node
+that gains a local shifts every name after it. Measured: a two-node program
+whose first node gains one local moves the second node's clock from `sec$9` to
+`sec$10` and its output from `sec$12` to `sec$13`, with that node's own
+interface untouched. Independent allocation on the source and on the
+normalized program therefore still disagrees from the first such node onward.
+Fixing that would mean splitting allocation into an interface sweep and a
+locals sweep, restating every lemma about `generate_local_env_for_node` across
+two stages.
+
+*The paper says not to bother.* (LTndef) reads "Let `α₁,…,αₙ, δ₁,…δₖ,
+β₁,…βₘ, γ` be **distinct fresh type variables**" -- it does not say which, and
+Theorem 1 then writes the *same* `ᾱ, γ, β̄` on both sides of normalisation. It
+is entitled to that only because the rule lets you choose them: a signature is
+a scheme and its variable names carry no content. The paper obtains the
+coincidence by choosing, not by computing.
+
+**So: the naming pass runs once, and every generator reads its result.** This
+is the mechanised form of that choice, it is the discipline the Stc and Obc
+generators already follow, and the interface fields then agree by computation
+with nothing to discharge. `SecLNameInterface.v` keeps its value: with
+`to_global_lscoped_env` the Lustre allocator, run on the normalized program,
+*is* the NLustre one, so the Lustre typing can still be presented as
+allocating its own names.
+
+Consequences for `SecLTyping.v`, as implemented:
+
+- `generate_lnode_sig` and `generate_all_lsignatures_scoped_env` take `envs`
+  and `aux_names` as parameters, like `SECSTCTYPING` and `SECOBCTYPING`.
+- They also take and return a `sec_state`, because unlike the NLustre
+  generator this one is not `state_pure`: a nested call mints a name per
+  result flow. Start the run at the naming pass's final state
+  (`generate_lnode_scoped_env_st`) and every minted name is clear of every
+  program variable's, both drawing `gensym` from `Ids.sec`.
+- `simplify` must eliminate the minted names *as well as* the declared locals.
+  `minted st0 st1` reads them back off the state the run consumed. A
+  call-output name is local to the node's body exactly as a declared local is,
+  and neither may reach the interface -- without this, `signature_scoped`
+  fails and the interfaces stop matching. Working the `scaled` example is what
+  surfaced this; the NLustre entry point passes only the locals, because
+  minted names do not exist there.
+
+**If the Lustre typing is ever wanted genuinely standalone**, the principled
+route is not the two-sweep allocator but relaxing `signature_fields_agree` to
+a *renaming* of the interface variables -- which is what the paper actually
+means, and for which the machinery half exists already, since
+`generate_constraints` instantiates a callee signature by substitution. The
+cost is generalising `signature_fields_agree` and its uses through
+`Signature_head_consistent`, the simplify bridge and the noninterference
+transport, which reaches into the Stc and Obc legs.
+
 ### Where a new lemma about types goes
 
 A standing rule for this leg, to keep (H1) mechanical rather than a judgement
@@ -646,6 +710,12 @@ Docs, one per Coq file (house rule), plus:
 ---
 
 ## 9. Milestones
+
+0. **Done.** `SymLusTypes.v` (algebra + confluence, no axioms), `SecLusTypes.v`
+   (semantics, `lconstrain_sound`), `LusTypes.v`, `SecLNameInterface.v`
+   (`to_global_lscoped_env`), interface-first allocation, and `SecLTyping.v`
+   through expression, equation, node and global level.
+   Next: the equation lemmas `simpl` will not give (see `norm_cs_cons`), then Leg A.
 
 1. `SymLusTypes.v` compiles; Fig-5 rewriting confluent, `lty_eq a b <-> norm a = norm b`.
 1b. `SecLusTypes.v` compiles; Lemma 1 (soundness) proved; degeneracy lemma proved.
