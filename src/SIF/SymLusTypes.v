@@ -464,3 +464,334 @@ Proof.
   rewrite <- !cmerge_assoc. f_equal.
   apply cmerge_comm.
 Qed.
+
+(** * The equational theory of [ICTAC] Figure 5
+
+    [ICTAC] Lemma 2 says the equations other than associativity and
+    commutativity can be oriented left to right, that the resulting system is
+    confluent modulo AC, and hence that equal types can be rewritten to a
+    common form.  Rather than mechanise a rewriting system and a completion
+    argument, this file states the theory as a congruence and proves that
+    [norm] *decides* it: [lty_eq a b] exactly when [norm a = norm b].  That
+    is the conclusion Lemma 2 is after, in the form later files can use, and
+    it yields decidability of type equality as a corollary.
+
+    Note which equations are primitive here.  Associativity, commutativity,
+    idempotence and the unit for join are primitive, as are the four
+    refinement equations of Figure 5 lines 2 and 3.  The refinement component
+    is a *set*, so its permutation and duplication laws are primitive too --
+    [LCE_swap] and [LCE_dedup] -- which is what lets a term be equated to its
+    sorted, duplicate-free canonical form. *)
+
+Inductive lty_eq : lty -> lty -> Prop :=
+| LE_refl  : forall a, lty_eq a a
+| LE_sym   : forall a b, lty_eq a b -> lty_eq b a
+| LE_trans : forall a b c, lty_eq a b -> lty_eq b c -> lty_eq a c
+| LE_cong_join : forall a a' b b',
+    lty_eq a a' -> lty_eq b b' -> lty_eq (LJoin a b) (LJoin a' b')
+| LE_cong_ref : forall a a' r r',
+    lty_eq a a' -> lcons_eq r r' -> lty_eq (LRef a r) (LRef a' r')
+| LE_jassoc : forall a b c, lty_eq (LJoin (LJoin a b) c) (LJoin a (LJoin b c))
+| LE_jcomm  : forall a b, lty_eq (LJoin a b) (LJoin b a)
+| LE_jidem  : forall a, lty_eq (LJoin a a) a
+| LE_jbot   : forall a, lty_eq (LJoin a LBot) a
+| LE_rnil   : forall a, lty_eq (LRef a LCnil) a
+| LE_rjoin  : forall a1 r1 a2 r2,
+    lty_eq (LJoin (LRef a1 r1) (LRef a2 r2)) (LRef (LJoin a1 a2) (lcapp r1 r2))
+| LE_rref   : forall a r1 r2,
+    lty_eq (LRef (LRef a r1) r2) (LRef a (lcapp r1 r2))
+
+with lcons_eq : lcons -> lcons -> Prop :=
+| LCE_refl  : forall r, lcons_eq r r
+| LCE_sym   : forall r r', lcons_eq r r' -> lcons_eq r' r
+| LCE_trans : forall r1 r2 r3, lcons_eq r1 r2 -> lcons_eq r2 r3 -> lcons_eq r1 r3
+| LCE_cong  : forall x x' y y' r r',
+    lty_eq x x' -> lty_eq y y' -> lcons_eq r r' ->
+    lcons_eq (LCcons x y r) (LCcons x' y' r')
+| LCE_swap  : forall x1 y1 x2 y2 r,
+    lcons_eq (LCcons x1 y1 (LCcons x2 y2 r)) (LCcons x2 y2 (LCcons x1 y1 r))
+| LCE_dedup : forall x y r, lcons_eq (LCcons x y (LCcons x y r)) (LCcons x y r)
+| LCE_hoist : forall a r1 b r2 r,
+    lcons_eq (LCcons (LRef a r1) (LRef b r2) r) (LCcons a b (lcapp r1 (lcapp r2 r))).
+
+Scheme lty_eq_mut   := Minimality for lty_eq   Sort Prop
+  with lcons_eq_mut := Minimality for lcons_eq Sort Prop.
+
+Combined Scheme lty_lcons_eq_mut from lty_eq_mut, lcons_eq_mut.
+
+Hint Constructors lty_eq lcons_eq.
+
+(** * Soundness: the canonical form is an invariant of the theory *)
+
+Lemma cmerge_shuffle : forall a b c, cmerge a (cmerge b c) = cmerge b (cmerge a c).
+Proof.
+  intros. rewrite <- !cmerge_assoc. now rewrite (cmerge_comm a b).
+Qed.
+
+Lemma cmerge_swap4 : forall a b c d,
+    cmerge (cmerge a b) (cmerge c d) = cmerge (cmerge a c) (cmerge b d).
+Proof.
+  intros. rewrite !cmerge_assoc. f_equal. apply cmerge_shuffle.
+Qed.
+
+(** Raw equation lemmas.  [simpl] cannot be used on a [norm_cs] of a cons:
+    the generated constraint is a literal singleton list, so [simpl] unfolds
+    [cmerge] into its comparison and destroys the shape the algebraic lemmas
+    match against.  These let a proof unfold exactly one layer instead. *)
+
+Lemma norm_join : forall a b,
+    norm (LJoin a b)
+    = (merge (fst (norm a)) (fst (norm b)), cmerge (snd (norm a)) (snd (norm b))).
+Proof. reflexivity. Qed.
+
+Lemma norm_ref : forall a r,
+    norm (LRef a r) = (fst (norm a), cmerge (snd (norm a)) (norm_cs r)).
+Proof. reflexivity. Qed.
+
+Lemma norm_cs_cons : forall x y r,
+    norm_cs (LCcons x y r)
+    = cmerge (cmerge [(fst (norm x), fst (norm y))]
+                     (cmerge (snd (norm x)) (snd (norm y))))
+             (norm_cs r).
+Proof. reflexivity. Qed.
+
+Lemma cmerge_dedup_l : forall a b, cmerge a (cmerge a b) = cmerge a b.
+Proof. intros. now rewrite <- cmerge_assoc, cmerge_refl. Qed.
+
+Theorem lty_lcons_eq_norm :
+  (forall a b, lty_eq a b -> norm a = norm b)
+  /\ (forall r r', lcons_eq r r' -> norm_cs r = norm_cs r').
+Proof.
+  apply lty_lcons_eq_mut.
+  - (* LE_refl *) reflexivity.
+  - (* LE_sym *) intros a b _ IH. now symmetry.
+  - (* LE_trans *) intros a b c _ IH1 _ IH2. congruence.
+  - (* LE_cong_join *) intros a a' b b' _ IH1 _ IH2. simpl. now rewrite IH1, IH2.
+  - (* LE_cong_ref *) intros a a' r r' _ IH1 _ IH2. simpl. now rewrite IH1, IH2.
+  - (* LE_jassoc *) intros a b c. simpl.
+    now rewrite MergeFacts.merge_assoc, cmerge_assoc.
+  - (* LE_jcomm *) intros a b. simpl.
+    rewrite (MergeFacts.merge_comm (fst (norm a)) (fst (norm b))).
+    now rewrite (cmerge_comm (snd (norm a)) (snd (norm b))).
+  - (* LE_jidem *) intros a. simpl.
+    rewrite MergeFacts.merge_refl, cmerge_refl. symmetry. apply surjective_pairing.
+  - (* LE_jbot *) intros a. simpl.
+    rewrite MergeFacts.merge_nil, cmerge_nil. symmetry. apply surjective_pairing.
+  - (* LE_rnil *) intros a. simpl.
+    rewrite cmerge_nil. symmetry. apply surjective_pairing.
+  - (* LE_rjoin *) intros a1 r1 a2 r2. simpl.
+    rewrite norm_cs_lcapp. f_equal. apply cmerge_swap4.
+  - (* LE_rref *) intros a r1 r2. simpl.
+    rewrite norm_cs_lcapp. f_equal. apply cmerge_assoc.
+  - (* LCE_refl *) reflexivity.
+  - (* LCE_sym *) intros r r' _ IH. now symmetry.
+  - (* LCE_trans *) intros r1 r2 r3 _ IH1 _ IH2. congruence.
+  - (* LCE_cong *) intros x x' y y' r r' _ IH1 _ IH2 _ IH3. simpl.
+    now rewrite IH1, IH2, IH3.
+  - (* LCE_swap *) intros x1 y1 x2 y2 r. simpl. apply cmerge_shuffle.
+  - (* LCE_dedup *) intros x y r. simpl. apply cmerge_dedup_l.
+  - (* LCE_hoist *) intros a r1 b r2 r.
+    rewrite !norm_cs_cons, !norm_ref. cbn [fst snd].
+    rewrite !norm_cs_lcapp, !cmerge_assoc.
+    f_equal. f_equal. apply cmerge_shuffle.
+Qed.
+
+Corollary lty_eq_norm : forall a b, lty_eq a b -> norm a = norm b.
+Proof. apply lty_lcons_eq_norm. Qed.
+
+Corollary lcons_eq_norm : forall r r', lcons_eq r r' -> norm_cs r = norm_cs r'.
+Proof. apply lty_lcons_eq_norm. Qed.
+
+(** * Completeness: every term is equated to its own canonical form
+
+    This is the direction that does the real work.  [merge] and [cmerge]
+    sort and remove duplicates, so equating a term with the embedding of its
+    canonical form means deriving a sorted, duplicate-free rearrangement from
+    associativity, commutativity and idempotence alone.  [embed_st_merge] and
+    [embed_cs_cmerge] are where that happens; everything after them is
+    bookkeeping. *)
+
+Lemma le_jbot2 : forall a, lty_eq (LJoin LBot a) a.
+Proof. intros a. eapply LE_trans; [apply LE_jcomm | apply LE_jbot]. Qed.
+
+Lemma le_jshuffle : forall a b c,
+    lty_eq (LJoin a (LJoin b c)) (LJoin b (LJoin a c)).
+Proof.
+  intros a b c.
+  eapply LE_trans; [apply LE_sym, LE_jassoc|].
+  eapply LE_trans; [apply LE_cong_join; [apply LE_jcomm | apply LE_refl]|].
+  apply LE_jassoc.
+Qed.
+
+Lemma le_jdup : forall a b c,
+    lty_eq (LJoin (LJoin a b) (LJoin a c)) (LJoin a (LJoin b c)).
+Proof.
+  intros a b c.
+  eapply LE_trans; [apply LE_jassoc|].
+  eapply LE_trans;
+    [apply LE_cong_join; [apply LE_refl | apply le_jshuffle]|].
+  eapply LE_trans; [apply LE_sym, LE_jassoc|].
+  apply LE_cong_join; [apply LE_jidem | apply LE_refl].
+Qed.
+
+(** [ICTAC] Figure 5 line 1, applied to a whole sorted union: the fold of
+    [LJoin] over [merge s1 s2] is the join of the two folds. *)
+Lemma embed_st_merge : forall s1 s2,
+    lty_eq (embed_st (merge s1 s2)) (LJoin (embed_st s1) (embed_st s2)).
+Proof.
+  induction s1 as [|x xs IH1]; intros s2.
+  - rewrite MergeFacts.merge_nil2. simpl. apply LE_sym, le_jbot2.
+  - induction s2 as [|y ys IH2].
+    + rewrite MergeFacts.merge_nil. simpl. apply LE_sym, LE_jbot.
+    + destruct (Pos.compare x y) eqn:E.
+      * apply Pos.compare_eq in E; subst y.
+        rewrite MergeFacts.merge3. simpl.
+        eapply LE_trans;
+          [apply LE_cong_join; [apply LE_refl | apply IH1]|].
+        apply LE_sym, le_jdup.
+      * rewrite Pos.compare_lt_iff in E.
+        rewrite MergeFacts.merge1 by exact E. simpl.
+        eapply LE_trans;
+          [apply LE_cong_join; [apply LE_refl | apply IH1]|].
+        apply LE_sym, LE_jassoc.
+      * rewrite Pos.compare_gt_iff in E.
+        rewrite MergeFacts.merge2 by exact E. simpl.
+        eapply LE_trans;
+          [apply LE_cong_join; [apply LE_refl | apply IH2]|].
+        apply le_jshuffle.
+Qed.
+
+Lemma lcapp_cong_r : forall q r r',
+    lcons_eq r r' -> lcons_eq (lcapp q r) (lcapp q r').
+Proof.
+  induction q as [|u v q IH]; intros r r' H; simpl; auto.
+Qed.
+
+Lemma lcons_move : forall A x y B,
+    lcons_eq (lcapp A (LCcons x y B)) (LCcons x y (lcapp A B)).
+Proof.
+  induction A as [|u v A IH]; intros x y B; simpl.
+  - apply LCE_refl.
+  - eapply LCE_trans.
+    + apply LCE_cong; [apply LE_refl | apply LE_refl | apply IH].
+    + apply LCE_swap.
+Qed.
+
+(** The [lcons] counterpart of [embed_st_merge]. *)
+Lemma embed_cs_cmerge : forall r1 r2,
+    lcons_eq (embed_cs (cmerge r1 r2)) (lcapp (embed_cs r1) (embed_cs r2)).
+Proof.
+  induction r1 as [|x xs IH1]; intros r2.
+  - rewrite cmerge_nil2. apply LCE_refl.
+  - induction r2 as [|y ys IH2].
+    + rewrite cmerge_nil, lcapp_nil. apply LCE_refl.
+    + destruct (ccmp x y) eqn:E.
+      * apply ccmp_eq in E; subst y.
+        rewrite cmerge3. destruct x as [x1 x2]; simpl.
+        eapply LCE_trans.
+        { apply LCE_cong; [apply LE_refl | apply LE_refl | apply IH1]. }
+        apply LCE_sym.
+        eapply LCE_trans.
+        { apply LCE_cong;
+            [apply LE_refl | apply LE_refl | apply lcons_move]. }
+        apply LCE_dedup.
+      * rewrite (cmerge1 _ _ _ _ E).
+        destruct x as [x1 x2]; simpl.
+        apply LCE_cong; [apply LE_refl | apply LE_refl | apply IH1].
+      * rewrite (cmerge2 _ _ _ _ E).
+        destruct x as [x1 x2]; destruct y as [y1 y2]; simpl.
+        apply LCE_sym.
+        eapply LCE_trans.
+        { apply LCE_cong;
+            [apply LE_refl | apply LE_refl | apply lcons_move]. }
+        eapply LCE_trans; [apply LCE_swap|].
+        apply LCE_cong; [apply LE_refl | apply LE_refl | ].
+        apply LCE_sym. exact (IH2).
+Qed.
+
+Lemma embed_norm : forall t,
+    embed (norm t) = LRef (embed_st (fst (norm t))) (embed_cs (snd (norm t))).
+Proof. reflexivity. Qed.
+
+Theorem lty_lcons_norm_embed :
+  (forall t, lty_eq t (embed (norm t)))
+  /\ (forall r, lcons_eq r (embed_cs (norm_cs r))).
+Proof.
+  apply lty_lcons_mut.
+  - (* LBot *) apply LE_sym, LE_rnil.
+  - (* LVar *) intros d. simpl.
+    eapply LE_trans; [apply LE_sym, LE_jbot|].
+    apply LE_sym, LE_rnil.
+  - (* LJoin *) intros a IHa b IHb.
+    eapply LE_trans; [apply LE_cong_join; [exact IHa | exact IHb]|].
+    rewrite !embed_norm, norm_join. cbn [fst snd].
+    eapply LE_trans; [apply LE_rjoin|].
+    apply LE_cong_ref.
+    + apply LE_sym, embed_st_merge.
+    + apply LCE_sym, embed_cs_cmerge.
+  - (* LRef *) intros a IHa r IHr.
+    eapply LE_trans; [apply LE_cong_ref; [exact IHa | exact IHr]|].
+    rewrite !embed_norm, norm_ref. cbn [fst snd].
+    eapply LE_trans; [apply LE_rref|].
+    apply LE_cong_ref; [apply LE_refl|].
+    apply LCE_sym, embed_cs_cmerge.
+  - (* LCnil *) apply LCE_refl.
+  - (* LCcons *) intros x IHx y IHy r IHr.
+    eapply LCE_trans;
+      [apply LCE_cong; [exact IHx | exact IHy | exact IHr]|].
+    rewrite !embed_norm.
+    eapply LCE_trans; [apply LCE_hoist|].
+    rewrite norm_cs_cons, !cmerge_assoc.
+    apply LCE_sym.
+    eapply LCE_trans; [apply embed_cs_cmerge|].
+    simpl.
+    apply LCE_cong; [apply LE_refl | apply LE_refl |].
+    eapply LCE_trans; [apply embed_cs_cmerge|].
+    apply lcapp_cong_r.
+    apply embed_cs_cmerge.
+Qed.
+
+Corollary lty_norm_embed : forall t, lty_eq t (embed (norm t)).
+Proof. apply lty_lcons_norm_embed. Qed.
+
+Corollary lcons_norm_embed : forall r, lcons_eq r (embed_cs (norm_cs r)).
+Proof. apply lty_lcons_norm_embed. Qed.
+
+(** * Confluence
+
+    [ICTAC] Lemma 2, in the form the rest of the development uses: [norm] is
+    a canonical form for the equational theory.  Two types are equal in the
+    theory exactly when they normalise to the same pair, so every term
+    rewrites to a common form modulo AC, and type equality is decidable. *)
+
+Theorem lty_eq_iff_norm : forall a b, lty_eq a b <-> norm a = norm b.
+Proof.
+  split.
+  - apply lty_eq_norm.
+  - intros H.
+    eapply LE_trans; [apply lty_norm_embed|].
+    rewrite H. apply LE_sym, lty_norm_embed.
+Qed.
+
+Theorem lcons_eq_iff_norm : forall r r', lcons_eq r r' <-> norm_cs r = norm_cs r'.
+Proof.
+  split.
+  - apply lcons_eq_norm.
+  - intros H.
+    eapply LCE_trans; [apply lcons_norm_embed|].
+    rewrite H. apply LCE_sym, lcons_norm_embed.
+Qed.
+
+Definition LST_eq_dec : forall (p q : LST), {p = q} + {p <> q}.
+Proof.
+  intros p q.
+  repeat decide equality; apply Pos.eq_dec.
+Defined.
+
+Corollary lty_eq_dec : forall a b, {lty_eq a b} + {~ lty_eq a b}.
+Proof.
+  intros a b.
+  destruct (LST_eq_dec (norm a) (norm b)) as [Heq|Hneq].
+  - left. now apply lty_eq_iff_norm.
+  - right. intros H. apply Hneq. now apply lty_eq_iff_norm.
+Defined.
