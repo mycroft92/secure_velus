@@ -131,20 +131,20 @@ Module Type SECLTYPING
           do g  <- find_env x env;
           ret (map (fun t => ljoin t (lvar g)) ts)
 
+      (* [xty] (+) t (+) u, associated exactly as the CoreExpr rule
+         associates it, so that the two generators agree on the nose *)
       | Emerge x ets efs _ =>
           do g  <- find_env x env;
           do ts <- assign_lexps ets;
           do us <- assign_lexps efs;
-          do r  <- ljoin_list ts us;
-          ret (map (fun t => ljoin t (lvar g)) r)
+          ljoin_list (map (fun t => ljoin (lvar g) t) ts) us
 
       | Eite e0 ets efs _ =>
           do t0 <- assign_lexp_type e0;
           do th <- single t0;
           do ts <- assign_lexps ets;
           do us <- assign_lexps efs;
-          do r  <- ljoin_list ts us;
-          ret (map (fun t => ljoin t th) r)
+          ljoin_list (map (fun t => ljoin th t) ts) us
 
       | Efby e0s es _ =>
           do ts <- assign_lexps e0s;
@@ -196,6 +196,200 @@ Module Type SECLTYPING
                         do r <- go es';
                         ret (t ++ r)
          end) es.
+
+
+    (** * Unfolding equations
+
+        [assign_lexp_type] recurses over [list exp] through a local [fix], so
+        [simpl] cannot expose one layer of it without unfolding the whole
+        recursion.  These give a proof exactly one layer, and each holds by
+        [reflexivity] because the local [fix] and [assign_lexps] have the same
+        body.  Same problem, and same remedy, as [norm_cs_cons]. *)
+
+    Lemma assign_lexp_Econst : forall c,
+        assign_lexp_type (Econst c) = ret [lbot].
+    Proof. reflexivity. Qed.
+
+    Lemma assign_lexp_Evar : forall x a,
+        assign_lexp_type (Evar x a) = (do t <- find_env x env; ret [lvar t]).
+    Proof. reflexivity. Qed.
+
+    Lemma assign_lexp_Eunop : forall op e a,
+        assign_lexp_type (Eunop op e a) = assign_lexp_type e.
+    Proof. reflexivity. Qed.
+
+    Lemma assign_lexp_Ebinop : forall op e1 e2 a,
+        assign_lexp_type (Ebinop op e1 e2 a)
+        = (do t1 <- assign_lexp_type e1;
+           do t2 <- assign_lexp_type e2;
+           do a1 <- single t1;
+           do a2 <- single t2;
+           ret [ljoin a1 a2]).
+    Proof. reflexivity. Qed.
+
+    Lemma assign_lexp_Ewhen : forall es x b a,
+        assign_lexp_type (Ewhen es x b a)
+        = (do ts <- assign_lexps es;
+           do g  <- find_env x env;
+           ret (map (fun t => ljoin t (lvar g)) ts)).
+    Proof. reflexivity. Qed.
+
+    Lemma assign_lexp_Emerge : forall x ets efs a,
+        assign_lexp_type (Emerge x ets efs a)
+        = (do g  <- find_env x env;
+           do ts <- assign_lexps ets;
+           do us <- assign_lexps efs;
+           ljoin_list (map (fun t => ljoin (lvar g) t) ts) us).
+    Proof. reflexivity. Qed.
+
+    Lemma assign_lexp_Eite : forall e0 ets efs a,
+        assign_lexp_type (Eite e0 ets efs a)
+        = (do t0 <- assign_lexp_type e0;
+           do th <- single t0;
+           do ts <- assign_lexps ets;
+           do us <- assign_lexps efs;
+           ljoin_list (map (fun t => ljoin th t) ts) us).
+    Proof. reflexivity. Qed.
+
+    Lemma assign_lexps_nil : assign_lexps [] = ret [].
+    Proof. reflexivity. Qed.
+
+    Lemma assign_lexps_cons : forall e es,
+        assign_lexps (e :: es)
+        = (do t <- assign_lexp_type e;
+           do r <- assign_lexps es;
+           ret (t ++ r)).
+    Proof. reflexivity. Qed.
+
+    (** * Leg A, expression level
+
+        On an expression that transcribes, the two generators agree: the
+        Lustre one returns the single plain type the CoreExpr one computes,
+        and consumes no state -- it mints nothing, because a transcribable
+        expression contains no node call. *)
+
+    Lemma to_lexp_assign_eq : forall e le sa st,
+        to_lexp e = OK le ->
+        assign_exp_type env le = Some sa ->
+        assign_lexp_type e st = OK ([(sa, [])], st).
+    Proof.
+      apply (exp_ind2 (fun e => forall le sa st,
+                 to_lexp e = OK le ->
+                 assign_exp_type env le = Some sa ->
+                 assign_lexp_type e st = OK ([(sa, [])], st))).
+      - (* Econst *)
+        intros c le sa st Htr Hnl. simpl in Htr. monadInv Htr.
+        simpl in Hnl. inv Hnl. reflexivity.
+      - (* Evar *)
+        intros x a le sa st Htr Hnl.
+        destruct a as [ty ck]. simpl in Htr. monadInv Htr. simpl in Hnl.
+        destruct (Env.find x env) eqn:E; try discriminate. inv Hnl.
+        rewrite assign_lexp_Evar. unfold find_env. now rewrite E.
+      - (* Eunop *)
+        intros op e a IH le sa st Htr Hnl.
+        destruct a as [ty ck]. simpl in Htr. monadInv Htr. simpl in Hnl.
+        rewrite assign_lexp_Eunop. eauto.
+      - (* Ebinop *)
+        intros op e1 e2 a IH1 IH2 le sa st Htr Hnl.
+        destruct a as [ty ck]. simpl in Htr. monadInv Htr. simpl in Hnl.
+        destruct (assign_exp_type env x) eqn:E1; try discriminate.
+        destruct (assign_exp_type env x0) eqn:E2; try discriminate.
+        inv Hnl. rewrite assign_lexp_Ebinop. unfold bind, ret.
+        erewrite IH1 by eauto. erewrite IH2 by eauto.
+        unfold single. reflexivity.
+      - (* Efby: never transcribes as an expression *)
+        intros e0s es a IH1 IH2 le sa st Htr Hnl. simpl in Htr. discriminate.
+      - (* Earrow *)
+        intros e0s es a IH1 IH2 le sa st Htr Hnl. simpl in Htr. discriminate.
+      - (* Ewhen: only the singleton form transcribes *)
+        intros es x b a IH le sa st Htr Hnl.
+        destruct es as [|e' [|]]; destruct a as [tys ck]; simpl in Htr;
+          try discriminate.
+        destruct tys as [|ty [|]]; try discriminate.
+        monadInv Htr. simpl in Hnl.
+        destruct (assign_exp_type env x0) eqn:E1; try discriminate.
+        destruct (Env.find x env) eqn:E2; try discriminate. inv Hnl.
+        rewrite assign_lexp_Ewhen, assign_lexps_cons.
+        unfold bind, ret.
+        inv IH. erewrite H1 by eauto.
+        rewrite assign_lexps_nil. unfold ret.
+        unfold find_env. rewrite E2. reflexivity.
+      - (* Emerge *)
+        intros x ets efs a IH1 IH2 le sa st Htr Hnl. simpl in Htr. discriminate.
+      - (* Eite *)
+        intros e ets efs a IH IH1 IH2 le sa st Htr Hnl. simpl in Htr.
+        discriminate.
+      - (* Eapp *)
+        intros f es ro a IHr IH le sa st Htr Hnl. simpl in Htr. discriminate.
+    Qed.
+
+    Lemma to_cexp_assign_eq : forall e ce sa st,
+        to_cexp e = OK ce ->
+        assign_cexp_type env ce = Some sa ->
+        assign_lexp_type e st = OK ([(sa, [])], st).
+    Proof.
+      apply (exp_ind2 (fun e => forall ce sa st,
+                 to_cexp e = OK ce ->
+                 assign_cexp_type env ce = Some sa ->
+                 assign_lexp_type e st = OK ([(sa, [])], st))).
+      (* the forms that transcribe through [to_lexp] and sit under [Eexp].
+         For the two leaves [simpl] computes [to_lexp] away, so there is no
+         hypothesis left to feed the expression lemma and they are discharged
+         directly. *)
+      - intros c ce sa st Htr Hnl. simpl in Htr. monadInv Htr.
+        simpl in Hnl. inv Hnl. reflexivity.
+      - intros x a ce sa st Htr Hnl.
+        destruct a as [ty ck]. simpl in Htr. monadInv Htr. simpl in Hnl.
+        destruct (Env.find x env) eqn:E; try discriminate. inv Hnl.
+        rewrite assign_lexp_Evar. unfold find_env. now rewrite E.
+      - intros op e a IH ce sa st Htr Hnl.
+        destruct a as [ty ck]. simpl in Htr. monadInv Htr.
+        simpl in Hnl. eapply to_lexp_assign_eq; eassumption.
+      - intros op e1 e2 a IH1 IH2 ce sa st Htr Hnl.
+        destruct a as [ty ck]. simpl in Htr. monadInv Htr.
+        simpl in Hnl. eapply to_lexp_assign_eq; eassumption.
+      - (* Efby *)
+        intros e0s es a IH1 IH2 ce sa st Htr Hnl. simpl in Htr. discriminate.
+      - (* Earrow *)
+        intros e0s es a IH1 IH2 ce sa st Htr Hnl. simpl in Htr. discriminate.
+      - (* Ewhen *)
+        intros es x b a IH ce sa st Htr Hnl. simpl in Htr. monadInv Htr.
+        simpl in Hnl. eapply to_lexp_assign_eq; eassumption.
+      - (* Emerge *)
+        intros x ets efs a IH1 IH2 ce sa st Htr Hnl.
+        destruct ets as [|et [|]]; destruct efs as [|ef [|]];
+          destruct a as [tys ck]; simpl in Htr; try discriminate.
+        destruct tys as [|ty [|]]; try discriminate.
+        monadInv Htr. simpl in Hnl.
+        destruct (Env.find x env) eqn:Eg; try discriminate.
+        destruct (assign_cexp_type env x0) eqn:E1; try discriminate.
+        destruct (assign_cexp_type env x1) eqn:E2; try discriminate.
+        inv Hnl.
+        rewrite assign_lexp_Emerge. unfold bind, ret.
+        unfold find_env. rewrite Eg.
+        rewrite !assign_lexps_cons, assign_lexps_nil. unfold bind, ret.
+        inv IH1. inv IH2.
+        erewrite H1 by eauto. erewrite H3 by eauto.
+        simpl. unfold bind, ret. reflexivity.
+      - (* Eite: the scrutinee goes through to_lexp, the branches through to_cexp *)
+        intros e ets efs a IH IH1 IH2 ce sa st Htr Hnl.
+        destruct ets as [|et [|]]; destruct efs as [|ef [|]];
+          destruct a as [tys ck]; simpl in Htr; try discriminate.
+        destruct tys as [|ty [|]]; try discriminate.
+        monadInv Htr. simpl in Hnl.
+        destruct (assign_exp_type env x) eqn:E0; try discriminate.
+        destruct (assign_cexp_type env x0) eqn:E1; try discriminate.
+        destruct (assign_cexp_type env x1) eqn:E2; try discriminate.
+        inv Hnl.
+        rewrite assign_lexp_Eite. unfold bind, ret.
+        erewrite to_lexp_assign_eq by eassumption. unfold single.
+        rewrite !assign_lexps_cons, assign_lexps_nil. unfold bind, ret.
+        inv IH1. inv IH2.
+        erewrite H1 by eauto. erewrite H3 by eauto.
+        simpl. unfold bind, ret. reflexivity.
+      - (* Eapp *)
+        intros f es ro a IHr IH ce sa st Htr Hnl. simpl in Htr. discriminate.
+    Qed.
 
     (** * Equations
 
