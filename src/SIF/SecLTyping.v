@@ -593,7 +593,9 @@ Module Type SECLTYPING
 
       (** a delayed definition; the initial value is a constant, so it
           contributes nothing, as (NTfb) *)
-      | [Efby [e0] [e] [an]] =>
+      (* the annotation list is a wildcard in [to_equation] too: it does not
+         constrain it, so neither may this *)
+      | [Efby [e0] [e] _] =>
           match xs with
           | [x] => generate_ldef_constraint x e
           | _   => generate_lgen_constraint xs es
@@ -645,8 +647,8 @@ Module Type SECLTYPING
         = generate_ldef_constraint x (Eite e ets efs a).
     Proof. reflexivity. Qed.
 
-    Lemma gen_leqn_Efby : forall x e0 e an,
-        generate_leqn_constraint ([x], [Efby [e0] [e] [an]]) = generate_ldef_constraint x e.
+    Lemma gen_leqn_Efby : forall x e0 e ans,
+        generate_leqn_constraint ([x], [Efby [e0] [e] ans]) = generate_ldef_constraint x e.
     Proof. reflexivity. Qed.
 
     Lemma gen_leqn_Eapp : forall x xs f args a,

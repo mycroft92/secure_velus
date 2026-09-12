@@ -174,15 +174,15 @@ Module Type SECLUSNLUSTRANSLATION
              | reflexivity ]).
   Qed.
 
-  Lemma to_equation_fby_inv : forall cenv envo x e0 e an eq',
-      to_equation cenv envo ([x], [Efby [e0] [e] [an]]) = OK eq' ->
+  Lemma to_equation_fby_inv : forall cenv envo x e0 e ans eq',
+      to_equation cenv envo ([x], [Efby [e0] [e] ans]) = OK eq' ->
       exists ck c0 le,
         find_clock cenv x = OK ck
         /\ to_constant e0 = OK c0
         /\ to_lexp e = OK le
         /\ eq' = NLSyn.EqFby x ck c0 le.
   Proof.
-    intros cenv envo x e0 e an eq' H.
+    intros cenv envo x e0 e ans eq' H.
     simpl in H. monadInv H.
     do 3 eexists. repeat split; eassumption.
   Qed.
@@ -222,13 +222,13 @@ Module Type SECLUSNLUSTRANSLATION
   Qed.
 
   Theorem to_equation_constraint_eq_fby :
-    forall G env base_ty rst_ty cenv envo x e0 e an eq' cs st st',
-      to_equation cenv envo ([x], [Efby [e0] [e] [an]]) = OK eq' ->
+    forall G env base_ty rst_ty cenv envo x e0 e ans eq' cs st st',
+      to_equation cenv envo ([x], [Efby [e0] [e] ans]) = OK eq' ->
       generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st') ->
-      generate_leqn_constraint G env base_ty rst_ty cenv ([x], [Efby [e0] [e] [an]]) st
+      generate_leqn_constraint G env base_ty rst_ty cenv ([x], [Efby [e0] [e] ans]) st
         = OK (cs, st').
   Proof.
-    intros G env base_ty rst_ty cenv envo x e0 e an eq' cs st st' Htr Hnl.
+    intros G env base_ty rst_ty cenv envo x e0 e ans eq' cs st st' Htr Hnl.
     edestruct to_equation_fby_inv as (ck & c0 & le & Hck & Hc0 & Hle & Heq); eauto.
     subst eq'.
     eapply nl_EqFby_inv in Hnl
@@ -237,6 +237,215 @@ Module Type SECLUSNLUSTRANSLATION
     rewrite gen_leqn_Efby.
     eapply generate_ldef_constraint_eq; try eassumption.
     eapply to_lexp_assign_eq; eassumption.
+  Qed.
+
+  (** * The call shapes
+
+      Both NLustre call cases special-case an empty result list, and their
+      match is flat, so a proof has to split [xs] before either side will
+      reduce.  On the empty list both generators return the empty constraint
+      list. *)
+
+  Lemma nl_EqApp_inv : forall G env base_ty rst_ty x xs ck f les cs st st',
+      generate_eqn_constraint G env base_ty rst_ty
+        (NLSyn.EqApp (x :: xs) ck f les None) st = OK (cs, st') ->
+      exists sg ckty inptyp outtyp sti,
+        find_signature f G = Some sg
+        /\ assign_clk_type env base_ty ck = Some ckty
+        /\ Forall2 (fun le t => assign_exp_type env le = Some t) les inptyp
+        /\ SC.mmap (fun y => find_env y env) (x :: xs) st = OK (outtyp, sti)
+        /\ generate_constraints sg inptyp ckty [rst_ty] outtyp sti = OK (cs, st').
+  Proof.
+    intros G env base_ty rst_ty x xs ck f les cs st st' H.
+    unfold generate_eqn_constraint in H.
+    destruct (find_signature f G) as [sg|] eqn:Esg; [|discriminate].
+    eapply sec_bind_inv in H as (ckty & st1 & Hck & H).
+    eapply sec_bind_inv in H as (inptyp & st2 & Hin & H).
+    eapply sec_bind_inv in H as (outtyp & st3 & Hout & H).
+    unfold option_to_sec in Hck.
+    destruct (assign_clk_type env base_ty ck) eqn:E1; try discriminate.
+    unfold ret in Hck. inv Hck.
+    eapply sec_mmap_assign_exp_Forall2 in Hin as [Hst Hall]; subst st2.
+    exists sg, ckty, inptyp, outtyp, st3.
+    repeat split; auto.
+  Qed.
+
+  Lemma nl_EqApp_reset_inv :
+    forall G env base_ty rst_ty x xs ck f les r ckr cs st st',
+      generate_eqn_constraint G env base_ty rst_ty
+        (NLSyn.EqApp (x :: xs) ck f les (Some (r, ckr))) st = OK (cs, st') ->
+      exists sg ckty rty rstty inptyp outtyp sti,
+        find_signature f G = Some sg
+        /\ assign_clk_type env base_ty ck = Some ckty
+        /\ Env.find r env = Some rty
+        /\ assign_clk_type env base_ty ckr = Some rstty
+        /\ Forall2 (fun le t => assign_exp_type env le = Some t) les inptyp
+        /\ SC.mmap (fun y => find_env y env) (x :: xs) st = OK (outtyp, sti)
+        /\ generate_constraints sg inptyp ckty
+             (merge [rst_ty] (merge [rty] rstty)) outtyp sti = OK (cs, st').
+  Proof.
+    intros G env base_ty rst_ty x xs ck f les r ckr cs st st' H.
+    unfold generate_eqn_constraint in H.
+    destruct (find_signature f G) as [sg|] eqn:Esg; [|discriminate].
+    eapply sec_bind_inv in H as (ckty & st1 & Hck & H).
+    eapply sec_bind_inv in H as (rty & st2 & Hrty & H).
+    eapply sec_bind_inv in H as (rstty & st3 & Hrst & H).
+    eapply sec_bind_inv in H as (inptyp & st4 & Hin & H).
+    eapply sec_bind_inv in H as (outtyp & st5 & Hout & H).
+    unfold option_to_sec in Hck.
+    destruct (assign_clk_type env base_ty ck) eqn:E1; try discriminate.
+    unfold ret in Hck. inv Hck.
+    unfold find_env in Hrty.
+    destruct (Env.find r env) eqn:E2; try discriminate.
+    unfold ret in Hrty. inv Hrty.
+    unfold option_to_sec in Hrst.
+    destruct (assign_clk_type env base_ty ckr) eqn:E3; try discriminate.
+    unfold ret in Hrst. inv Hrst.
+    eapply sec_mmap_assign_exp_Forall2 in Hin as [Hst Hall]; subst st4.
+    exists sg, ckty, rty, rstty, inptyp, outtyp, st5.
+    repeat split; auto.
+  Qed.
+
+  Lemma to_equation_app_inv : forall cenv envo xs f args a eq',
+      to_equation cenv envo (xs, [Eapp f args None a]) = OK eq' ->
+      exists les,
+        Errors.mmap to_lexp args = OK les
+        /\ eq' = NLSyn.EqApp xs (find_base_clock (LSyn.clocksof args)) f les None.
+  Proof.
+    intros cenv envo xs f args a eq' H. simpl in H. monadInv H. eauto.
+  Qed.
+
+  Lemma to_equation_app_reset_inv :
+    forall cenv envo xs f args r ty ckr nm a eq',
+      to_equation cenv envo (xs, [Eapp f args (Some (Evar r (ty, (ckr, nm)))) a])
+        = OK eq' ->
+      exists les,
+        Errors.mmap to_lexp args = OK les
+        /\ eq' = NLSyn.EqApp xs (find_base_clock (LSyn.clocksof args)) f les
+                   (Some (r, ckr)).
+  Proof.
+    intros cenv envo xs f args r ty ckr nm a eq' H. simpl in H. monadInv H. eauto.
+  Qed.
+
+  Theorem to_equation_constraint_eq_app :
+    forall G env base_ty rst_ty cenv envo xs f args a eq' cs st st',
+      to_equation cenv envo (xs, [Eapp f args None a]) = OK eq' ->
+      generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st') ->
+      generate_leqn_constraint G env base_ty rst_ty cenv
+        (xs, [Eapp f args None a]) st = OK (cs, st').
+  Proof.
+    intros G env base_ty rst_ty cenv envo xs f args a eq' cs st st' Htr Hnl.
+    edestruct to_equation_app_inv as (les & Hles & Heq); eauto. subst eq'.
+    destruct xs as [|x xs'].
+    - (* a call defining nothing: both sides give the empty list *)
+      simpl in Hnl. unfold ret in Hnl. inv Hnl. reflexivity.
+    - eapply nl_EqApp_inv in Hnl
+        as (sg & ckty & inptyp & outtyp & sti & Esg & Hck & Hall & Hout & Hgc).
+      rewrite gen_leqn_Eapp.
+      unfold generate_lcall_constraint. rewrite Esg.
+      erewrite bind_OK by (unfold option_to_sec; rewrite Hck; reflexivity).
+      erewrite bind_OK by (eapply to_lexps_assign_eq; eassumption).
+      erewrite bind_OK by exact Hout.
+      rewrite map_fst_plain.
+      erewrite bind_OK by (unfold lvar; cbn [fst]; exact Hgc).
+      unfold ret. rewrite carried_plain.
+      unfold lvar. cbn [snd]. now rewrite !cmerge_nil.
+  Qed.
+
+  Theorem to_equation_constraint_eq_app_reset :
+    forall G env base_ty rst_ty cenv envo xs f args r ty ckr nm a eq' cs st st',
+      to_equation cenv envo (xs, [Eapp f args (Some (Evar r (ty, (ckr, nm)))) a])
+        = OK eq' ->
+      generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st') ->
+      generate_leqn_constraint G env base_ty rst_ty cenv
+        (xs, [Eapp f args (Some (Evar r (ty, (ckr, nm)))) a]) st = OK (cs, st').
+  Proof.
+    intros G env base_ty rst_ty cenv envo xs f args r ty ckr nm a eq' cs st st'
+           Htr Hnl.
+    edestruct to_equation_app_reset_inv as (les & Hles & Heq); eauto. subst eq'.
+    destruct xs as [|x xs'].
+    - simpl in Hnl. unfold ret in Hnl. inv Hnl. reflexivity.
+    - eapply nl_EqApp_reset_inv in Hnl
+        as (sg & ckty & rty & rstty & inptyp & outtyp & sti
+            & Esg & Hck & Hrty & Hrst & Hall & Hout & Hgc).
+      rewrite gen_leqn_Eapp_reset.
+      erewrite bind_OK by (unfold find_env; rewrite Hrty; reflexivity).
+      erewrite bind_OK by (unfold option_to_sec; rewrite Hrst; reflexivity).
+      unfold generate_lcall_constraint. rewrite Esg.
+      erewrite bind_OK by (unfold option_to_sec; rewrite Hck; reflexivity).
+      erewrite bind_OK by (eapply to_lexps_assign_eq; eassumption).
+      erewrite bind_OK by exact Hout.
+      rewrite map_fst_plain.
+      erewrite bind_OK by (unfold ljoin, lvar; cbn [fst snd]; exact Hgc).
+      unfold ret. rewrite carried_plain.
+      unfold ljoin, lvar. cbn [snd]. now rewrite !cmerge_nil.
+  Qed.
+
+  (** * One equation, all shapes
+
+      The dispatcher.  Every equation that transcribes is one of the four
+      shapes above; the rest is case analysis. *)
+
+  Ltac def_shape Htr Hnl :=
+    eapply to_equation_constraint_eq_def;
+    [ exact Htr | intros; discriminate | intros; discriminate | exact Hnl ].
+
+  Theorem to_equation_constraint_eq :
+    forall G env base_ty rst_ty cenv envo eq eq' cs st st',
+      to_equation cenv envo eq = OK eq' ->
+      generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st') ->
+      generate_leqn_constraint G env base_ty rst_ty cenv eq st = OK (cs, st').
+  Proof.
+    intros G env base_ty rst_ty cenv envo [xs es] eq' cs st st' Htr Hnl.
+    destruct es as [|e [|e' es']];
+      [simpl in Htr; discriminate | | simpl in Htr; discriminate].
+    destruct e.
+    (* the seven shapes that transcribe to EqDef *)
+    1-4,6-9: (destruct xs as [|x [|]];
+              [simpl in Htr; discriminate | | simpl in Htr; discriminate];
+              def_shape Htr Hnl).
+    - (* Efby: only the singleton form is a delay; the rest reach EqDef and
+         are rejected there by to_cexp *)
+      destruct l as [|e0 [|e0' l']]; destruct l0 as [|e1 [|e1' l0']];
+        try (destruct xs as [|x [|]];
+             [simpl in Htr; discriminate | | simpl in Htr; discriminate];
+             solve [ def_shape Htr Hnl
+                   | (simpl in Htr; monadInv Htr)
+                   | (simpl in Htr; discriminate) ]).
+      destruct xs as [|x [|]];
+        [simpl in Htr; discriminate | | simpl in Htr; discriminate].
+      eapply to_equation_constraint_eq_fby; eassumption.
+    - (* Eapp, with and without a reset *)
+      destruct o as [er|].
+        destruct er;
+          try solve [ (simpl in Htr; monadInv Htr)
+                    | (simpl in Htr; discriminate) ].
+        match goal with an : ann |- _ => destruct an as [ty [ckr nm]] end.
+        eapply to_equation_constraint_eq_app_reset; eassumption.
+      + eapply to_equation_constraint_eq_app; eassumption.
+  Qed.
+
+  (** * Equation lists
+
+      Both generators fold over the list with [++] in the same order, so the
+      lift is a plain induction. *)
+
+  Theorem to_equations_constraints_eq :
+    forall G env base_ty rst_ty cenv envo eqs neqs cs st st',
+      Errors.mmap (to_equation cenv envo) eqs = OK neqs ->
+      generate_eqns_constraints G env base_ty rst_ty neqs st = OK (cs, st') ->
+      generate_leqns_constraints G env base_ty rst_ty cenv eqs st = OK (cs, st').
+  Proof.
+    induction eqs as [|eq eqs IH]; intros neqs cs st st' Htr Hnl; simpl in Htr.
+    - inv Htr. simpl in Hnl. unfold ret in Hnl. inv Hnl. reflexivity.
+    - monadInv Htr. simpl in Hnl.
+      eapply sec_bind_inv in Hnl as (c & st1 & Hc & Hnl).
+      eapply sec_bind_inv in Hnl as (cr & st2 & Hcr & Hret).
+      unfold ret in Hret. inv Hret.
+      simpl.
+      erewrite bind_OK by (eapply to_equation_constraint_eq; eassumption).
+      erewrite bind_OK by (eapply IH; eassumption).
+      reflexivity.
   Qed.
 
   (** * What remains: the equation level and above
