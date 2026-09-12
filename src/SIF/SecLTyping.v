@@ -471,6 +471,63 @@ Module Type SECLTYPING
     Definition ambient (ckty : ST) : LST :=
       ljoin (lvar rst_ty) (ckty, []).
 
+    (** The body shared by the definition and delayed-definition cases: one
+        defined variable, its declared clock, and one expression.  Factoring
+        it out is what lets the correspondence be proved once, uniformly in
+        the expression, instead of once per syntactic form. *)
+    Definition generate_ldef_constraint (x : ident) (e : exp)
+      : Sec (list constraint) :=
+      do ckty <- eqn_clock_type x;
+      do ts   <- assign_lexp_type e;
+      do t    <- single ts;
+      do b    <- find_env x env;
+      ret (lconstrain (ljoin (ambient ckty) t) b).
+
+    Lemma res_to_sec_OK : forall {A : Type} (a : A) st,
+        res_to_sec (OK a) st = OK (a, st).
+    Proof. reflexivity. Qed.
+
+    (** Step a bind forward given what its left-hand side computes.  Chaining
+        these is how the proofs below reduce, rather than by [simpl]: a
+        blanket [simpl] unfolds [SymTypes.merge] into its inner [fix] on one
+        side of a goal only, and two otherwise identical sides then stop being
+        syntactically equal. *)
+    Lemma bind_OK : forall {A B : Type} (m : Sec A) (f : A -> Sec B) st a st1,
+        m st = OK (a, st1) -> (do x <- m; f x) st = f a st1.
+    Proof. intros A B m f st a st1 H. unfold bind. now rewrite H. Qed.
+
+    Lemma eqn_clock_type_OK : forall x ck ckty st,
+        find_clock cenv x = OK ck ->
+        assign_clk_type env base_ty ck = Some ckty ->
+        eqn_clock_type x st = OK (ckty, st).
+    Proof.
+      intros x ck ckty st Hck Hckty. unfold eqn_clock_type.
+      erewrite bind_OK by (rewrite Hck; apply res_to_sec_OK).
+      unfold option_to_sec. now rewrite Hckty.
+    Qed.
+
+    Lemma find_env_OK : forall x b st,
+        Env.find x env = Some b -> find_env x env st = OK (b, st).
+    Proof. intros x b st H. unfold find_env. now rewrite H. Qed.
+
+    Lemma generate_ldef_constraint_eq : forall x e ck ckty sa b st,
+        find_clock cenv x = OK ck ->
+        assign_clk_type env base_ty ck = Some ckty ->
+        assign_lexp_type e st = OK ([(sa, [])], st) ->
+        Env.find x env = Some b ->
+        generate_ldef_constraint x e st
+        = OK ([(merge (merge [rst_ty] ckty) sa, [b])], st).
+    Proof.
+      intros x e ck ckty sa b st Hck Hckty He Hb.
+      unfold generate_ldef_constraint.
+      erewrite bind_OK by (eapply eqn_clock_type_OK; eassumption).
+      erewrite bind_OK by exact He.
+      erewrite bind_OK by (unfold single, ret; reflexivity).
+      erewrite bind_OK by (apply find_env_OK; exact Hb).
+      unfold ret, lconstrain, ljoin, ambient, lvar. cbn [fst snd].
+      now rewrite !cmerge_nil.
+    Qed.
+
     Fixpoint generate_lvars_constraints
       (xs : list ident) (bs : list ident) (ts : list LST) : Sec (list constraint) :=
       match xs, bs, ts with
@@ -499,46 +556,114 @@ Module Type SECLTYPING
           ret (cmerge cs (cmerge (carried argts) (snd rstty)))
       end.
 
-    Definition generate_leqn_constraint (eq : equation) : Sec (list constraint) :=
-      match eq with
-      (** a call defining nothing, as the NLustre generator has it *)
-      | ([], [Eapp _ _ _ _]) => ret []
+    (** The general rule (LTeq), for equations that are not yet normalized. *)
+    Definition generate_lgen_constraint (xs : list ident) (es : list exp)
+      : Sec (list constraint) :=
+      do ts <- assign_lexps es;
+      do bs <- option_to_sec (get_mappings xs env);
+      generate_lvars_constraints xs bs ts.
 
+    (** Nested the way [to_equation] nests -- on the expression list first,
+        then on the defined variables.  Written as one flat [match] instead,
+        the [[x]] patterns force Coq to split the tail of [xs], and the term
+        is then stuck on any equation whose variable list is not literal.
+        Nesting keeps reduction predictable, which is what the reduction
+        lemmas below rely on. *)
+    Definition generate_leqn_constraint (eq : equation) : Sec (list constraint) :=
+      let (xs, es) := eq in
+      match es with
       (** an ordinary call at the head of an equation *)
-      | (xs, [Eapp f es None _]) =>
-          generate_lcall_constraint xs f es (lvar rst_ty)
+      | [Eapp f args None _] =>
+          match xs with
+          | [] => ret []
+          | _  => generate_lcall_constraint xs f args (lvar rst_ty)
+          end
 
       (** a reset call; the reset variable's level and the level of the clock
           it is sampled on stack onto the ambient reset, exactly as (NTrc) *)
-      | (xs, [Eapp f es (Some (Evar r (_, (ckr, _)))) _]) =>
-          do rty   <- find_env r env;
-          do rstck <- option_to_sec (assign_clk_type env base_ty ckr);
-          generate_lcall_constraint xs f es
-            (ljoin (lvar rst_ty) (merge [rty] rstck, []))
+      | [Eapp f args (Some (Evar r (_, (ckr, _)))) _] =>
+          match xs with
+          | [] => ret []
+          | _  =>
+              do rty   <- find_env r env;
+              do rstck <- option_to_sec (assign_clk_type env base_ty ckr);
+              generate_lcall_constraint xs f args
+                (ljoin (lvar rst_ty) (merge [rty] rstck, []))
+          end
 
       (** a delayed definition; the initial value is a constant, so it
           contributes nothing, as (NTfb) *)
-      | ([x], [Efby [_] [e] [_]]) =>
-          do ckty <- eqn_clock_type x;
-          do ts   <- assign_lexp_type e;
-          do t    <- single ts;
-          do b    <- find_env x env;
-          ret (lconstrain (ljoin (ambient ckty) t) b)
+      | [Efby [e0] [e] [an]] =>
+          match xs with
+          | [x] => generate_ldef_constraint x e
+          | _   => generate_lgen_constraint xs es
+          end
 
       (** an ordinary definition *)
-      | ([x], [e]) =>
-          do ckty <- eqn_clock_type x;
-          do ts   <- assign_lexp_type e;
-          do t    <- single ts;
-          do b    <- find_env x env;
-          ret (lconstrain (ljoin (ambient ckty) t) b)
+      | [e] =>
+          match xs with
+          | [x] => generate_ldef_constraint x e
+          | _   => generate_lgen_constraint xs es
+          end
 
-      (** the general rule, for equations not yet normalized *)
-      | (xs, es) =>
-          do ts <- assign_lexps es;
-          do bs <- option_to_sec (get_mappings xs env);
-          generate_lvars_constraints xs bs ts
+      | _ => generate_lgen_constraint xs es
       end.
+
+    (** Reduction lemmas for the equation generator, one per shape, each by
+        [reflexivity].  A proof uses these instead of reducing the [match]
+        itself. *)
+
+    Lemma gen_leqn_Econst : forall x c,
+        generate_leqn_constraint ([x], [Econst c]) = generate_ldef_constraint x (Econst c).
+    Proof. reflexivity. Qed.
+
+    Lemma gen_leqn_Evar : forall x i a,
+        generate_leqn_constraint ([x], [Evar i a]) = generate_ldef_constraint x (Evar i a).
+    Proof. reflexivity. Qed.
+
+    Lemma gen_leqn_Eunop : forall x op e a,
+        generate_leqn_constraint ([x], [Eunop op e a]) = generate_ldef_constraint x (Eunop op e a).
+    Proof. reflexivity. Qed.
+
+    Lemma gen_leqn_Ebinop : forall x op e1 e2 a,
+        generate_leqn_constraint ([x], [Ebinop op e1 e2 a])
+        = generate_ldef_constraint x (Ebinop op e1 e2 a).
+    Proof. reflexivity. Qed.
+
+    Lemma gen_leqn_Ewhen : forall x es i b a,
+        generate_leqn_constraint ([x], [Ewhen es i b a])
+        = generate_ldef_constraint x (Ewhen es i b a).
+    Proof. reflexivity. Qed.
+
+    Lemma gen_leqn_Emerge : forall x i ets efs a,
+        generate_leqn_constraint ([x], [Emerge i ets efs a])
+        = generate_ldef_constraint x (Emerge i ets efs a).
+    Proof. reflexivity. Qed.
+
+    Lemma gen_leqn_Eite : forall x e ets efs a,
+        generate_leqn_constraint ([x], [Eite e ets efs a])
+        = generate_ldef_constraint x (Eite e ets efs a).
+    Proof. reflexivity. Qed.
+
+    Lemma gen_leqn_Efby : forall x e0 e an,
+        generate_leqn_constraint ([x], [Efby [e0] [e] [an]]) = generate_ldef_constraint x e.
+    Proof. reflexivity. Qed.
+
+    Lemma gen_leqn_Eapp : forall x xs f args a,
+        generate_leqn_constraint (x :: xs, [Eapp f args None a])
+        = generate_lcall_constraint (x :: xs) f args (lvar rst_ty).
+    Proof. reflexivity. Qed.
+
+    Lemma gen_leqn_Eapp_reset : forall x xs f args r ty ckr nm a,
+        generate_leqn_constraint
+          (x :: xs, [Eapp f args (Some (Evar r (ty, (ckr, nm)))) a])
+        = (do rty   <- find_env r env;
+           do rstck <- option_to_sec (assign_clk_type env base_ty ckr);
+           generate_lcall_constraint (x :: xs) f args
+             (ljoin (lvar rst_ty) (merge [rty] rstck, []))).
+    Proof. reflexivity. Qed.
+
+
 
     Fixpoint generate_leqns_constraints (eqs : list equation) : Sec (list constraint) :=
       match eqs with

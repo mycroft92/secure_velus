@@ -81,6 +81,164 @@ Module Type SECLUSNLUSTRANSLATION
     destruct (m st) as [[a st']|e]; reflexivity.
   Qed.
 
+  (** * Inverting the NLustre side
+
+      What the NLustre generator computed, read back out of a successful run.
+      It is state-pure, so the state comes back unchanged. *)
+
+  Lemma nl_EqDef_inv : forall G env base_ty rst_ty x ck ce cs st st',
+      generate_eqn_constraint G env base_ty rst_ty (NLSyn.EqDef x ck ce) st
+        = OK (cs, st') ->
+      exists ckty sa b,
+        assign_clk_type env base_ty ck = Some ckty
+        /\ assign_cexp_type env ce = Some sa
+        /\ Env.find x env = Some b
+        /\ cs = [(merge (merge [rst_ty] ckty) sa, [b])]
+        /\ st' = st.
+  Proof.
+    intros G env base_ty rst_ty x ck ce cs st st' H.
+    unfold generate_eqn_constraint in H.
+    eapply sec_bind_inv in H as (ckty & st1 & Hck & H).
+    eapply sec_bind_inv in H as (sa & st2 & Hsa & H).
+    eapply sec_bind_inv in H as (b & st3 & Hb & Hret).
+    unfold ret in Hret. inv Hret.
+    unfold option_to_sec in Hck.
+    destruct (assign_clk_type env base_ty ck) eqn:E1; try discriminate.
+    unfold ret in Hck. inv Hck.
+    unfold option_to_sec in Hsa.
+    destruct (assign_cexp_type env ce) eqn:E2; try discriminate.
+    unfold ret in Hsa. inv Hsa.
+    unfold find_env in Hb.
+    destruct (Env.find x env) eqn:E3; try discriminate.
+    unfold ret in Hb. inv Hb.
+    exists ckty, sa, b. repeat split; auto.
+  Qed.
+
+  Lemma nl_EqFby_inv : forall G env base_ty rst_ty x ck c0 le cs st st',
+      generate_eqn_constraint G env base_ty rst_ty (NLSyn.EqFby x ck c0 le) st
+        = OK (cs, st') ->
+      exists ckty sa b,
+        assign_clk_type env base_ty ck = Some ckty
+        /\ assign_exp_type env le = Some sa
+        /\ Env.find x env = Some b
+        /\ cs = [(merge (merge [rst_ty] ckty) sa, [b])]
+        /\ st' = st.
+  Proof.
+    intros G env base_ty rst_ty x ck c0 le cs st st' H.
+    unfold generate_eqn_constraint in H.
+    eapply sec_bind_inv in H as (ckty & st1 & Hck & H).
+    eapply sec_bind_inv in H as (sa & st2 & Hsa & H).
+    eapply sec_bind_inv in H as (b & st3 & Hb & Hret).
+    unfold ret in Hret. inv Hret.
+    unfold option_to_sec in Hck.
+    destruct (assign_clk_type env base_ty ck) eqn:E1; try discriminate.
+    unfold ret in Hck. inv Hck.
+    unfold option_to_sec in Hsa.
+    destruct (assign_exp_type env le) eqn:E2; try discriminate.
+    unfold ret in Hsa. inv Hsa.
+    unfold find_env in Hb.
+    destruct (Env.find x env) eqn:E3; try discriminate.
+    unfold ret in Hb. inv Hb.
+    exists ckty, sa, b. repeat split; auto.
+  Qed.
+
+  (** * Inverting the Lustre side
+
+      What [to_equation] produced from a single-variable equation whose
+      expression is neither a call nor a delay.  Isolating this is what keeps
+      the theorem below uniform in the expression: [simpl] computes [to_cexp]
+      away on the leaves, so the hypothesis a proof wants to use is not always
+      there to be used, and each case has to rebuild it. *)
+
+  Lemma to_equation_def_inv : forall cenv envo x e eq',
+      (forall f args ro a, e <> Eapp f args ro a) ->
+      (forall e0s es an, e <> Efby e0s es an) ->
+      to_equation cenv envo ([x], [e]) = OK eq' ->
+      exists ck ce,
+        find_clock cenv x = OK ck
+        /\ to_cexp e = OK ce
+        /\ eq' = NLSyn.EqDef x ck ce.
+  Proof.
+    intros cenv envo x e eq' Hnapp Hnfby H.
+    destruct e;
+      try (exfalso; eapply Hnapp; reflexivity);
+      try (exfalso; eapply Hnfby; reflexivity);
+      (simpl in H; monadInv H; do 2 eexists;
+       repeat split; try eassumption;
+       first [ eassumption
+             | simpl;
+               repeat match goal with
+                      | Hl : to_lexp _ = OK _ |- _ => rewrite Hl
+                      end;
+               reflexivity
+             | reflexivity ]).
+  Qed.
+
+  Lemma to_equation_fby_inv : forall cenv envo x e0 e an eq',
+      to_equation cenv envo ([x], [Efby [e0] [e] [an]]) = OK eq' ->
+      exists ck c0 le,
+        find_clock cenv x = OK ck
+        /\ to_constant e0 = OK c0
+        /\ to_lexp e = OK le
+        /\ eq' = NLSyn.EqFby x ck c0 le.
+  Proof.
+    intros cenv envo x e0 e an eq' H.
+    simpl in H. monadInv H.
+    do 3 eexists. repeat split; eassumption.
+  Qed.
+
+  (** * One equation, the definition shapes
+
+      Stated NLustre-to-Lustre, not as an equality of the two [Sec]
+      computations: equality is false where generation fails, since the two
+      generators report different messages.  This is also the direction the
+      expression lemmas give, and it is sufficient, because
+      [SecNLusTypingTotality.source_signature_generation_total] says the
+      NLustre generator succeeds on any ordered, well-clocked program and
+      transcription supplies both.  So on a program that transcribes the
+      NLustre side always succeeds, this hands the Lustre side the same
+      constraints, and the two sets are then equal. *)
+
+  Theorem to_equation_constraint_eq_def :
+    forall G env base_ty rst_ty cenv envo x e eq' cs st st',
+      to_equation cenv envo ([x], [e]) = OK eq' ->
+      (forall f args ro a, e <> Eapp f args ro a) ->
+      (forall e0s es an, e <> Efby e0s es an) ->
+      generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st') ->
+      generate_leqn_constraint G env base_ty rst_ty cenv ([x], [e]) st
+        = OK (cs, st').
+  Proof.
+    intros G env base_ty rst_ty cenv envo x e eq' cs st st' Htr Hnapp Hnfby Hnl.
+    edestruct to_equation_def_inv as (ck & ce & Hck & Hce & Heq); eauto.
+    subst eq'.
+    eapply nl_EqDef_inv in Hnl
+      as (cky & sy & by0 & Hcky & Hsy & Hby & Hcs & Hst).
+    subst cs st'.
+    destruct e;
+      try (exfalso; eapply Hnapp; reflexivity);
+      try (exfalso; eapply Hnfby; reflexivity);
+      (eapply generate_ldef_constraint_eq; try eassumption;
+       eapply to_cexp_assign_eq; eassumption).
+  Qed.
+
+  Theorem to_equation_constraint_eq_fby :
+    forall G env base_ty rst_ty cenv envo x e0 e an eq' cs st st',
+      to_equation cenv envo ([x], [Efby [e0] [e] [an]]) = OK eq' ->
+      generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st') ->
+      generate_leqn_constraint G env base_ty rst_ty cenv ([x], [Efby [e0] [e] [an]]) st
+        = OK (cs, st').
+  Proof.
+    intros G env base_ty rst_ty cenv envo x e0 e an eq' cs st st' Htr Hnl.
+    edestruct to_equation_fby_inv as (ck & c0 & le & Hck & Hc0 & Hle & Heq); eauto.
+    subst eq'.
+    eapply nl_EqFby_inv in Hnl
+      as (cky & sy & by0 & Hcky & Hsy & Hby & Hcs & Hst).
+    subst cs st'.
+    rewrite gen_leqn_Efby.
+    eapply generate_ldef_constraint_eq; try eassumption.
+    eapply to_lexp_assign_eq; eassumption.
+  Qed.
+
   (** * What remains: the equation level and above
 
       The expression-level halves of this leg are proved, in [SecLTyping.v]:
