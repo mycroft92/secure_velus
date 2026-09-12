@@ -215,23 +215,42 @@ Module Type SECLUSNLUSTRANSLATION
        eapply to_cexp_assign_eq; eassumption).
   Qed.
 
-  Theorem to_equation_constraint_eq_fby :
-    forall G env base_ty rst_ty cenv envo x e0 e ans eq' cs st st',
-      to_equation cenv envo ([x], [Efby [e0] [e] ans]) = OK eq' ->
-      generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st') ->
-      generate_leqn_constraint G env base_ty rst_ty cenv ([x], [Efby [e0] [e] ans]) st
-        = OK (cs, st').
-  Proof.
-    intros G env base_ty rst_ty cenv envo x e0 e ans eq' cs st st' Htr Hnl.
-    edestruct to_equation_fby_inv as (ck & c0 & le & Hck & Hc0 & Hle & Heq); eauto.
-    subst eq'.
-    eapply nl_EqFby_inv in Hnl
-      as (cky & sy & by0 & Hcky & Hsy & Hby & Hcs & Hst).
-    subst cs st'.
-    rewrite gen_leqn_Efby.
-    eapply generate_ldef_constraint_eq; try eassumption.
-    eapply to_lexp_assign_eq; eassumption.
-  Qed.
+  (** The delayed definition is where the equality stops, now that the
+      generator types *both* operands of an [Efby].
+
+      [to_constant] strips the [when]s off a normalized initial value and the
+      NLustre rule types a literal constant, so the target constraint mentions
+      only the second operand while the source mentions both.  The source is
+      strictly stronger, which is the right way round for preservation, but
+      the two constraint lists are no longer equal and neither is the
+      signature global.
+
+      Reaching preservation needs two things this file does not yet have.
+
+      First, the leg has to run *Lustre to NLustre*.  The theorems below run
+      the other way -- NLustre success hands the Lustre side the same result
+      -- which was sound while the two agreed, and was justified by the
+      NLustre generator being total on ordered well-clocked programs.  It no
+      longer suffices: the Lustre fby rule looks up the [when] variables of
+      the initial value, which the NLustre rule never mentions, so NLustre
+      success does not imply Lustre success.  What the noninterference
+      pull-back actually needs is the other direction anyway -- a secure
+      Lustre node is one whose generated constraints are satisfied, and the
+      NLustre node's must follow.  So [to_lexp_assign_eq] and
+      [to_cexp_assign_eq] need their converses, which is the same induction.
+
+      Second, [simplify] has to be crossed.  Both halves exist:
+      [SecTypes.simplify_complete] recovers a valuation of the raw
+      constraints from one of the simplified ones, and [simplify_is_correct]
+      pushes a raw valuation forward.  Their side conditions --
+      [wf_constraints] of the Lustre raw list, and the locals being disjoint
+      from the signature scope -- are the Lustre analogues of what
+      [SecNLusTypingCorrectness.v] proves for NLustre, and are not yet
+      available.
+
+      Kept below: the three shapes where the generators still agree exactly,
+      and the inversion lemmas for both sides, which the preservation proof
+      will reuse unchanged. *)
 
   (** * The call shapes
 
@@ -375,73 +394,6 @@ Module Type SECLUSNLUSTRANSLATION
       unfold ljoin, lvar. cbn [snd]. now rewrite !cmerge_nil.
   Qed.
 
-  (** * One equation, all shapes
-
-      The dispatcher.  Every equation that transcribes is one of the four
-      shapes above; the rest is case analysis. *)
-
-  Ltac def_shape Htr Hnl :=
-    eapply to_equation_constraint_eq_def;
-    [ exact Htr | intros; discriminate | intros; discriminate | exact Hnl ].
-
-  Theorem to_equation_constraint_eq :
-    forall G env base_ty rst_ty cenv envo eq eq' cs st st',
-      to_equation cenv envo eq = OK eq' ->
-      generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st') ->
-      generate_leqn_constraint G env base_ty rst_ty cenv eq st = OK (cs, st').
-  Proof.
-    intros G env base_ty rst_ty cenv envo [xs es] eq' cs st st' Htr Hnl.
-    destruct es as [|e [|e' es']];
-      [simpl in Htr; discriminate | | simpl in Htr; discriminate].
-    destruct e.
-    (* the seven shapes that transcribe to EqDef *)
-    1-4,6-9: (destruct xs as [|x [|]];
-              [simpl in Htr; discriminate | | simpl in Htr; discriminate];
-              def_shape Htr Hnl).
-    - (* Efby: only the singleton form is a delay; the rest reach EqDef and
-         are rejected there by to_cexp *)
-      destruct l as [|e0 [|e0' l']]; destruct l0 as [|e1 [|e1' l0']];
-        try (destruct xs as [|x [|]];
-             [simpl in Htr; discriminate | | simpl in Htr; discriminate];
-             solve [ def_shape Htr Hnl
-                   | (simpl in Htr; monadInv Htr)
-                   | (simpl in Htr; discriminate) ]).
-      destruct xs as [|x [|]];
-        [simpl in Htr; discriminate | | simpl in Htr; discriminate].
-      eapply to_equation_constraint_eq_fby; eassumption.
-    - (* Eapp, with and without a reset *)
-      destruct o as [er|].
-        destruct er;
-          try solve [ (simpl in Htr; monadInv Htr)
-                    | (simpl in Htr; discriminate) ].
-        match goal with an : ann |- _ => destruct an as [ty [ckr nm]] end.
-        eapply to_equation_constraint_eq_app_reset; eassumption.
-      + eapply to_equation_constraint_eq_app; eassumption.
-  Qed.
-
-  (** * Equation lists
-
-      Both generators fold over the list with [++] in the same order, so the
-      lift is a plain induction. *)
-
-  Theorem to_equations_constraints_eq :
-    forall G env base_ty rst_ty cenv envo eqs neqs cs st st',
-      Errors.mmap (to_equation cenv envo) eqs = OK neqs ->
-      generate_eqns_constraints G env base_ty rst_ty neqs st = OK (cs, st') ->
-      generate_leqns_constraints G env base_ty rst_ty cenv eqs st = OK (cs, st').
-  Proof.
-    induction eqs as [|eq eqs IH]; intros neqs cs st st' Htr Hnl; simpl in Htr.
-    - inv Htr. simpl in Hnl. unfold ret in Hnl. inv Hnl. reflexivity.
-    - monadInv Htr. simpl in Hnl.
-      eapply sec_bind_inv in Hnl as (c & st1 & Hc & Hnl).
-      eapply sec_bind_inv in Hnl as (cr & st2 & Hcr & Hret).
-      unfold ret in Hret. inv Hret.
-      simpl.
-      erewrite bind_OK by (eapply to_equation_constraint_eq; eassumption).
-      erewrite bind_OK by (eapply IH; eassumption).
-      reflexivity.
-  Qed.
-
   (** * The NLustre generator is state-pure
 
       It only ever looks names up, so its result does not depend on the
@@ -557,109 +509,5 @@ Module Type SECLUSNLUSTRANSLATION
     destruct (state_pure_generate_eqns_constraints G env clk_type rst_type
                 (NLSyn.n_eqs n) _ st _ _ Hcns) as [_ Hst]. exact Hst.
   Qed.
-
-  Theorem to_node_sig_eq :
-    forall G n n' Hp env aux_names nsig st,
-      to_node n Hp = OK n' ->
-      generate_node_sig G n' env aux_names = OK nsig ->
-      generate_lnode_sig G n env aux_names st = OK (nsig, st).
-  Proof.
-    intros G n n' Hp env aux_names nsig st Htr Hnl.
-    (* invert the translation first: the NLustre node then *is* the record
-       built from n's own name and variable lists, so the interface fields of
-       the two generated signatures are literally the same computations *)
-    pose proof Htr as Htr'. tonodeInv Htr'.
-    eapply nl_node_sig_inv in Hnl
-      as (ci & ri & ckt & rstt & inp & out & locals & cns
-          & Haux & Hclk & Hrst & Hinp & Hout & Hloc & Hcns & Hsig).
-    simpl in Haux, Hinp, Hout, Hloc, Hcns, Hsig.
-    unfold generate_lnode_sig.
-    erewrite bind2_OK by (unfold option_to_sec; rewrite Haux; reflexivity).
-    erewrite bind_OK by (unfold option_to_sec; rewrite Hclk; reflexivity).
-    erewrite bind_OK by (unfold option_to_sec; rewrite Hrst; reflexivity).
-    erewrite bind_OK by (unfold option_to_sec; rewrite Hinp; reflexivity).
-    erewrite bind_OK by (unfold option_to_sec; rewrite Hout; reflexivity).
-    erewrite bind_OK by (unfold option_to_sec; rewrite Hloc; reflexivity).
-    erewrite bind_OK by (eapply to_equations_constraints_eq;
-                         [ exact Hmmap | apply Hcns ]).
-    unfold ret. rewrite minted_refl, app_nil_r.
-    now rewrite Hsig.
-  Qed.
-
-  Theorem to_node_sig_scoped_env_eq :
-    forall G n n' Hp envs aux_names nsig st,
-      to_node n Hp = OK n' ->
-      generate_node_sig_scoped_env G n' envs aux_names = OK nsig ->
-      generate_lnode_sig_scoped_env G n envs aux_names st = OK (nsig, st).
-  Proof.
-    intros G n n' Hp envs aux_names nsig st Htr Hnl.
-    assert (Hname := to_node_name _ _ _ Htr).
-    unfold generate_node_sig_scoped_env in Hnl.
-    unfold generate_lnode_sig_scoped_env.
-    rewrite Hname.
-    destruct (find_node_env (NLSyn.n_name n') envs) as [envn|]; [|discriminate].
-    eapply to_node_sig_eq; eassumption.
-  Qed.
-
-  (** * Programs
-
-      One induction.  Both drivers thread the same accumulator, which is also
-      the signature global the node generator reads its callees from, so the
-      two stay in step at every prefix. *)
-
-  Theorem to_global_signatures_eq :
-    forall LG P Hp acc envs aux_names sigs st,
-      to_global LG Hp = OK P ->
-      generate_all_signatures_scoped_env' acc P envs aux_names = OK sigs ->
-      generate_all_lsignatures' acc LG envs aux_names st = OK (sigs, st).
-  Proof.
-    induction LG as [|n LG IH]; intros P Hp acc envs aux_names sigs st Htr Hnl.
-    - simpl in Htr. inv Htr. simpl in Hnl. inv Hnl. reflexivity.
-    - simpl in Htr. monadInv Htr. simpl in Hnl. monadInv Hnl.
-      simpl.
-      erewrite to_node_sig_scoped_env_eq by eassumption.
-      eapply IH; eassumption.
-  Qed.
-
-  Corollary to_global_all_signatures_eq :
-    forall LG P Hp envs aux_names sigs st,
-      to_global LG Hp = OK P ->
-      generate_all_signatures_scoped_env P envs aux_names = OK sigs ->
-      generate_all_lsignatures_scoped_env LG envs aux_names st = OK sigs.
-  Proof.
-    intros LG P Hp envs aux_names sigs st Htr Hnl.
-    unfold generate_all_signatures_scoped_env in Hnl.
-    unfold generate_all_lsignatures_scoped_env.
-    erewrite to_global_signatures_eq by eassumption.
-    reflexivity.
-  Qed.
-
-  (** * Summary
-
-      [to_global_all_signatures_eq] is what this leg exists to prove: on a
-      program that transcribes, the Lustre generator produces *the same*
-      signature global as the NLustre generator, not merely one whose
-      constraints preserve satisfiability.
-
-      Three things make the equality available rather than the [preserves_on]
-      the NLustre-to-Stc leg has to settle for.  Transcription introduces no
-      variables and keeps a node's name and its input, variable and output
-      lists definitionally.  The naming pass runs once, so both sides read the
-      same environment ([SecLNameInterface.to_global_lscoped_env] shows a
-      Lustre-side allocator would agree with it).  And a normalized expression
-      holds no nested call, so the Lustre generator mints nothing here -- which
-      is why [minted] contributes nothing to [simplify] and the two signatures
-      have identical constraint lists, not merely equivalent ones.
-
-      The statements run NLustre-to-Lustre.  Equality of the two [Sec]
-      computations is false where generation fails, since the generators
-      report different messages, and this direction is what the expression
-      lemmas give.  It loses nothing:
-      [SecNLusTypingTotality.source_signature_generation_total] says the
-      NLustre generator succeeds on any ordered, well-clocked program, and
-      transcription supplies both ([TrOrdered.ord_l_nl],
-      [TrClocking.wc_transcription]).  So the NLustre side always succeeds,
-      these theorems hand the Lustre side the same result, and the two are
-      then equal -- usable in either direction. *)
 
 End SECLUSNLUSTRANSLATION.

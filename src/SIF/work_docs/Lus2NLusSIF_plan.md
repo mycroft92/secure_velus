@@ -84,6 +84,47 @@ NI stack through exactly one door: it builds a `node_security` witness for the
 transcribed NLustre node and hands it to the existing theorem. Nothing
 downstream has to learn that Lustre exists.
 
+### Correction: the fby rule must type both operands, 2026-09-12
+
+§3 chose option (A) -- type the initial value of an `fby` as `⊥`, matching the
+NLustre rule (NTfb) and keeping Leg A an equality. **That was unsound and has
+been reverted.** In NLustre `EqFby x ck c e` carries a literal constant, so
+typing only `e` is right. In Lustre `Efby` takes an arbitrary expression, and
+`x = h fby 0` was given the constraint `κ ⊔ γ ⊑ β` -- no mention of `h`, though
+`x`'s first value *is* `h`. The paper's (LTfby) joins both operands and was
+right; the deviation was mine.
+
+The equation generator no longer special-cases `fby`: it falls through to the
+ordinary definition rule, whose expression case already joins both operands.
+
+What it costs. The source constraint now mentions the initial value and the
+target does not, because `to_constant` strips the `when`s and NLustre types a
+constant. The source is strictly stronger -- the right way round -- but the two
+constraint lists are no longer equal, so **Leg A is preservation, not
+equality**, which is what [ICTAC] Theorem 1 claims anyway and what the
+NLustre-to-Stc leg already lives with. Three of the four shapes stay exact.
+
+Two things preservation needs that are not yet in place.
+
+1. **The leg must run Lustre-to-NLustre.** The committed theorems run the other
+   way, which was sound while the generators agreed and was justified by
+   NLustre totality. It no longer suffices: the Lustre fby rule looks up the
+   `when` variables of the initial value, which the NLustre rule never
+   mentions, so NLustre success does not imply Lustre success. The
+   noninterference pull-back wants the other direction anyway -- a secure
+   Lustre node is one whose constraints are satisfied, and the NLustre node's
+   must follow. So `to_lexp_assign_eq` and `to_cexp_assign_eq` need their
+   converses; same induction.
+2. **The `simplify` bridge.** Both halves exist -- `simplify_complete` pulls a
+   raw valuation back, `simplify_is_correct` pushes one forward. Their side
+   conditions (`wf_constraints` of the Lustre raw list, locals disjoint from
+   the signature scope) are the Lustre analogues of what
+   `SecNLusTypingCorrectness.v` proves for NLustre, and are the next thing to
+   build.
+
+Kept in `SecLusNLusTranslation.v`: the three exact shapes, and the inversion
+lemmas for both sides, which the preservation proof reuses unchanged.
+
 ### Decision: one naming pass (option A), 2026-09-12
 
 Signature preservation needs the Lustre and NLustre signatures to have the

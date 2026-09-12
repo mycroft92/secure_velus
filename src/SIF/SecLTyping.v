@@ -591,15 +591,14 @@ Module Type SECLTYPING
                 (ljoin (lvar rst_ty) (merge [rty] rstck, []))
           end
 
-      (** a delayed definition; the initial value is a constant, so it
-          contributes nothing, as (NTfb) *)
-      (* the annotation list is a wildcard in [to_equation] too: it does not
-         constrain it, so neither may this *)
-      | [Efby [e0] [e] _] =>
-          match xs with
-          | [x] => generate_ldef_constraint x e
-          | _   => generate_lgen_constraint xs es
-          end
+      (** A delayed definition gets no case of its own.  It falls through to
+          the ordinary definition below, whose expression rule joins *both*
+          operands of an [Efby].  Typing only the second - which is what the
+          NLustre rule (NTfb) does, legitimately, since there the initial
+          value is a literal constant - would drop a real dependency here: in
+          Lustre the initial value is an arbitrary expression, so [x = h fby 0]
+          would be given a constraint that never mentions [h] even though
+          [x]'s first value is [h]. *)
 
       (** an ordinary definition *)
       | [e] =>
@@ -647,8 +646,9 @@ Module Type SECLTYPING
         = generate_ldef_constraint x (Eite e ets efs a).
     Proof. reflexivity. Qed.
 
-    Lemma gen_leqn_Efby : forall x e0 e ans,
-        generate_leqn_constraint ([x], [Efby [e0] [e] ans]) = generate_ldef_constraint x e.
+    Lemma gen_leqn_Efby : forall x e0s es ans,
+        generate_leqn_constraint ([x], [Efby e0s es ans])
+        = generate_ldef_constraint x (Efby e0s es ans).
     Proof. reflexivity. Qed.
 
     Lemma gen_leqn_Eapp : forall x xs f args a,
