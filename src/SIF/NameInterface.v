@@ -431,7 +431,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     do rst_name <- fresh_ident_gen;
     do env' <- fresh_map_list
                  ([clk_name; rst_name]
-                    ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                    ++ map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))
                  (Env.empty _);
     do inst_env <- fresh_inst_map_list
                      (map fst (gather_insts n.(n_eqs))) (Env.empty _);
@@ -539,7 +539,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
   Definition generate_new_names_for_node (n: node) (e: Env.t ident): Name (Env.t ident * node_aux_names):=
     do clk_name <- fresh_ident_gen;
     do rst_name <- fresh_ident_gen;
-    do env' <- fresh_map_list ([clk_name; rst_name]  ++ (map fst  (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))) e;
+    do env' <- fresh_map_list ([clk_name; rst_name]  ++ (map fst  (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))) e;
     do inst_env <- fresh_inst_map_list
                      (map fst (gather_insts n.(n_eqs))) (Env.empty _);
     NMret (env', {| nname:= n.(n_name) ; nclk := clk_name ; nrst := rst_name;
@@ -870,6 +870,34 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
         eapply fresh_insert_preserves_find; eauto.
   Qed.
 
+  (** The allocation list is interface-first -- clock, reset, inputs, outputs,
+      and only then locals -- so that the security name given to an interface
+      variable does not depend on how many locals the node happens to have.
+      That is what lets two nodes with the same interface receive the same
+      interface names even when one has extra locals, which is exactly the
+      situation normalisation creates.
+
+      Statements elsewhere quote a node's variables in the
+      [n_in ++ n_vars ++ n_out] order, because that is the order [n_nodup] and
+      [wc_node] use.  Membership, freshness and duplicate-freedom are all
+      permutation-invariant, so the two spellings are interchangeable and this
+      lemma is the bridge. *)
+
+  Lemma node_keys_perm : forall (n : node),
+      Permutation (map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                  (map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars))).
+  Proof.
+    intro n. rewrite !map_app.
+    apply Permutation_app_head, Permutation_app_comm.
+  Qed.
+
+  Lemma in_node_keys_perm : forall (n : node) k,
+      In k (map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+      In k (map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars))).
+  Proof.
+    intros n k. apply Permutation_in, node_keys_perm.
+  Qed.
+
   Lemma generate_new_names_for_node_keys_fresh_from_initial:
     forall n env st env' aux st' k,
       generate_new_names_for_node n env st = OK ((env', aux), st') ->
@@ -886,6 +914,9 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env' aux st'.
     eapply fresh_map_list_keys_fresh_from_initial; eauto.
+    simpl in Hin |- *.
+    destruct Hin as [Hk|[Hk|Hk]]; auto.
+    right; right. now apply in_node_keys_perm.
   Qed.
 
   Definition generate_node_env (ns: list node) : res (Env.t ident * list node_aux_names) :=
@@ -1307,7 +1338,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     unfold NMret in Hret. inversion Hret; subst env aux st'.
     destruct (fresh_map_list_env_props
                 ([gensym Ids.sec st; gensym Ids.sec (Pos.succ st)]
-                   ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                   ++ map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))
                 (Env.empty _) (Pos.succ (Pos.succ st)) env0 st3)
       as [_ Hnodup].
     - intros x ty Hfind. rewrite Env.gempty in Hfind. discriminate.
@@ -1388,7 +1419,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     pose proof
       (fresh_map_list_find_ge_start_from_empty
          ([gensym Ids.sec st; gensym Ids.sec (Pos.succ st)]
-            ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+            ++ map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))
          (Pos.succ (Pos.succ st)) env0 st3 x ty Hmap Hfind)
       as (nsec & Hsec & _).
     now exists nsec.
@@ -1412,7 +1443,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     pose proof
       (fresh_map_list_find_ge_start_from_empty
          ([gensym Ids.sec st; gensym Ids.sec (Pos.succ st)]
-            ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+            ++ map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))
          (Pos.succ (Pos.succ st)) env0 st3 x ty Hmap Hfind)
       as (nsec & Hsec & [Hlo _]).
     exists nsec. split; auto.
@@ -1435,7 +1466,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     pose proof
       (fresh_map_list_find_ge_start_from_empty
          ([gensym Ids.sec st; gensym Ids.sec (Pos.succ st)]
-            ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+            ++ map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))
          (Pos.succ (Pos.succ st)) env0 st3 x ty Hmap Hfind)
       as (nsec & Hsec & [_ Hhi]).
     exists nsec. split; [exact Hsec|].
@@ -1462,7 +1493,7 @@ Module Type  NAMEGEN  (Import Ids   : IDS)
     pose proof
       (fresh_map_list_find_ge_start_from_empty
          ([gensym Ids.sec st; gensym Ids.sec (Pos.succ st)]
-            ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+            ++ map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))
          (Pos.succ (Pos.succ st)) env0 st3 x ty Hmap Hfind)
       as (nsec & Hsec & [Hlo _]).
     rewrite Heq in Hsec.

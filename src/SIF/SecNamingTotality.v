@@ -278,20 +278,35 @@ Module Type SECNAMINGTOTALITY
       by the previous lemma; and the declared variables are distinct by
       [n_nodup]. *)
 
+  (** The allocation list is interface-first, while [n_nodup] and the
+      statements below quote a node's variables in the [n_in ++ n_vars ++
+      n_out] order.  These two bridge the spellings; both facts are
+      permutation-invariant. *)
+
+  Lemma node_var_not_sec':
+    forall n x i,
+      In x (map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars))) ->
+      x <> Ids.gensym Ids.sec i.
+  Proof.
+    intros n x i Hin. eapply node_var_not_sec; eauto.
+    eapply Permutation_in; [apply Permutation_sym, node_keys_perm|exact Hin].
+  Qed.
+
   Lemma node_local_keys_NoDup:
     forall n st,
       NoDup ([Ids.gensym Ids.sec st; Ids.gensym Ids.sec (Pos.succ st)]
-               ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out))).
+               ++ map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars))).
   Proof.
     intros n st. simpl.
-    assert (Hvars : NoDup (map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out))))
-      by (apply fst_NoDupMembers, n.(n_nodup)).
+    assert (Hvars : NoDup (map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))).
+    { eapply Permutation_NoDup; [apply node_keys_perm|].
+      apply fst_NoDupMembers, n.(n_nodup). }
     constructor; [|constructor].
     - intros [Heq|Hin].
       + apply gensym_injective in Heq as [_ Hcnt].
         exact (Pos.succ_discr st (eq_sym Hcnt)).
-      + eapply node_var_not_sec; [exact Hin|reflexivity].
-    - intro Hin. eapply node_var_not_sec; [exact Hin|reflexivity].
+      + eapply node_var_not_sec'; [exact Hin|reflexivity].
+    - intro Hin. eapply node_var_not_sec'; [exact Hin|reflexivity].
     - exact Hvars.
   Qed.
 
@@ -352,7 +367,7 @@ Module Type SECNAMINGTOTALITY
     intros n st.
     destruct (fresh_map_list_ok
                 ([Ids.gensym Ids.sec st; Ids.gensym Ids.sec (Pos.succ st)]
-                   ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                   ++ map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))
                 (Env.empty ident) (Pos.succ (Pos.succ st)))
       as (env' & st1 & Henv).
     { apply node_local_keys_NoDup. }
@@ -508,7 +523,9 @@ Module Type SECNAMINGTOTALITY
     unfold NMret in Hret. inversion Hret; subst env rec st'.
     simpl in Hin.
     eapply fresh_map_list_binds; [exact Henv|].
-    exact Hin.
+    simpl. destruct Hin as [Hk|[Hk|Hk]]; auto.
+    right; right.
+    eapply Permutation_in; [apply node_keys_perm|exact Hk].
   Qed.
 
   Lemma generate_local_env_for_node_inst_binds:

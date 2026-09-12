@@ -28,6 +28,24 @@ edited**, and **no existing `src/SIF` file is edited** except `vfiles`,
 Two constraints govern this leg. They are checked against every design
 decision below.
 
+**(H1 amended, 2026-09-12.)** The user lifted H1 for one specific change: the
+naming pass now allocates **interface-first** -- clock, reset, inputs, outputs,
+and only then locals -- so that an interface variable's security name does not
+depend on how many locals its node has. `NameInterface.v` and
+`SecNamingTotality.v` were edited and the whole NLustre-to-Obc chain rebuilt
+green. H1 otherwise stands: any further edit to those files needs the same
+explicit authorisation.
+
+**What the reorder does and does not buy.** Within a node it works: an output
+now keeps its name however many locals normalisation adds. Across nodes it does
+not, because `generate_node_scoped_env'` threads one counter through the whole
+program, so a node that gains a local shifts every name after it. Measured: a
+two-node program whose *first* node gains one local moves the second node's
+clock from `sec$9` to `sec$10` and its output from `sec$12` to `sec$13`, with
+that node's own interface untouched. So independent allocation on the source
+and on the normalized program still disagrees from the first such node onward;
+see the options recorded with the milestones.
+
 **(H1) Nothing from `SymTypes.v` downstream is changed. Additions only.**
 No existing definition, notation, lemma statement or proof script in
 `SymTypes.v`, `SecTypes.v`, `SIFSignature.v`, `SecContext.v`, `NameInterface.v`,

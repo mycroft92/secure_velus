@@ -77,7 +77,7 @@ Module Type SECLNAMEGEN
     do rst_name <- fresh_ident_gen;
     do env' <- fresh_map_list
                  ([clk_name; rst_name]
-                    ++ map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                    ++ map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))
                  (Env.empty _);
     do inst_env <- fresh_inst_map_list
                      (map fst (gather_linsts n.(n_eqs))) (Env.empty _);
