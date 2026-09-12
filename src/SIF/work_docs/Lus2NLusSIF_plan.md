@@ -713,9 +713,24 @@ Docs, one per Coq file (house rule), plus:
 
 0. **Done.** `SymLusTypes.v` (algebra + confluence, no axioms), `SecLusTypes.v`
    (semantics, `lconstrain_sound`), `LusTypes.v`, `SecLNameInterface.v`
-   (`to_global_lscoped_env`), interface-first allocation, and `SecLTyping.v`
-   through expression, equation, node and global level.
-   Next: the equation lemmas `simpl` will not give (see `norm_cs_cons`), then Leg A.
+   (`to_global_lscoped_env`), interface-first allocation, `SecLTyping.v`
+   through expression, equation, node and global level, and **Leg A complete**
+   in `SecLusNLusTranslation.v`, ending at `to_global_all_signatures_eq`:
+   on a program that transcribes, the Lustre generator produces the *same*
+   signature global as the NLustre one.
+
+   Three notes for the legs still to come.  Reduce by stepping binds
+   (`bind_OK`, `bind2_OK`) and the per-shape reduction lemmas, never by a
+   blanket `simpl` -- that unfolds `SymTypes.merge` into its inner `fix` on
+   one side of a goal only.  Write generators with nested matches, on the
+   expression list before the defined variables, or the `[x]` patterns leave
+   the term stuck on any equation whose variable list is not literal.  And
+   state these theorems NLustre-to-Lustre: equality of the two `Sec`
+   computations is false where generation fails, since the generators report
+   different messages, and the NLustre totality theorem makes the one
+   direction sufficient.
+
+   Next: Leg B (`normfby_global`), then Leg C (`unnest_global`).
 
 1. `SymLusTypes.v` compiles; Fig-5 rewriting confluent, `lty_eq a b <-> norm a = norm b`.
 1b. `SecLusTypes.v` compiles; Lemma 1 (soundness) proved; degeneracy lemma proved.
