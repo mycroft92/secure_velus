@@ -795,3 +795,23 @@ Proof.
   - left. now apply lty_eq_iff_norm.
   - right. intros H. apply Hneq. now apply lty_eq_iff_norm.
 Defined.
+
+(** * Membership in a canonical union
+
+    The semantic layer reads a refinement component as a conjunction of
+    obligations, so it needs to know that [cmerge] is union on the nose: it
+    keeps everything from both sides and invents nothing. *)
+
+Lemma cmerge_In : forall r1 r2 c,
+    In c (cmerge r1 r2) <-> In c r1 \/ In c r2.
+Proof.
+  induction r1 as [|x xs IH1]; intros r2 c.
+  - rewrite cmerge_nil2. simpl. tauto.
+  - induction r2 as [|y ys IH2].
+    + rewrite cmerge_nil. simpl. tauto.
+    + destruct (ccmp x y) eqn:E.
+      * apply ccmp_eq in E; subst y.
+        rewrite cmerge3. simpl. rewrite IH1. tauto.
+      * rewrite (cmerge1 _ _ _ _ E). simpl. rewrite IH1. simpl. tauto.
+      * rewrite (cmerge2 _ _ _ _ E). simpl. rewrite IH2. simpl. tauto.
+Qed.
