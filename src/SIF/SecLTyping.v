@@ -323,6 +323,103 @@ Module Type SECLTYPING
         intros f es ro a IHr IH le sa st Htr Hnl. simpl in Htr. discriminate.
     Qed.
 
+    (** * Leg A, expression level, Lustre to NLustre
+
+        The converse of [to_lexp_assign_eq].  The preservation proof needs
+        this direction: a secure Lustre node is one whose generated
+        constraints are satisfied, and the NLustre node's must follow, so the
+        hypothesis available is that the *Lustre* generator succeeded.  The
+        forward direction no longer suffices on its own, because the Lustre
+        fby rule looks up the [when] variables of an initial value that the
+        NLustre rule never mentions. *)
+
+    Lemma to_lexp_assign_rev : forall e le ts st st',
+        to_lexp e = OK le ->
+        assign_lexp_type e st = OK (ts, st') ->
+        exists sa, ts = [(sa, [])]
+                   /\ assign_exp_type env le = Some sa
+                   /\ st' = st.
+    Proof.
+      apply (exp_ind2 (fun e => forall le ts st st',
+                 to_lexp e = OK le ->
+                 assign_lexp_type e st = OK (ts, st') ->
+                 exists sa, ts = [(sa, [])]
+                            /\ assign_exp_type env le = Some sa
+                            /\ st' = st)).
+      - (* Econst *)
+        intros c le ts st st' Htr Hl. simpl in Htr. monadInv Htr.
+        rewrite assign_lexp_Econst in Hl. unfold ret in Hl. inv Hl.
+        exists []. repeat split; reflexivity.
+      - (* Evar *)
+        intros x a le ts st st' Htr Hl.
+        destruct a as [ty ck]. simpl in Htr. monadInv Htr.
+        rewrite assign_lexp_Evar in Hl.
+        eapply sec_bind_inv in Hl as (t & st1 & Ht & Hret).
+        unfold ret in Hret. inv Hret.
+        unfold find_env in Ht.
+        destruct (Env.find x env) eqn:E; try discriminate.
+        unfold ret in Ht. inv Ht.
+        exists [t]. repeat split; simpl; try reflexivity. now rewrite E.
+      - (* Eunop *)
+        intros op e a IH le ts st st' Htr Hl.
+        destruct a as [ty ck]. simpl in Htr. monadInv Htr.
+        rewrite assign_lexp_Eunop in Hl.
+        destruct (IH _ _ _ _ EQ Hl) as (sa & Hts & Hnl & Hst).
+        exists sa. repeat split; auto.
+      - (* Ebinop *)
+        intros op e1 e2 a IH1 IH2 le ts st st' Htr Hl.
+        destruct a as [ty ck]. simpl in Htr. monadInv Htr.
+        rewrite assign_lexp_Ebinop in Hl.
+        eapply sec_bind_inv in Hl as (t1 & st1 & H1 & Hl).
+        eapply sec_bind_inv in Hl as (t2 & st2 & H2 & Hl).
+        eapply sec_bind_inv in Hl as (a1 & st3 & Ha1 & Hl).
+        eapply sec_bind_inv in Hl as (a2 & st4 & Ha2 & Hret).
+        unfold ret in Hret. inv Hret.
+        destruct (IH1 _ _ _ _ EQ H1) as (s1 & Ht1 & Hnl1 & Hst1). subst t1 st1.
+        destruct (IH2 _ _ _ _ EQ1 H2) as (s2 & Ht2 & Hnl2 & Hst2). subst t2 st2.
+        unfold single, ret in Ha1. inv Ha1.
+        unfold single, ret in Ha2. inv Ha2.
+        exists (merge s1 s2). repeat split;
+          try reflexivity;
+          try (unfold ljoin; cbn [fst snd]; reflexivity);
+          try (simpl; now rewrite Hnl1, Hnl2).
+      - (* Efby *)
+        intros e0s es a IH1 IH2 le ts st st' Htr Hl. simpl in Htr. discriminate.
+      - (* Earrow *)
+        intros e0s es a IH1 IH2 le ts st st' Htr Hl. simpl in Htr. discriminate.
+      - (* Ewhen *)
+        intros es x b a IH le ts st st' Htr Hl.
+        destruct es as [|e' [|]]; destruct a as [tys ck]; simpl in Htr;
+          try discriminate.
+        destruct tys as [|ty [|]]; try discriminate.
+        monadInv Htr.
+        rewrite assign_lexp_Ewhen in Hl.
+        eapply sec_bind_inv in Hl as (ts0 & st1 & Hts0 & Hl).
+        eapply sec_bind_inv in Hl as (g & st2 & Hg & Hret).
+        unfold ret in Hret. inv Hret.
+        rewrite assign_lexps_cons in Hts0.
+        eapply sec_bind_inv in Hts0 as (t' & st3 & Ht' & Hts0).
+        eapply sec_bind_inv in Hts0 as (r & st4 & Hr & Hret2).
+        unfold ret in Hret2. inv Hret2.
+        rewrite assign_lexps_nil in Hr. unfold ret in Hr. inv Hr.
+        inv IH.
+        destruct (H1 _ _ _ _ EQ Ht') as (s' & Hts' & Hnl' & Hst'); subst.
+        unfold find_env in Hg.
+        destruct (Env.find x env) eqn:E; try discriminate.
+        unfold ret in Hg. inv Hg.
+        exists (merge s' [g]). repeat split;
+          try reflexivity;
+          try (unfold ljoin, lvar; cbn [fst snd]; reflexivity);
+          try (simpl; now rewrite Hnl', E).
+      - (* Emerge *)
+        intros x ets efs a IH1 IH2 le ts st st' Htr Hl. simpl in Htr. discriminate.
+      - (* Eite *)
+        intros e ets efs a IH IH1 IH2 le ts st st' Htr Hl. simpl in Htr.
+        discriminate.
+      - (* Eapp *)
+        intros f es ro a IHr IH le ts st st' Htr Hl. simpl in Htr. discriminate.
+    Qed.
+
     Lemma to_cexp_assign_eq : forall e ce sa st,
         to_cexp e = OK ce ->
         assign_cexp_type env ce = Some sa ->
