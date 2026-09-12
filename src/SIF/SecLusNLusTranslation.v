@@ -34,6 +34,7 @@ From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF.SymLusTypes.
 From Velus Require Import SIF.SecCETyping.
 From Velus Require Import SIF.SecContext.
+From Velus Require Import SIF.SecMonadStep.
 From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF.NameInterface.
 From Velus Require Import SIF.SecLTyping.
@@ -51,6 +52,7 @@ Module Type SECLUSNLUSTRANSLATION
   (Import LSyn    : LSYNTAX  Ids Op)
   (CESyn          : CESYNTAX     Op)
   (NLSyn          : NLSYNTAX Ids Op CESyn)
+  (Import STEP    : SECMONADSTEP Ids SC)
   (Import SIG     : SIGNATURE  Ids SC)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn NLSyn)
   (CEIsF          : CEISFREE Ids Op CESyn)
@@ -69,23 +71,9 @@ Module Type SECLUSNLUSTRANSLATION
 
   Import SECMONADNotations.
 
-  Lemma bind2_OK : forall {A1 A2 B : Type} (m : Sec (A1 * A2))
-                          (f : A1 -> A2 -> Sec B) st a1 a2 st1,
-      m st = OK ((a1, a2), st1) -> (do (x, y) <- m; f x y) st = f a1 a2 st1.
-  Proof. intros. unfold bind2. now rewrite H. Qed.
-
   Lemma res_to_sec_OK : forall {A : Type} (a : A) st,
       res_to_sec (OK a) st = OK (a, st).
   Proof. reflexivity. Qed.
-
-  (** A monad law the call case needs: it binds the instantiated block only to
-      merge an empty set of carried obligations into it. *)
-  Lemma bind_ret_id : forall {A : Type} (m : Sec A) st,
-      (do a <- m; ret a) st = m st.
-  Proof.
-    intros A m st. unfold bind, ret.
-    destruct (m st) as [[a st']|e]; reflexivity.
-  Qed.
 
   (** * Inverting the NLustre side
 

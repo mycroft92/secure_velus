@@ -138,6 +138,7 @@ src/SIF/SIFSignature.v
 src/SIF/NameInterface.v
 src/SIF/SecNamingTotality.v
 src/SIF/SecContext.v
+src/SIF/SecMonadStep.v
 src/SIF/SecCETyping.v
 src/SIF/SecTypes.v
 src/SIF/SecLusTypes.v
