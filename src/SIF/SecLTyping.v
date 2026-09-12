@@ -391,6 +391,57 @@ Module Type SECLTYPING
         intros f es ro a IHr IH ce sa st Htr Hnl. simpl in Htr. discriminate.
     Qed.
 
+    (** * Leg A, expression lists
+
+        The call cases compare a whole argument list, so the expression
+        correspondence has to be lifted.  Splitting the NLustre side's
+        monadic map into a [Forall2] first keeps the two inductions apart. *)
+
+    Lemma sec_mmap_assign_exp_Forall2 : forall les tys st st',
+        SC.mmap (fun e => option_to_sec (assign_exp_type env e)) les st
+        = OK (tys, st') ->
+        st' = st
+        /\ Forall2 (fun le t => assign_exp_type env le = Some t) les tys.
+    Proof.
+      induction les as [|le les IH]; intros tys st st' Hm; simpl in Hm.
+      - unfold ret in Hm. inv Hm. split; [reflexivity|constructor].
+      - eapply sec_bind_inv in Hm as (t & st1 & Ht & Hm).
+        eapply sec_bind_inv in Hm as (tys' & st2 & Htys & Hret).
+        unfold ret in Hret. inv Hret.
+        unfold option_to_sec in Ht.
+        destruct (assign_exp_type env le) eqn:E; try discriminate.
+        unfold ret in Ht. inv Ht.
+        destruct (IH _ _ _ Htys) as [Hst Hall]; subst.
+        split; [reflexivity|constructor; auto].
+    Qed.
+
+    Lemma to_lexps_assign_eq : forall es les tys st,
+        Errors.mmap to_lexp es = OK les ->
+        Forall2 (fun le t => assign_exp_type env le = Some t) les tys ->
+        assign_lexps es st = OK (map (fun t => (t, [])) tys, st).
+    Proof.
+      induction es as [|e es IH]; intros les tys st Htr Hall;
+        simpl in Htr.
+      - inv Htr. inv Hall. rewrite assign_lexps_nil. reflexivity.
+      - monadInv Htr. inv Hall.
+        rewrite assign_lexps_cons. unfold bind, ret.
+        erewrite to_lexp_assign_eq by eassumption.
+        erewrite IH by eauto. reflexivity.
+    Qed.
+
+    Lemma carried_plain : forall tys,
+        carried (map (fun t => (t, [])) tys) = [].
+    Proof.
+      induction tys as [|t tys IH]; simpl; auto.
+      unfold carried in *; simpl. now rewrite IH.
+    Qed.
+
+    Lemma map_fst_plain : forall tys,
+        map fst (map (fun t : ST => (t, ([] : list constraint))) tys) = tys.
+    Proof.
+      induction tys as [|t tys IH]; simpl; auto. now rewrite IH.
+    Qed.
+
     (** * Equations
 
         One case per shape of [to_equation], so that on the normalized
@@ -431,17 +482,19 @@ Module Type SECLTYPING
       | _, _, _ => error (msg "security typing: equation arity mismatch")
       end.
 
+    (* the binds are ordered, and the outputs looked up, exactly as the
+       NLustre call case orders and looks them up *)
     Definition generate_lcall_constraint
       (xs : list ident) (f : ident) (es : list exp) (rstty : LST)
       : Sec (list constraint) :=
-      do argts <- assign_lexps es;
-      do ckty  <- option_to_sec
-                    (assign_clk_type env base_ty
-                       (find_base_clock (LSyn.clocksof es)));
-      do outs  <- option_to_sec (get_mappings xs env);
       match find_signature f G with
       | None => error (MSG "Signature not found for: " :: [CTX f])
       | Some sg =>
+          do ckty  <- option_to_sec
+                        (assign_clk_type env base_ty
+                           (find_base_clock (LSyn.clocksof es)));
+          do argts <- assign_lexps es;
+          do outs  <- SC.mmap (fun x => find_env x env) xs;
           do cs <- generate_constraints sg (map fst argts) ckty (fst rstty) outs;
           ret (cmerge cs (cmerge (carried argts) (snd rstty)))
       end.
