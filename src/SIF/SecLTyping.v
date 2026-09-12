@@ -501,6 +501,9 @@ Module Type SECLTYPING
 
     Definition generate_leqn_constraint (eq : equation) : Sec (list constraint) :=
       match eq with
+      (** a call defining nothing, as the NLustre generator has it *)
+      | ([], [Eapp _ _ _ _]) => ret []
+
       (** an ordinary call at the head of an equation *)
       | (xs, [Eapp f es None _]) =>
           generate_lcall_constraint xs f es (lvar rst_ty)
@@ -516,17 +519,17 @@ Module Type SECLTYPING
       (** a delayed definition; the initial value is a constant, so it
           contributes nothing, as (NTfb) *)
       | ([x], [Efby [_] [e] [_]]) =>
+          do ckty <- eqn_clock_type x;
           do ts   <- assign_lexp_type e;
           do t    <- single ts;
-          do ckty <- eqn_clock_type x;
           do b    <- find_env x env;
           ret (lconstrain (ljoin (ambient ckty) t) b)
 
       (** an ordinary definition *)
       | ([x], [e]) =>
+          do ckty <- eqn_clock_type x;
           do ts   <- assign_lexp_type e;
           do t    <- single ts;
-          do ckty <- eqn_clock_type x;
           do b    <- find_env x env;
           ret (lconstrain (ljoin (ambient ckty) t) b)
 
