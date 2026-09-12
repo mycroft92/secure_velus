@@ -271,6 +271,34 @@ depth.
 `to_equation` computes it (`find_base_clock (L.clocksof es)`) so Leg A lines
 up (§5).
 
+**Where the per-call-site names come from.** `SecContext.fresh_ident`
+(`SecContext.v:43`) mints `Ids.gensym Ids.sec n` -- the *same prefix*
+`NameInterface.fresh_ident_gen` (`NameInterface.v:318`) uses for program
+variables' security names. It has no users today, because every existing
+generator is `state_pure` (`SecContext.v`, "State-pure computations"): they
+look names up, they never mint. The Lustre call case is the first that must
+mint, so the collision is real and would break every freshness and scopedness
+fact downstream (`generate_node_env_sec_range`, `env_sec_bounded`, ...).
+
+Adding a fourth prefix to `Ident.v` is out -- that file is outside `src/SIF`.
+The fix needs no edit anywhere: **run the equation generator from the naming
+pass's final state rather than from `SC.init_state`.** Every name it then
+mints is `Ids.gensym Ids.sec n` with `n` at or above that bound, so it is
+fresh from every program-variable name by the bound facts `NameInterface.v`
+already proves (`generate_local_env_for_node_fresh_from_bound`,
+`generate_node_scoped_env'_bounded`).
+
+`generate_node_scoped_env` discards that final state, but
+`generate_node_scoped_env'` -- which `SecNLusStcTranslation.v` already calls
+directly -- returns it. `SecLNameInterface.v` therefore runs the primed form
+and keeps the state, and `NameInterface.v` is not touched.
+
+**Two degeneracy facts, not one.** On an unnested expression the generator
+mints nothing and carries nothing, so *both* `lst_plain` (empty refinement,
+`SecLusTypes.v`) and `state_pure` hold. They are what make Leg A an equality:
+the NLustre generator is state-pure and its types are plain, and on the
+normalized fragment so is this one.
+
 **Reset in nested position is new work beyond both papers.** [ICTAC] has no
 `reset` at all; [POPL] added reset-stacking but only for NLustre, where the
 reset is an `(ident * clock)`. In full Lustre `er : option exp` is an
