@@ -402,8 +402,8 @@ Module Type SECLTYPING
         eapply sec_bind_inv in Hts0 as (r & st4 & Hr & Hret2).
         unfold ret in Hret2. inv Hret2.
         rewrite assign_lexps_nil in Hr. unfold ret in Hr. inv Hr.
-        inv IH.
-        destruct (H1 _ _ _ _ EQ Ht') as (s' & Hts' & Hnl' & Hst'); subst.
+        apply Forall_inv in IH.
+        destruct (IH _ _ _ _ EQ Ht') as (s' & Hts' & Hnl' & Hst'); subst.
         unfold find_env in Hg.
         destruct (Env.find x env) eqn:E; try discriminate.
         unfold ret in Hg. inv Hg.
@@ -537,6 +537,127 @@ Module Type SECLTYPING
         map fst (map (fun t : ST => (t, ([] : list constraint))) tys) = tys.
     Proof.
       induction tys as [|t tys IH]; simpl; auto. now rewrite IH.
+    Qed.
+
+    Lemma ljoin_list_single : forall t u st,
+        ljoin_list [t] [u] st = OK ([ljoin t u], st).
+    Proof. reflexivity. Qed.
+
+    Lemma to_cexp_assign_rev : forall e ce ts st st',
+        to_cexp e = OK ce ->
+        assign_lexp_type e st = OK (ts, st') ->
+        exists sa, ts = [(sa, [])]
+                   /\ assign_cexp_type env ce = Some sa
+                   /\ st' = st.
+    Proof.
+      apply (exp_ind2 (fun e => forall ce ts st st',
+                 to_cexp e = OK ce ->
+                 assign_lexp_type e st = OK (ts, st') ->
+                 exists sa, ts = [(sa, [])]
+                            /\ assign_cexp_type env ce = Some sa
+                            /\ st' = st)).
+      (* the five forms that transcribe through [to_lexp], under [Eexp]:
+         build the [to_lexp] fact, then defer to the expression lemma *)
+      - intros c ce ts st st' Htr Hl. simpl in Htr. monadInv Htr.
+        assert (Hle : to_lexp (Econst c) = OK (CESyn.Econst c)) by reflexivity.
+        destruct (to_lexp_assign_rev _ _ _ _ _ Hle Hl) as (sa & Hts & Hnl & Hst).
+        exists sa. repeat split; auto.
+      - intros x a ce ts st st' Htr Hl.
+        destruct a as [ty ck]. simpl in Htr. monadInv Htr.
+        assert (Hle : to_lexp (Evar x (ty, ck)) = OK (CESyn.Evar x ty))
+          by reflexivity.
+        destruct (to_lexp_assign_rev _ _ _ _ _ Hle Hl) as (sa & Hts & Hnl & Hst).
+        exists sa. repeat split; auto.
+      - intros op e a IH ce ts st st' Htr Hl.
+        destruct a as [ty ck]. simpl in Htr. monadInv Htr.
+        (* [monadInv] peeled only the outer [Eexp] bind, so [EQ] already *is*
+           the [to_lexp] fact, though not syntactically: ascribe it *)
+        assert (Hle : to_lexp (Eunop op e (ty, ck)) = OK x) by exact EQ.
+        destruct (to_lexp_assign_rev _ _ _ _ _ Hle Hl) as (sa & Hts & Hnl & Hst).
+        exists sa. repeat split; auto.
+      - intros op e1 e2 a IH1 IH2 ce ts st st' Htr Hl.
+        destruct a as [ty ck]. simpl in Htr. monadInv Htr.
+        assert (Hle : to_lexp (Ebinop op e1 e2 (ty, ck)) = OK x) by exact EQ.
+        destruct (to_lexp_assign_rev _ _ _ _ _ Hle Hl) as (sa & Hts & Hnl & Hst).
+        exists sa. repeat split; auto.
+      - (* Efby *)
+        intros e0s es a IH1 IH2 ce ts st st' Htr Hl. simpl in Htr. discriminate.
+      - (* Earrow *)
+        intros e0s es a IH1 IH2 ce ts st st' Htr Hl. simpl in Htr. discriminate.
+      - (* Ewhen *)
+        intros es x b a IH ce ts st st' Htr Hl.
+        destruct es as [|e' [|]]; destruct a as [tys ck]; simpl in Htr;
+          try discriminate.
+        destruct tys as [|ty [|]]; try discriminate.
+        monadInv Htr.
+        assert (Hle : to_lexp (Ewhen [e'] x b ([ty], ck)) = OK x0) by exact EQ.
+        destruct (to_lexp_assign_rev _ _ _ _ _ Hle Hl) as (sa & Hts & Hnl & Hst).
+        exists sa. repeat split; auto.
+      - (* Emerge *)
+        intros x ets efs a IH1 IH2 ce ts st st' Htr Hl.
+        destruct ets as [|et [|]]; destruct efs as [|ef [|]];
+          destruct a as [tys ck]; simpl in Htr; try discriminate.
+        destruct tys as [|ty [|]]; try discriminate.
+        monadInv Htr.
+        rewrite assign_lexp_Emerge in Hl.
+        eapply sec_bind_inv in Hl as (g & st1 & Hg & Hl).
+        eapply sec_bind_inv in Hl as (ts1 & st2 & Hts1 & Hl).
+        eapply sec_bind_inv in Hl as (us1 & st3 & Hus1 & Hl).
+        unfold find_env in Hg.
+        destruct (Env.find x env) eqn:Eg; try discriminate.
+        unfold ret in Hg. inv Hg.
+        rewrite assign_lexps_cons in Hts1.
+        eapply sec_bind_inv in Hts1 as (t & sta & Ht & Hts1).
+        eapply sec_bind_inv in Hts1 as (r1 & stb & Hr1 & Hr1').
+        unfold ret in Hr1'. inv Hr1'.
+        rewrite assign_lexps_nil in Hr1. unfold ret in Hr1. inv Hr1.
+        rewrite assign_lexps_cons in Hus1.
+        eapply sec_bind_inv in Hus1 as (u & stc & Hu & Hus1).
+        eapply sec_bind_inv in Hus1 as (r2 & std & Hr2 & Hr2').
+        unfold ret in Hr2'. inv Hr2'.
+        rewrite assign_lexps_nil in Hr2. unfold ret in Hr2. inv Hr2.
+        apply Forall_inv in IH1. apply Forall_inv in IH2.
+        destruct (IH1 _ _ _ _ EQ Ht) as (s1 & Ht1 & Hnl1 & Hst1); subst.
+        destruct (IH2 _ _ _ _ EQ1 Hu) as (s2 & Ht2 & Hnl2 & Hst2); subst.
+        simpl in Hl. try unfold ret in Hl. inv Hl.
+        exists (merge (merge [g] s1) s2). repeat split;
+          try reflexivity;
+          try (unfold ljoin, lvar; cbn [fst snd]; reflexivity);
+          try (simpl; now rewrite Eg, Hnl1, Hnl2).
+      - (* Eite *)
+        intros e ets efs a IH IH1 IH2 ce ts st st' Htr Hl.
+        destruct ets as [|et [|]]; destruct efs as [|ef [|]];
+          destruct a as [tys ck]; simpl in Htr; try discriminate.
+        destruct tys as [|ty [|]]; try discriminate.
+        monadInv Htr.
+        rewrite assign_lexp_Eite in Hl.
+        eapply sec_bind_inv in Hl as (t0 & st1 & Ht0 & Hl).
+        eapply sec_bind_inv in Hl as (th & st2 & Hth & Hl).
+        eapply sec_bind_inv in Hl as (ts1 & st3 & Hts1 & Hl).
+        eapply sec_bind_inv in Hl as (us1 & st4 & Hus1 & Hl).
+        destruct (to_lexp_assign_rev _ _ _ _ _ EQ Ht0) as (s0 & Ht0' & Hnl0 & Hst0);
+          subst.
+        unfold single, ret in Hth. inv Hth.
+        rewrite assign_lexps_cons in Hts1.
+        eapply sec_bind_inv in Hts1 as (t & sta & Ht & Hts1).
+        eapply sec_bind_inv in Hts1 as (r1 & stb & Hr1 & Hr1').
+        unfold ret in Hr1'. inv Hr1'.
+        rewrite assign_lexps_nil in Hr1. unfold ret in Hr1. inv Hr1.
+        rewrite assign_lexps_cons in Hus1.
+        eapply sec_bind_inv in Hus1 as (u & stc & Hu & Hus1).
+        eapply sec_bind_inv in Hus1 as (r2 & std & Hr2 & Hr2').
+        unfold ret in Hr2'. inv Hr2'.
+        rewrite assign_lexps_nil in Hr2. unfold ret in Hr2. inv Hr2.
+        apply Forall_inv in IH1. apply Forall_inv in IH2.
+        destruct (IH1 _ _ _ _ EQ1 Ht) as (s1 & Ht1 & Hnl1 & Hst1); subst.
+        destruct (IH2 _ _ _ _ EQ0 Hu) as (s2 & Ht2 & Hnl2 & Hst2); subst.
+        simpl in Hl. try unfold ret in Hl. inv Hl.
+        exists (merge (merge s0 s1) s2). repeat split;
+          try reflexivity;
+          try (unfold ljoin; cbn [fst snd]; reflexivity);
+          try (simpl; now rewrite Hnl0, Hnl1, Hnl2).
+      - (* Eapp *)
+        intros f es ro a IHr IH ce ts st st' Htr Hl. simpl in Htr. discriminate.
     Qed.
 
     (** * Equations
