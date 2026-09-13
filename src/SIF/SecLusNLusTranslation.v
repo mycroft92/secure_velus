@@ -442,8 +442,16 @@ Module Type SECLUSNLUSTRANSLATION
 
   Definition Signature_head_entails (n1 n2 : signature) : Prop :=
     n1.(s_name) = n2.(s_name)
-    /\ signature_fields_agree n1 n2
+    /\ SIGPROOFS.signatures_preserved n1 n2
     /\ Signature_call_entails n1 n2.
+
+  (** [signatures_preserved] is what the layer above reads -- a valuation
+      satisfying the Lustre signature's stored constraints extends to one
+      satisfying the NLustre signature's, agreeing on the scope they share.
+      The call clause is derived from it at the node
+      ([Signature_call_entails_from_preserved]), so carrying it costs nothing
+      and keeps the program-level statement about the constraints a security
+      predicate actually looks at, not only about call sites. *)
 
   Definition Signature_entails (G1 G2 : secglobal) : Prop :=
     forall f n1,
@@ -745,7 +753,8 @@ Module Type SECLUSNLUSTRANSLATION
   Proof.
     intros scope GL GN f sgL inptyp ckty rstty outtyp cs0 st stf
            Hsig HfreshN HscN HgoodN HndN EsgL Hinp Hck Hrst Hout Hnd HgcL.
-    destruct (Hsig f sgL EsgL) as (sgN & EsgN & Hname & Hfields & Hcall).
+    destruct (Hsig f sgL EsgL) as (sgN & EsgN & Hname & Hpres & Hcall).
+    pose proof (proj1 Hpres) as Hfields.
     pose proof (HfreshN f sgN EsgN) as HfrN.
     assert (HfrL : scope_fresh scope sgL).
     { intros z Hz. rewrite (signature_scope_agree _ _ Hfields).
@@ -1405,7 +1414,7 @@ Module Type SECLUSNLUSTRANSLATION
                 Htr Hnl Hl Hauxs Hclks Hrsts Hctx Hwceqs Hside)
       as (Hname & Hpres & Hrhs).
     pose proof Hpres as Hpres'. destruct Hpres' as [Hfields _].
-    split; [exact Hname|]. split; [exact Hfields|].
+    split; [exact Hname|]. split; [exact Hpres|].
     eapply Signature_call_entails_from_preserved; eauto.
     - eapply signature_good_of_rhs; eauto.
     - erewrite signature_scope_agree by exact Hfields. exact HndN.
@@ -1862,6 +1871,35 @@ Module Type SECLUSNLUSTRANSLATION
     rewrite (SECLNG.to_global_lscoped_env _ _ _ Htr) in Henvsgen.
     eapply generate_all_signatures_entails_scoped; eauto.
     eapply TRC.wc_transcription; eauto.
+  Qed.
+
+  (** What the layer above reads off [Signature_entails]: a valuation
+      satisfying a Lustre signature's stored constraints extends to one
+      satisfying its NLustre counterpart's, agreeing on the scope -- which is
+      the same list on both sides, the interface fields being equal.  This is
+      the form [SecNLusNonInterferenceSupport.signature_satisfied] is stated
+      in, so a secure Lustre callee hands the NLustre noninterference theorem
+      the signature hypothesis it wants. *)
+
+  Corollary signature_constraints_entail :
+    forall GL GN f sgL sgN dlt,
+      Signature_entails GL GN ->
+      find_signature f GL = Some sgL ->
+      find_signature f GN = Some sgN ->
+      listSatisfiable dlt sgL.(s_constraints) ->
+      exists dlt',
+        agree_on (signature_scope sgL) dlt dlt'
+        /\ listSatisfiable dlt' sgN.(s_constraints)
+        /\ signature_scope sgL = signature_scope sgN.
+  Proof.
+    intros GL GN f sgL sgN dlt Hent HfindL HfindN Hsat.
+    destruct (Hent f sgL HfindL) as (sgN' & HfindN' & _ & Hpres & _).
+    rewrite HfindN in HfindN'. inversion HfindN'; subst sgN'.
+    destruct Hpres as [Hfields Hpres].
+    destruct (Hpres dlt Hsat) as (dlt' & Hagree & Hsat').
+    exists dlt'. split; [exact Hagree|].
+    split; [exact Hsat'|].
+    eapply signature_scope_agree; exact Hfields.
   Qed.
 
 End SECLUSNLUSTRANSLATION.

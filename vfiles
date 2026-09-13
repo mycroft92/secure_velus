@@ -150,6 +150,7 @@ src/SIF/SecNLusConstraintExport.v
 src/SIF/SecNLusTypingCorrectness.v
 src/SIF/SecNLusTypingTotality.v
 src/SIF/SecLusNLusTranslation.v
+src/SIF/SecLusConstraintExport.v
 src/SIF/SecSTCTyping.v
 src/SIF/SecStcConstraintExport.v
 src/SIF/SecStcTypingCorrectness.v
