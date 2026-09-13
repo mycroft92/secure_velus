@@ -114,12 +114,74 @@ Module Type SECNLUSTYPINGCORRECTNESS
       SIG.secglobal_scope_fresh
         (inp ++ out ++ locals ++ clk_type :: rst_type :: nil) G.
 
+  (** [node_scope_fresh_in_env] asks a node's scope to be fresh from *every*
+      signature of [G].  That is right at an accumulator, which is where it is
+      discharged ([node_scope_fresh_in_env_from_bounds], and the two uses in
+      this file at [acc]): the accumulator holds the node's callees and not the
+      node.  It cannot hold at a global that holds the node's own signature.
+      [signature_scope] of that signature is [s_in ++ s_out ++ [s_clk;
+      s_reset]], a sublist of the node's own scope, so [scope_fresh] forces
+      [s_in = []], and [n_ingt0] forbids that.  The next lemma is that
+      argument, so the point is checked rather than remarked. *)
+
+  Lemma node_scope_fresh_in_env_self_absurd:
+    forall n env aux_names G clk_id rst_id clk_type rst_type inp out locals sig,
+      node_scope_fresh_in_env n env aux_names G ->
+      get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
+      Env.find clk_id env = Some clk_type ->
+      Env.find rst_id env = Some rst_type ->
+      get_mappings_from_node n.(n_in) env = Some inp ->
+      get_mappings_from_node n.(n_out) env = Some out ->
+      get_mappings_from_node n.(n_vars) env = Some locals ->
+      SIG.find_signature n.(n_name) G = Some sig ->
+      sig.(SIG.s_in) = inp ->
+      inp = nil.
+  Proof.
+    intros n env aux_names G clk_id rst_id clk_type rst_type inp out locals sig
+           Hfresh Haux Hclk Hrst Hinp Hout Hlocals Hfsig Hsin.
+    pose proof (Hfresh _ _ _ _ _ _ _ Haux Hclk Hrst Hinp Hout Hlocals) as Hsf.
+    specialize (Hsf _ _ Hfsig).
+    destruct inp as [|x xs]; [reflexivity|exfalso].
+    eapply (Hsf x).
+    - apply in_or_app. left. now left.
+    - unfold SIG.signature_scope. rewrite Hsin. apply in_or_app. left. now left.
+  Qed.
+
+  (** What a caller actually needs: freshness from the signatures it may
+      *call*, which by [Ordered_nodes] never includes its own.  This is the
+      form that survives at a whole-program global. *)
+
+  Definition node_callees_scope_fresh
+    (n: node) (env: Env.t ident) (aux_names: list node_aux_names) (G: secglobal) : Prop :=
+    forall clk_id rst_id clk_type rst_type inp out locals,
+      get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
+      Env.find clk_id env = Some clk_type ->
+      Env.find rst_id env = Some rst_type ->
+      get_mappings_from_node n.(n_in) env = Some inp ->
+      get_mappings_from_node n.(n_out) env = Some out ->
+      get_mappings_from_node n.(n_vars) env = Some locals ->
+      forall f sig,
+        f <> n.(n_name) ->
+        SIG.find_signature f G = Some sig ->
+        SIG.scope_fresh (inp ++ out ++ locals ++ clk_type :: rst_type :: nil) sig.
+
+  Lemma node_scope_fresh_in_env_callees:
+    forall n env aux_names G,
+      node_scope_fresh_in_env n env aux_names G ->
+      node_callees_scope_fresh n env aux_names G.
+  Proof.
+    intros n env aux_names G Hfresh
+           clk_id rst_id clk_type rst_type inp out locals
+           Haux Hclk Hrst Hinp Hout Hlocals f sig _ Hfsig.
+    eapply Hfresh; eauto.
+  Qed.
+
   Definition generated_callers_scope_fresh
     (all_nodes: global) (env: Env.t ident) (aux_names: list node_aux_names)
     (G: secglobal) : Prop :=
     forall n,
       find_node n.(n_name) all_nodes = Some n ->
-      node_scope_fresh_in_env n env aux_names G.
+      node_callees_scope_fresh n env aux_names G.
 
   Lemma node_var_not_sec_gensym:
     forall n x i,

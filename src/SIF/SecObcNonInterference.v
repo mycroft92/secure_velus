@@ -552,6 +552,7 @@ Module Type SECOBCNONINTERFERENCE
       NL.Clo.wc_global all_nodes ->
       Stc.Clo.wc_program (TransNL.translate all_nodes) ->
       Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
+      NL.Ord.Ordered_nodes all_nodes ->
       SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
         = OK Gsrc ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env
@@ -567,12 +568,12 @@ Module Type SECOBCNONINTERFERENCE
         (TransNL.translate_node n) dlt_sig dlt_raw.
   Proof.
     intros all_nodes Gsrc Gstc Gstcs Gobc envs aux_names n dlt_sig dlt_raw
-           Henvsgen Hwcnl Hwcstc Hsch Hallsrc Hallstc Hallstcs Hallobc
+           Henvsgen Hwcnl Hwcstc Hsch Hord Hallsrc Hallstc Hallstcs Hallobc
            Hfindnode Hsec.
     assert (Hsys : StcNI.system_security all_nodes Gsrc Gstc envs aux_names
                      (TransNL.translate_node n) dlt_sig dlt_raw)
       by (eapply StcNI.system_security_from_node_security;
-          [exact Henvsgen|exact Hwcnl|exact Hallsrc|exact Hallstc
+          [exact Henvsgen|exact Hwcnl|exact Hord|exact Hallsrc|exact Hallstc
           |exact Hfindnode|exact Hsec]).
     pose proof Hsys as Hsys0.
     destruct Hsys0 as (n0 & nsig & ssig & _ & _ & _ & Hfindstc & _ & _).
@@ -715,6 +716,7 @@ Module Type SECOBCNONINTERFERENCE
       NL.Clo.wc_global all_nodes ->
       Stc.Clo.wc_program (TransNL.translate all_nodes) ->
       Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
+      NL.Ord.Ordered_nodes all_nodes ->
       SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
         = OK Gsrc ->
       exists Gstc Gstcs Gobc,
@@ -727,7 +729,7 @@ Module Type SECOBCNONINTERFERENCE
              (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
              envs aux_names = OK Gobc.
   Proof.
-    intros all_nodes envs aux_names Gsrc Henvsgen Hwcnl Hwcstc Hsch Hsrc.
+    intros all_nodes envs aux_names Gsrc Henvsgen Hwcnl Hwcstc Hsch Hord Hsrc.
     assert (Haux : NAMEGEN.aux_naming_props aux_names)
       by (eapply NAMEGEN.aux_naming_props_from_scoped_env; exact Henvsgen).
     assert (Hwcstcs : Stc.Clo.wc_program
@@ -735,7 +737,7 @@ Module Type SECOBCNONINTERFERENCE
       by (apply Sched.scheduler_wc_program; exact Hwcstc).
     (* the NLustre-to-Stc leg *)
     destruct (NLusStcBridge.generate_all_sys_signatures_scoped_env_ok
-                all_nodes envs aux_names Gsrc Henvsgen Hwcnl Hsrc)
+                all_nodes envs aux_names Gsrc Henvsgen Hwcnl Hord Hsrc)
       as (Gstc & Hstc).
     (* the scheduling step *)
     assert (Hstcs : exists Gstcs,
@@ -781,6 +783,7 @@ Module Type SECOBCNONINTERFERENCE
       NL.Clo.wc_global all_nodes ->
       Stc.Clo.wc_program (TransNL.translate all_nodes) ->
       Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
+      NL.Ord.Ordered_nodes all_nodes ->
       SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
         = OK Gsrc ->
       find_node n.(NL.Syn.n_name) all_nodes = Some n ->
@@ -798,14 +801,14 @@ Module Type SECOBCNONINTERFERENCE
              (TransNL.translate_node n) dlt_sig dlt_raw.
   Proof.
     intros all_nodes Gsrc envs aux_names n dlt_sig dlt_raw
-           Henvsgen Hwcnl Hwcstc Hsch Hsrc Hfindnode Hsec.
+           Henvsgen Hwcnl Hwcstc Hsch Hord Hsrc Hfindnode Hsec.
     destruct (generate_all_signatures_chain_ok all_nodes envs aux_names Gsrc
-                Henvsgen Hwcnl Hwcstc Hsch Hsrc)
+                Henvsgen Hwcnl Hwcstc Hsch Hord Hsrc)
       as (Gstc & Gstcs & Gobc & Hstc & Hstcs & Hobc).
     exists Gstc, Gstcs, Gobc.
     split; [exact Hstc|]. split; [exact Hstcs|]. split; [exact Hobc|].
     eapply class_security_from_node_security;
-      [exact Henvsgen|exact Hwcnl|exact Hwcstc|exact Hsch|exact Hsrc
+      [exact Henvsgen|exact Hwcnl|exact Hwcstc|exact Hsch|exact Hord|exact Hsrc
       |exact Hstc|exact Hstcs|exact Hobc|exact Hfindnode|exact Hsec].
   Qed.
 
@@ -823,6 +826,7 @@ Module Type SECOBCNONINTERFERENCE
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
       NL.Clo.wc_global all_nodes ->
       Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
+      NL.Ord.Ordered_nodes all_nodes ->
       SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
         = OK Gsrc ->
       exists Gstc Gstcs Gobc,
@@ -835,11 +839,11 @@ Module Type SECOBCNONINTERFERENCE
              (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
              envs aux_names = OK Gobc.
   Proof.
-    intros all_nodes envs aux_names Gsrc Henvsgen Hwcnl Hsch Hsrc.
+    intros all_nodes envs aux_names Gsrc Henvsgen Hwcnl Hsch Hord Hsrc.
     eapply generate_all_signatures_chain_ok;
       [exact Henvsgen|exact Hwcnl
       |apply NL2StcClo.translate_wc; exact Hwcnl
-      |exact Hsch|exact Hsrc].
+      |exact Hsch|exact Hord|exact Hsrc].
   Qed.
 
   (** As [class_security_from_node_security_total], with the translated
@@ -849,6 +853,7 @@ Module Type SECOBCNONINTERFERENCE
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
       NL.Clo.wc_global all_nodes ->
       Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
+      NL.Ord.Ordered_nodes all_nodes ->
       SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
         = OK Gsrc ->
       find_node n.(NL.Syn.n_name) all_nodes = Some n ->
@@ -866,11 +871,11 @@ Module Type SECOBCNONINTERFERENCE
              (TransNL.translate_node n) dlt_sig dlt_raw.
   Proof.
     intros all_nodes Gsrc envs aux_names n dlt_sig dlt_raw
-           Henvsgen Hwcnl Hsch Hsrc Hfindnode Hsec.
+           Henvsgen Hwcnl Hsch Hord Hsrc Hfindnode Hsec.
     eapply class_security_from_node_security_total;
       [exact Henvsgen|exact Hwcnl
       |apply NL2StcClo.translate_wc; exact Hwcnl
-      |exact Hsch|exact Hsrc|exact Hfindnode|exact Hsec].
+      |exact Hsch|exact Hord|exact Hsrc|exact Hfindnode|exact Hsec].
   Qed.
 
   (** ** Noninterference for the emitted class, from the source alone
@@ -920,7 +925,7 @@ Module Type SECOBCNONINTERFERENCE
            Hfindenv Hbeh Hbeh' Hclock_eq Habs Hlowin.
     destruct (class_security_from_node_security_source all_nodes Gsrc envs
                 aux_names n dlt_sig dlt_raw
-                Henvsgen Hwc Hsch Hallsrc Hfindnode Hsec)
+                Henvsgen Hwc Hsch Hord Hallsrc Hfindnode Hsec)
       as (Gstc & Gstcs & Gobc & _ & _ & _ & Hclssec).
     eapply class_noninterference_outputs;
       [exact Hcls|exact Hstepm|exact Henvsgen|exact Hord|exact Hwc|exact Hallsrc
