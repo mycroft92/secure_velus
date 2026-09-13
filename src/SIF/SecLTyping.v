@@ -849,6 +849,45 @@ Module Type SECLTYPING
       | _ => generate_lgen_constraint xs es
       end.
 
+    (** What a successful run of the shared definition body computed.  The
+        expression's type may carry refinement obligations, and they come out
+        merged alongside the ordering constraint -- that is [lconstrain]. *)
+    Lemma generate_ldef_constraint_inv : forall x e cs st st',
+        generate_ldef_constraint x e st = OK (cs, st') ->
+        exists ck ckty sa rho b,
+          find_clock cenv x = OK ck
+          /\ assign_clk_type env base_ty ck = Some ckty
+          /\ assign_lexp_type e st = OK ([(sa, rho)], st')
+          /\ Env.find x env = Some b
+          /\ cs = cmerge [(merge (merge [rst_ty] ckty) sa, [b])] rho.
+    Proof.
+      intros x e cs st st' H.
+      unfold generate_ldef_constraint in H.
+      eapply sec_bind_inv in H as (ckty & st1 & Hck & H).
+      eapply sec_bind_inv in H as (ts & st2 & Hts & H).
+      eapply sec_bind_inv in H as (t & st3 & Ht & H).
+      eapply sec_bind_inv in H as (b & st4 & Hb & Hret).
+      unfold ret in Hret. inv Hret.
+      unfold eqn_clock_type in Hck.
+      eapply sec_bind_inv in Hck as (ck & sta & Hck0 & Hck).
+      unfold res_to_sec in Hck0.
+      destruct (find_clock cenv x) eqn:Eck; try discriminate.
+      unfold ret in Hck0. inv Hck0.
+      unfold option_to_sec in Hck.
+      destruct (assign_clk_type env base_ty ck) eqn:Eckty; try discriminate.
+      unfold ret in Hck. inv Hck.
+      unfold single in Ht. destruct ts as [|t0 [|]]; try discriminate.
+      unfold ret in Ht. inv Ht.
+      unfold find_env in Hb.
+      destruct (Env.find x env) eqn:Eb; try discriminate.
+      unfold ret in Hb. inv Hb.
+      destruct t as [sa rho].
+      exists ck, ckty, sa, rho, b.
+      repeat split; auto.
+      unfold lconstrain, ljoin, ambient, lvar. cbn [fst snd].
+      rewrite ?cmerge_nil, ?cmerge_nil2. reflexivity.
+    Qed.
+
     (** Reduction lemmas for the equation generator, one per shape, each by
         [reflexivity].  A proof uses these instead of reducing the [match]
         itself. *)
