@@ -212,6 +212,34 @@ statement about generated signatures. Turning it into "a secure Lustre program
 transcribes to a secure NLustre one" needs the Lustre analogue of
 `SecNLusNonInterference.v`'s top-level statement, which is a separate leg.
 
+### TODO: rebasing onto Velus head
+
+Not started, and deliberately deferred. What a plan will have to account for:
+
+- **What this branch depends on, outside `src/SIF/`.** `Transcription/Tr.v`
+  (`to_node`, `to_equation`, `to_global`, `tonodeInv`, `to_node_{name,in,out,vars}`,
+  `find_node_global`, `find_node_global'`), `Transcription/TrClocking.v`
+  (`wc_node`, `wc_transcription`), `Lustre/LSyntax.v` (node record,
+  `vars_defined`, `NoDup_vars_defined_n_eqs`), `Lustre/LClocking.v`,
+  `NLustre/NLClocking.v` (`wc_equation`'s three-constructor shape, inverted by
+  hand in several places), and `Instantiator.v` (`L`, `NL`, `TR`, `CE`).
+  A rebase breaks on any change to those, and the `wc_equation` inversions and
+  the `to_equation` case analysis are the brittle ones -- both are written
+  against the current constructor lists.
+- **The normalisation frontier.** `to_equation` only accepts a normalized
+  fragment, and the shapes it accepts are hard-coded in
+  `to_equation_{app,app_reset,EqApp,EqApp_reset}_inv` and in the
+  `to_equation_entails` dispatcher. If head has changed what normalisation
+  produces (extra expression forms, a different reset shape), those are the
+  first things to re-derive.
+- **Order of attack.** `SecLNameInterface` -> `SecLTyping` ->
+  `SecLusNLusTranslation` -> `SecLusConstraintExport` -> `SecLusNonInterference`,
+  which is `vfiles` order. The export file is the cheap early warning: it
+  applies the whole Lustre stack to `Instantiator`'s real modules, so it fails
+  fast if a module type's parameter list moved.
+- **What is insulated.** Nothing in the NLustre, Stc or Obc legs was edited, so
+  a rebase there is Velus's problem, not this branch's.
+
 ### Decision: one naming pass (option A), 2026-09-12
 
 Signature preservation needs the Lustre and NLustre signatures to have the

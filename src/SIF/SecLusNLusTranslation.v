@@ -1902,4 +1902,102 @@ Module Type SECLUSNLUSTRANSLATION
     eapply signature_scope_agree; exact Hfields.
   Qed.
 
+  (** * The two globals have the same domain
+
+      [Signature_entails] only says every Lustre signature has an NLustre
+      counterpart.  Reading a call site off the NLustre side -- which is what
+      the noninterference pull-back does -- needs the converse, and it does not
+      need [Signature_entails] at all: both generators name a signature by its
+      node, and transcription keeps the name, so the two accumulators grow
+      through the same sequence of names. *)
+
+  Definition Signature_domain_incl (G1 G2 : secglobal) : Prop :=
+    forall f n1,
+      find_signature f G1 = Some n1 ->
+      exists n2, find_signature f G2 = Some n2.
+
+  Lemma Signature_domain_incl_nil : Signature_domain_incl [] [].
+  Proof. intros f n1 Hfind. simpl in Hfind. discriminate. Qed.
+
+  Lemma Signature_domain_incl_cons :
+    forall G1 G2 sig1 sig2,
+      Signature_domain_incl G1 G2 ->
+      sig1.(s_name) = sig2.(s_name) ->
+      Signature_domain_incl (sig1 :: G1) (sig2 :: G2).
+  Proof.
+    intros G1 G2 sig1 sig2 Hincl Hnm f n1 Hfind. simpl in Hfind.
+    destruct (ident_eqb sig1.(s_name) f) eqn:Hname.
+    - exists sig2. simpl. rewrite <- Hnm, Hname. reflexivity.
+    - destruct (Hincl f n1 Hfind) as (n2 & Hfind2).
+      exists n2. simpl. rewrite <- Hnm, Hname. exact Hfind2.
+  Qed.
+
+  Lemma lnode_sig_name :
+    forall GL n env aux_names lsig st st',
+      generate_lnode_sig GL n env aux_names st = OK (lsig, st') ->
+      lsig.(s_name) = n.(n_name).
+  Proof.
+    intros GL n env aux_names lsig st st' H.
+    eapply l_node_sig_inv in H
+      as (? & ? & ? & ? & ? & ? & ? & ? & _ & _ & _ & _ & _ & _ & _ & Hdef).
+    subst lsig. reflexivity.
+  Qed.
+
+  Lemma nl_node_sig_name :
+    forall GN n env aux_names nsig,
+      generate_node_sig GN n env aux_names = OK nsig ->
+      nsig.(s_name) = n.(NLSyn.n_name).
+  Proof.
+    intros GN n env aux_names nsig H.
+    eapply nl_node_sig_inv in H
+      as (? & ? & ? & ? & ? & ? & ? & ? & _ & _ & _ & _ & _ & _ & _ & Hdef).
+    subst nsig. reflexivity.
+  Qed.
+
+  Theorem generate_all_signatures_domain' :
+    forall G P envs aux_names accL accN st GLout stf GNout,
+      transcribed G P ->
+      Signature_domain_incl accN accL ->
+      generate_all_lsignatures' accL G envs aux_names st = OK (GLout, stf) ->
+      SECNL.generate_all_signatures_scoped_env' accN P envs aux_names = OK GNout ->
+      Signature_domain_incl GNout GLout.
+  Proof.
+    intros G P envs aux_names accL accN st GLout stf GNout Htr.
+    revert accL accN st.
+    induction Htr as [|nL nP G P HnodeP Htr IH]; intros accL accN st Hincl Hl Hn.
+    - simpl in Hl, Hn. inversion Hl; subst. inversion Hn; subst. exact Hincl.
+    - destruct HnodeP as [Hp Htn]. simpl in Hl, Hn.
+      destruct (generate_lnode_sig_scoped_env accL nL envs aux_names st)
+        as [[lsig st1]|] eqn:El; [|discriminate].
+      destruct (SECNL.generate_node_sig_scoped_env accN nP envs aux_names)
+        as [nsig|] eqn:En; simpl in Hn; [|discriminate].
+      eapply IH; [|exact Hl|exact Hn].
+      apply Signature_domain_incl_cons; [exact Hincl|].
+      unfold generate_lnode_sig_scoped_env in El.
+      unfold SECNL.generate_node_sig_scoped_env in En.
+      destruct (find_node_env nL.(n_name) envs) as [env|] eqn:Eenv;
+        [|discriminate].
+      rewrite <- (to_node_name _ _ _ Htn), Eenv in En.
+      rewrite (nl_node_sig_name _ _ _ _ _ En),
+              (lnode_sig_name _ _ _ _ _ _ _ El),
+              (to_node_name _ _ _ Htn).
+      reflexivity.
+  Qed.
+
+  Corollary generate_all_signatures_domain :
+    forall G P Hp envs aux_names st GLout GNout,
+      to_global G Hp = OK P ->
+      generate_all_lsignatures_scoped_env G envs aux_names st = OK GLout ->
+      SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GNout ->
+      Signature_domain_incl GNout GLout.
+  Proof.
+    intros G P Hp envs aux_names st GLout GNout Htr Hl Hn.
+    unfold generate_all_lsignatures_scoped_env in Hl.
+    destruct (generate_all_lsignatures' [] G envs aux_names st)
+      as [[sigs stf]|] eqn:El; [|discriminate]. inversion Hl; subst sigs.
+    unfold SECNL.generate_all_signatures_scoped_env in Hn.
+    eapply generate_all_signatures_domain'; eauto using to_global_transcribed.
+    apply Signature_domain_incl_nil.
+  Qed.
+
 End SECLUSNLUSTRANSLATION.
