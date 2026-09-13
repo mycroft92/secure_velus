@@ -251,6 +251,33 @@ Module Type SECLTYPING
            ljoin_list (map (fun t => ljoin th t) ts) us).
     Proof. reflexivity. Qed.
 
+    Lemma ljoin_list_inv_single : forall ts us r st st',
+        ljoin_list ts us st = OK ([r], st') ->
+        exists p q, ts = [p] /\ us = [q] /\ r = ljoin p q /\ st' = st.
+    Proof.
+      intros ts us r st st' H.
+      destruct ts as [|p ts]; destruct us as [|q us]; simpl in H.
+      - unfold ret in H. discriminate.
+      - unfold error in H. discriminate.
+      - unfold error in H. discriminate.
+      - eapply sec_bind_inv in H as (rr & st1 & Hrr & Hret).
+        unfold ret in Hret. inv Hret.
+        destruct ts as [|p' ts']; destruct us as [|q' us']; simpl in Hrr.
+        + unfold ret in Hrr. inv Hrr.
+          exists p, q. repeat split; reflexivity.
+        + unfold error in Hrr. discriminate.
+        + unfold error in Hrr. discriminate.
+        + eapply sec_bind_inv in Hrr as (rr' & st2 & Hrr' & Hret').
+          unfold ret in Hret'. discriminate.
+    Qed.
+
+    Lemma assign_lexp_Efby : forall e0s es ans,
+        assign_lexp_type (Efby e0s es ans)
+        = (do ts <- assign_lexps e0s;
+           do us <- assign_lexps es;
+           ljoin_list ts us).
+    Proof. reflexivity. Qed.
+
     Lemma assign_lexps_nil : assign_lexps [] = ret [].
     Proof. reflexivity. Qed.
 
@@ -260,6 +287,55 @@ Module Type SECLTYPING
            do r <- assign_lexps es;
            ret (t ++ r)).
     Proof. reflexivity. Qed.
+
+    Lemma assign_lexps_single_inv : forall e ts st st',
+        assign_lexps [e] st = OK (ts, st') ->
+        assign_lexp_type e st = OK (ts, st').
+    Proof.
+      intros e ts st st' H.
+      rewrite assign_lexps_cons, assign_lexps_nil in H.
+      eapply sec_bind_inv in H as (t & st1 & Ht & H).
+      eapply sec_bind_inv in H as (r & st2 & Hr & Hret).
+      unfold ret in Hr, Hret. inv Hr. inv Hret.
+      now rewrite app_nil_r.
+    Qed.
+
+    (** An [fby]'s initial value, on an equation that transcribes, is a
+        constant under [when]s -- [to_constant] accepts nothing else -- so it
+        holds no node call and the generator mints nothing while typing it. *)
+    Lemma to_constant_assign_state : forall e0 c0 ts st st',
+        to_constant e0 = OK c0 ->
+        assign_lexp_type e0 st = OK (ts, st') ->
+        st' = st.
+    Proof.
+      apply (exp_ind2 (fun e0 => forall c0 ts st st',
+                 to_constant e0 = OK c0 ->
+                 assign_lexp_type e0 st = OK (ts, st') ->
+                 st' = st)).
+      - intros c c0 ts st st' Htc Hl.
+        rewrite assign_lexp_Econst in Hl. unfold ret in Hl. now inv Hl.
+      - intros x a c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+      - intros op e a IH c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+      - intros op e1 e2 a IH1 IH2 c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+      - intros e0s es a IH1 IH2 c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+      - intros e0s es a IH1 IH2 c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+      - (* Ewhen: the only recursive case [to_constant] allows *)
+        intros es x b a IH c0 ts st st' Htc Hl.
+        destruct es as [|e' [|]]; simpl in Htc; try discriminate.
+        rewrite assign_lexp_Ewhen in Hl.
+        eapply sec_bind_inv in Hl as (ts0 & st1 & Hts0 & Hl).
+        eapply sec_bind_inv in Hl as (g & st2 & Hg & Hret).
+        unfold ret in Hret. inv Hret.
+        unfold find_env in Hg.
+        destruct (Env.find x env); try discriminate.
+        unfold ret in Hg. inv Hg.
+        apply assign_lexps_single_inv in Hts0.
+        apply Forall_inv in IH. eapply IH; eauto.
+      - intros x ets efs a IH1 IH2 c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+      - intros e ets efs a IH IH1 IH2 c0 ts st st' Htc Hl. simpl in Htc.
+        discriminate.
+      - intros f es ro a IHr IH c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+    Qed.
 
     (** * Leg A, expression level
 

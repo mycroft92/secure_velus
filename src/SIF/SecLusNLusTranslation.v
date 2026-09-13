@@ -30,7 +30,9 @@ From Velus Require Import NLustre.IsDefined.
 From Velus Require Import NLustre.IsFree.
 From Velus Require Import NLustre.NLClocking.
 From Velus Require Import Transcription.Tr.
+From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SymTypes.
+From Velus Require Import SIF.SecTypes.
 From Velus Require Import SIF.SymLusTypes.
 From Velus Require Import SIF.SecCETyping.
 From Velus Require Import SIF.SecContext.
@@ -52,6 +54,8 @@ Module Type SECLUSNLUSTRANSLATION
   (Import LSyn    : LSYNTAX  Ids Op)
   (CESyn          : CESYNTAX     Op)
   (NLSyn          : NLSYNTAX Ids Op CESyn)
+  (Lat            : Lattice)
+  (Import SecT    : SECTYPES Lat)
   (Import STEP    : SECMONADSTEP Ids SC)
   (Import SIG     : SIGNATURE  Ids SC)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn NLSyn)
@@ -251,6 +255,113 @@ Module Type SECLUSNLUSTRANSLATION
       Kept below: the three shapes where the generators still agree exactly,
       and the inversion lemmas for both sides, which the preservation proof
       will reuse unchanged. *)
+
+  (** * Preservation, one equation at a time
+
+      [entails] is the relation the leg now proves: any ground instantiation
+      satisfying the Lustre constraints satisfies the NLustre ones.  Three of
+      the four shapes give it by the two lists being equal; the delayed
+      definition gives it by the source constraint being strictly stronger. *)
+
+  Definition entails (cs' cs : list constraint) : Prop :=
+    forall dlt, listSatisfiable dlt cs' -> listSatisfiable dlt cs.
+
+  Lemma entails_refl : forall cs, entails cs cs.
+  Proof. intros cs dlt H. exact H. Qed.
+
+  Theorem to_equation_entails_def :
+    forall G env base_ty rst_ty cenv envo x e eq' cs' st st',
+      to_equation cenv envo ([x], [e]) = OK eq' ->
+      (forall f args ro a, e <> Eapp f args ro a) ->
+      (forall e0s es an, e <> Efby e0s es an) ->
+      generate_leqn_constraint G env base_ty rst_ty cenv ([x], [e]) st
+        = OK (cs', st') ->
+      exists cs,
+        generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st')
+        /\ entails cs' cs.
+  Proof.
+    intros G env base_ty rst_ty cenv envo x e eq' cs' st st' Htr Hnapp Hnfby Hl.
+    edestruct to_equation_def_inv as (ck & ce & Hck & Hce & Heq); eauto.
+    subst eq'.
+    assert (Hld : generate_ldef_constraint G env base_ty rst_ty cenv x e st
+                  = OK (cs', st')).
+    { destruct e;
+        try (exfalso; eapply Hnapp; reflexivity);
+        try (exfalso; eapply Hnfby; reflexivity);
+        exact Hl. }
+    eapply generate_ldef_constraint_inv in Hld
+      as (ck2 & ckty & sa & rho & b & Hck2 & Hckty & He & Hb & Hcs').
+    rewrite Hck in Hck2. inv Hck2.
+    destruct (to_cexp_assign_rev _ _ _ _ _ _ _ _ _ Hce He)
+      as (sa2 & Hts & Hnl & Hst).
+    inv Hts; subst.
+    eexists. split.
+    - unfold generate_eqn_constraint.
+      osec Hckty. osec Hnl. fsec Hb. reflexivity.
+    - rewrite ?cmerge_nil, ?cmerge_nil2. apply entails_refl.
+  Qed.
+
+  (** The delayed definition: the one shape where the two disagree.  The
+      source constraint joins in the initial value's type, which the target
+      never mentions, so it is strictly stronger -- and all that is needed is
+      monotonicity of satisfaction in the left-hand side. *)
+
+  Lemma satisfiable_drop_middle : forall dlt X s0 s1 b,
+      satisfiable dlt (merge X (merge s0 s1)) b ->
+      satisfiable dlt (merge X s1) b.
+  Proof.
+    intros dlt X s0 s1 b H. unfold satisfiable in *.
+    rewrite hm_ext_merge_eq in H |- *.
+    rewrite hm_ext_merge_eq in H.
+    eapply Lat.order_trans; [|exact H].
+    apply Lat.join_least_upper_bound.
+    - apply Lat.join_bound1.
+    - eapply Lat.order_trans; [apply Lat.join_bound2|].
+      apply Lat.join_bound2.
+  Qed.
+
+  Theorem to_equation_entails_fby :
+    forall G env base_ty rst_ty cenv envo x e0 e ans eq' cs' st st',
+      to_equation cenv envo ([x], [Efby [e0] [e] ans]) = OK eq' ->
+      generate_leqn_constraint G env base_ty rst_ty cenv
+        ([x], [Efby [e0] [e] ans]) st = OK (cs', st') ->
+      exists cs,
+        generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st')
+        /\ entails cs' cs.
+  Proof.
+    intros G env base_ty rst_ty cenv envo x e0 e ans eq' cs' st st' Htr Hl.
+    edestruct to_equation_fby_inv as (ck & c0 & le & Hck & Hc0 & Hle & Heq); eauto.
+    subst eq'.
+    rewrite gen_leqn_Efby in Hl.
+    eapply generate_ldef_constraint_inv in Hl
+      as (ck2 & ckty & sa & rho & b & Hck2 & Hckty & He & Hb & Hcs').
+    rewrite Hck in Hck2. inv Hck2.
+    (* decompose the fby's own type: both operands, joined *)
+    rewrite assign_lexp_Efby in He.
+    eapply sec_bind_inv in He as (ts0 & st1 & Hts0 & He).
+    eapply sec_bind_inv in He as (us0 & st2 & Hus0 & He).
+    destruct (ljoin_list_inv_single _ _ _ _ _ He)
+      as (p & q & Hp & Hq & Hr & Hst2).
+    subst ts0 us0 st2.
+    apply assign_lexps_single_inv in Hts0.
+    apply assign_lexps_single_inv in Hus0.
+    destruct p as [s0 rho0]. destruct q as [s1 rho1].
+    unfold ljoin in Hr. cbn [fst snd] in Hr. inv Hr.
+    destruct (to_lexp_assign_rev _ _ _ _ _ _ _ _ _ Hle Hus0)
+      as (s1' & Hq' & Hnl1 & Hst1). inv Hq'. subst.
+    assert (Hst0 : st1 = st)
+      by (eapply to_constant_assign_state; eassumption).
+    subst st1.
+    eexists. split.
+    - unfold generate_eqn_constraint.
+      osec Hckty. osec Hnl1. fsec Hb. reflexivity.
+    - intros dlt Hsat. constructor; [|constructor].
+      unfold constraintSatisfiable.
+      eapply satisfiable_drop_middle with (s0 := s0).
+      unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
+      apply (Hsat (merge (merge [rst_ty] ckty) (merge s0 s1'), [b])).
+      apply cmerge_In. left. now left.
+  Qed.
 
   (** * The call shapes
 
