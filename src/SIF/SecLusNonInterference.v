@@ -377,6 +377,58 @@ Module Type SECLUSNONINTERFERENCE
         /\ SECNL.generate_node_sig_scoped_env GN nd' envs aux_names = OK nsig
         /\ signature_scoped nsig.
 
+  (** * Where a generated signature came from
+
+      Every signature of a generated global is the generator's output on some
+      node of the program, at whatever accumulator that node was reached with.
+
+      This is what lets a call site's freshness be *proved* rather than
+      assumed.  [SecNLusNonInterferenceHelpers] takes the signature global as a
+      section variable, so
+      [generated_caller_scope_fresh_scoped_env] can be applied at that
+      accumulator -- and no agreement between the accumulator and the final
+      global is needed, which is the lemma that would otherwise be missing. *)
+
+  Lemma generated_signature_provenance :
+    forall nodes envs aux_names acc G,
+      SECNL.generate_all_signatures_scoped_env' acc nodes envs aux_names = OK G ->
+      forall g sg,
+        find_signature g G = Some sg ->
+        find_signature g acc = Some sg
+        \/ exists m accm,
+             In m nodes
+             /\ SECNL.generate_node_sig_scoped_env accm m envs aux_names = OK sg.
+  Proof.
+    intros nodes envs aux_names.
+    induction nodes as [|n nodes IH]; intros acc G Hgen g sg Hfind.
+    - simpl in Hgen. inversion Hgen; subst G. now left.
+    - simpl in Hgen.
+      destruct (SECNL.generate_node_sig_scoped_env acc n envs aux_names)
+        as [sig|] eqn:En; simpl in Hgen; [|discriminate].
+      destruct (IH _ _ Hgen g sg Hfind) as [Hacc|(m & accm & Hin & Hm)].
+      + simpl in Hacc. destruct (ident_eqb sig.(s_name) g) eqn:Hnm.
+        * inversion Hacc; subst sig. right. exists n, acc.
+          split; [now left|exact En].
+        * now left.
+      + right. exists m, accm. split; [now right|exact Hm].
+  Qed.
+
+  Corollary generated_signature_provenance_full :
+    forall nodes envs aux_names G,
+      SECNL.generate_all_signatures_scoped_env nodes envs aux_names = OK G ->
+      forall g sg,
+        find_signature g G = Some sg ->
+        exists m accm,
+          In m nodes
+          /\ SECNL.generate_node_sig_scoped_env accm m envs aux_names = OK sg.
+  Proof.
+    intros nodes envs aux_names G Hgen g sg Hfind.
+    unfold SECNL.generate_all_signatures_scoped_env in Hgen.
+    destruct (generated_signature_provenance nodes envs aux_names nil G Hgen
+                g sg Hfind) as [Hnil|Hprov]; [|exact Hprov].
+    simpl in Hnil. discriminate.
+  Qed.
+
   (** The freshness a call site needs, at a whole-program global.
 
       [SecNLusTypingCorrectness.node_scope_fresh_in_env] asks a node's scope to
@@ -419,12 +471,83 @@ Module Type SECLUSNONINTERFERENCE
         find_signature g G = Some sg ->
         scope_fresh (inp ++ out ++ locals ++ clk_type :: rst_type :: nil) sg.
 
+  (** * The freshness, proved
+
+      A callee's signature is fresh from the caller's scope because the two
+      nodes' names are allocated in disjoint ranges.  The NLustre
+      noninterference layer proves exactly that, per caller/callee pair, in
+      [generated_caller_scope_fresh_scoped_env] -- from a two-sided bound,
+      with [caller <> callee] explicit.  What was missing here was the step
+      from "a signature of the global" to "a node of the program", which is
+      [generated_signature_provenance_full], and it hands back the accumulator
+      the callee was generated at, which is the global that lemma is then
+      applied at. *)
+
+  Lemma find_signature_name :
+    forall f G sg, find_signature f G = Some sg -> sg.(s_name) = f.
+  Proof.
+    intros f G sg H. unfold find_signature in H.
+    apply List.find_some in H as [_ Heq].
+    now apply ident_eqb_eq in Heq.
+  Qed.
+
+  Lemma In_find_node_nl :
+    forall (P : NLSyn.global) m,
+      NoDup (map NLSyn.n_name P) ->
+      In m P ->
+      NLSyn.find_node m.(NLSyn.n_name) P = Some m.
+  Proof.
+    induction P as [|nd P IH]; intros m Hnd Hin; [inversion Hin|].
+    simpl in Hnd. inversion Hnd as [|x xs Hnotin Hnd']; subst x xs.
+    destruct Hin as [Heq|Hin].
+    - subst nd. simpl. rewrite ident_eqb_refl. reflexivity.
+    - simpl. destruct (ident_eqb nd.(NLSyn.n_name) m.(NLSyn.n_name)) eqn:Hname.
+      + exfalso. apply ident_eqb_eq in Hname.
+        apply Hnotin. rewrite Hname. now apply in_map.
+      + apply IH; assumption.
+  Qed.
+
+  Lemma node_callees_scope_fresh_proved :
+    forall P envs aux_names GN nd' ty_env,
+      generate_node_scoped_env P = OK (envs, aux_names) ->
+      NLOrd.Ordered_nodes P ->
+      SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GN ->
+      NLSyn.find_node nd'.(NLSyn.n_name) P = Some nd' ->
+      find_node_env nd'.(NLSyn.n_name) envs = Some ty_env ->
+      node_callees_scope_fresh nd' ty_env aux_names GN.
+  Proof.
+    intros P envs aux_names GN nd' ty_env Hnames Hord Hgen Hfnd Hfenv.
+    intros clk_id rst_id clk_type rst_type inp out locals
+           Haux Hclk Hrst Hinp Hout Hlocals f sg Hne Hfsig.
+    destruct (generated_signature_provenance_full P envs aux_names GN Hgen f sg
+                Hfsig) as (m & accm & Hin & Hm).
+    assert (Hndnames : NoDup (map NLSyn.n_name P))
+      by (eapply Ordered_nodes_nodup_names; exact Hord).
+    assert (Hfndm : NLSyn.find_node m.(NLSyn.n_name) P = Some m)
+      by (apply In_find_node_nl; assumption).
+    pose proof Hm as Hm'.
+    unfold SECNL.generate_node_sig_scoped_env in Hm'.
+    destruct (find_node_env m.(NLSyn.n_name) envs) as [env_m|] eqn:Henvm;
+      [|discriminate].
+    assert (Hsgname : sg.(s_name) = m.(NLSyn.n_name))
+      by (eapply nl_node_sig_name; exact Hm').
+    assert (Hfname : sg.(s_name) = f)
+      by (eapply find_signature_name; exact Hfsig).
+    eapply (generated_caller_scope_fresh_scoped_env
+              P accm envs aux_names nd' m ty_env env_m sg
+              clk_id rst_id clk_type rst_type inp out locals); eauto.
+    congruence.
+  Qed.
+
   Lemma transcribed_program_context_intro :
     forall all_lnodes P GL GN envs aux_names,
       Signature_entails GL GN ->
       secglobal_scoped GN ->
       secglobal_good GN ->
       (forall g sg, find_signature g GN = Some sg -> NoDup (signature_scope sg)) ->
+      generate_node_scoped_env P = OK (envs, aux_names) ->
+      NLOrd.Ordered_nodes P ->
+      SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GN ->
       (forall nd nd' Hpn ty_env,
           find_node nd.(n_name) all_lnodes = Some nd ->
           to_node nd Hpn = OK nd' ->
@@ -433,17 +556,20 @@ Module Type SECLUSNONINTERFERENCE
             NLSyn.find_node nd'.(NLSyn.n_name) P = Some nd'
             /\ generate_local_env_for_node nd' stx = OK ((ty_env, rec), sty)
             /\ NLClo.wc_node P nd'
-            /\ node_callees_scope_fresh nd' ty_env aux_names GN
             /\ find_signature nd'.(NLSyn.n_name) GN = Some nsig
             /\ SECNL.generate_node_sig_scoped_env GN nd' envs aux_names = OK nsig) ->
       transcribed_program_context all_lnodes P GL GN envs aux_names.
   Proof.
-    intros all_lnodes P GL GN envs aux_names Hsig HscN HgoodN HndN Hnodes.
+    intros all_lnodes P GL GN envs aux_names Hsig HscN HgoodN HndN
+           Hnamesgen Hord Hallsig Hnodes.
     intros nd nd' Hpn ty_env clk_id rst_id clk_type rst_type
            Hfnd Htn Hfenv Haux Hclk Hrst.
     destruct (Hnodes nd nd' Hpn ty_env Hfnd Htn Hfenv)
-      as (rec & stx & sty & nsig & HfndP & Hlocal & Hwc & Hfresh & Hfsig & Hgen).
+      as (rec & stx & sty & nsig & HfndP & Hlocal & Hwc & Hfsig & Hgen).
     pose proof (to_node_name _ _ _ Htn) as Hname.
+    assert (Hfresh : node_callees_scope_fresh nd' ty_env aux_names GN).
+    { eapply node_callees_scope_fresh_proved; eauto.
+      rewrite <- Hname. exact Hfenv. }
     pose proof (generate_local_env_for_node_injective _ _ _ _ _ Hlocal) as Hinj.
     pose proof Hgen as Hgen'.
     unfold SECNL.generate_node_sig_scoped_env in Hgen'.
