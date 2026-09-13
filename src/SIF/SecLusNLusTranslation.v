@@ -286,20 +286,20 @@ Module Type SECLUSNLUSTRANSLATION
   Proof. intros cs' cs dlt [_ H]. apply H. Qed.
 
   Theorem to_equation_entails_def :
-    forall G env base_ty rst_ty cenv envo x e eq' cs' st st',
+    forall GL GN env base_ty rst_ty cenv envo x e eq' cs' st st',
       to_equation cenv envo ([x], [e]) = OK eq' ->
       (forall f args ro a, e <> Eapp f args ro a) ->
       (forall e0s es an, e <> Efby e0s es an) ->
-      generate_leqn_constraint G env base_ty rst_ty cenv ([x], [e]) st
+      generate_leqn_constraint GL env base_ty rst_ty cenv ([x], [e]) st
         = OK (cs', st') ->
       exists cs,
-        generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st')
+        generate_eqn_constraint GN env base_ty rst_ty eq' st = OK (cs, st')
         /\ entails cs' cs.
   Proof.
-    intros G env base_ty rst_ty cenv envo x e eq' cs' st st' Htr Hnapp Hnfby Hl.
+    intros GL GN env base_ty rst_ty cenv envo x e eq' cs' st st' Htr Hnapp Hnfby Hl.
     edestruct to_equation_def_inv as (ck & ce & Hck & Hce & Heq); eauto.
     subst eq'.
-    assert (Hld : generate_ldef_constraint G env base_ty rst_ty cenv x e st
+    assert (Hld : generate_ldef_constraint GL env base_ty rst_ty cenv x e st
                   = OK (cs', st')).
     { destruct e;
         try (exfalso; eapply Hnapp; reflexivity);
@@ -337,15 +337,15 @@ Module Type SECLUSNLUSTRANSLATION
   Qed.
 
   Theorem to_equation_entails_fby :
-    forall G env base_ty rst_ty cenv envo x e0 e ans eq' cs' st st',
+    forall GL GN env base_ty rst_ty cenv envo x e0 e ans eq' cs' st st',
       to_equation cenv envo ([x], [Efby [e0] [e] ans]) = OK eq' ->
-      generate_leqn_constraint G env base_ty rst_ty cenv
+      generate_leqn_constraint GL env base_ty rst_ty cenv
         ([x], [Efby [e0] [e] ans]) st = OK (cs', st') ->
       exists cs,
-        generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st')
+        generate_eqn_constraint GN env base_ty rst_ty eq' st = OK (cs, st')
         /\ entails cs' cs.
   Proof.
-    intros G env base_ty rst_ty cenv envo x e0 e ans eq' cs' st st' Htr Hl.
+    intros GL GN env base_ty rst_ty cenv envo x e0 e ans eq' cs' st st' Htr Hl.
     edestruct to_equation_fby_inv as (ck & c0 & le & Hck & Hc0 & Hle & Heq); eauto.
     subst eq'.
     rewrite gen_leqn_Efby in Hl.
@@ -381,6 +381,115 @@ Module Type SECLUSNLUSTRANSLATION
       unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
       apply (Hsat (merge (merge [rst_ty] ckty) (merge s0 s1'), [b])).
       apply cmerge_In. left. now left.
+  Qed.
+
+  (** * From [preserves_on] back to [entails]
+
+      The call-site theorems in [SIFSignature.v] conclude [preserves_on],
+      which allows the witness valuation to differ off the visible scope.  On
+      this leg nothing needs that freedom: transcription introduces no
+      variables, and an instantiated call block is scoped to the caller's own
+      scope, so the witness can be transported back and the whole leg stays in
+      [entails].  That is what avoids the private-extras discipline the
+      NLustre-to-Stc leg has to carry. *)
+
+  Lemma preserves_on_entails_sat : forall scope a b,
+      constraints_scoped scope b ->
+      preserves_on scope a b ->
+      forall dlt, listSatisfiable dlt a -> listSatisfiable dlt b.
+  Proof.
+    intros scope a b Hsc Hp dlt Hsat.
+    destruct (Hp dlt Hsat) as (dlt' & Hagree & Hsat').
+    eapply listSatisfiable_ext; [exact Hsc | | exact Hsat'].
+    intros x Hin. symmetry. now apply Hagree.
+  Qed.
+
+  (** * Two signature globals
+
+      Up to here one signature global served both generators, which was right
+      while the two agreed.  It is not right any more.  A callee whose body
+      holds an [fby] with a non-constant initial value gets a strictly
+      stronger Lustre signature than NLustre one -- that is the whole point of
+      the corrected [fby] rule -- so the two accumulators diverge and a call
+      site reads a different signature on each side.
+
+      What survives is a relation between the two globals: name and interface
+      fields agree, and the instantiated call blocks stand in the same
+      entailment the leg proves everywhere else.  This is the Lustre analogue
+      of [Signature_consistent] on the NLustre-to-Stc leg, and it is weaker in
+      exactly one place: the reset actual is the same expression on both sides
+      here, so only the equal-actuals call clause is needed. *)
+
+  Definition Signature_call_entails (n1 n2 : signature) : Prop :=
+    forall scope inptyp ckty rstty outtyp c1 c2 sa sa' sb sb',
+      scope_fresh scope n1 ->
+      call_subst_scoped scope inptyp ckty rstty outtyp ->
+      call_subst_fresh n1 inptyp ckty rstty outtyp ->
+      generate_constraints n1 inptyp ckty rstty outtyp sa = OK (c1, sa') ->
+      generate_constraints n2 inptyp ckty rstty outtyp sb = OK (c2, sb') ->
+      preserves_on scope c1 c2.
+
+  Definition Signature_head_entails (n1 n2 : signature) : Prop :=
+    n1.(s_name) = n2.(s_name)
+    /\ signature_fields_agree n1 n2
+    /\ Signature_call_entails n1 n2.
+
+  Definition Signature_entails (G1 G2 : secglobal) : Prop :=
+    forall f n1,
+      find_signature f G1 = Some n1 ->
+      exists n2,
+        find_signature f G2 = Some n2
+        /\ Signature_head_entails n1 n2.
+
+  (** The call clause is not proved by hand: it is what
+      [signatures_preserved_equal_calls_from_good] says about a pair of
+      signatures already known to be preserved, and the node level supplies
+      that pair. *)
+  Lemma Signature_call_entails_from_preserved :
+    forall n1 n2,
+      signature_good n1 ->
+      NoDup (signature_scope n1) ->
+      signature_scoped n2 ->
+      SIGPROOFS.signatures_preserved n1 n2 ->
+      Signature_call_entails n1 n2.
+  Proof.
+    intros n1 n2 Hgood Hnd Hsc Hpres
+           scope inptyp ckty rstty outtyp c1 c2 sa sa' sb sb'
+           Hfresh Hscoped Hcf Hg1 Hg2.
+    eapply SIGPROOFS.signatures_preserved_equal_calls_from_good; eauto.
+  Qed.
+
+  (** One instantiated call block entails the other.  The satisfaction half is
+      the call clause, transported off [preserves_on] by
+      [preserves_on_entails_sat]: the target block is scoped to the caller, so
+      the witness valuation can be carried back.  The right-hand-side half
+      does not look at either signature at all -- by
+      [generate_constraints_shape] an instantiated block constrains exactly
+      the caller's own result variables, one constraint each, whichever
+      signature it came from. *)
+  Lemma call_block_entails :
+    forall scope n1 n2 inptyp ckty rstty outtyp c1 c2 sa sa' sb sb',
+      Signature_call_entails n1 n2 ->
+      signature_scoped n2 ->
+      scope_fresh scope n1 ->
+      call_subst_scoped scope inptyp ckty rstty outtyp ->
+      call_subst_fresh n1 inptyp ckty rstty outtyp ->
+      NoDup outtyp ->
+      generate_constraints n1 inptyp ckty rstty outtyp sa = OK (c1, sa') ->
+      generate_constraints n2 inptyp ckty rstty outtyp sb = OK (c2, sb') ->
+      entails c1 c2.
+  Proof.
+    intros scope n1 n2 inptyp ckty rstty outtyp c1 c2 sa sa' sb sb'
+           Hcall Hsc2 Hfresh Hscoped Hcf Hnd Hg1 Hg2.
+    destruct Hscoped as [[Hinp [Hck Hout]] Hrst].
+    split.
+    - destruct (generate_constraints_shape _ _ _ _ _ _ _ _ Hnd Hg1) as [_ H1].
+      destruct (generate_constraints_shape _ _ _ _ _ _ _ _ Hnd Hg2) as [_ H2].
+      etransitivity; [exact H1|symmetry; exact H2].
+    - eapply preserves_on_entails_sat with (scope := scope).
+      + exact (generate_constraints_scoped n2 scope inptyp ckty rstty outtyp c2 sb sb'
+                 Hsc2 Hinp Hck Hrst Hout Hg2).
+      + eapply Hcall; eauto. split; [split; [|split]|]; eauto.
   Qed.
 
   (** * The call shapes
@@ -689,27 +798,6 @@ Module Type SECLUSNLUSTRANSLATION
       exists (c ++ cr). split.
       + simpl. ssec Hc. ssec Hcr. reflexivity.
       + now apply entails_app.
-  Qed.
-
-  (** * From [preserves_on] back to [entails]
-
-      The call-site theorems in [SIFSignature.v] conclude [preserves_on],
-      which allows the witness valuation to differ off the visible scope.  On
-      this leg nothing needs that freedom: transcription introduces no
-      variables, and an instantiated call block is scoped to the caller's own
-      scope, so the witness can be transported back and the whole leg stays in
-      [entails].  That is what avoids the private-extras discipline the
-      NLustre-to-Stc leg has to carry. *)
-
-  Lemma preserves_on_entails_sat : forall scope a b,
-      constraints_scoped scope b ->
-      preserves_on scope a b ->
-      forall dlt, listSatisfiable dlt a -> listSatisfiable dlt b.
-  Proof.
-    intros scope a b Hsc Hp dlt Hsat.
-    destruct (Hp dlt Hsat) as (dlt' & Hagree & Hsat').
-    eapply listSatisfiable_ext; [exact Hsc | | exact Hsat'].
-    intros x Hin. symmetry. now apply Hagree.
   Qed.
 
   (** * Crossing [simplify]
