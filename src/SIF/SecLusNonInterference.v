@@ -399,29 +399,6 @@ Module Type SECLUSNONINTERFERENCE
       what a call site actually needs, because [Ordered_nodes] says a call site
       never names the node it is in. *)
 
-  Lemma node_scope_fresh_in_env_self_absurd :
-    forall nd ty_env aux_names G clk_id rst_id clk_type rst_type inp out locals
-           sig,
-      SECNLC.node_scope_fresh_in_env nd ty_env aux_names G ->
-      get_node_aux nd.(NLSyn.n_name) aux_names = Some (clk_id, rst_id) ->
-      Env.find clk_id ty_env = Some clk_type ->
-      Env.find rst_id ty_env = Some rst_type ->
-      get_mappings_from_node nd.(NLSyn.n_in) ty_env = Some inp ->
-      get_mappings_from_node nd.(NLSyn.n_out) ty_env = Some out ->
-      get_mappings_from_node nd.(NLSyn.n_vars) ty_env = Some locals ->
-      find_signature nd.(NLSyn.n_name) G = Some sig ->
-      sig.(s_in) = inp ->
-      inp = [].
-  Proof.
-    intros nd ty_env aux_names G clk_id rst_id clk_type rst_type inp out locals
-           sig Hfresh Haux Hclk Hrst Hinp Hout Hlocals Hfsig Hsin.
-    pose proof (Hfresh _ _ _ _ _ _ _ Haux Hclk Hrst Hinp Hout Hlocals) as Hsf.
-    specialize (Hsf _ _ Hfsig).
-    destruct inp as [|x xs]; [reflexivity|exfalso].
-    eapply (Hsf x).
-    - apply in_or_app. left. now left.
-    - unfold signature_scope. rewrite Hsin. apply in_or_app. left. now left.
-  Qed.
 
   Definition node_callees_scope_fresh (nd : NLSyn.node) (ty_env : Env.t ident)
       (aux_names : list node_aux_names) (G : secglobal) : Prop :=

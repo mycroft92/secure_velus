@@ -207,7 +207,6 @@ Module Type SECSTCNONINTERFERENCE
     forall all_nodes Gsrc Gstc envs aux_names n dlt_sig dlt_raw,
       NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
       NL.Clo.wc_global all_nodes ->
-      NL.Ord.Ordered_nodes all_nodes ->
       SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK Gsrc ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env (Translation.translate all_nodes) envs aux_names = OK Gstc ->
       find_node n.(n_name) all_nodes = Some n ->
@@ -215,7 +214,7 @@ Module Type SECSTCNONINTERFERENCE
       system_security all_nodes Gsrc Gstc envs aux_names (Translation.translate_node n) dlt_sig dlt_raw.
   Proof.
     intros all_nodes Gsrc Gstc envs aux_names n dlt_sig dlt_raw
-           Henvsgen Hwc Hord Hallsrc Hallstc Hfindnode Hsec.
+           Henvsgen Hwc Hallsrc Hallstc Hfindnode Hsec.
     destruct Hsec as
       [ty_env nsig
        clk_id rst_id clk_type rst_type inp out locals raw st_n
@@ -225,7 +224,7 @@ Module Type SECSTCNONINTERFERENCE
     destruct
       (NLusStcBridge.generated_program_signatures_preserved_global
          all_nodes Gsrc Gstc envs aux_names
-         Henvsgen Hwc Hord Hallsrc Hallstc
+         Henvsgen Hwc Hallsrc Hallstc
          n.(n_name) nsig Hfindsig)
       as (ssig & Hfindstc & Hhead).
     unfold system_security.
