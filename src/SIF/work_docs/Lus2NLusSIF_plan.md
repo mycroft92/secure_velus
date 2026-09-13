@@ -125,6 +125,43 @@ Two things preservation needs that are not yet in place.
 Kept in `SecLusNLusTranslation.v`: the three exact shapes, and the inversion
 lemmas for both sides, which the preservation proof reuses unchanged.
 
+### Leg A status, 2026-09-13
+
+Preservation now runs Lustre-to-NLustre and reaches the node, unconditionally
+except for one named side condition. Proved, no admits, full build green:
+
+- `to_lexp_assign_rev`, `to_cexp_assign_rev`, `to_lexps_assign_rev` -- the
+  converses of the expression lemmas, which is the direction preservation
+  needs;
+- `to_equation_entails_{def,fby,app,app_reset}` and the dispatcher
+  `to_equation_entails`; `to_equations_entails` for a node's body;
+- `entails_simplify` -- the bridge, from `simplify_complete` and
+  `simplify_is_correct`;
+- `to_node_sig_preserved` -- `signatures_preserved lsig nsig`.
+
+`entails` records *two* things: the satisfaction implication, and that the two
+lists have the same right-hand sides. The second is free -- every shape
+constrains exactly the variables its equation defines, and only the delay's
+left-hand side differs -- and it is what carries `wf_constraints` from the
+NLustre side to the Lustre one, which the bridge needs.
+
+**What the program level still needs.** The equation theorems are parameterised
+by *one* signature global `G`, read by both generators for callee lookup. That
+was right while the two agreed. It is not right any more: the Lustre and
+NLustre accumulators now diverge, because a callee's Lustre signature is
+stronger than its NLustre one wherever the callee contains an `fby` whose
+initial value is not a bare constant. So the program level needs the theorems
+generalised to `G_L` and `G_NL` related by `Signature_consistent`, and a
+lockstep global induction carrying `Signature_call_preserves` -- exactly the
+shape of `generate_all_signatures_consistent_scoped'` in the Stc leg, and
+reusing `generate_constraints_correct_inst` and
+`generate_constraints_complete_good` from `SIFSignature.v`.
+
+The one remaining side condition on `to_node_sig_preserved` -- the generated
+raw list is well formed, and a node's locals are fresh from its signature
+scope -- is the Lustre analogue of what `SecNLusTypingCorrectness.v` proves for
+NLustre.
+
 ### Decision: one naming pass (option A), 2026-09-12
 
 Signature preservation needs the Lustre and NLustre signatures to have the
