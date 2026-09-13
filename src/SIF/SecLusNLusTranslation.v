@@ -264,10 +264,25 @@ Module Type SECLUSNLUSTRANSLATION
       definition gives it by the source constraint being strictly stronger. *)
 
   Definition entails (cs' cs : list constraint) : Prop :=
-    forall dlt, listSatisfiable dlt cs' -> listSatisfiable dlt cs.
+    map snd cs' = map snd cs
+    /\ (forall dlt, listSatisfiable dlt cs' -> listSatisfiable dlt cs).
+
+  (** The right-hand sides coincide as well as the satisfaction implication.
+      That is free -- every shape constrains exactly the variables the
+      equation defines, and only the fby's left-hand side differs -- and it is
+      what carries [wf_constraints] from the NLustre side, which
+      [SecNLusTypingCorrectness.v] already proves, to the Lustre one, which
+      the [simplify] bridge needs. *)
 
   Lemma entails_refl : forall cs, entails cs cs.
-  Proof. intros cs dlt H. exact H. Qed.
+  Proof. intros cs. split; [reflexivity|intros dlt H; exact H]. Qed.
+
+  Lemma entails_rhs : forall cs' cs, entails cs' cs -> map snd cs' = map snd cs.
+  Proof. intros cs' cs [H _]. exact H. Qed.
+
+  Lemma entails_sat : forall cs' cs dlt,
+      entails cs' cs -> listSatisfiable dlt cs' -> listSatisfiable dlt cs.
+  Proof. intros cs' cs dlt [_ H]. apply H. Qed.
 
   Theorem to_equation_entails_def :
     forall G env base_ty rst_ty cenv envo x e eq' cs' st st',
@@ -352,10 +367,14 @@ Module Type SECLUSNLUSTRANSLATION
     assert (Hst0 : st1 = st)
       by (eapply to_constant_assign_state; eassumption).
     subst st1.
+    assert (Hplain : rho0 = []).
+    { assert (Hp := to_constant_assign_plain _ _ _ _ _ _ _ _ _ Hc0 Hts0).
+      apply Forall_inv in Hp. exact Hp. }
+    subst rho0.
     eexists. split.
     - unfold generate_eqn_constraint.
       osec Hckty. osec Hnl1. fsec Hb. reflexivity.
-    - intros dlt Hsat. constructor; [|constructor].
+    - split; [now rewrite cmerge_nil|]. intros dlt Hsat. constructor; [|constructor].
       unfold constraintSatisfiable.
       eapply satisfiable_drop_middle with (s0 := s0).
       unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
@@ -589,12 +608,18 @@ Module Type SECLUSNLUSTRANSLATION
       Every equation that transcribes is one of the four; the rest is case
       analysis. *)
 
+  Lemma map_snd_app : forall (a b : list constraint),
+      map snd (a ++ b) = map snd a ++ map snd b.
+  Proof. induction a as [|c a IH]; intros b; simpl; auto. now rewrite IH. Qed.
+
   Lemma entails_app : forall a b a' b',
       entails a a' -> entails b b' -> entails (a ++ b) (a' ++ b').
   Proof.
-    intros a b a' b' Ha Hb dlt H.
-    unfold listSatisfiable in *. rewrite Forall_app in H |- *.
-    destruct H as [H1 H2]. split; [now apply Ha | now apply Hb].
+    intros a b a' b' [Hra Hsa] [Hrb Hsb]. split.
+    - rewrite !map_snd_app, Hra, Hrb. reflexivity.
+    - intros dlt H.
+      unfold listSatisfiable in *. rewrite Forall_app in H |- *.
+      destruct H as [H1 H2]. split; [now apply Hsa | now apply Hsb].
   Qed.
 
   Ltac def_shape_e Htr Hl :=

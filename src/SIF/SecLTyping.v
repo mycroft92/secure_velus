@@ -337,6 +337,44 @@ Module Type SECLTYPING
       - intros f es ro a IHr IH c0 ts st st' Htc Hl. simpl in Htc. discriminate.
     Qed.
 
+    (** The same expressions carry no obligations either, for the same
+        reason: there is no node call in them. *)
+    Lemma to_constant_assign_plain : forall e0 c0 ts st st',
+        to_constant e0 = OK c0 ->
+        assign_lexp_type e0 st = OK (ts, st') ->
+        Forall (fun t => snd t = []) ts.
+    Proof.
+      apply (exp_ind2 (fun e0 => forall c0 ts st st',
+                 to_constant e0 = OK c0 ->
+                 assign_lexp_type e0 st = OK (ts, st') ->
+                 Forall (fun t => snd t = []) ts)).
+      - intros c c0 ts st st' Htc Hl.
+        rewrite assign_lexp_Econst in Hl. unfold ret in Hl. inv Hl.
+        constructor; auto.
+      - intros x a c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+      - intros op e a IH c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+      - intros op e1 e2 a IH1 IH2 c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+      - intros e0s es a IH1 IH2 c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+      - intros e0s es a IH1 IH2 c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+      - intros es x b a IH c0 ts st st' Htc Hl.
+        destruct es as [|e' [|]]; simpl in Htc; try discriminate.
+        rewrite assign_lexp_Ewhen in Hl.
+        eapply sec_bind_inv in Hl as (ts0 & st1 & Hts0 & Hl).
+        eapply sec_bind_inv in Hl as (g & st2 & Hg & Hret).
+        unfold ret in Hret. inv Hret.
+        apply assign_lexps_single_inv in Hts0.
+        apply Forall_inv in IH.
+        specialize (IH _ _ _ _ Htc Hts0).
+        rewrite Forall_forall in IH |- *.
+        intros t Hin. apply in_map_iff in Hin as (t0 & Ht0 & Hin0).
+        subst t. unfold ljoin, lvar. cbn [snd].
+        rewrite (IH _ Hin0). reflexivity.
+      - intros x ets efs a IH1 IH2 c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+      - intros e ets efs a IH IH1 IH2 c0 ts st st' Htc Hl. simpl in Htc.
+        discriminate.
+      - intros f es ro a IHr IH c0 ts st st' Htc Hl. simpl in Htc. discriminate.
+    Qed.
+
     (** * Leg A, expression level
 
         On an expression that transcribes, the two generators agree: the
