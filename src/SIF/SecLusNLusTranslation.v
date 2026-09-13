@@ -690,6 +690,91 @@ Module Type SECLUSNLUSTRANSLATION
       + now apply entails_app.
   Qed.
 
+  (** * Crossing [simplify]
+
+      Both generators eliminate the same locals, so entailment of the raw
+      lists becomes preservation of the stored ones.  Both halves already
+      exist: [simplify_complete] recovers a valuation of the raw constraints
+      from one of the simplified constraints, and [simplify_is_correct]
+      pushes a raw valuation forward. *)
+
+  Lemma simplify_correct : forall dlt cns ds,
+      listSatisfiable dlt cns -> listSatisfiable dlt (simplify cns ds).
+  Proof.
+    intros dlt cns ds H.
+    eapply simplify_is_correct; [exact H|].
+    eapply simplify_simplifyRel. reflexivity.
+  Qed.
+
+  (** [wf_constraints] only looks at right-hand sides, so it transfers along
+      the right-hand-side equality [entails] records. *)
+  Lemma wf_constraints_of_rhs : forall cs' cs,
+      map snd cs' = map snd cs -> wf_constraints cs -> wf_constraints cs'.
+  Proof.
+    intros cs' cs Hr [Hnd Hlen]. split.
+    - rewrite Hr. exact Hnd.
+    - rewrite Forall_forall in Hlen |- *.
+      intros c Hin. destruct c as [lhs rhs].
+      assert (Hrhs : In rhs (map snd cs'))
+        by (apply in_map_iff; exists (lhs, rhs); split; auto).
+      rewrite Hr in Hrhs.
+      apply in_map_iff in Hrhs as ((l2, r2) & Hr2 & Hin2).
+      simpl in Hr2. subst r2.
+      specialize (Hlen _ Hin2). exact Hlen.
+  Qed.
+
+  Theorem entails_simplify : forall scope cs' cs ds,
+      entails cs' cs ->
+      wf_constraints cs ->
+      (forall x, In x ds -> ~ In x scope) ->
+      preserves_on scope (simplify cs' ds) (simplify cs ds).
+  Proof.
+    intros scope cs' cs ds He Hwf Hdisj dlt Hsat.
+    assert (Hwf' : wf_constraints cs')
+      by (eapply wf_constraints_of_rhs; [apply entails_rhs|]; eauto).
+    edestruct simplify_complete as (dlt' & Hagree & Hsat'); eauto.
+    exists dlt'. split.
+    - intros x Hin. now apply Hagree.
+    - apply simplify_correct. eapply entails_sat; eauto.
+  Qed.
+
+  Lemma l_node_sig_inv : forall G n env aux_names lsig st st',
+      generate_lnode_sig G n env aux_names st = OK (lsig, st') ->
+      exists clk_id rst_id clk_type rst_type inp out locals cns,
+        get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id)
+        /\ Env.find clk_id env = Some clk_type
+        /\ Env.find rst_id env = Some rst_type
+        /\ get_mappings_from_node n.(n_in) env = Some inp
+        /\ get_mappings_from_node n.(n_out) env = Some out
+        /\ get_mappings_from_node n.(n_vars) env = Some locals
+        /\ generate_leqns_constraints G env clk_type rst_type
+             (lnode_clock_env n) n.(n_eqs) st = OK (cns, st')
+        /\ lsig = {| s_name  := n.(n_name);
+                     s_in    := inp;
+                     s_out   := out;
+                     s_reset := rst_type;
+                     s_clk   := clk_type;
+                     s_constraints := simplify cns (locals ++ minted st st') |}.
+  Proof.
+    intros G n env aux_names lsig st st' H.
+    unfold generate_lnode_sig in H.
+    match type of H with
+    | match ?X with _ => _ end = _ => destruct X as [[p stz]|er] eqn:E
+    end; [|discriminate].
+    eapply sec_bind2_inv in E as (clk_id & rst_id & st1 & Haux & E).
+    eapply sec_bind_inv in E as (clk_type & st2 & Hclk & E).
+    eapply sec_bind_inv in E as (rst_type & st3 & Hrst & E).
+    eapply sec_bind_inv in E as (inp & st4 & Hinp & E).
+    eapply sec_bind_inv in E as (out & st5 & Hout & E).
+    eapply sec_bind_inv in E as (locals & st6 & Hloc & E).
+    eapply sec_bind_inv in E as (cns & st7 & Hcns & Hret).
+    unfold ret in Hret. inv Hret. inv H.
+    sec_peel Haux. sec_peel Hclk. sec_peel Hrst.
+    sec_peel Hinp. sec_peel Hout. sec_peel Hloc.
+    exists clk_id, rst_id, clk_type, rst_type, inp, out, locals, cns.
+    repeat split; auto.
+  Qed.
+
   (** * The NLustre generator is state-pure
 
       It only ever looks names up, so its result does not depend on the
