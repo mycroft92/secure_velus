@@ -58,6 +58,7 @@ Module Type SECLUSNLUSTRANSLATION
   (Import SecT    : SECTYPES Lat)
   (Import STEP    : SECMONADSTEP Ids SC)
   (Import SIG     : SIGNATURE  Ids SC)
+  (SIGPROOFS      : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn NLSyn)
   (CEIsF          : CEISFREE Ids Op CESyn)
   (CEClo          : CECLOCKING Ids Op CESyn)
@@ -161,7 +162,7 @@ Module Type SECLUSNLUSTRANSLATION
     destruct e;
       try (exfalso; eapply Hnapp; reflexivity);
       try (exfalso; eapply Hnfby; reflexivity);
-      (simpl in H; monadInv H; do 2 eexists;
+      (simpl in H; monadInv H; eexists; eexists;
        repeat split; try eassumption;
        first [ eassumption
              | simpl;
@@ -182,7 +183,7 @@ Module Type SECLUSNLUSTRANSLATION
   Proof.
     intros cenv envo x e0 e ans eq' H.
     simpl in H. monadInv H.
-    do 3 eexists. repeat split; eassumption.
+    eexists; eexists; eexists. repeat split; eassumption.
   Qed.
 
   (** * One equation, the definition shapes
@@ -889,6 +890,58 @@ Module Type SECLUSNLUSTRANSLATION
     intros st.
     destruct (state_pure_generate_eqns_constraints G env clk_type rst_type
                 (NLSyn.n_eqs n) _ st _ _ Hcns) as [_ Hst]. exact Hst.
+  Qed.
+
+  (** * Nodes
+
+      Transcription keeps a node's name and its three variable lists
+      definitionally, and both sides read one naming environment, so the
+      interface fields are the same computation on the same data.  What is
+      left is the constraint list, which is the equation-list theorem crossed
+      through [simplify].
+
+      The side condition is the Lustre analogue of what
+      [SecNLusTypingCorrectness.v] proves for NLustre: the generated raw list
+      is well formed, and a node's locals are fresh from its signature scope.
+      It is a hypothesis here so the caller supplies it from that file. *)
+
+  Theorem to_node_sig_preserved :
+    forall G n n' Hp env aux_names nsig lsig st st',
+      to_node n Hp = OK n' ->
+      generate_node_sig G n' env aux_names = OK nsig ->
+      generate_lnode_sig G n env aux_names st = OK (lsig, st') ->
+      (forall clk_type rst_type locals cns,
+          get_mappings_from_node n.(n_vars) env = Some locals ->
+          generate_eqns_constraints G env clk_type rst_type
+            n'.(NLSyn.n_eqs) st = OK (cns, st) ->
+          wf_constraints cns
+          /\ (forall x, In x locals -> ~ In x (signature_scope lsig))) ->
+      SIGPROOFS.signatures_preserved lsig nsig.
+  Proof.
+    intros G n n' Hp env aux_names nsig lsig st st' Htr Hnl Hl Hside.
+    pose proof Htr as Htr'. tonodeInv Htr'.
+    eapply nl_node_sig_inv in Hnl
+      as (ci & ri & ckt & rstt & inp & out & locs & cns
+          & Haux & Hclk & Hrst & Hinp & Hout & Hloc & Hcns & Hnsig).
+    eapply l_node_sig_inv in Hl
+      as (ci2 & ri2 & ckt2 & rstt2 & inp2 & out2 & locs2 & cns2
+          & Haux2 & Hclk2 & Hrst2 & Hinp2 & Hout2 & Hloc2 & Hcns2 & Hlsig).
+    simpl in Haux, Hinp, Hout, Hloc, Hcns, Hnsig.
+    specialize (Hcns st).
+    destruct (Hside ckt rstt locs cns Hloc Hcns) as [Hwf Hfresh].
+    rewrite Haux in Haux2. inv Haux2.
+    rewrite Hclk in Hclk2. inv Hclk2.
+    rewrite Hrst in Hrst2. inv Hrst2.
+    rewrite Hinp in Hinp2. inv Hinp2.
+    rewrite Hout in Hout2. inv Hout2.
+    rewrite Hloc in Hloc2. inv Hloc2.
+    destruct (to_equations_entails _ _ _ _ _ _ _ _ _ _ _ Hmmap Hcns2)
+      as (cs & Hcs & Hent).
+    rewrite Hcns in Hcs. inv Hcs.
+    subst. unfold SIGPROOFS.signatures_preserved. split.
+    - repeat split; reflexivity.
+    - simpl. rewrite minted_refl, app_nil_r.
+      apply entails_simplify; auto.
   Qed.
 
 End SECLUSNLUSTRANSLATION.
