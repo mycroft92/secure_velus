@@ -691,6 +691,27 @@ Module Type SECLUSNLUSTRANSLATION
       + now apply entails_app.
   Qed.
 
+  (** * From [preserves_on] back to [entails]
+
+      The call-site theorems in [SIFSignature.v] conclude [preserves_on],
+      which allows the witness valuation to differ off the visible scope.  On
+      this leg nothing needs that freedom: transcription introduces no
+      variables, and an instantiated call block is scoped to the caller's own
+      scope, so the witness can be transported back and the whole leg stays in
+      [entails].  That is what avoids the private-extras discipline the
+      NLustre-to-Stc leg has to carry. *)
+
+  Lemma preserves_on_entails_sat : forall scope a b,
+      constraints_scoped scope b ->
+      preserves_on scope a b ->
+      forall dlt, listSatisfiable dlt a -> listSatisfiable dlt b.
+  Proof.
+    intros scope a b Hsc Hp dlt Hsat.
+    destruct (Hp dlt Hsat) as (dlt' & Hagree & Hsat').
+    eapply listSatisfiable_ext; [exact Hsc | | exact Hsat'].
+    intros x Hin. symmetry. now apply Hagree.
+  Qed.
+
   (** * Crossing [simplify]
 
       Both generators eliminate the same locals, so entailment of the raw
