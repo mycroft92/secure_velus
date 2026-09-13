@@ -127,8 +127,7 @@ lemmas for both sides, which the preservation proof reuses unchanged.
 
 ### Leg A status, 2026-09-13
 
-Preservation now runs Lustre-to-NLustre and reaches the node, unconditionally
-except for one named side condition. Proved, no admits, full build green:
+Preservation runs Lustre-to-NLustre and reaches the node. Proved, no admits:
 
 - `to_lexp_assign_rev`, `to_cexp_assign_rev`, `to_lexps_assign_rev` -- the
   converses of the expression lemmas, which is the direction preservation
@@ -145,22 +144,73 @@ constrains exactly the variables its equation defines, and only the delay's
 left-hand side differs -- and it is what carries `wf_constraints` from the
 NLustre side to the Lustre one, which the bridge needs.
 
-**What the program level still needs.** The equation theorems are parameterised
-by *one* signature global `G`, read by both generators for callee lookup. That
-was right while the two agreed. It is not right any more: the Lustre and
-NLustre accumulators now diverge, because a callee's Lustre signature is
-stronger than its NLustre one wherever the callee contains an `fby` whose
-initial value is not a bare constant. So the program level needs the theorems
-generalised to `G_L` and `G_NL` related by `Signature_consistent`, and a
-lockstep global induction carrying `Signature_call_preserves` -- exactly the
-shape of `generate_all_signatures_consistent_scoped'` in the Stc leg, and
-reusing `generate_constraints_correct_inst` and
-`generate_constraints_complete_good` from `SIFSignature.v`.
+### Leg A complete, 2026-09-13
 
-The one remaining side condition on `to_node_sig_preserved` -- the generated
-raw list is well formed, and a node's locals are fresh from its signature
-scope -- is the Lustre analogue of what `SecNLusTypingCorrectness.v` proves for
-NLustre.
+Preservation runs Lustre-to-NLustre and reaches the whole program,
+unconditionally. `SecLusNLusTranslation.v`, no admits, no new assumptions, and
+no file outside it touched:
+
+    to_global_signatures_entail :
+      to_global G Hp = OK P ->
+      LClo.wc_global G ->
+      SECLNG.generate_lnode_scoped_env G = OK (envs, aux_names) ->
+      generate_all_lsignatures_scoped_env G envs aux_names st = OK GLout ->
+      SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GNout ->
+      Signature_entails GLout GNout
+
+`Signature_entails GL GN` is the leg's relation: every callee found in `GL` is
+found in `GN` under the same name with the same interface fields, and the two
+instantiated call blocks entail. It is the Lustre analogue of
+`Signature_consistent`, weaker in one place -- the reset actual is the same
+expression on both sides here, so only the equal-actuals call clause is needed.
+
+**The two globals.** The call shapes are the only ones that read a signature,
+so they are the only ones the split touches. `call_block_step` is where it
+happens: `Signature_entails` produces the callee's NLustre signature,
+`generate_constraints_ok_from_good` shows the NLustre run exists at all -- it
+reads only interface fields and the shape of the constraints, both of which
+agree with a signature that has already generated -- and `call_block_entails`
+relates the two blocks.
+
+**Where the side conditions live.** Everything a call shape needs beyond the
+two globals is in `call_context`, and every clause of it is about the *NLustre*
+side. That is not a loss: transcription hands both generators the same actuals,
+so `SecNLusTyping`'s scoping lemmas apply verbatim instead of being reproved
+against Lustre clocking. Freshness moved there too --
+`signature_fields_agree` makes the two signature scopes equal, so `scope_fresh`
+transports back from `G_NL` to `G_L`.
+
+**`signature_good` of the Lustre signature** is what the call rules want and
+nothing on the Lustre side proves. It does not have to be proved there.
+`wf_constraints` and `signature_good` read only right-hand sides, and what
+`simplify` does to those is a function of the right-hand sides alone: `findST`
+looks a target up, `subAll` drops the constraints targeting it and retargets
+the rest at the names they already had. So the right-hand-side half of
+`entails` survives elimination and carries `signature_good` back across
+(`simplify_rhs_eq`, `signature_good_of_rhs`).
+
+**The program level** is `generate_all_signatures_entails_scoped'`, the lockstep
+induction of `generate_all_signatures_consistent_scoped'` with
+`Signature_head_entails` in place of `Signature_head_consistent`. It carries
+`secglobal_scoped`, `secglobal_good`, duplicate-free scopes and
+`secglobal_scope_bounded_above` on the *NLustre* accumulator only -- nothing
+separate is needed about the Lustre one, because `Signature_entails` keeps the
+interface fields aligned. Each is re-established at a node by the facts
+`generated_node_head_entails` already produces; scope-freshness comes from
+splitting the naming run at the node.
+
+The node lists are related by `transcribed` (a `Forall2` over `to_node`) rather
+than by a `to_global` run, because the drivers generate over `rev nodes` and a
+`Forall2` reverses where a `to_global` run does not.
+
+**Module parameters added** to `SecLusNLusTranslation.v`: `SECNLUSTYPINGCORRECTNESS`,
+`SECLNAMEGEN`, `LCLOCKING`, `TRCLOCKING`. The file remains a leaf -- nothing
+imports it -- so nothing in the NLustre, Stc or Obc chain is affected.
+
+**What is left for the noninterference pull-back.** Preservation is the
+statement about generated signatures. Turning it into "a secure Lustre program
+transcribes to a secure NLustre one" needs the Lustre analogue of
+`SecNLusNonInterference.v`'s top-level statement, which is a separate leg.
 
 ### Decision: one naming pass (option A), 2026-09-12
 

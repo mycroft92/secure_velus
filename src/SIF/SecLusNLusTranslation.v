@@ -20,6 +20,7 @@ From Velus Require Import Environment.
 From Velus Require Import Operators.
 From Velus Require Import Clocks.
 From Velus Require Import Lustre.LSyntax.
+From Velus Require Import Lustre.LClocking.
 From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import CoreExpr.CEIsFree.
 From Velus Require Import CoreExpr.CEClocking.
@@ -30,6 +31,7 @@ From Velus Require Import NLustre.IsDefined.
 From Velus Require Import NLustre.IsFree.
 From Velus Require Import NLustre.NLClocking.
 From Velus Require Import Transcription.Tr.
+From Velus Require Import Transcription.TrClocking.
 From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF.SecTypes.
@@ -39,6 +41,7 @@ From Velus Require Import SIF.SecContext.
 From Velus Require Import SIF.SecMonadStep.
 From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF.NameInterface.
+From Velus Require Import SIF.SecLNameInterface.
 From Velus Require Import SIF.SecLTyping.
 From Velus Require Import SIF.SecNLusTyping.
 From Velus Require Import SIF.SecNLusTypingCorrectness.
@@ -76,7 +79,11 @@ Module Type SECLUSNLUSTRANSLATION
                       SECCET NLOrd NLMem NLIsD NLIsF NLClo)
   (SECNLC         : SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn NLSyn Lat SecT SIG
                       SIGPROOFS NAMEGEN CEIsF CEClo SECCET NLOrd NLMem NLIsD
-                      NLIsF NLClo SECNL).
+                      NLIsF NLClo SECNL)
+  (SECLNG         : SECLNAMEGEN Ids Op OpAux LSyn CESyn NLSyn NAMEGEN TR)
+  (LClo           : LCLOCKING Ids Op LSyn)
+  (TRC            : TRCLOCKING Ids Op OpAux LSyn LClo CESyn NLSyn NLOrd NLMem
+                      NLIsD CEIsF NLIsF CEClo NLClo TR).
 
   Import SECMONADNotations.
 
@@ -1427,7 +1434,10 @@ Module Type SECLUSNLUSTRANSLATION
       (forall g sg, find_signature g GN = Some sg -> NoDup (signature_scope sg)) ->
       generate_node_sig GN n' env aux_names = OK nsig ->
       generate_lnode_sig GL n env aux_names st = OK (lsig, st') ->
-      Signature_head_entails lsig nsig.
+      Signature_head_entails lsig nsig
+      /\ signature_good nsig
+      /\ NoDup (signature_scope nsig)
+      /\ signature_scoped nsig.
   Proof.
     intros P GL GN n n' Hp env rec aux_names nsig lsig stx sty st st'
            Htn Hlocal Hauxrec Hwc Hsig Hfreshenv HscN HgoodN HndN Hnl Hl.
@@ -1499,6 +1509,8 @@ Module Type SECLUSNLUSTRANSLATION
              |repeat (apply in_or_app; right); now right; left]. }
     assert (Hauxl : get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id))
       by (rewrite (to_node_name _ _ _ Htn); exact Haux).
+    split;
+      [|split; [exact Hgoodnsig|split; [exact Hndnsig|exact Hscnsig]]].
     exact (to_node_head_entails P
              (idck (n'.(NLSyn.n_in) ++ n'.(NLSyn.n_vars) ++ n'.(NLSyn.n_out)))
              (inp ++ out ++ locals ++ clk_type :: rst_type :: nil)
@@ -1673,6 +1685,183 @@ Module Type SECLUSNLUSTRANSLATION
       as [[sigs stf]|] eqn:El; [|discriminate]. inv Hl.
     unfold SECNL.generate_all_signatures_scoped_env in Hn.
     eapply generate_all_signatures_entails'; eauto using Signature_entails_nil.
+  Qed.
+
+  (** * The whole program, with the accumulators' invariants carried
+
+      [node_step_entails] leaves the accumulators' invariants to the caller.
+      They do not have to be left there.  Every one of them is about the
+      NLustre accumulator -- [Signature_entails] keeps the Lustre one's
+      interface fields aligned, so nothing separate is needed about it -- and
+      each is re-established at a node by the very facts
+      [generated_node_head_entails] already produces.  The one that is not is
+      scope-freshness, which comes from the naming run being split at the
+      node: everything the accumulator holds was allocated before the node's
+      own names were.
+
+      This is the induction of [generate_all_signatures_consistent_scoped'] on
+      the NLustre-to-Stc leg, with [Signature_head_entails] in its place. *)
+
+  Lemma secglobal_scope_nodup_cons :
+    forall sig G,
+      NoDup (signature_scope sig) ->
+      (forall g sg, find_signature g G = Some sg -> NoDup (signature_scope sg)) ->
+      forall g sg, find_signature g (sig :: G) = Some sg ->
+                   NoDup (signature_scope sg).
+  Proof.
+    intros sig G Hnd HG g sg Hfind. simpl in Hfind.
+    destruct (ident_eqb sig.(s_name) g).
+    - inversion Hfind; subst sg. exact Hnd.
+    - eapply HG; eauto.
+  Qed.
+
+  Theorem generate_all_signatures_entails_scoped' :
+    forall prefix nsL nsP accL accN envs aux_names
+           envs_pref aux_pref stn st GLout stf GNout,
+      transcribed nsL nsP ->
+      generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
+        = OK ((envs_pref, aux_pref), stn) ->
+      generate_node_scoped_env (prefix ++ nsP) = OK (envs, aux_names) ->
+      NLClo.wc_global nsP ->
+      Signature_entails accL accN ->
+      secglobal_scoped accN ->
+      secglobal_good accN ->
+      (forall g sg, find_signature g accN = Some sg -> NoDup (signature_scope sg)) ->
+      secglobal_scope_bounded_above accN stn ->
+      generate_all_lsignatures' accL nsL envs aux_names st = OK (GLout, stf) ->
+      SECNL.generate_all_signatures_scoped_env' accN nsP envs aux_names = OK GNout ->
+      Signature_entails GLout GNout.
+  Proof.
+    intros prefix nsL nsP accL accN envs aux_names envs_pref aux_pref stn st
+           GLout stf GNout Htr.
+    revert prefix accL accN envs_pref aux_pref stn st GLout stf GNout.
+    induction Htr as [|nL nP nsL nsP HnodeP Htr IH];
+      intros prefix accL accN envs_pref aux_pref stn st GLout stf GNout
+             Hprefgen Henvsgen Hwc Hent Hscoped Hgood Hndacc Hbound Hl Hn.
+    - simpl in Hl, Hn. inversion Hl; subst. inversion Hn; subst. exact Hent.
+    - destruct HnodeP as [Hp Htn].
+      inversion Hwc as [|nP' nsP' Hwc_tail Hwc_head]; subst nP' nsP'.
+      simpl in Hl, Hn.
+      destruct (generate_lnode_sig_scoped_env accL nL envs aux_names st)
+        as [[lsig st1]|] eqn:El; [|discriminate].
+      destruct (SECNL.generate_node_sig_scoped_env accN nP envs aux_names)
+        as [nsig|] eqn:En; simpl in Hn; [|discriminate].
+      (* split the naming run at this node *)
+      pose proof Henvsgen as Hfull.
+      unfold generate_node_scoped_env in Hfull.
+      destruct (generate_node_scoped_env' (prefix ++ nP :: nsP) (Env.empty _) nil
+                  NAMEGEN.init_state) as [[[envs_full aux_full] st_full]|] eqn:Hrun;
+        try discriminate.
+      inversion Hfull; subst envs_full aux_full; clear Hfull.
+      edestruct generate_node_scoped_env'_split_node
+        as (envs_pref' & aux_pref' & st_pref & local_env & rec & st_local
+            & envs_cur & st_cur & Hpref & Hlocal & Hins & Htail); [exact Hrun|].
+      rewrite Hprefgen in Hpref. inversion Hpref; subst envs_pref' aux_pref' st_pref.
+      assert (Hcur : st_cur = st_local).
+      { unfold fresh_insert_node_env in Hins.
+        destruct (Env.mem nP.(NLSyn.n_name) envs_pref) eqn:Hmem; try discriminate.
+        unfold insert_node_env, NMret in Hins. inversion Hins. reflexivity. }
+      subst st_cur.
+      assert (Hfindlocal : find_node_env nP.(NLSyn.n_name) envs = Some local_env).
+      { eapply generate_node_scoped_env'_preserves_find; [exact Htail|].
+        eapply fresh_insert_node_env_finds_new; eauto. }
+      assert (Hauxlocal : get_node_aux nP.(NLSyn.n_name) aux_names
+                          = Some (rec.(nclk), rec.(nrst))).
+      { eapply generate_node_scoped_env'_preserves_get_node_aux; [exact Htail| |].
+        - pose proof (generate_local_env_for_node_name _ _ _ _ _ Hlocal) as Hrecname.
+          unfold get_node_aux. simpl. rewrite <- Hrecname, ident_eqb_refl.
+          reflexivity.
+        - eapply fresh_insert_node_env_finds_new; eauto. }
+      (* both drivers read that environment *)
+      unfold SECNL.generate_node_sig_scoped_env in En. rewrite Hfindlocal in En.
+      unfold generate_lnode_sig_scoped_env in El.
+      rewrite (to_node_name _ _ _ Htn), Hfindlocal in El.
+      assert (Hscopefresh :
+                SECNLC.node_scope_fresh_in_env nP local_env aux_names accN)
+        by (eapply SECNLC.node_scope_fresh_in_env_from_bounds; eauto).
+      destruct (generated_node_head_entails nsP accL accN nL nP Hp local_env rec
+                  aux_names nsig lsig stn st_local st st1
+                  Htn Hlocal Hauxlocal Hwc_head Hent Hscopefresh Hscoped Hgood
+                  Hndacc En El)
+        as (Hhead & Hnsiggood & Hnsignd & Hnsigsc).
+      (* the accumulators keep their invariants *)
+      assert (Hle : (stn <= st_local)%positive)
+        by (eapply generate_local_env_for_node_state_monotone; eauto).
+      assert (Hnsigbound : signature_scope_bounded_above nsig st_local).
+      { intros ty Hin.
+        eapply (SECNLC.generated_node_sig_scope_upper_bound_from_local_env
+                  accN nP local_env aux_names nsig stn rec st_local ty);
+          eauto. }
+      eapply IH with (prefix := prefix ++ nP :: nil)
+                     (accL := lsig :: accL) (accN := nsig :: accN)
+                     (envs_pref := envs_cur) (aux_pref := rec :: aux_pref)
+                     (stn := st_local) (st := st1);
+        eauto using Signature_entails_cons, secglobal_scoped_cons,
+                    secglobal_good_cons, secglobal_scope_nodup_cons.
+      + eapply generate_node_scoped_env'_app; [exact Hprefgen|].
+        simpl. unfold NMbind2. rewrite Hlocal. simpl. unfold NMbind.
+        rewrite Hins. simpl. reflexivity.
+      + rewrite <- app_assoc. simpl. exact Henvsgen.
+      + eapply secglobal_scope_bounded_above_cons; eauto.
+        eapply secglobal_scope_bounded_above_monotone; eauto.
+  Qed.
+
+  (** The two drivers, from the empty accumulator.  What is left is the
+      program's own well-clocking and the one naming run both sides read. *)
+
+  Corollary generate_all_signatures_entails_scoped :
+    forall G P Hp envs aux_names st GLout GNout,
+      to_global G Hp = OK P ->
+      generate_node_scoped_env P = OK (envs, aux_names) ->
+      NLClo.wc_global P ->
+      generate_all_lsignatures_scoped_env G envs aux_names st = OK GLout ->
+      SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GNout ->
+      Signature_entails GLout GNout.
+  Proof.
+    intros G P Hp envs aux_names st GLout GNout Htr Henvsgen Hwc Hl Hn.
+    unfold generate_all_lsignatures_scoped_env in Hl.
+    destruct (generate_all_lsignatures' [] G envs aux_names st)
+      as [[sigs stf]|] eqn:El; [|discriminate]. inversion Hl; subst sigs.
+    unfold SECNL.generate_all_signatures_scoped_env in Hn.
+    eapply (generate_all_signatures_entails_scoped' nil G P nil nil envs aux_names
+              (Env.empty _) nil NAMEGEN.init_state st GLout stf GNout).
+    - eapply to_global_transcribed; exact Htr.
+    - reflexivity.
+    - simpl. exact Henvsgen.
+    - exact Hwc.
+    - apply Signature_entails_nil.
+    - apply secglobal_scoped_nil.
+    - apply secglobal_good_nil.
+    - intros g sg Hfind. discriminate.
+    - apply secglobal_scope_bounded_above_nil.
+    - exact El.
+    - exact Hn.
+  Qed.
+
+  (** Leg A, stated in Lustre terms.
+
+      For a well-clocked Lustre program that transcribes, the signature global
+      the Lustre generator produces entails the one the NLustre generator
+      produces from its transcription: every callee is found on both sides
+      with the same interface, and each Lustre signature's constraints imply
+      the NLustre one's.  Both sides read one naming pass, which
+      [SecLNameInterface.to_global_lscoped_env] computes from either program.  That is preservation for the leg, and the direction
+      noninterference needs -- a secure Lustre program stays secure after
+      transcription. *)
+
+  Corollary to_global_signatures_entail :
+    forall G P Hp envs aux_names st GLout GNout,
+      to_global G Hp = OK P ->
+      LClo.wc_global G ->
+      SECLNG.generate_lnode_scoped_env G = OK (envs, aux_names) ->
+      generate_all_lsignatures_scoped_env G envs aux_names st = OK GLout ->
+      SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GNout ->
+      Signature_entails GLout GNout.
+  Proof.
+    intros G P Hp envs aux_names st GLout GNout Htr Hwc Henvsgen Hl Hn.
+    rewrite (SECLNG.to_global_lscoped_env _ _ _ Htr) in Henvsgen.
+    eapply generate_all_signatures_entails_scoped; eauto.
+    eapply TRC.wc_transcription; eauto.
   Qed.
 
 End SECLUSNLUSTRANSLATION.
