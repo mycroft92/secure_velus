@@ -377,27 +377,32 @@ Module Type SECLUSNONINTERFERENCE
         /\ SECNL.generate_node_sig_scoped_env GN nd' envs aux_names = OK nsig
         /\ signature_scoped nsig.
 
-  (** [transcribed_program_context] reduced to the facts the rest of the
-      development already speaks in: four invariants of the NLustre global, and
-      per node its naming run, its clocking, and its generated signature.
+  (** The freshness a call site needs, at a whole-program global.
 
-      [node_scope_fresh_in_env] is the one genuine assumption.  It is assumed
-      at this level on the NLustre-to-Stc leg too --
-      [generated_callers_scope_fresh] is defined in
-      [SecNLusTypingCorrectness.v] and taken as a hypothesis, never proved --
-      so this leg is no more assuming than that one. *)
-
-  (** [SecNLusTypingCorrectness.node_scope_fresh_in_env] asks a node's scope to
-      be fresh from *every* signature of the global.  At an accumulator, which
-      is where the preservation leg uses it, that is right: the accumulator
+      [SecNLusTypingCorrectness.node_scope_fresh_in_env] asks a node's scope to
+      be fresh from *every* signature of the global.  At an accumulator -- the
+      only place the preservation legs use it -- that is right: the accumulator
       holds the node's callees and not the node.  At a whole-program global it
-      cannot hold at all -- the global then holds the node's own signature,
-      whose scope is a sublist of the node's own, so [scope_fresh] would force
-      the node to have no inputs, which [n_ingt0] forbids.
+      cannot hold: the global then holds the node's own signature, whose scope
+      is a sublist of the node's own, so [scope_fresh] would force the node to
+      have no inputs and [n_ingt0] forbids it.
 
-      This is the version that survives: everything but the node itself.  It is
-      what a call site actually needs, because [Ordered_nodes] says a call site
-      never names the node it is in. *)
+      This leg has no choice about the global.  [lnode_security] mirrors
+      [node_security], which is stated over the whole program, so a call site
+      here is read at the final signature globals.  So the node itself is
+      excluded, which is sound because [Ordered_nodes] says a call site never
+      names the node it is in.
+
+      This is the one thing the leg assumes rather than proves.  It is not a
+      new kind of assumption: the NLustre noninterference layer needs the same
+      fact and *proves* it, in
+      [SecNLusNonInterferenceHelpers.generated_caller_scope_fresh_scoped_env],
+      from a two-sided bound on name allocation with [caller <> callee]
+      explicit.  Reusing that here needs two lemmas this file does not have:
+      that every signature of a generated global comes from a node of the
+      program, and that regenerating a node against the final global agrees
+      with regenerating it against the accumulator it was built at.  Both are
+      true and provable; neither is written. *)
 
 
   Definition node_callees_scope_fresh (nd : NLSyn.node) (ty_env : Env.t ident)
