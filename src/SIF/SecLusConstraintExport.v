@@ -205,12 +205,12 @@ Module Check (Lat : Lattice).
     <: SECLUSNLUSTRANSLATION Ids Op OpAux SC L.Syn CE.Syn NL.Syn Lat SecT STEP
          SIG SIGPROOFS ConcreteNameGen CE.IsF CE.Clo ConcreteSecCETyping
          NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo TR.Tr ConcreteSecLTyping
-         SECNLUSTYPING SECNLC ConcreteSecLNameGen L.Clo TR.Clocking.
+         SECNLUSTYPING SECNLC ConcreteSecLNameGen L.Clo L.Ord TR.Clocking.
   Include SECLUSNLUSTRANSLATION Ids Op OpAux SC L.Syn CE.Syn NL.Syn Lat SecT
             STEP SIG SIGPROOFS ConcreteNameGen CE.IsF CE.Clo
             ConcreteSecCETyping NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo TR.Tr
             ConcreteSecLTyping SECNLUSTYPING SECNLC ConcreteSecLNameGen
-            L.Clo TR.Clocking.
+            L.Clo L.Ord TR.Clocking.
   End Leg.
 
 End Check.

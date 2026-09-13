@@ -212,6 +212,43 @@ statement about generated signatures. Turning it into "a secure Lustre program
 transcribes to a secure NLustre one" needs the Lustre analogue of
 `SecNLusNonInterference.v`'s top-level statement, which is a separate leg.
 
+### Correction: scope-freshness cannot include the node itself, 2026-09-13
+
+`call_context` asked for `secglobal_scope_fresh scope GN` -- the node's scope
+fresh from *every* signature of the global. At an accumulator, which is where
+the preservation leg uses it, that is right: the accumulator holds the node's
+callees and not the node. At a whole-program global it is unsatisfiable. The
+global then holds the node's own signature, and `signature_scope sig =
+s_in ++ s_out ++ [s_clk; s_reset]` is a sublist of the node's scope
+`inp ++ out ++ locals ++ [clk; rst]`, so `scope_fresh` forces `s_in = []`,
+which `n_ingt0` forbids.
+
+`node_scope_fresh_in_env_self_absurd` in `SecLusNonInterference.v` records
+that as a checked lemma rather than a comment.
+
+This mattered because `SecLusNonInterference.v` instantiated `call_context` at
+the *final* globals, which is what `node_security` and `lnode_security` are
+stated over. Everything downstream of that hypothesis was therefore vacuous
+until the fix. The preservation leg was never affected -- it instantiates at
+the accumulator.
+
+The fix threads the caller's own name through as `self`:
+
+- `call_context` takes `self` and asks freshness only of signatures `g <> self`;
+- the call shapes take `f <> self`, the dispatcher takes
+  `~ Is_node_in_eq self eq`, the equation list `~ Is_node_in self eqs`, and the
+  node level instantiates `self` at the node's name;
+- `Ordered_nodes` is what discharges it -- `Ordered_nodes_not_self` at the
+  program level, `find_node_not_Is_node_in` at the node level. A call site
+  never names the node it is in, which is exactly the side condition the
+  weakened clause needs.
+
+`node_callees_scope_fresh` is the satisfiable replacement for
+`node_scope_fresh_in_env` at a whole-program global. The same correction
+applies to `generated_callers_scope_fresh` in `SecNLusTypingCorrectness.v`,
+which is assumed rather than proved and has the same shape -- worth checking
+before anyone tries to discharge it.
+
 ### TODO: rebasing onto Velus head
 
 Not started, and deliberately deferred. What a plan will have to account for:

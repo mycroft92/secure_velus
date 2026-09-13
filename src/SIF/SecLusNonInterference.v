@@ -27,6 +27,7 @@ From Velus Require Import Clocks.
 From Velus Require Import IndexedStreams.
 From Velus Require Import Lustre.LSyntax.
 From Velus Require Import Lustre.LClocking.
+From Velus Require Import Lustre.LOrdered.
 From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import CoreExpr.CETyping.
 From Velus Require Import CoreExpr.CEIsFree.
@@ -101,6 +102,7 @@ Module Type SECLUSNONINTERFERENCE
                       NLIsF NLClo SECNL)
   (SECLNG         : SECLNAMEGEN Ids Op OpAux LSyn CESyn NLSyn NAMEGEN TR)
   (LClo           : LCLOCKING Ids Op LSyn)
+  (Import LOrd    : LORDERED Ids Op LSyn)
   (TRC            : TRCLOCKING Ids Op OpAux LSyn LClo CESyn NLSyn NLOrd NLMem
                       NLIsD CEIsF NLIsF CEClo NLClo TR)
   (Import NLNI    : SECNLUSNONINTERFERENCE Ids Lat Op OpAux SC SecT
@@ -110,7 +112,7 @@ Module Type SECLUSNONINTERFERENCE
   (Import SECLNL  : SECLUSNLUSTRANSLATION Ids Op OpAux SC LSyn CESyn NLSyn Lat
                       SecT STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET NLOrd
                       NLMem NLIsD NLIsF NLClo TR SECL SECNL SECNLC SECLNG LClo
-                      TRC).
+                      LOrd TRC).
 
   Import SECMONADNotations.
 
@@ -369,7 +371,7 @@ Module Type SECLUSNONINTERFERENCE
       Env.find rst_id ty_env = Some rst_type ->
       exists vars scope nsig,
         NLSyn.find_node nd'.(NLSyn.n_name) P = Some nd'
-        /\ call_context P vars scope ty_env clk_type rst_type GL GN
+        /\ call_context P vars scope ty_env clk_type rst_type nd.(n_name) GL GN
         /\ Forall (NLClo.wc_equation P vars) nd'.(NLSyn.n_eqs)
         /\ find_signature nd'.(NLSyn.n_name) GN = Some nsig
         /\ SECNL.generate_node_sig_scoped_env GN nd' envs aux_names = OK nsig
@@ -385,6 +387,56 @@ Module Type SECLUSNONINTERFERENCE
       [SecNLusTypingCorrectness.v] and taken as a hypothesis, never proved --
       so this leg is no more assuming than that one. *)
 
+  (** [SecNLusTypingCorrectness.node_scope_fresh_in_env] asks a node's scope to
+      be fresh from *every* signature of the global.  At an accumulator, which
+      is where the preservation leg uses it, that is right: the accumulator
+      holds the node's callees and not the node.  At a whole-program global it
+      cannot hold at all -- the global then holds the node's own signature,
+      whose scope is a sublist of the node's own, so [scope_fresh] would force
+      the node to have no inputs, which [n_ingt0] forbids.
+
+      This is the version that survives: everything but the node itself.  It is
+      what a call site actually needs, because [Ordered_nodes] says a call site
+      never names the node it is in. *)
+
+  Lemma node_scope_fresh_in_env_self_absurd :
+    forall nd ty_env aux_names G clk_id rst_id clk_type rst_type inp out locals
+           sig,
+      SECNLC.node_scope_fresh_in_env nd ty_env aux_names G ->
+      get_node_aux nd.(NLSyn.n_name) aux_names = Some (clk_id, rst_id) ->
+      Env.find clk_id ty_env = Some clk_type ->
+      Env.find rst_id ty_env = Some rst_type ->
+      get_mappings_from_node nd.(NLSyn.n_in) ty_env = Some inp ->
+      get_mappings_from_node nd.(NLSyn.n_out) ty_env = Some out ->
+      get_mappings_from_node nd.(NLSyn.n_vars) ty_env = Some locals ->
+      find_signature nd.(NLSyn.n_name) G = Some sig ->
+      sig.(s_in) = inp ->
+      inp = [].
+  Proof.
+    intros nd ty_env aux_names G clk_id rst_id clk_type rst_type inp out locals
+           sig Hfresh Haux Hclk Hrst Hinp Hout Hlocals Hfsig Hsin.
+    pose proof (Hfresh _ _ _ _ _ _ _ Haux Hclk Hrst Hinp Hout Hlocals) as Hsf.
+    specialize (Hsf _ _ Hfsig).
+    destruct inp as [|x xs]; [reflexivity|exfalso].
+    eapply (Hsf x).
+    - apply in_or_app. left. now left.
+    - unfold signature_scope. rewrite Hsin. apply in_or_app. left. now left.
+  Qed.
+
+  Definition node_callees_scope_fresh (nd : NLSyn.node) (ty_env : Env.t ident)
+      (aux_names : list node_aux_names) (G : secglobal) : Prop :=
+    forall clk_id rst_id clk_type rst_type inp out locals,
+      get_node_aux nd.(NLSyn.n_name) aux_names = Some (clk_id, rst_id) ->
+      Env.find clk_id ty_env = Some clk_type ->
+      Env.find rst_id ty_env = Some rst_type ->
+      get_mappings_from_node nd.(NLSyn.n_in) ty_env = Some inp ->
+      get_mappings_from_node nd.(NLSyn.n_out) ty_env = Some out ->
+      get_mappings_from_node nd.(NLSyn.n_vars) ty_env = Some locals ->
+      forall g sg,
+        g <> nd.(NLSyn.n_name) ->
+        find_signature g G = Some sg ->
+        scope_fresh (inp ++ out ++ locals ++ clk_type :: rst_type :: nil) sg.
+
   Lemma transcribed_program_context_intro :
     forall all_lnodes P GL GN envs aux_names,
       Signature_entails GL GN ->
@@ -399,7 +451,7 @@ Module Type SECLUSNONINTERFERENCE
             NLSyn.find_node nd'.(NLSyn.n_name) P = Some nd'
             /\ generate_local_env_for_node nd' stx = OK ((ty_env, rec), sty)
             /\ NLClo.wc_node P nd'
-            /\ SECNLC.node_scope_fresh_in_env nd' ty_env aux_names GN
+            /\ node_callees_scope_fresh nd' ty_env aux_names GN
             /\ find_signature nd'.(NLSyn.n_name) GN = Some nsig
             /\ SECNL.generate_node_sig_scoped_env GN nd' envs aux_names = OK nsig) ->
       transcribed_program_context all_lnodes P GL GN envs aux_names.
@@ -435,7 +487,7 @@ Module Type SECLUSNONINTERFERENCE
     split.
     { unfold call_context.
       split; [exact Hsig|].
-      split; [exact Hscopefresh|].
+      split; [rewrite Hname; exact Hscopefresh|].
       split; [exact HscN|].
       split; [exact HgoodN|].
       split; [exact HndN|].
@@ -453,6 +505,7 @@ Module Type SECLUSNONINTERFERENCE
   Theorem lnode_security_transcribes :
     forall all_lnodes P Hp GL GN envs aux_names,
       to_global all_lnodes Hp = OK P ->
+      Ordered_nodes all_lnodes ->
       Signature_entails GL GN ->
       Signature_domain_incl GN GL ->
       transcribed_program_context all_lnodes P GL GN envs aux_names ->
@@ -462,7 +515,7 @@ Module Type SECLUSNONINTERFERENCE
           to_node nd Hpn = OK nd' ->
           node_security P GN envs aux_names nd' dlt_sig dlt_raw.
   Proof.
-    intros all_lnodes P Hp GL GN envs aux_names Htg Hsig Hdom Hctxs
+    intros all_lnodes P Hp GL GN envs aux_names Htg Hord Hsig Hdom Hctxs
            nd0 dlt_sig0 dlt_raw0 Hsec.
     induction Hsec as
       [nd dlt_sig dlt_raw ty_env lsig clk_id rst_id clk_type rst_type
@@ -498,8 +551,11 @@ Module Type SECLUSNONINTERFERENCE
     pose proof (to_node_eqs _ _ _ Htn) as Hmmap.
     assert (Hndeqs : Forall (fun eq => NoDup (fst eq)) nd.(n_eqs))
       by (apply NoDup_flat_map_each; exact (NoDup_vars_defined_n_eqs nd)).
+    assert (Hself : ~ Is_node_in nd.(n_name) nd.(n_eqs))
+      by (eapply find_node_not_Is_node_in; eauto).
     destruct (to_equations_entails P vars scope GL GN ty_env clk_type rst_type
-                _ _ _ _ _ _ _ Hctx Hndeqs Hmmap Hwceqs Hraw) as (cs & Hcs & Hent).
+                nd.(n_name) _ _ _ _ _ _ _
+                Hctx Hself Hndeqs Hmmap Hwceqs Hraw) as (cs & Hcs & Hent).
     destruct (state_pure_generate_eqns_constraints GN ty_env clk_type rst_type
                 _ st0 init_state _ _ Hcs) as [Hstn Hpure].
     rewrite HrawN in Hpure. inversion Hpure; subst cs stN.
@@ -624,6 +680,7 @@ Module Type SECLUSNONINTERFERENCE
       to_global all_lnodes Hp = OK P ->
       Signature_entails GL GN ->
       Signature_domain_incl GN GL ->
+      Ordered_nodes all_lnodes ->
       transcribed_program_context all_lnodes P GL GN envs aux_names ->
       to_node nd Hpn = OK nd' ->
       lnode_security all_lnodes GL envs aux_names nd dlt_sig dlt_raw ->
@@ -642,7 +699,7 @@ Module Type SECLUSNONINTERFERENCE
   Proof.
     intros all_lnodes P Hp GL GN envs aux_names nd nd' Hpn ty_env nsig
            dlt_sig dlt_raw t bk H H'
-           Htg Hsig Hdom Hctxs Htn Hsec Henvsgen Hord Hwc Hallsig Hcaus
+           Htg Hsig Hdom Hordl Hctxs Htn Hsec Henvsgen Hord Hwc Hallsig Hcaus
            HfndP Hfenv Hfsig Hsem Hsem' Hlowin.
     rewrite (to_node_out _ _ _ Htn).
     rewrite (to_node_in _ _ _ Htn) in Hlowin.
@@ -661,6 +718,7 @@ Module Type SECLUSNONINTERFERENCE
            nd nd' Hpn ty_env nsig dlt_sig dlt_raw t bk H H',
       to_global all_lnodes Hp = OK P ->
       LClo.wc_global all_lnodes ->
+      Ordered_nodes all_lnodes ->
       SECLNG.generate_lnode_scoped_env all_lnodes = OK (envs, aux_names) ->
       generate_all_lsignatures_scoped_env all_lnodes envs aux_names st = OK GL ->
       SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GN ->
@@ -680,7 +738,7 @@ Module Type SECLUSNONINTERFERENCE
   Proof.
     intros all_lnodes P Hp envs aux_names GL GN st
            nd nd' Hpn ty_env nsig dlt_sig dlt_raw t bk H H'
-           Htg Hwcl Hnames Hlsigs Hnsigs Hctxs Htn Hsec
+           Htg Hwcl Hordl Hnames Hlsigs Hnsigs Hctxs Htn Hsec
            Hord Hwc Hcaus HfndP Hfenv Hfsig Hsem Hsem' Hlowin.
     assert (Hnames' : generate_node_scoped_env P = OK (envs, aux_names))
       by (rewrite <- (SECLNG.to_global_lscoped_env _ _ _ Htg); exact Hnames).

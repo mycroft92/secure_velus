@@ -21,6 +21,7 @@ From Velus Require Import Operators.
 From Velus Require Import Clocks.
 From Velus Require Import Lustre.LSyntax.
 From Velus Require Import Lustre.LClocking.
+From Velus Require Import Lustre.LOrdered.
 From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import CoreExpr.CEIsFree.
 From Velus Require Import CoreExpr.CEClocking.
@@ -82,6 +83,7 @@ Module Type SECLUSNLUSTRANSLATION
                       NLIsF NLClo SECNL)
   (SECLNG         : SECLNAMEGEN Ids Op OpAux LSyn CESyn NLSyn NAMEGEN TR)
   (LClo           : LCLOCKING Ids Op LSyn)
+  (LOrd           : LORDERED Ids Op LSyn)
   (TRC            : TRCLOCKING Ids Op OpAux LSyn LClo CESyn NLSyn NLOrd NLMem
                       NLIsD CEIsF NLIsF CEClo NLClo TR).
 
@@ -616,6 +618,12 @@ Module Type SECLUSNLUSTRANSLATION
       naming environment places every variable its equations mention inside
       one scope, and it is injective, so a call's result types are distinct.
 
+      Freshness is stated for every signature *but the node's own*.  It has to
+      be: a node's scope contains its own signature's scope, so
+      [scope_fresh] against its own signature is false as soon as it has an
+      input, which [n_ingt0] guarantees.  [self] is the node's name, and
+      [Ordered_nodes] is what says a call site never names it.
+
       All of it is stated about the *NLustre* side.  That is not a loss --
       transcription hands both generators the same actuals, which is what the
       expression correspondence says -- and it is what lets the scoping
@@ -623,10 +631,11 @@ Module Type SECLUSNLUSTRANSLATION
       against Lustre clocking. *)
 
   Definition call_context (P : NLSyn.global) (vars : list (ident * clock))
-      (scope : list ident) (env : Env.t ident) (base_ty rst_ty : ident)
+      (scope : list ident) (env : Env.t ident) (base_ty rst_ty self : ident)
       (GL GN : secglobal) : Prop :=
     Signature_entails GL GN
-    /\ secglobal_scope_fresh scope GN
+    /\ (forall g sg, g <> self ->
+                    find_signature g GN = Some sg -> scope_fresh scope sg)
     /\ secglobal_scoped GN
     /\ secglobal_good GN
     /\ (forall g sg, find_signature g GN = Some sg -> NoDup (signature_scope sg))
@@ -733,9 +742,11 @@ Module Type SECLUSNLUSTRANSLATION
   Qed.
 
   Lemma call_block_step :
-    forall scope GL GN f sgL inptyp ckty rstty outtyp cs0 st stf,
+    forall scope GL GN self f sgL inptyp ckty rstty outtyp cs0 st stf,
       Signature_entails GL GN ->
-      secglobal_scope_fresh scope GN ->
+      (forall g sg, g <> self ->
+                    find_signature g GN = Some sg -> scope_fresh scope sg) ->
+      f <> self ->
       secglobal_scoped GN ->
       secglobal_good GN ->
       (forall g sg, find_signature g GN = Some sg -> NoDup (signature_scope sg)) ->
@@ -751,11 +762,11 @@ Module Type SECLUSNLUSTRANSLATION
         /\ generate_constraints sgN inptyp ckty rstty outtyp st = OK (cs, st)
         /\ entails cs0 cs.
   Proof.
-    intros scope GL GN f sgL inptyp ckty rstty outtyp cs0 st stf
-           Hsig HfreshN HscN HgoodN HndN EsgL Hinp Hck Hrst Hout Hnd HgcL.
+    intros scope GL GN self f sgL inptyp ckty rstty outtyp cs0 st stf
+           Hsig HfreshN Hself HscN HgoodN HndN EsgL Hinp Hck Hrst Hout Hnd HgcL.
     destruct (Hsig f sgL EsgL) as (sgN & EsgN & Hname & Hpres & Hcall).
     pose proof (proj1 Hpres) as Hfields.
-    pose proof (HfreshN f sgN EsgN) as HfrN.
+    pose proof (HfreshN f sgN Hself EsgN) as HfrN.
     assert (HfrL : scope_fresh scope sgL).
     { intros z Hz. rewrite (signature_scope_agree _ _ Hfields).
       eapply HfrN; exact Hz. }
@@ -778,9 +789,10 @@ Module Type SECLUSNLUSTRANSLATION
   Qed.
 
   Theorem to_equation_entails_app :
-    forall P vars scope GL GN env base_ty rst_ty cenv envo xs f args a eq'
+    forall P vars scope GL GN env base_ty rst_ty self cenv envo xs f args a eq'
            cs' st st',
-      call_context P vars scope env base_ty rst_ty GL GN ->
+      call_context P vars scope env base_ty rst_ty self GL GN ->
+      f <> self ->
       NoDup xs ->
       to_equation cenv envo (xs, [Eapp f args None a]) = OK eq' ->
       NLClo.wc_equation P vars eq' ->
@@ -790,9 +802,9 @@ Module Type SECLUSNLUSTRANSLATION
         generate_eqn_constraint GN env base_ty rst_ty eq' st = OK (cs, st')
         /\ entails cs' cs.
   Proof.
-    intros P vars scope GL GN env base_ty rst_ty cenv envo xs f args a eq'
-           cs' st st' Hctx Hnd Htr Hwc Hl.
-    destruct Hctx as (Hsig & HfreshL & HscN & HgoodN & HndN
+    intros P vars scope GL GN env base_ty rst_ty self cenv envo xs f args a eq'
+           cs' st st' Hctx Hself Hnd Htr Hwc Hl.
+    destruct Hctx as (Hsig & HfreshN & HscN & HgoodN & HndN
                       & Hwce & Hvars & Hinj & Hbase & Hrstin).
     edestruct to_equation_app_inv as (les & Hles & Heq); eauto. subst eq'.
     destruct xs as [|x xs'].
@@ -810,8 +822,8 @@ Module Type SECLUSNLUSTRANSLATION
       destruct (call_actuals_ok _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
                   Hwce Hwc Hvars Hinj Hbase Hnd Hck Hall Houts)
         as (Hckscope & Hinpscope & Houtscope & Hndout).
-      destruct (call_block_step scope GL GN f sgL tys ckty [rst_ty] outs cs0
-                  st st Hsig HfreshL HscN HgoodN HndN EsgL
+      destruct (call_block_step scope GL GN self f sgL tys ckty [rst_ty] outs
+                  cs0 st st Hsig HfreshN Hself HscN HgoodN HndN EsgL
                   Hinpscope Hckscope (st_scoped_singleton _ _ Hrstin)
                   Houtscope Hndout HgcL)
         as (sgN & cs & EsgN & HgcN & Hent).
@@ -825,9 +837,10 @@ Module Type SECLUSNLUSTRANSLATION
   Qed.
 
   Theorem to_equation_entails_app_reset :
-    forall P vars scope GL GN env base_ty rst_ty cenv envo xs f args r ty ckr nm
-           a eq' cs' st st',
-      call_context P vars scope env base_ty rst_ty GL GN ->
+    forall P vars scope GL GN env base_ty rst_ty self cenv envo xs f args r ty
+           ckr nm a eq' cs' st st',
+      call_context P vars scope env base_ty rst_ty self GL GN ->
+      f <> self ->
       NoDup xs ->
       to_equation cenv envo (xs, [Eapp f args (Some (Evar r (ty, (ckr, nm)))) a])
         = OK eq' ->
@@ -838,9 +851,9 @@ Module Type SECLUSNLUSTRANSLATION
         generate_eqn_constraint GN env base_ty rst_ty eq' st = OK (cs, st')
         /\ entails cs' cs.
   Proof.
-    intros P vars scope GL GN env base_ty rst_ty cenv envo xs f args r ty ckr nm
-           a eq' cs' st st' Hctx Hnd Htr Hwc Hl.
-    destruct Hctx as (Hsig & HfreshL & HscN & HgoodN & HndN
+    intros P vars scope GL GN env base_ty rst_ty self cenv envo xs f args r ty
+           ckr nm a eq' cs' st st' Hctx Hself Hnd Htr Hwc Hl.
+    destruct Hctx as (Hsig & HfreshN & HscN & HgoodN & HndN
                       & Hwce & Hvars & Hinj & Hbase & Hrstin).
     edestruct to_equation_app_reset_inv as (les & Hles & Heq); eauto. subst eq'.
     destruct xs as [|x xs'].
@@ -868,9 +881,9 @@ Module Type SECLUSNLUSTRANSLATION
         by (eapply (call_reset_scoped P vars scope env base_ty rst_ty
                       (find_base_clock (LSyn.clocksof args)) f les (x :: xs')
                       r ckr rty rstck); eauto).
-      destruct (call_block_step scope GL GN f sgL tys ckty
+      destruct (call_block_step scope GL GN self f sgL tys ckty
                   (merge [rst_ty] (merge [rty] rstck)) outs cs0 st st
-                  Hsig HfreshL HscN HgoodN HndN EsgL
+                  Hsig HfreshN Hself HscN HgoodN HndN EsgL
                   Hinpscope Hckscope Hrstscope Houtscope Hndout HgcL)
         as (sgN & cs & EsgN & HgcN & Hent).
       exists cs. split.
@@ -960,8 +973,9 @@ Module Type SECLUSNLUSTRANSLATION
     [ exact Htr | intros; discriminate | intros; discriminate | exact Hl ].
 
   Theorem to_equation_entails :
-    forall P vars scope GL GN env base_ty rst_ty cenv envo eq eq' cs' st st',
-      call_context P vars scope env base_ty rst_ty GL GN ->
+    forall P vars scope GL GN env base_ty rst_ty self cenv envo eq eq' cs' st st',
+      call_context P vars scope env base_ty rst_ty self GL GN ->
+      ~ LOrd.Is_node_in_eq self eq ->
       NoDup (fst eq) ->
       to_equation cenv envo eq = OK eq' ->
       NLClo.wc_equation P vars eq' ->
@@ -970,9 +984,16 @@ Module Type SECLUSNLUSTRANSLATION
         generate_eqn_constraint GN env base_ty rst_ty eq' st = OK (cs, st')
         /\ entails cs' cs.
   Proof.
-    intros P vars scope GL GN env base_ty rst_ty cenv envo [xs es] eq' cs' st st'
-           Hctx Hnd Htr Hwc Hl.
+    intros P vars scope GL GN env base_ty rst_ty self cenv envo [xs es] eq' cs'
+           st st' Hctx Hself Hnd Htr Hwc Hl.
     simpl in Hnd.
+    (* a call site never names the node it is in, so its callee's signature is
+       one the context is fresh from *)
+    assert (Hne : forall g le ro an, In (Eapp g le ro an) es -> g <> self).
+    { intros g le ro an Hin Heq. subst g. apply Hself.
+      unfold LOrd.Is_node_in_eq. simpl.
+      apply Exists_exists. exists (Eapp self le ro an).
+      split; [exact Hin|constructor]. }
     destruct es as [|e [|e' es']];
       [simpl in Htr; discriminate | | simpl in Htr; discriminate].
     destruct e.
@@ -995,8 +1016,10 @@ Module Type SECLUSNLUSTRANSLATION
           try solve [ (simpl in Htr; monadInv Htr)
                     | (simpl in Htr; discriminate) ].
         match goal with an : ann |- _ => destruct an as [ty [ckr nm]] end.
-        eapply to_equation_entails_app_reset; eassumption.
-      + eapply to_equation_entails_app; eassumption.
+        eapply to_equation_entails_app_reset;
+          try eassumption; eapply Hne; now left.
+      + eapply to_equation_entails_app;
+          try eassumption; eapply Hne; now left.
   Qed.
 
   (** * Equation lists
@@ -1014,8 +1037,10 @@ Module Type SECLUSNLUSTRANSLATION
   Qed.
 
   Theorem to_equations_entails :
-    forall P vars scope GL GN env base_ty rst_ty cenv envo eqs neqs cs' st st',
-      call_context P vars scope env base_ty rst_ty GL GN ->
+    forall P vars scope GL GN env base_ty rst_ty self cenv envo eqs neqs cs'
+           st st',
+      call_context P vars scope env base_ty rst_ty self GL GN ->
+      ~ LOrd.Is_node_in self eqs ->
       Forall (fun eq => NoDup (fst eq)) eqs ->
       Errors.mmap (to_equation cenv envo) eqs = OK neqs ->
       Forall (NLClo.wc_equation P vars) neqs ->
@@ -1025,18 +1050,23 @@ Module Type SECLUSNLUSTRANSLATION
         generate_eqns_constraints GN env base_ty rst_ty neqs st = OK (cs, st')
         /\ entails cs' cs.
   Proof.
-    intros P vars scope GL GN env base_ty rst_ty cenv envo eqs.
-    induction eqs as [|eq eqs IH]; intros neqs cs' st st' Hctx Hnd Htr Hwc Hl;
-      simpl in Htr.
+    intros P vars scope GL GN env base_ty rst_ty self cenv envo eqs.
+    induction eqs as [|eq eqs IH];
+      intros neqs cs' st st' Hctx Hself Hnd Htr Hwc Hl; simpl in Htr.
     - inv Htr. simpl in Hl. unfold ret in Hl. inv Hl.
       exists []. split; [reflexivity | apply entails_refl].
     - monadInv Htr. inv Hnd. inv Hwc. simpl in Hl.
       eapply sec_bind_inv in Hl as (c' & st1 & Hc' & Hl).
       eapply sec_bind_inv in Hl as (cr' & st2 & Hcr' & Hret).
       unfold ret in Hret. inv Hret.
-      destruct (to_equation_entails P vars scope GL GN env base_ty rst_ty cenv
-                  envo eq _ c' st st1 Hctx H1 EQ H3 Hc') as (c & Hc & Hec).
-      destruct (IH _ cr' st1 st' Hctx H2 EQ1 H4 Hcr') as (cr & Hcr & Hecr).
+      assert (Hhd : ~ LOrd.Is_node_in_eq self eq)
+        by (intro; apply Hself; now left).
+      assert (Htl : ~ LOrd.Is_node_in self eqs)
+        by (intro; apply Hself; now right).
+      destruct (to_equation_entails P vars scope GL GN env base_ty rst_ty self
+                  cenv envo eq _ c' st st1 Hctx Hhd H1 EQ H3 Hc')
+        as (c & Hc & Hec).
+      destruct (IH _ cr' st1 st' Hctx Htl H2 EQ1 H4 Hcr') as (cr & Hcr & Hecr).
       exists (c ++ cr). split.
       + simpl. ssec Hc. ssec Hcr. reflexivity.
       + now apply entails_app.
@@ -1325,7 +1355,8 @@ Module Type SECLUSNLUSTRANSLATION
       get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
       Env.find clk_id env = Some clk_type ->
       Env.find rst_id env = Some rst_type ->
-      call_context P vars scope env clk_type rst_type GL GN ->
+      call_context P vars scope env clk_type rst_type n.(n_name) GL GN ->
+      ~ LOrd.Is_node_in n.(n_name) n.(n_eqs) ->
       Forall (NLClo.wc_equation P vars) n'.(NLSyn.n_eqs) ->
       (forall locals cns,
           get_mappings_from_node n.(n_vars) env = Some locals ->
@@ -1339,7 +1370,7 @@ Module Type SECLUSNLUSTRANSLATION
   Proof.
     intros P vars scope GL GN n n' Hp env aux_names nsig lsig st st'
            clk_id rst_id clk_type rst_type
-           Htr Hnl Hl Hauxs Hclks Hrsts Hctx Hwceqs Hside.
+           Htr Hnl Hl Hauxs Hclks Hrsts Hctx Hself Hwceqs Hside.
     pose proof Htr as Htr'. tonodeInv Htr'.
     eapply nl_node_sig_inv in Hnl
       as (ci & ri & ckt & rstt & inp & out & locs & cns
@@ -1361,8 +1392,8 @@ Module Type SECLUSNLUSTRANSLATION
     rewrite Hloc in Hloc2. inv Hloc2.
     assert (Hndeqs : Forall (fun eq => NoDup (fst eq)) n.(n_eqs)).
     { apply NoDup_flat_map_each. exact (LSyn.NoDup_vars_defined_n_eqs n). }
-    destruct (to_equations_entails P vars scope GL GN env _ _ _ _ _ _ _ _ _
-                Hctx Hndeqs Hmmap Hwceqs Hcns2)
+    destruct (to_equations_entails P vars scope GL GN env _ _ _ _ _ _ _ _ _ _
+                Hctx Hself Hndeqs Hmmap Hwceqs Hcns2)
       as (cs & Hcs & Hent).
     rewrite Hcns in Hcs. inv Hcs.
     subst. split; [reflexivity|]. split.
@@ -1392,7 +1423,8 @@ Module Type SECLUSNLUSTRANSLATION
       get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
       Env.find clk_id env = Some clk_type ->
       Env.find rst_id env = Some rst_type ->
-      call_context P vars scope env clk_type rst_type GL GN ->
+      call_context P vars scope env clk_type rst_type n.(n_name) GL GN ->
+      ~ LOrd.Is_node_in n.(n_name) n.(n_eqs) ->
       Forall (NLClo.wc_equation P vars) n'.(NLSyn.n_eqs) ->
       (forall locals cns,
           get_mappings_from_node n.(n_vars) env = Some locals ->
@@ -1407,11 +1439,11 @@ Module Type SECLUSNLUSTRANSLATION
   Proof.
     intros P vars scope GL GN n n' Hp env aux_names nsig lsig st st'
            clk_id rst_id clk_type rst_type
-           Htr Hnl Hl Hauxs Hclks Hrsts Hctx Hwceqs Hside
+           Htr Hnl Hl Hauxs Hclks Hrsts Hctx Hself Hwceqs Hside
            HgoodN HndN HscN.
     destruct (to_node_sig_preserved P vars scope GL GN n n' Hp env aux_names
                 nsig lsig st st' clk_id rst_id clk_type rst_type
-                Htr Hnl Hl Hauxs Hclks Hrsts Hctx Hwceqs Hside)
+                Htr Hnl Hl Hauxs Hclks Hrsts Hctx Hself Hwceqs Hside)
       as (Hname & Hpres & Hrhs).
     pose proof Hpres as Hpres'. destruct Hpres' as [Hfields _].
     split; [exact Hname|]. split; [exact Hpres|].
@@ -1436,6 +1468,7 @@ Module Type SECLUSNLUSTRANSLATION
       generate_local_env_for_node n' stx = OK ((env, rec), sty) ->
       get_node_aux n'.(NLSyn.n_name) aux_names = Some (rec.(nclk), rec.(nrst)) ->
       NLClo.wc_node P n' ->
+      ~ LOrd.Is_node_in n.(n_name) n.(n_eqs) ->
       Signature_entails GL GN ->
       SECNLC.node_scope_fresh_in_env n' env aux_names GN ->
       secglobal_scoped GN ->
@@ -1449,7 +1482,7 @@ Module Type SECLUSNLUSTRANSLATION
       /\ signature_scoped nsig.
   Proof.
     intros P GL GN n n' Hp env rec aux_names nsig lsig stx sty st st'
-           Htn Hlocal Hauxrec Hwc Hsig Hfreshenv HscN HgoodN HndN Hnl Hl.
+           Htn Hlocal Hauxrec Hwc Hself Hsig Hfreshenv HscN HgoodN HndN Hnl Hl.
     pose proof (NAMEGEN.generate_local_env_for_node_injective _ _ _ _ _ Hlocal)
       as Hinj.
     edestruct SECNLC.generate_node_sig_inv as
@@ -1504,10 +1537,10 @@ Module Type SECLUSNLUSTRANSLATION
     assert (Hctx : call_context P
               (idck (n'.(NLSyn.n_in) ++ n'.(NLSyn.n_vars) ++ n'.(NLSyn.n_out)))
               (inp ++ out ++ locals ++ clk_type :: rst_type :: nil)
-              env clk_type rst_type GL GN).
+              env clk_type rst_type n.(n_name) GL GN).
     { unfold call_context.
       split; [exact Hsig|].
-      split; [exact Hscopefresh|].
+      split; [intros g sg _ Hfg; eapply Hscopefresh; exact Hfg|].
       split; [exact HscN|].
       split; [exact HgoodN|].
       split; [exact HndN|].
@@ -1525,7 +1558,7 @@ Module Type SECLUSNLUSTRANSLATION
              (inp ++ out ++ locals ++ clk_type :: rst_type :: nil)
              GL GN n n' Hp env aux_names nsig lsig st st'
              clk_id rst_id clk_type rst_type
-             Htn Hnl Hl Hauxl Hclk Hrst Hctx Hwceqs Hside
+             Htn Hnl Hl Hauxl Hclk Hrst Hctx Hself Hwceqs Hside
              Hgoodnsig Hndnsig Hscnsig).
   Qed.
 
@@ -1626,7 +1659,8 @@ Module Type SECLUSNLUSTRANSLATION
         get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id)
         /\ Env.find clk_id env = Some clk_type
         /\ Env.find rst_id env = Some rst_type
-        /\ call_context P vars scope env clk_type rst_type accL accN
+        /\ call_context P vars scope env clk_type rst_type n.(n_name) accL accN
+        /\ ~ LOrd.Is_node_in n.(n_name) n.(n_eqs)
         /\ Forall (NLClo.wc_equation P vars) n'.(NLSyn.n_eqs)
         /\ (forall locals cns,
                get_mappings_from_node n.(n_vars) env = Some locals ->
@@ -1649,7 +1683,8 @@ Module Type SECLUSNLUSTRANSLATION
     destruct (find_node_env n.(n_name) envs) as [env|] eqn:Eenv; [|discriminate].
     destruct (Hbr accL accN n n' Hp env lsig nsig st st' Htn Eenv Hent Hl Hn)
       as (vars & scope & clk_id & rst_id & clk_type & rst_type
-          & Haux & Hclk & Hrst & Hctx & Hwceqs & Hside & Hgood & Hnd & Hsc).
+          & Haux & Hclk & Hrst & Hctx & Hself & Hwceqs & Hside & Hgood & Hnd
+          & Hsc).
     eapply to_node_head_entails; eauto.
   Qed.
 
@@ -1728,6 +1763,7 @@ Module Type SECLUSNLUSTRANSLATION
     forall prefix nsL nsP accL accN envs aux_names
            envs_pref aux_pref stn st GLout stf GNout,
       transcribed nsL nsP ->
+      Forall (fun m => ~ LOrd.Is_node_in m.(n_name) m.(n_eqs)) nsL ->
       generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
         = OK ((envs_pref, aux_pref), stn) ->
       generate_node_scoped_env (prefix ++ nsP) = OK (envs, aux_names) ->
@@ -1746,9 +1782,11 @@ Module Type SECLUSNLUSTRANSLATION
     revert prefix accL accN envs_pref aux_pref stn st GLout stf GNout.
     induction Htr as [|nL nP nsL nsP HnodeP Htr IH];
       intros prefix accL accN envs_pref aux_pref stn st GLout stf GNout
-             Hprefgen Henvsgen Hwc Hent Hscoped Hgood Hndacc Hbound Hl Hn.
+             Hnotselfs Hprefgen Henvsgen Hwc Hent Hscoped Hgood Hndacc Hbound
+             Hl Hn.
     - simpl in Hl, Hn. inversion Hl; subst. inversion Hn; subst. exact Hent.
     - destruct HnodeP as [Hp Htn].
+      inversion Hnotselfs as [|? ? Hnotself Hnotselfs_tl]; subst.
       inversion Hwc as [|nP' nsP' Hwc_tail Hwc_head]; subst nP' nsP'.
       simpl in Hl, Hn.
       destruct (generate_lnode_sig_scoped_env accL nL envs aux_names st)
@@ -1790,8 +1828,8 @@ Module Type SECLUSNLUSTRANSLATION
         by (eapply SECNLC.node_scope_fresh_in_env_from_bounds; eauto).
       destruct (generated_node_head_entails nsP accL accN nL nP Hp local_env rec
                   aux_names nsig lsig stn st_local st st1
-                  Htn Hlocal Hauxlocal Hwc_head Hent Hscopefresh Hscoped Hgood
-                  Hndacc En El)
+                  Htn Hlocal Hauxlocal Hwc_head Hnotself Hent Hscopefresh
+                  Hscoped Hgood Hndacc En El)
         as (Hhead & Hnsiggood & Hnsignd & Hnsigsc).
       (* the accumulators keep their invariants *)
       assert (Hle : (stn <= st_local)%positive)
@@ -1818,16 +1856,30 @@ Module Type SECLUSNLUSTRANSLATION
   (** The two drivers, from the empty accumulator.  What is left is the
       program's own well-clocking and the one naming run both sides read. *)
 
+  (** [Ordered_nodes] is what rules out a node naming itself at a call site,
+      which is what makes [call_context]'s freshness clause satisfiable. *)
+
+  Lemma Ordered_nodes_not_self :
+    forall G,
+      LOrd.Ordered_nodes G ->
+      Forall (fun m => ~ LOrd.Is_node_in m.(n_name) m.(n_eqs)) G.
+  Proof.
+    induction 1 as [|nd nds Hord IH Hcalls Hnames]; constructor; auto.
+    intro Hin. destruct (Hcalls _ Hin) as [Hne _]. now apply Hne.
+  Qed.
+
   Corollary generate_all_signatures_entails_scoped :
     forall G P Hp envs aux_names st GLout GNout,
       to_global G Hp = OK P ->
+      Forall (fun m => ~ LOrd.Is_node_in m.(n_name) m.(n_eqs)) G ->
       generate_node_scoped_env P = OK (envs, aux_names) ->
       NLClo.wc_global P ->
       generate_all_lsignatures_scoped_env G envs aux_names st = OK GLout ->
       SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GNout ->
       Signature_entails GLout GNout.
   Proof.
-    intros G P Hp envs aux_names st GLout GNout Htr Henvsgen Hwc Hl Hn.
+    intros G P Hp envs aux_names st GLout GNout Htr Hnotselfs Henvsgen Hwc
+           Hl Hn.
     unfold generate_all_lsignatures_scoped_env in Hl.
     destruct (generate_all_lsignatures' [] G envs aux_names st)
       as [[sigs stf]|] eqn:El; [|discriminate]. inversion Hl; subst sigs.
@@ -1835,6 +1887,7 @@ Module Type SECLUSNLUSTRANSLATION
     eapply (generate_all_signatures_entails_scoped' nil G P nil nil envs aux_names
               (Env.empty _) nil NAMEGEN.init_state st GLout stf GNout).
     - eapply to_global_transcribed; exact Htr.
+    - exact Hnotselfs.
     - reflexivity.
     - simpl. exact Henvsgen.
     - exact Hwc.
@@ -1862,15 +1915,17 @@ Module Type SECLUSNLUSTRANSLATION
     forall G P Hp envs aux_names st GLout GNout,
       to_global G Hp = OK P ->
       LClo.wc_global G ->
+      LOrd.Ordered_nodes G ->
       SECLNG.generate_lnode_scoped_env G = OK (envs, aux_names) ->
       generate_all_lsignatures_scoped_env G envs aux_names st = OK GLout ->
       SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GNout ->
       Signature_entails GLout GNout.
   Proof.
-    intros G P Hp envs aux_names st GLout GNout Htr Hwc Henvsgen Hl Hn.
+    intros G P Hp envs aux_names st GLout GNout Htr Hwc Hord Henvsgen Hl Hn.
     rewrite (SECLNG.to_global_lscoped_env _ _ _ Htr) in Henvsgen.
     eapply generate_all_signatures_entails_scoped; eauto.
-    eapply TRC.wc_transcription; eauto.
+    - now apply Ordered_nodes_not_self.
+    - eapply TRC.wc_transcription; eauto.
   Qed.
 
   (** What the layer above reads off [Signature_entails]: a valuation
