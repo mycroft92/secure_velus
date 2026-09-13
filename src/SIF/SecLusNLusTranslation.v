@@ -591,49 +591,227 @@ Module Type SECLUSNLUSTRANSLATION
     intros cenv envo xs f args r ty ckr nm a eq' H. simpl in H. monadInv H. eauto.
   Qed.
 
+  (** * The context a call site is read in
+
+      Beyond the two globals, a call shape needs facts about the caller: its
+      naming environment places every variable its equations mention inside
+      one scope, and it is injective, so a call's result types are distinct.
+
+      All of it is stated about the *NLustre* side.  That is not a loss --
+      transcription hands both generators the same actuals, which is what the
+      expression correspondence says -- and it is what lets the scoping
+      lemmas of [SecNLusTyping.v] be reused verbatim instead of being reproved
+      against Lustre clocking. *)
+
+  Definition call_context (P : NLSyn.global) (vars : list (ident * clock))
+      (scope : list ident) (env : Env.t ident) (base_ty rst_ty : ident)
+      (GL GN : secglobal) : Prop :=
+    Signature_entails GL GN
+    /\ secglobal_scope_fresh scope GL
+    /\ secglobal_scoped GN
+    /\ secglobal_good GN
+    /\ (forall g sg, find_signature g GN = Some sg -> NoDup (signature_scope sg))
+    /\ wc_env vars
+    /\ SECNL.vars_env_scoped env vars scope
+    /\ SECNL.env_injective env
+    /\ In base_ty scope
+    /\ In rst_ty scope.
+
+  (** The four facts [call_block_entails] asks about a call's actuals, read
+      off the well-clocked NLustre equation in one go. *)
+
+  Lemma call_actuals_ok :
+    forall P vars scope env base_ty ck f les r xs ckty inptyp outtyp st st',
+      wc_env vars ->
+      NLClo.wc_equation P vars (NLSyn.EqApp xs ck f les r) ->
+      SECNL.vars_env_scoped env vars scope ->
+      SECNL.env_injective env ->
+      In base_ty scope ->
+      NoDup xs ->
+      assign_clk_type env base_ty ck = Some ckty ->
+      Forall2 (fun le t => assign_exp_type env le = Some t) les inptyp ->
+      SC.mmap (fun y => find_env y env) xs st = OK (outtyp, st') ->
+      st_scoped scope ckty
+      /\ Forall (st_scoped scope) inptyp
+      /\ Forall (fun y => In y scope) outtyp
+      /\ NoDup outtyp.
+  Proof.
+    intros P vars scope env base_ty ck f les r xs ckty inptyp outtyp st st'
+           Hwce Hwc Hvars Hinj Hbase Hnd Hck Hargs Houts.
+    inversion Hwc as [x' ck' ce' Hx Hce
+                     |xs' ck' f' les' r' n sub Hfindn Hins Houtsw Hr
+                     |x' ck' v le Hx Hle]; subst.
+    assert (Hckscope : st_scoped scope ckty).
+    { eapply (SECCET.assign_clk_type_scoped env base_ty scope ck ckty); eauto.
+      intros z Hz.
+      destruct (Hvars z) as (ty & Hfind' & Hscopez);
+        eauto using SECNL.wc_call_clock_free_in_vars. }
+    assert (Hinpscope : Forall (st_scoped scope) inptyp).
+    { eapply SECNL.mmap_assign_exp_type_scoped with (st := st) (st' := st).
+      - eapply SECNL.wc_call_args_scoped; eauto.
+      - eapply Forall2_sec_mmap_assign_exp; eauto. }
+    assert (Houtscope : Forall (fun y => In y scope) outtyp).
+    { eapply (SC.mmap_find_env_scoped env); [|exact Houts].
+      intros y Hy.
+      eapply SECNL.wc_call_outs_scoped; eauto. }
+    assert (Hndout : NoDup outtyp).
+    { destruct (SECNL.mmap_find_env_inv env _ _ _ _ Houts) as [_ Hmaps].
+      eapply SECNL.get_mappings_nodup; eauto. }
+    auto.
+  Qed.
+
+  (** The reset actual, which only the reset shape has: the caller's own
+      reset name joined with the reset variable's type and its clock. *)
+
+  Lemma call_reset_scoped :
+    forall P vars scope env base_ty rst_ty ck f les xs r ckr rty rstck,
+      wc_env vars ->
+      NLClo.wc_equation P vars (NLSyn.EqApp xs ck f les (Some (r, ckr))) ->
+      SECNL.vars_env_scoped env vars scope ->
+      In base_ty scope ->
+      In rst_ty scope ->
+      Env.find r env = Some rty ->
+      assign_clk_type env base_ty ckr = Some rstck ->
+      st_scoped scope (merge [rst_ty] (merge [rty] rstck)).
+  Proof.
+    intros P vars scope env base_ty rst_ty ck f les xs r ckr rty rstck
+           Hwce Hwc Hvars Hbase Hrst Hrty Hrstck.
+    inversion Hwc as [x' ck' ce' Hx Hce
+                     |xs' ck' f' les' r' n sub Hfindn Hins Houtsw Hr
+                     |x' ck' v le Hx Hle]; subst.
+    assert (Hinr : In (r, ckr) vars) by (eapply Hr; reflexivity).
+    apply st_scoped_merge; [now apply st_scoped_singleton|].
+    apply st_scoped_merge.
+    - apply st_scoped_singleton.
+      destruct (Hvars r (In_InMembers r ckr vars Hinr)) as (ty & Hfind & Hscoper).
+      rewrite Hrty in Hfind. inv Hfind. exact Hscoper.
+    - eapply (SECCET.assign_clk_type_scoped env base_ty scope ckr rstck); eauto.
+      intros z Hz.
+      destruct (Hvars z) as (ty & Hfind & Hscopez); [|eauto].
+      eapply SECCET.wc_clock_free_in_vars; [|exact Hz].
+      eapply wc_env_var; eauto.
+  Qed.
+
+  (** * One call block, across the two globals
+
+      This is the heart of the generalisation.  The two generators agree on
+      everything but the callee's signature: by [to_lexps_assign_rev] they
+      compute the same argument types, the same clock type and the same result
+      names, so the only question is what each global stores under [f].
+
+      [Signature_entails] answers it in two steps.  The NLustre run exists at
+      all because [generate_constraints_ok_from_good] only reads a signature's
+      interface fields and the shape of its constraints, and those agree with
+      a signature that has already generated.  The two blocks then entail by
+      [call_block_entails]. *)
+
+  Lemma call_block_step :
+    forall scope GL GN f sgL inptyp ckty rstty outtyp cs0 st stf,
+      Signature_entails GL GN ->
+      secglobal_scope_fresh scope GL ->
+      secglobal_scoped GN ->
+      secglobal_good GN ->
+      (forall g sg, find_signature g GN = Some sg -> NoDup (signature_scope sg)) ->
+      find_signature f GL = Some sgL ->
+      Forall (st_scoped scope) inptyp ->
+      st_scoped scope ckty ->
+      st_scoped scope rstty ->
+      Forall (fun y => In y scope) outtyp ->
+      NoDup outtyp ->
+      generate_constraints sgL inptyp ckty rstty outtyp st = OK (cs0, stf) ->
+      exists sgN cs,
+        find_signature f GN = Some sgN
+        /\ generate_constraints sgN inptyp ckty rstty outtyp st = OK (cs, st)
+        /\ entails cs0 cs.
+  Proof.
+    intros scope GL GN f sgL inptyp ckty rstty outtyp cs0 st stf
+           Hsig HfreshL HscN HgoodN HndN EsgL Hinp Hck Hrst Hout Hnd HgcL.
+    destruct (Hsig f sgL EsgL) as (sgN & EsgN & Hname & Hfields & Hcall).
+    pose proof (HfreshL f sgL EsgL) as HfrL.
+    pose proof (scope_fresh_fields_agree scope sgL sgN Hfields HfrL) as HfrN.
+    destruct (SIGPROOFS.generate_constraints_lengths _ _ _ _ _ _ _ _ HgcL) as [Hli Hlo].
+    pose proof Hfields as Hfields'.
+    destruct Hfields' as (Hfin & Hfout & Hfrst & Hfclk).
+    assert (HgN : signature_good sgN) by (eapply HgoodN; eauto).
+    assert (Hsubsc : call_subst_scoped scope inptyp ckty rstty outtyp)
+      by (repeat split; auto).
+    destruct (SIGPROOFS.generate_constraints_ok_from_good sgN inptyp ckty rstty outtyp st
+                (SIGPROOFS.signature_good_targets_out _ HgN)
+                (HndN _ _ EsgN)
+                ltac:(rewrite <- Hfin; exact Hli)
+                ltac:(rewrite <- Hfout; exact Hlo)
+                (outputs_fresh_from_scope_fresh scope sgN outtyp HfrN Hout)
+                Hnd) as (cs & HgcN).
+    exists sgN, cs. split; [exact EsgN|]. split; [exact HgcN|].
+    eapply call_block_entails with (scope := scope) (n1 := sgL) (n2 := sgN);
+      eauto using call_subst_fresh_from_scope_fresh.
+  Qed.
+
   Theorem to_equation_entails_app :
-    forall G env base_ty rst_ty cenv envo xs f args a eq' cs' st st',
+    forall P vars scope GL GN env base_ty rst_ty cenv envo xs f args a eq'
+           cs' st st',
+      call_context P vars scope env base_ty rst_ty GL GN ->
+      NoDup xs ->
       to_equation cenv envo (xs, [Eapp f args None a]) = OK eq' ->
-      generate_leqn_constraint G env base_ty rst_ty cenv
+      NLClo.wc_equation P vars eq' ->
+      generate_leqn_constraint GL env base_ty rst_ty cenv
         (xs, [Eapp f args None a]) st = OK (cs', st') ->
       exists cs,
-        generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st')
+        generate_eqn_constraint GN env base_ty rst_ty eq' st = OK (cs, st')
         /\ entails cs' cs.
   Proof.
-    intros G env base_ty rst_ty cenv envo xs f args a eq' cs' st st' Htr Hl.
+    intros P vars scope GL GN env base_ty rst_ty cenv envo xs f args a eq'
+           cs' st st' Hctx Hnd Htr Hwc Hl.
+    destruct Hctx as (Hsig & HfreshL & HscN & HgoodN & HndN
+                      & Hwce & Hvars & Hinj & Hbase & Hrstin).
     edestruct to_equation_app_inv as (les & Hles & Heq); eauto. subst eq'.
     destruct xs as [|x xs'].
     - simpl in Hl. unfold ret in Hl. inv Hl.
       exists []. split; [reflexivity | apply entails_refl].
     - rewrite gen_leqn_Eapp in Hl.
       eapply generate_lcall_constraint_inv in Hl
-        as (sg & ckty & argts & outs & sti & cs0
-            & Esg & Hck & Hargs & Houts & Hgc & Hcs).
+        as (sgL & ckty & argts & outs & sti & cs0
+            & EsgL & Hck & Hargs & Houts & HgcL & Hcs).
       destruct (to_lexps_assign_rev _ _ _ _ _ _ _ _ _ Hles Hargs)
         as (tys & Hargts & Hall & Hsti). subst argts sti.
-      exists cs0. split.
-      + unfold generate_eqn_constraint. rewrite Esg.
+      rewrite map_fst_plain in HgcL. unfold lvar in HgcL. cbn [fst] in HgcL.
+      destruct (state_pure_generate_constraints sgL tys ckty [rst_ty] outs
+                  st st _ _ HgcL) as [Hstf _]. subst st'.
+      destruct (call_actuals_ok _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+                  Hwce Hwc Hvars Hinj Hbase Hnd Hck Hall Houts)
+        as (Hckscope & Hinpscope & Houtscope & Hndout).
+      destruct (call_block_step scope GL GN f sgL tys ckty [rst_ty] outs cs0
+                  st st Hsig HfreshL HscN HgoodN HndN EsgL
+                  Hinpscope Hckscope (st_scoped_singleton _ _ Hrstin)
+                  Houtscope Hndout HgcL)
+        as (sgN & cs & EsgN & HgcN & Hent).
+      exists cs. split.
+      + unfold generate_eqn_constraint. rewrite EsgN.
         osec Hck.
         ssec (Forall2_sec_mmap_assign_exp env les tys st Hall).
-        ssec Houts.
-        rewrite map_fst_plain in Hgc.
-        unfold lvar in Hgc. cbn [fst] in Hgc. exact Hgc.
+        ssec Houts. exact HgcN.
       + subst cs'. rewrite carried_plain.
-        unfold lvar. cbn [snd]. rewrite !cmerge_nil. apply entails_refl.
+        unfold lvar. cbn [snd]. rewrite !cmerge_nil. exact Hent.
   Qed.
 
   Theorem to_equation_entails_app_reset :
-    forall G env base_ty rst_ty cenv envo xs f args r ty ckr nm a eq' cs' st st',
+    forall P vars scope GL GN env base_ty rst_ty cenv envo xs f args r ty ckr nm
+           a eq' cs' st st',
+      call_context P vars scope env base_ty rst_ty GL GN ->
+      NoDup xs ->
       to_equation cenv envo (xs, [Eapp f args (Some (Evar r (ty, (ckr, nm)))) a])
         = OK eq' ->
-      generate_leqn_constraint G env base_ty rst_ty cenv
+      NLClo.wc_equation P vars eq' ->
+      generate_leqn_constraint GL env base_ty rst_ty cenv
         (xs, [Eapp f args (Some (Evar r (ty, (ckr, nm)))) a]) st = OK (cs', st') ->
       exists cs,
-        generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st')
+        generate_eqn_constraint GN env base_ty rst_ty eq' st = OK (cs, st')
         /\ entails cs' cs.
   Proof.
-    intros G env base_ty rst_ty cenv envo xs f args r ty ckr nm a eq' cs' st st'
-           Htr Hl.
+    intros P vars scope GL GN env base_ty rst_ty cenv envo xs f args r ty ckr nm
+           a eq' cs' st st' Hctx Hnd Htr Hwc Hl.
+    destruct Hctx as (Hsig & HfreshL & HscN & HgoodN & HndN
+                      & Hwce & Hvars & Hinj & Hbase & Hrstin).
     edestruct to_equation_app_reset_inv as (les & Hles & Heq); eauto. subst eq'.
     destruct xs as [|x xs'].
     - simpl in Hl. unfold ret in Hl. inv Hl.
@@ -644,19 +822,34 @@ Module Type SECLUSNLUSTRANSLATION
       apply find_env_inv in Hrty as [Hrty ?]; subst sta.
       apply option_to_sec_inv in Hrstck as [Hrstck ?]; subst stb.
       eapply generate_lcall_constraint_inv in Hl
-        as (sg & ckty & argts & outs & sti & cs0
-            & Esg & Hck & Hargs & Houts & Hgc & Hcs).
+        as (sgL & ckty & argts & outs & sti & cs0
+            & EsgL & Hck & Hargs & Houts & HgcL & Hcs).
       destruct (to_lexps_assign_rev _ _ _ _ _ _ _ _ _ Hles Hargs)
         as (tys & Hargts & Hall & Hsti). subst argts sti.
-      exists cs0. split.
-      + unfold generate_eqn_constraint. rewrite Esg.
+      rewrite map_fst_plain in HgcL.
+      unfold ljoin, lvar in HgcL. cbn [fst snd] in HgcL.
+      destruct (state_pure_generate_constraints sgL tys ckty
+                  (merge [rst_ty] (merge [rty] rstck)) outs
+                  st st _ _ HgcL) as [Hstf _]. subst st'.
+      destruct (call_actuals_ok _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+                  Hwce Hwc Hvars Hinj Hbase Hnd Hck Hall Houts)
+        as (Hckscope & Hinpscope & Houtscope & Hndout).
+      assert (Hrstscope : st_scoped scope (merge [rst_ty] (merge [rty] rstck)))
+        by (eapply (call_reset_scoped P vars scope env base_ty rst_ty
+                      (find_base_clock (LSyn.clocksof args)) f les (x :: xs')
+                      r ckr rty rstck); eauto).
+      destruct (call_block_step scope GL GN f sgL tys ckty
+                  (merge [rst_ty] (merge [rty] rstck)) outs cs0 st st
+                  Hsig HfreshL HscN HgoodN HndN EsgL
+                  Hinpscope Hckscope Hrstscope Houtscope Hndout HgcL)
+        as (sgN & cs & EsgN & HgcN & Hent).
+      exists cs. split.
+      + unfold generate_eqn_constraint. rewrite EsgN.
         osec Hck. fsec Hrty. osec Hrstck.
         ssec (Forall2_sec_mmap_assign_exp env les tys st Hall).
-        ssec Houts.
-        rewrite map_fst_plain in Hgc.
-        unfold ljoin, lvar in Hgc. cbn [fst snd] in Hgc. exact Hgc.
+        ssec Houts. exact HgcN.
       + subst cs'. rewrite carried_plain.
-        unfold ljoin, lvar. cbn [snd]. rewrite !cmerge_nil. apply entails_refl.
+        unfold ljoin, lvar. cbn [snd]. rewrite !cmerge_nil. exact Hent.
   Qed.
 
   Theorem to_equation_constraint_eq_app :
@@ -737,14 +930,19 @@ Module Type SECLUSNLUSTRANSLATION
     [ exact Htr | intros; discriminate | intros; discriminate | exact Hl ].
 
   Theorem to_equation_entails :
-    forall G env base_ty rst_ty cenv envo eq eq' cs' st st',
+    forall P vars scope GL GN env base_ty rst_ty cenv envo eq eq' cs' st st',
+      call_context P vars scope env base_ty rst_ty GL GN ->
+      NoDup (fst eq) ->
       to_equation cenv envo eq = OK eq' ->
-      generate_leqn_constraint G env base_ty rst_ty cenv eq st = OK (cs', st') ->
+      NLClo.wc_equation P vars eq' ->
+      generate_leqn_constraint GL env base_ty rst_ty cenv eq st = OK (cs', st') ->
       exists cs,
-        generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st')
+        generate_eqn_constraint GN env base_ty rst_ty eq' st = OK (cs, st')
         /\ entails cs' cs.
   Proof.
-    intros G env base_ty rst_ty cenv envo [xs es] eq' cs' st st' Htr Hl.
+    intros P vars scope GL GN env base_ty rst_ty cenv envo [xs es] eq' cs' st st'
+           Hctx Hnd Htr Hwc Hl.
+    simpl in Hnd.
     destruct es as [|e [|e' es']];
       [simpl in Htr; discriminate | | simpl in Htr; discriminate].
     destruct e.
@@ -776,25 +974,39 @@ Module Type SECLUSNLUSTRANSLATION
       Both generators fold with [++] in the same order, so the lift is an
       induction and [entails] composes. *)
 
+  Lemma NoDup_flat_map_each :
+    forall {A B : Type} (f : A -> list B) l,
+      NoDup (flat_map f l) -> Forall (fun a => NoDup (f a)) l.
+  Proof.
+    intros A B f l. induction l as [|a l IH]; intros Hnd; constructor.
+    - simpl in Hnd. eapply NoDup_app_l; eauto.
+    - apply IH. simpl in Hnd. eapply NoDup_app_r; eauto.
+  Qed.
+
   Theorem to_equations_entails :
-    forall G env base_ty rst_ty cenv envo eqs neqs cs' st st',
+    forall P vars scope GL GN env base_ty rst_ty cenv envo eqs neqs cs' st st',
+      call_context P vars scope env base_ty rst_ty GL GN ->
+      Forall (fun eq => NoDup (fst eq)) eqs ->
       Errors.mmap (to_equation cenv envo) eqs = OK neqs ->
-      generate_leqns_constraints G env base_ty rst_ty cenv eqs st
+      Forall (NLClo.wc_equation P vars) neqs ->
+      generate_leqns_constraints GL env base_ty rst_ty cenv eqs st
         = OK (cs', st') ->
       exists cs,
-        generate_eqns_constraints G env base_ty rst_ty neqs st = OK (cs, st')
+        generate_eqns_constraints GN env base_ty rst_ty neqs st = OK (cs, st')
         /\ entails cs' cs.
   Proof.
-    induction eqs as [|eq eqs IH]; intros neqs cs' st st' Htr Hl; simpl in Htr.
+    intros P vars scope GL GN env base_ty rst_ty cenv envo eqs.
+    induction eqs as [|eq eqs IH]; intros neqs cs' st st' Hctx Hnd Htr Hwc Hl;
+      simpl in Htr.
     - inv Htr. simpl in Hl. unfold ret in Hl. inv Hl.
       exists []. split; [reflexivity | apply entails_refl].
-    - monadInv Htr. simpl in Hl.
+    - monadInv Htr. inv Hnd. inv Hwc. simpl in Hl.
       eapply sec_bind_inv in Hl as (c' & st1 & Hc' & Hl).
       eapply sec_bind_inv in Hl as (cr' & st2 & Hcr' & Hret).
       unfold ret in Hret. inv Hret.
-      destruct (to_equation_entails _ _ _ _ _ _ _ _ _ _ _ EQ Hc')
-        as (c & Hc & Hec).
-      destruct (IH _ _ _ _ EQ1 Hcr') as (cr & Hcr & Hecr).
+      destruct (to_equation_entails P vars scope GL GN env base_ty rst_ty cenv
+                  envo eq _ c' st st1 Hctx H1 EQ H3 Hc') as (c & Hc & Hec).
+      destruct (IH _ cr' st1 st' Hctx H2 EQ1 H4 Hcr') as (cr & Hcr & Hecr).
       exists (c ++ cr). split.
       + simpl. ssec Hc. ssec Hcr. reflexivity.
       + now apply entails_app.
@@ -940,6 +1152,74 @@ Module Type SECLUSNLUSTRANSLATION
     rewrite Hz. reflexivity.
   Qed.
 
+  (** * [simplify] on the right-hand sides
+
+      [wf_constraints] and [signature_good] read only right-hand sides, and
+      what [simplify] does to those is a function of the right-hand sides
+      alone: [findST] looks a target up, and [subAll] drops the constraints
+      that target it while retargeting the rest at the names they already
+      had.  So the right-hand-side half of [entails] survives elimination.
+
+      That is what carries [signature_good] backwards, from the NLustre
+      signature -- where [SecNLusTypingCorrectness.v] proves it -- to the
+      Lustre one, which the call rules need and nothing on the Lustre side
+      proves directly. *)
+
+  Lemma subAll_rhs_eq :
+    forall cs1 cs2 d t1 t2,
+      map snd cs1 = map snd cs2 ->
+      map snd (SymTypes.subAll cs1 d t1) = map snd (SymTypes.subAll cs2 d t2).
+  Proof.
+    induction cs1 as [|[l1 r1] cs1 IH]; intros cs2 d t1 t2 Ht.
+    - destruct cs2; simpl in Ht; try discriminate. reflexivity.
+    - destruct cs2 as [|[l2 r2] cs2]; simpl in Ht; try discriminate.
+      inversion Ht as [[Hr Hts]]. subst r2.
+      destruct r1 as [|y ys]; [simpl; eapply IH; eauto|].
+      destruct ys as [|y' ys']; [|simpl; eapply IH; eauto].
+      simpl. destruct (ident_eqb y d); [eapply IH; eauto|].
+      simpl. f_equal. eapply IH; eauto.
+  Qed.
+
+  Lemma simplify_rhs_eq :
+    forall ds cs1 cs2,
+      map snd cs1 = map snd cs2 ->
+      map snd (simplify cs1 ds) = map snd (simplify cs2 ds).
+  Proof.
+    induction ds as [|d ds IH]; intros cs1 cs2 Ht; simpl; [exact Ht|].
+    destruct (SymTypes.findST cs1 d) as [t1|] eqn:F1;
+      destruct (SymTypes.findST cs2 d) as [t2|] eqn:F2.
+    - apply IH. eapply subAll_rhs_eq; eauto.
+    - exfalso.
+      assert (SymTypes.findST cs1 d = None)
+        by (eapply SIGPROOFS.findST_none_targets; [symmetry; exact Ht|exact F2]).
+      congruence.
+    - exfalso.
+      assert (SymTypes.findST cs2 d = None)
+        by (eapply SIGPROOFS.findST_none_targets; [exact Ht|exact F1]).
+      congruence.
+    - apply IH. exact Ht.
+  Qed.
+
+  Lemma signature_scope_agree :
+    forall n1 n2, signature_fields_agree n1 n2 ->
+                  signature_scope n1 = signature_scope n2.
+  Proof.
+    intros n1 n2 (Hin & Hout & Hrst & Hclk).
+    unfold signature_scope. rewrite Hin, Hout, Hrst, Hclk. reflexivity.
+  Qed.
+
+  Lemma signature_good_of_rhs :
+    forall n1 n2,
+      signature_fields_agree n1 n2 ->
+      map snd n1.(s_constraints) = map snd n2.(s_constraints) ->
+      signature_good n2 ->
+      signature_good n1.
+  Proof.
+    intros n1 n2 (Hin & Hout & Hrst & Hclk) Hr [Hwf Hperm]. split.
+    - eapply wf_constraints_of_rhs; eauto.
+    - rewrite Hr, Hout. exact Hperm.
+  Qed.
+
   (** * Nodes
 
       Transcription keeps a node's name and its input, variable and output
@@ -1015,19 +1295,29 @@ Module Type SECLUSNLUSTRANSLATION
       It is a hypothesis here so the caller supplies it from that file. *)
 
   Theorem to_node_sig_preserved :
-    forall G n n' Hp env aux_names nsig lsig st st',
+    forall P vars scope GL GN n n' Hp env aux_names nsig lsig st st'
+           clk_id rst_id clk_type rst_type,
       to_node n Hp = OK n' ->
-      generate_node_sig G n' env aux_names = OK nsig ->
-      generate_lnode_sig G n env aux_names st = OK (lsig, st') ->
-      (forall clk_type rst_type locals cns,
+      generate_node_sig GN n' env aux_names = OK nsig ->
+      generate_lnode_sig GL n env aux_names st = OK (lsig, st') ->
+      get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
+      Env.find clk_id env = Some clk_type ->
+      Env.find rst_id env = Some rst_type ->
+      call_context P vars scope env clk_type rst_type GL GN ->
+      Forall (NLClo.wc_equation P vars) n'.(NLSyn.n_eqs) ->
+      (forall locals cns,
           get_mappings_from_node n.(n_vars) env = Some locals ->
-          generate_eqns_constraints G env clk_type rst_type
+          generate_eqns_constraints GN env clk_type rst_type
             n'.(NLSyn.n_eqs) st = OK (cns, st) ->
           wf_constraints cns
           /\ (forall x, In x locals -> ~ In x (signature_scope lsig))) ->
-      SIGPROOFS.signatures_preserved lsig nsig.
+      lsig.(s_name) = nsig.(s_name)
+      /\ SIGPROOFS.signatures_preserved lsig nsig
+      /\ map snd lsig.(s_constraints) = map snd nsig.(s_constraints).
   Proof.
-    intros G n n' Hp env aux_names nsig lsig st st' Htr Hnl Hl Hside.
+    intros P vars scope GL GN n n' Hp env aux_names nsig lsig st st'
+           clk_id rst_id clk_type rst_type
+           Htr Hnl Hl Hauxs Hclks Hrsts Hctx Hwceqs Hside.
     pose proof Htr as Htr'. tonodeInv Htr'.
     eapply nl_node_sig_inv in Hnl
       as (ci & ri & ckt & rstt & inp & out & locs & cns
@@ -1037,20 +1327,194 @@ Module Type SECLUSNLUSTRANSLATION
           & Haux2 & Hclk2 & Hrst2 & Hinp2 & Hout2 & Hloc2 & Hcns2 & Hlsig).
     simpl in Haux, Hinp, Hout, Hloc, Hcns, Hnsig.
     specialize (Hcns st).
-    destruct (Hside ckt rstt locs cns Hloc Hcns) as [Hwf Hfresh].
+    rewrite Haux in Hauxs. inv Hauxs.
+    rewrite Hclk in Hclks. inv Hclks.
+    rewrite Hrst in Hrsts. inv Hrsts.
+    destruct (Hside locs cns Hloc Hcns) as [Hwf Hfresh].
     rewrite Haux in Haux2. inv Haux2.
     rewrite Hclk in Hclk2. inv Hclk2.
     rewrite Hrst in Hrst2. inv Hrst2.
     rewrite Hinp in Hinp2. inv Hinp2.
     rewrite Hout in Hout2. inv Hout2.
     rewrite Hloc in Hloc2. inv Hloc2.
-    destruct (to_equations_entails _ _ _ _ _ _ _ _ _ _ _ Hmmap Hcns2)
+    assert (Hndeqs : Forall (fun eq => NoDup (fst eq)) n.(n_eqs)).
+    { apply NoDup_flat_map_each. exact (LSyn.NoDup_vars_defined_n_eqs n). }
+    destruct (to_equations_entails P vars scope GL GN env _ _ _ _ _ _ _ _ _
+                Hctx Hndeqs Hmmap Hwceqs Hcns2)
       as (cs & Hcs & Hent).
     rewrite Hcns in Hcs. inv Hcs.
-    subst. unfold SIGPROOFS.signatures_preserved. split.
-    - repeat split; reflexivity.
+    subst. split; [reflexivity|]. split.
+    - unfold SIGPROOFS.signatures_preserved. split.
+      + repeat split; reflexivity.
+      + simpl. rewrite minted_refl, app_nil_r.
+        apply entails_simplify; auto.
     - simpl. rewrite minted_refl, app_nil_r.
-      apply entails_simplify; auto.
+      apply simplify_rhs_eq. apply entails_rhs. exact Hent.
+  Qed.
+
+  (** * One node head
+
+      [signatures_preserved] is not by itself enough to read a call site: the
+      call rules also want the *source* signature to be good, and a Lustre
+      signature's goodness is not proved anywhere on the Lustre side.  It does
+      not have to be.  The two stored constraint lists have the same
+      right-hand sides, and that is all [signature_good] looks at, so it comes
+      back across from the NLustre signature. *)
+
+  Theorem to_node_head_entails :
+    forall P vars scope GL GN n n' Hp env aux_names nsig lsig st st'
+           clk_id rst_id clk_type rst_type,
+      to_node n Hp = OK n' ->
+      generate_node_sig GN n' env aux_names = OK nsig ->
+      generate_lnode_sig GL n env aux_names st = OK (lsig, st') ->
+      get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
+      Env.find clk_id env = Some clk_type ->
+      Env.find rst_id env = Some rst_type ->
+      call_context P vars scope env clk_type rst_type GL GN ->
+      Forall (NLClo.wc_equation P vars) n'.(NLSyn.n_eqs) ->
+      (forall locals cns,
+          get_mappings_from_node n.(n_vars) env = Some locals ->
+          generate_eqns_constraints GN env clk_type rst_type
+            n'.(NLSyn.n_eqs) st = OK (cns, st) ->
+          wf_constraints cns
+          /\ (forall x, In x locals -> ~ In x (signature_scope lsig))) ->
+      signature_good nsig ->
+      NoDup (signature_scope nsig) ->
+      signature_scoped nsig ->
+      Signature_head_entails lsig nsig.
+  Proof.
+    intros P vars scope GL GN n n' Hp env aux_names nsig lsig st st'
+           clk_id rst_id clk_type rst_type
+           Htr Hnl Hl Hauxs Hclks Hrsts Hctx Hwceqs Hside
+           HgoodN HndN HscN.
+    destruct (to_node_sig_preserved P vars scope GL GN n n' Hp env aux_names
+                nsig lsig st st' clk_id rst_id clk_type rst_type
+                Htr Hnl Hl Hauxs Hclks Hrsts Hctx Hwceqs Hside)
+      as (Hname & Hpres & Hrhs).
+    pose proof Hpres as Hpres'. destruct Hpres' as [Hfields _].
+    split; [exact Hname|]. split; [exact Hfields|].
+    eapply Signature_call_entails_from_preserved; eauto.
+    - eapply signature_good_of_rhs; eauto.
+    - erewrite signature_scope_agree by exact Hfields. exact HndN.
+  Qed.
+
+  (** * Programs
+
+      The two drivers fold over the two node lists in step, each extending its
+      own accumulator with the signature it just generated.  So the lift is
+      the same induction the NLustre-to-Stc leg runs, with
+      [Signature_head_entails] in place of [Signature_head_consistent], and
+      the per-node work abstracted into [node_step_entails] so that the
+      accumulators' own invariants stay with the caller.
+
+      The node lists are related by [transcribed] rather than by [to_global]
+      itself, because the drivers generate over [rev nodes] and a [Forall2]
+      reverses where a [to_global] run does not. *)
+
+  Definition transcribed (G : list node) (P : list NLSyn.node) : Prop :=
+    Forall2 (fun n n' => exists Hp, to_node n Hp = OK n') G P.
+
+  Lemma to_global_transcribed :
+    forall G P Hp, to_global G Hp = OK P -> transcribed G P.
+  Proof.
+    induction G as [|n G IH]; intros P Hp Htr.
+    - simpl in Htr. inv Htr. constructor.
+    - monadInv Htr. constructor.
+      + eexists. exact EQ.
+      + eapply IH; eauto.
+  Qed.
+
+  Lemma Forall2_app_both :
+    forall {A B : Type} (R : A -> B -> Prop) l1 l2 m1 m2,
+      Forall2 R l1 l2 -> Forall2 R m1 m2 -> Forall2 R (l1 ++ m1) (l2 ++ m2).
+  Proof. induction 1; simpl; auto. Qed.
+
+  Lemma transcribed_rev :
+    forall G P, transcribed G P -> transcribed (rev G) (rev P).
+  Proof.
+    unfold transcribed. induction 1; simpl; [constructor|].
+    apply Forall2_app_both; [assumption|constructor; [assumption|constructor]].
+  Qed.
+
+  Lemma Signature_entails_nil : Signature_entails [] [].
+  Proof. intros f n1 Hfind. simpl in Hfind. discriminate. Qed.
+
+  Lemma Signature_entails_cons :
+    forall GL GN lsig nsig,
+      Signature_entails GL GN ->
+      Signature_head_entails lsig nsig ->
+      Signature_entails (lsig :: GL) (nsig :: GN).
+  Proof.
+    intros GL GN lsig nsig Hent Hhead f n1 Hfind.
+    pose proof Hhead as Hhead'. destruct Hhead' as [Hsgname _].
+    simpl in Hfind.
+    destruct (ident_eqb lsig.(s_name) f) eqn:Hname.
+    - apply ident_eqb_eq in Hname. inversion Hfind; subst n1.
+      exists nsig. simpl. rewrite <- Hsgname, Hname, ident_eqb_refl.
+      split; [reflexivity|exact Hhead].
+    - apply ident_eqb_neq in Hname.
+      specialize (Hent f n1 Hfind) as (n2 & Hfind2 & Hhead2).
+      assert (Hneqb : ident_eqb nsig.(s_name) f = false)
+        by (apply ident_eqb_neq; rewrite <- Hsgname; exact Hname).
+      exists n2. simpl. rewrite Hneqb. auto.
+  Qed.
+
+  (** The per-node obligation, abstracted.  [to_node_head_entails] discharges
+      it; what it needs beyond this file -- that the NLustre signature is
+      good, scoped, and has a duplicate-free scope, and that the accumulators
+      carry their own invariants -- is exactly what
+      [SecNLusTypingCorrectness.v] proves for a generated NLustre global. *)
+
+  Definition node_step_entails (envs : node_scoped_env)
+      (aux_names : list node_aux_names) : Prop :=
+    forall accL accN n n' Hp lsig nsig st st',
+      to_node n Hp = OK n' ->
+      Signature_entails accL accN ->
+      generate_lnode_sig_scoped_env accL n envs aux_names st = OK (lsig, st') ->
+      SECNL.generate_node_sig_scoped_env accN n' envs aux_names = OK nsig ->
+      Signature_head_entails lsig nsig.
+
+  Theorem generate_all_signatures_entails' :
+    forall G P envs aux_names accL accN st GLout stf GNout,
+      transcribed G P ->
+      node_step_entails envs aux_names ->
+      Signature_entails accL accN ->
+      generate_all_lsignatures' accL G envs aux_names st = OK (GLout, stf) ->
+      SECNL.generate_all_signatures_scoped_env' accN P envs aux_names = OK GNout ->
+      Signature_entails GLout GNout.
+  Proof.
+    intros G P envs aux_names accL accN st GLout stf GNout Htr Hstep.
+    revert accL accN st.
+    induction Htr as [|n n' G P Htn Htr IH]; intros accL accN st Hent Hl Hn.
+    - simpl in Hl, Hn. inv Hl. inv Hn. exact Hent.
+    - destruct Htn as [Hp Htn].
+      simpl in Hl, Hn.
+      destruct (generate_lnode_sig_scoped_env accL n envs aux_names st)
+        as [[lsig st1]|] eqn:El; [|discriminate].
+      destruct (SECNL.generate_node_sig_scoped_env accN n' envs aux_names)
+        as [nsig|] eqn:En; simpl in Hn; [|discriminate].
+      eapply IH; [|exact Hl|exact Hn].
+      eapply Signature_entails_cons; eauto.
+  Qed.
+
+  (** The whole program.  [generate_all_lsignatures_scoped_env] and
+      [generate_all_signatures_scoped_env] are the two drivers, each started
+      on the empty accumulator. *)
+
+  Corollary generate_all_signatures_entails :
+    forall G P envs aux_names st GLout GNout,
+      transcribed G P ->
+      node_step_entails envs aux_names ->
+      generate_all_lsignatures_scoped_env G envs aux_names st = OK GLout ->
+      SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GNout ->
+      Signature_entails GLout GNout.
+  Proof.
+    intros G P envs aux_names st GLout GNout Htr Hstep Hl Hn.
+    unfold generate_all_lsignatures_scoped_env in Hl.
+    destruct (generate_all_lsignatures' [] G envs aux_names st)
+      as [[sigs stf]|] eqn:El; [|discriminate]. inv Hl.
+    unfold SECNL.generate_all_signatures_scoped_env in Hn.
+    eapply generate_all_signatures_entails'; eauto using Signature_entails_nil.
   Qed.
 
 End SECLUSNLUSTRANSLATION.
