@@ -584,6 +584,87 @@ Module Type SECLUSNLUSTRANSLATION
       unfold ljoin, lvar. cbn [snd]. now rewrite !cmerge_nil.
   Qed.
 
+  (** * One equation, all shapes
+
+      Every equation that transcribes is one of the four; the rest is case
+      analysis. *)
+
+  Lemma entails_app : forall a b a' b',
+      entails a a' -> entails b b' -> entails (a ++ b) (a' ++ b').
+  Proof.
+    intros a b a' b' Ha Hb dlt H.
+    unfold listSatisfiable in *. rewrite Forall_app in H |- *.
+    destruct H as [H1 H2]. split; [now apply Ha | now apply Hb].
+  Qed.
+
+  Ltac def_shape_e Htr Hl :=
+    eapply to_equation_entails_def;
+    [ exact Htr | intros; discriminate | intros; discriminate | exact Hl ].
+
+  Theorem to_equation_entails :
+    forall G env base_ty rst_ty cenv envo eq eq' cs' st st',
+      to_equation cenv envo eq = OK eq' ->
+      generate_leqn_constraint G env base_ty rst_ty cenv eq st = OK (cs', st') ->
+      exists cs,
+        generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st')
+        /\ entails cs' cs.
+  Proof.
+    intros G env base_ty rst_ty cenv envo [xs es] eq' cs' st st' Htr Hl.
+    destruct es as [|e [|e' es']];
+      [simpl in Htr; discriminate | | simpl in Htr; discriminate].
+    destruct e.
+    1-4,6-9: (destruct xs as [|x [|]];
+              [simpl in Htr; discriminate | | simpl in Htr; discriminate];
+              def_shape_e Htr Hl).
+    - (* Efby *)
+      destruct l as [|e0 [|e0' l']]; destruct l0 as [|e1 [|e1' l0']];
+        try (destruct xs as [|x [|]];
+             [simpl in Htr; discriminate | | simpl in Htr; discriminate];
+             solve [ def_shape_e Htr Hl
+                   | (simpl in Htr; monadInv Htr)
+                   | (simpl in Htr; discriminate) ]).
+      destruct xs as [|x [|]];
+        [simpl in Htr; discriminate | | simpl in Htr; discriminate].
+      eapply to_equation_entails_fby; eassumption.
+    - (* Eapp *)
+      destruct o as [er|].
+      + destruct er;
+          try solve [ (simpl in Htr; monadInv Htr)
+                    | (simpl in Htr; discriminate) ].
+        match goal with an : ann |- _ => destruct an as [ty [ckr nm]] end.
+        eapply to_equation_entails_app_reset; eassumption.
+      + eapply to_equation_entails_app; eassumption.
+  Qed.
+
+  (** * Equation lists
+
+      Both generators fold with [++] in the same order, so the lift is an
+      induction and [entails] composes. *)
+
+  Theorem to_equations_entails :
+    forall G env base_ty rst_ty cenv envo eqs neqs cs' st st',
+      Errors.mmap (to_equation cenv envo) eqs = OK neqs ->
+      generate_leqns_constraints G env base_ty rst_ty cenv eqs st
+        = OK (cs', st') ->
+      exists cs,
+        generate_eqns_constraints G env base_ty rst_ty neqs st = OK (cs, st')
+        /\ entails cs' cs.
+  Proof.
+    induction eqs as [|eq eqs IH]; intros neqs cs' st st' Htr Hl; simpl in Htr.
+    - inv Htr. simpl in Hl. unfold ret in Hl. inv Hl.
+      exists []. split; [reflexivity | apply entails_refl].
+    - monadInv Htr. simpl in Hl.
+      eapply sec_bind_inv in Hl as (c' & st1 & Hc' & Hl).
+      eapply sec_bind_inv in Hl as (cr' & st2 & Hcr' & Hret).
+      unfold ret in Hret. inv Hret.
+      destruct (to_equation_entails _ _ _ _ _ _ _ _ _ _ _ EQ Hc')
+        as (c & Hc & Hec).
+      destruct (IH _ _ _ _ EQ1 Hcr') as (cr & Hcr & Hecr).
+      exists (c ++ cr). split.
+      + simpl. ssec Hc. ssec Hcr. reflexivity.
+      + now apply entails_app.
+  Qed.
+
   (** * The NLustre generator is state-pure
 
       It only ever looks names up, so its result does not depend on the
