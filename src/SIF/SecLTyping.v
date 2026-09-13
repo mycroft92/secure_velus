@@ -871,6 +871,40 @@ Module Type SECLTYPING
           ret (cmerge cs (cmerge (carried argts) (snd rstty)))
       end.
 
+    (** What a successful call block computed. *)
+    Lemma generate_lcall_constraint_inv :
+      forall xs f es rstty cs st st',
+        generate_lcall_constraint xs f es rstty st = OK (cs, st') ->
+        exists sg ckty argts outs sti cs0,
+          find_signature f G = Some sg
+          /\ assign_clk_type env base_ty
+               (find_base_clock (LSyn.clocksof es)) = Some ckty
+          /\ assign_lexps es st = OK (argts, sti)
+          /\ SC.mmap (fun x => find_env x env) xs sti = OK (outs, sti)
+          /\ generate_constraints sg (map fst argts) ckty (fst rstty) outs sti
+             = OK (cs0, st')
+          /\ cs = cmerge cs0 (cmerge (carried argts) (snd rstty)).
+    Proof.
+      intros xs f es rstty cs st st' H.
+      unfold generate_lcall_constraint in H.
+      destruct (find_signature f G) as [sg|] eqn:Esg; [|discriminate].
+      eapply sec_bind_inv in H as (ckty & st1 & Hck & H).
+      eapply sec_bind_inv in H as (argts & st2 & Hargs & H).
+      eapply sec_bind_inv in H as (outs & st3 & Houts & H).
+      eapply sec_bind_inv in H as (cs0 & st4 & Hgc & Hret).
+      unfold ret in Hret. inv Hret.
+      unfold option_to_sec in Hck.
+      destruct (assign_clk_type env base_ty
+                  (find_base_clock (LSyn.clocksof es))) eqn:Eck;
+        try discriminate.
+      unfold ret in Hck. inv Hck.
+      assert (Hpure : state_pure (SC.mmap (fun x => find_env x env) xs))
+        by (apply state_pure_mmap; intros; apply state_pure_find_env).
+      destruct (Hpure st2 st2 _ _ Houts) as [Hst3 _]. subst st3.
+      exists sg, ckty, argts, outs, st2, cs0.
+      repeat split; auto.
+    Qed.
+
     (** The general rule (LTeq), for equations that are not yet normalized. *)
     Definition generate_lgen_constraint (xs : list ident) (es : list exp)
       : Sec (list constraint) :=

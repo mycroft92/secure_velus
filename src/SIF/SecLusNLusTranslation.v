@@ -370,6 +370,17 @@ Module Type SECLUSNLUSTRANSLATION
       reduce.  On the empty list both generators return the empty constraint
       list. *)
 
+  Lemma Forall2_sec_mmap_assign_exp : forall env les tys st,
+      Forall2 (fun le t => assign_exp_type env le = Some t) les tys ->
+      SC.mmap (fun e => option_to_sec (assign_exp_type env e)) les st
+      = OK (tys, st).
+  Proof.
+    intros env les tys st H. revert st.
+    induction H as [|le t les tys Hle Hall IH]; intros st; simpl.
+    - reflexivity.
+    - osec Hle. ssec (IH st). reflexivity.
+  Qed.
+
   Lemma nl_EqApp_inv : forall G env base_ty rst_ty x xs ck f les cs st st',
       generate_eqn_constraint G env base_ty rst_ty
         (NLSyn.EqApp (x :: xs) ck f les None) st = OK (cs, st') ->
@@ -449,6 +460,74 @@ Module Type SECLUSNLUSTRANSLATION
                    (Some (r, ckr)).
   Proof.
     intros cenv envo xs f args r ty ckr nm a eq' H. simpl in H. monadInv H. eauto.
+  Qed.
+
+  Theorem to_equation_entails_app :
+    forall G env base_ty rst_ty cenv envo xs f args a eq' cs' st st',
+      to_equation cenv envo (xs, [Eapp f args None a]) = OK eq' ->
+      generate_leqn_constraint G env base_ty rst_ty cenv
+        (xs, [Eapp f args None a]) st = OK (cs', st') ->
+      exists cs,
+        generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st')
+        /\ entails cs' cs.
+  Proof.
+    intros G env base_ty rst_ty cenv envo xs f args a eq' cs' st st' Htr Hl.
+    edestruct to_equation_app_inv as (les & Hles & Heq); eauto. subst eq'.
+    destruct xs as [|x xs'].
+    - simpl in Hl. unfold ret in Hl. inv Hl.
+      exists []. split; [reflexivity | apply entails_refl].
+    - rewrite gen_leqn_Eapp in Hl.
+      eapply generate_lcall_constraint_inv in Hl
+        as (sg & ckty & argts & outs & sti & cs0
+            & Esg & Hck & Hargs & Houts & Hgc & Hcs).
+      destruct (to_lexps_assign_rev _ _ _ _ _ _ _ _ _ Hles Hargs)
+        as (tys & Hargts & Hall & Hsti). subst argts sti.
+      exists cs0. split.
+      + unfold generate_eqn_constraint. rewrite Esg.
+        osec Hck.
+        ssec (Forall2_sec_mmap_assign_exp env les tys st Hall).
+        ssec Houts.
+        rewrite map_fst_plain in Hgc.
+        unfold lvar in Hgc. cbn [fst] in Hgc. exact Hgc.
+      + subst cs'. rewrite carried_plain.
+        unfold lvar. cbn [snd]. rewrite !cmerge_nil. apply entails_refl.
+  Qed.
+
+  Theorem to_equation_entails_app_reset :
+    forall G env base_ty rst_ty cenv envo xs f args r ty ckr nm a eq' cs' st st',
+      to_equation cenv envo (xs, [Eapp f args (Some (Evar r (ty, (ckr, nm)))) a])
+        = OK eq' ->
+      generate_leqn_constraint G env base_ty rst_ty cenv
+        (xs, [Eapp f args (Some (Evar r (ty, (ckr, nm)))) a]) st = OK (cs', st') ->
+      exists cs,
+        generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st')
+        /\ entails cs' cs.
+  Proof.
+    intros G env base_ty rst_ty cenv envo xs f args r ty ckr nm a eq' cs' st st'
+           Htr Hl.
+    edestruct to_equation_app_reset_inv as (les & Hles & Heq); eauto. subst eq'.
+    destruct xs as [|x xs'].
+    - simpl in Hl. unfold ret in Hl. inv Hl.
+      exists []. split; [reflexivity | apply entails_refl].
+    - rewrite gen_leqn_Eapp_reset in Hl.
+      eapply sec_bind_inv in Hl as (rty & sta & Hrty & Hl).
+      eapply sec_bind_inv in Hl as (rstck & stb & Hrstck & Hl).
+      apply find_env_inv in Hrty as [Hrty ?]; subst sta.
+      apply option_to_sec_inv in Hrstck as [Hrstck ?]; subst stb.
+      eapply generate_lcall_constraint_inv in Hl
+        as (sg & ckty & argts & outs & sti & cs0
+            & Esg & Hck & Hargs & Houts & Hgc & Hcs).
+      destruct (to_lexps_assign_rev _ _ _ _ _ _ _ _ _ Hles Hargs)
+        as (tys & Hargts & Hall & Hsti). subst argts sti.
+      exists cs0. split.
+      + unfold generate_eqn_constraint. rewrite Esg.
+        osec Hck. fsec Hrty. osec Hrstck.
+        ssec (Forall2_sec_mmap_assign_exp env les tys st Hall).
+        ssec Houts.
+        rewrite map_fst_plain in Hgc.
+        unfold ljoin, lvar in Hgc. cbn [fst snd] in Hgc. exact Hgc.
+      + subst cs'. rewrite carried_plain.
+        unfold ljoin, lvar. cbn [snd]. rewrite !cmerge_nil. apply entails_refl.
   Qed.
 
   Theorem to_equation_constraint_eq_app :
