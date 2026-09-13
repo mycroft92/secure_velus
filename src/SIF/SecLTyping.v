@@ -660,6 +660,27 @@ Module Type SECLTYPING
         intros f es ro a IHr IH ce ts st st' Htr Hl. simpl in Htr. discriminate.
     Qed.
 
+    Lemma to_lexps_assign_rev : forall es les ts st st',
+        Errors.mmap to_lexp es = OK les ->
+        assign_lexps es st = OK (ts, st') ->
+        exists tys, ts = map (fun t => (t, [])) tys
+                    /\ Forall2 (fun le t => assign_exp_type env le = Some t) les tys
+                    /\ st' = st.
+    Proof.
+      induction es as [|e es IH]; intros les ts st st' Htr Hl; simpl in Htr.
+      - inv Htr. rewrite assign_lexps_nil in Hl. unfold ret in Hl. inv Hl.
+        exists []. repeat split; constructor.
+      - monadInv Htr.
+        rewrite assign_lexps_cons in Hl.
+        eapply sec_bind_inv in Hl as (t & st1 & Ht & Hl).
+        eapply sec_bind_inv in Hl as (r & st2 & Hr & Hret).
+        unfold ret in Hret. inv Hret.
+        destruct (to_lexp_assign_rev _ _ _ _ _ EQ Ht) as (sa & Hts & Hnl & Hst);
+          subst.
+        destruct (IH _ _ _ _ EQ1 Hr) as (tys & Hr' & Hall & Hst'); subst.
+        exists (sa :: tys). repeat split; auto.
+    Qed.
+
     (** * Equations
 
         One case per shape of [to_equation], so that on the normalized
