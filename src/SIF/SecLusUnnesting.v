@@ -848,6 +848,50 @@ Module Type SECLUSUNNESTING
       constraintSatisfiable dlt (lhs, [b]) <-> satisfiable dlt lhs [b].
   Proof. intros. split; intro H; exact H. Qed.
 
+  (** * How carried constraints propagate
+
+      Every constructor but the call builds its result types with [ljoin],
+      [ljoin_list] or [lvar], and none of those creates a constraint -- they
+      merge what their operands were already carrying.  So a constructor's
+      carried set is the merge of its operands' carried sets, and an
+      expression carries something exactly when a call occurs inside it.
+
+      That is the precise form of the observation that opened this leg: the
+      refinement component is empty until a nested call puts something in it,
+      and [to_lexps_assign_rev] saw it empty on the transcription leg because
+      by then the calls had all been lifted out. *)
+
+  Lemma carried_ljoin :
+    forall a b, carried [ljoin a b] = cmerge (snd a) (snd b).
+  Proof.
+    intros a b. simpl. unfold ljoin. simpl. apply cmerge_nil.
+  Qed.
+
+  Lemma ljoin_list_carried :
+    forall ts us rs st st',
+      ljoin_list ts us st = OK (rs, st') ->
+      carried rs = cmerge (carried ts) (carried us).
+  Proof.
+    induction ts as [|t ts IH]; intros us rs st st' H.
+    - destruct us as [|u us]; simpl in H; [|discriminate].
+      unfold ret in H. inv H. reflexivity.
+    - destruct us as [|u us]; simpl in H; [discriminate|].
+      eapply sec_bind_inv in H as (r & sta & Hr & Hret).
+      unfold ret in Hret. inv Hret.
+      simpl. rewrite (IH _ _ _ _ Hr). unfold ljoin. simpl.
+      rewrite <- !cmerge_assoc. f_equal.
+      rewrite !cmerge_assoc. f_equal. apply cmerge_comm.
+  Qed.
+
+  (** A variable and a constant carry nothing, so the leaves contribute
+      nothing and the whole propagation bottoms out. *)
+
+  Lemma carried_lvar : forall d, carried [lvar d] = [].
+  Proof. reflexivity. Qed.
+
+  Lemma carried_lbot : carried [lbot] = [].
+  Proof. reflexivity. Qed.
+
 End SECLUSUNNESTING.
 
 Module SecLusUnnesting
