@@ -1858,3 +1858,44 @@ Module Type SECLUSNLUSTRANSLATION
   Qed.
 
 End SECLUSNLUSTRANSLATION.
+
+Module SecLusNLusTranslation
+  (Import Ids     : IDS)
+  (Import Op      : OPERATORS)
+  (Import OpAux   : OPERATORS_AUX Op)
+  (Import SC      : SECMONAD Ids)
+  (Import LSyn    : LSYNTAX  Ids Op)
+  (CESyn          : CESYNTAX     Op)
+  (NLSyn          : NLSYNTAX Ids Op CESyn)
+  (Lat            : Lattice)
+  (Import SecT    : SECTYPES Lat)
+  (Import STEP    : SECMONADSTEP Ids SC)
+  (Import SIG     : SIGNATURE  Ids SC)
+  (SIGPROOFS      : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
+  (Import NAMEGEN : NAMEGEN Ids Op CESyn NLSyn)
+  (CEIsF          : CEISFREE Ids Op CESyn)
+  (CEClo          : CECLOCKING Ids Op CESyn)
+  (Import SECCET  : SECCETYPING Ids Op CESyn CEIsF CEClo)
+  (NLOrd          : NLORDERED Ids Op CESyn NLSyn)
+  (NLMem          : MEMORIES Ids Op CESyn NLSyn)
+  (NLIsD          : ISDEFINED Ids Op CESyn NLSyn NLMem)
+  (NLIsF          : ISFREE Ids Op CESyn NLSyn CEIsF)
+  (NLClo          : NLCLOCKING Ids Op CESyn NLSyn NLOrd NLMem NLIsD CEIsF NLIsF CEClo)
+  (Import TR      : TR Ids Op OpAux LSyn CESyn NLSyn)
+  (Import SECL    : SECLTYPING Ids Op OpAux SC LSyn CESyn NLSyn SIG NAMEGEN
+                      CEIsF CEClo SECCET TR)
+  (Import SECNL   : SECNLUSTYPING Ids Op SC CESyn NLSyn SIG NAMEGEN CEIsF CEClo
+                      SECCET NLOrd NLMem NLIsD NLIsF NLClo)
+  (SECNLC         : SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn NLSyn Lat SecT SIG
+                      SIGPROOFS NAMEGEN CEIsF CEClo SECCET NLOrd NLMem NLIsD
+                      NLIsF NLClo SECNL)
+  (SECLNG         : SECLNAMEGEN Ids Op OpAux LSyn CESyn NLSyn NAMEGEN TR)
+  (LClo           : LCLOCKING Ids Op LSyn)
+  (LOrd           : LORDERED Ids Op LSyn)
+  (TRC            : TRCLOCKING Ids Op OpAux LSyn LClo CESyn NLSyn NLOrd NLMem
+                      NLIsD CEIsF NLIsF CEClo NLClo TR)
+  <: SECLUSNLUSTRANSLATION Ids Op OpAux SC LSyn CESyn NLSyn Lat SecT STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET NLOrd NLMem NLIsD NLIsF NLClo TR SECL SECNL SECNLC SECLNG LClo LOrd TRC.
+
+Include SECLUSNLUSTRANSLATION Ids Op OpAux SC LSyn CESyn NLSyn Lat SecT STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET NLOrd NLMem NLIsD NLIsF NLClo TR SECL SECNL SECNLC SECLNG LClo LOrd TRC.
+
+End SecLusNLusTranslation.

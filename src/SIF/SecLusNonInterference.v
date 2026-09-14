@@ -856,3 +856,58 @@ Module Type SECLUSNONINTERFERENCE
   Qed.
 
 End SECLUSNONINTERFERENCE.
+
+Module SecLusNonInterference
+  (Import Ids     : IDS)
+  (Import Lat     : Lattice)
+  (Import Op      : OPERATORS)
+  (Import OpAux   : OPERATORS_AUX Op)
+  (Import SC      : SECMONAD Ids)
+  (Import SecT    : SECTYPES Lat)
+  (Import LSyn    : LSYNTAX Ids Op)
+  (CESyn          : CESYNTAX Op)
+  (NLSyn          : NLSYNTAX Ids Op CESyn)
+  (Import STEP    : SECMONADSTEP Ids SC)
+  (Import SIG     : SIGNATURE Ids SC)
+  (SIGPROOFS      : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
+  (Import NAMEGEN : NAMEGEN Ids Op CESyn NLSyn)
+  (CETyp          : CETYPING Ids Op CESyn)
+  (CEIsF          : CEISFREE Ids Op CESyn)
+  (CEClo          : CECLOCKING Ids Op CESyn)
+  (Import SECCET  : SECCETYPING Ids Op CESyn CEIsF CEClo)
+  (Str            : INDEXEDSTREAMS Op OpAux)
+  (NLOrd          : NLORDERED Ids Op CESyn NLSyn)
+  (NLMem          : MEMORIES Ids Op CESyn NLSyn)
+  (NLIsD          : ISDEFINED Ids Op CESyn NLSyn NLMem)
+  (NLIsF          : ISFREE Ids Op CESyn NLSyn CEIsF)
+  (NLCaus         : NLUSTRECAUSALITY Ids Op CESyn NLSyn CEIsF NLIsF)
+  (NLClo          : NLCLOCKING Ids Op CESyn NLSyn NLOrd NLMem NLIsD CEIsF NLIsF CEClo)
+  (CESem          : CESEMANTICS Ids Op OpAux CESyn Str)
+  (CEProps        : CEPROPERTIES Ids Op OpAux CESyn Str CESem CETyp CEIsF)
+  (Indexed        : NLINDEXEDSEMANTICS Ids Op OpAux CESyn NLSyn Str NLOrd CESem)
+  (Import TR      : TR Ids Op OpAux LSyn CESyn NLSyn)
+  (Import SECL    : SECLTYPING Ids Op OpAux SC LSyn CESyn NLSyn SIG NAMEGEN
+                      CEIsF CEClo SECCET TR)
+  (Import SECNL   : SECNLUSTYPING Ids Op SC CESyn NLSyn SIG NAMEGEN CEIsF CEClo
+                      SECCET NLOrd NLMem NLIsD NLIsF NLClo)
+  (SECNLC         : SECNLUSTYPINGCORRECTNESS Ids Op SC CESyn NLSyn Lat SecT SIG
+                      SIGPROOFS NAMEGEN CEIsF CEClo SECCET NLOrd NLMem NLIsD
+                      NLIsF NLClo SECNL)
+  (SECLNG         : SECLNAMEGEN Ids Op OpAux LSyn CESyn NLSyn NAMEGEN TR)
+  (LClo           : LCLOCKING Ids Op LSyn)
+  (Import LOrd    : LORDERED Ids Op LSyn)
+  (TRC            : TRCLOCKING Ids Op OpAux LSyn LClo CESyn NLSyn NLOrd NLMem
+                      NLIsD CEIsF NLIsF CEClo NLClo TR)
+  (Import NLNI    : SECNLUSNONINTERFERENCE Ids Lat Op OpAux SC SecT
+                      CESyn NLSyn SIG NAMEGEN CETyp CEIsF CEClo SECCET Str
+                      NLOrd NLMem NLIsD NLIsF NLCaus NLClo CESem CEProps
+                      Indexed SIGPROOFS SECNL SECNLC)
+  (Import SECLNL  : SECLUSNLUSTRANSLATION Ids Op OpAux SC LSyn CESyn NLSyn Lat
+                      SecT STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET NLOrd
+                      NLMem NLIsD NLIsF NLClo TR SECL SECNL SECNLC SECLNG LClo
+                      LOrd TRC)
+  <: SECLUSNONINTERFERENCE Ids Lat Op OpAux SC SecT LSyn CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CETyp CEIsF CEClo SECCET Str NLOrd NLMem NLIsD NLIsF NLCaus NLClo CESem CEProps Indexed TR SECL SECNL SECNLC SECLNG LClo LOrd TRC NLNI SECLNL.
+
+Include SECLUSNONINTERFERENCE Ids Lat Op OpAux SC SecT LSyn CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CETyp CEIsF CEClo SECCET Str NLOrd NLMem NLIsD NLIsF NLCaus NLClo CESem CEProps Indexed TR SECL SECNL SECNLC SECLNG LClo LOrd TRC NLNI SECLNL.
+
+End SecLusNonInterference.

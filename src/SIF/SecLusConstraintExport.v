@@ -28,6 +28,7 @@ From Velus Require Import SIF.SecLTyping.
 From Velus Require Import SIF.SecNLusTyping.
 From Velus Require Import SIF.SecNLusTypingCorrectness.
 From Velus Require Import SIF.SecLusNLusTranslation.
+From Velus Require Import SIF.SecLusUnnesting.
 
 From Coq Require Import String List.
 From compcert Require Import common.Errors.
@@ -53,17 +54,12 @@ Module ConcreteSecCETyping <: SECCETYPING Ids Op CE.Syn CE.IsF CE.Clo.
 Include SECCETYPING Ids Op CE.Syn CE.IsF CE.Clo.
 End ConcreteSecCETyping.
 
-Module ConcreteSecLNameGen
-  <: SECLNAMEGEN Ids Op OpAux L.Syn CE.Syn NL.Syn ConcreteNameGen TR.Tr.
-Include SECLNAMEGEN Ids Op OpAux L.Syn CE.Syn NL.Syn ConcreteNameGen TR.Tr.
-End ConcreteSecLNameGen.
+Module ConcreteSecLNameGen :=
+  SecLNameGen Ids Op OpAux L.Syn CE.Syn NL.Syn ConcreteNameGen TR.Tr.
 
-Module ConcreteSecLTyping
-  <: SECLTYPING Ids Op OpAux SC L.Syn CE.Syn NL.Syn SIG ConcreteNameGen
-       CE.IsF CE.Clo ConcreteSecCETyping TR.Tr.
-Include SECLTYPING Ids Op OpAux SC L.Syn CE.Syn NL.Syn SIG ConcreteNameGen
-          CE.IsF CE.Clo ConcreteSecCETyping TR.Tr.
-End ConcreteSecLTyping.
+Module ConcreteSecLTyping :=
+  SecLTyping Ids Op OpAux SC L.Syn CE.Syn NL.Syn SIG ConcreteNameGen
+    CE.IsF CE.Clo ConcreteSecCETyping TR.Tr.
 
 (** * The dump
 
@@ -201,16 +197,16 @@ Module Check (Lat : Lattice).
       ConcreteNameGen CE.IsF CE.Clo ConcreteSecCETyping
       NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo SECNLUSTYPING.
 
-  Module Leg
-    <: SECLUSNLUSTRANSLATION Ids Op OpAux SC L.Syn CE.Syn NL.Syn Lat SecT STEP
-         SIG SIGPROOFS ConcreteNameGen CE.IsF CE.Clo ConcreteSecCETyping
-         NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo TR.Tr ConcreteSecLTyping
-         SECNLUSTYPING SECNLC ConcreteSecLNameGen L.Clo L.Ord TR.Clocking.
-  Include SECLUSNLUSTRANSLATION Ids Op OpAux SC L.Syn CE.Syn NL.Syn Lat SecT
-            STEP SIG SIGPROOFS ConcreteNameGen CE.IsF CE.Clo
-            ConcreteSecCETyping NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo TR.Tr
-            ConcreteSecLTyping SECNLUSTYPING SECNLC ConcreteSecLNameGen
-            L.Clo L.Ord TR.Clocking.
-  End Leg.
+  Module Leg :=
+    SecLusNLusTranslation Ids Op OpAux SC L.Syn CE.Syn NL.Syn Lat SecT STEP
+      SIG SIGPROOFS ConcreteNameGen CE.IsF CE.Clo ConcreteSecCETyping
+      NL.Ord NL.Mem NL.IsD NL.IsF NL.Clo TR.Tr ConcreteSecLTyping
+      SECNLUSTYPING SECNLC ConcreteSecLNameGen L.Clo L.Ord TR.Clocking.
+
+  (** And the unnesting leg, at the same concrete modules. *)
+  Module LegU :=
+    SecLusUnnesting Ids Op OpAux SC L.Syn CE.Syn NL.Syn STEP SIG
+      ConcreteNameGen CE.IsF CE.Clo ConcreteSecCETyping TR.Tr
+      ConcreteSecLTyping L.Norm.Norm.Unnesting.
 
 End Check.

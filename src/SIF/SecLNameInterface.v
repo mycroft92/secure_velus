@@ -228,3 +228,18 @@ Module Type SECLNAMEGEN
   Qed.
 
 End SECLNAMEGEN.
+
+Module SecLNameGen
+  (Import Ids     : IDS)
+  (Import Op      : OPERATORS)
+  (Import OpAux   : OPERATORS_AUX Op)
+  (Import LSyn    : LSYNTAX  Ids Op)
+  (CESyn          : CESYNTAX     Op)
+  (NLSyn          : NLSYNTAX Ids Op CESyn)
+  (Import NAMEGEN : NAMEGEN  Ids Op CESyn NLSyn)
+  (Import TR      : TR Ids Op OpAux LSyn CESyn NLSyn)
+  <: SECLNAMEGEN Ids Op OpAux LSyn CESyn NLSyn NAMEGEN TR.
+
+Include SECLNAMEGEN Ids Op OpAux LSyn CESyn NLSyn NAMEGEN TR.
+
+End SecLNameGen.

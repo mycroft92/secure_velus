@@ -1198,3 +1198,23 @@ Module Type SECLTYPING
     end.
 
 End SECLTYPING.
+
+Module SecLTyping
+  (Import Ids    : IDS)
+  (Import Op     : OPERATORS)
+  (Import OpAux  : OPERATORS_AUX Op)
+  (Import SC     : SECMONAD Ids)
+  (Import LSyn   : LSYNTAX  Ids Op)
+  (CESyn         : CESYNTAX     Op)
+  (NLSyn         : NLSYNTAX Ids Op CESyn)
+  (Import SIG    : SIGNATURE  Ids SC)
+  (Import NAMEGEN : NAMEGEN Ids Op CESyn NLSyn)
+  (CEIsF         : CEISFREE Ids Op CESyn)
+  (CEClo         : CECLOCKING Ids Op CESyn)
+  (Import SECCET : SECCETYPING Ids Op CESyn CEIsF CEClo)
+  (Import TR     : TR Ids Op OpAux LSyn CESyn NLSyn)
+  <: SECLTYPING Ids Op OpAux SC LSyn CESyn NLSyn SIG NAMEGEN CEIsF CEClo SECCET TR.
+
+Include SECLTYPING Ids Op OpAux SC LSyn CESyn NLSyn SIG NAMEGEN CEIsF CEClo SECCET TR.
+
+End SecLTyping.

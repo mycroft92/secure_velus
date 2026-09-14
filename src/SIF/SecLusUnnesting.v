@@ -296,3 +296,27 @@ Module Type SECLUSUNNESTING
   Qed.
 
 End SECLUSUNNESTING.
+
+Module SecLusUnnesting
+  (Import Ids     : IDS)
+  (Import Op      : OPERATORS)
+  (Import OpAux   : OPERATORS_AUX Op)
+  (Import SC      : SECMONAD Ids)
+  (Import LSyn    : LSYNTAX Ids Op)
+  (CESyn          : CESYNTAX Op)
+  (NLSyn          : NLSYNTAX Ids Op CESyn)
+  (Import STEP    : SECMONADSTEP Ids SC)
+  (Import SIG     : SIGNATURE Ids SC)
+  (Import NAMEGEN : NAMEGEN Ids Op CESyn NLSyn)
+  (CEIsF          : CEISFREE Ids Op CESyn)
+  (CEClo          : CECLOCKING Ids Op CESyn)
+  (Import SECCET  : SECCETYPING Ids Op CESyn CEIsF CEClo)
+  (Import TR      : TR Ids Op OpAux LSyn CESyn NLSyn)
+  (Import SECL    : SECLTYPING Ids Op OpAux SC LSyn CESyn NLSyn SIG NAMEGEN
+                      CEIsF CEClo SECCET TR)
+  (Import UNN     : UNNESTING Ids Op OpAux LSyn)
+  <: SECLUSUNNESTING Ids Op OpAux SC LSyn CESyn NLSyn STEP SIG NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
+
+Include SECLUSUNNESTING Ids Op OpAux SC LSyn CESyn NLSyn STEP SIG NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
+
+End SecLusUnnesting.
