@@ -434,6 +434,105 @@ Module Type SECLUSUNNESTING
     repeat esplit; eauto.
   Qed.
 
+  (** * The reset of an unnested call is always a variable
+
+      [unnest_reset] has two branches: it keeps the head when it is already an
+      [Evar], and otherwise mints a variable and emits an equation binding it.
+      Either way what comes back is a variable, which is what lets the emitted
+      call equation be inverted with [generate_lcall_constraint_inv] -- the
+      Lustre generator only accepts a reset that is an [Evar]. *)
+
+  Lemma unnest_reset_shape :
+    forall k er er' eqs st st',
+      unnest_reset k er st = ((er', eqs), st') ->
+      er' = None \/ exists v an, er' = Some (Evar v an).
+  Proof.
+    intros k er er' eqs st st' H.
+    unnest_reset_spec.
+    - right. do 2 eexists. reflexivity.
+    - right. do 2 eexists. reflexivity.
+    - left. reflexivity.
+  Qed.
+
+  Corollary unnest_exp_Eapp_reset_is_var :
+    forall G is_control f es er anns es' eqs st st',
+      unnest_exp G is_control (Eapp f es er anns) st = ((es', eqs), st') ->
+      exists es2 er' xs,
+        (er' = None \/ exists v an, er' = Some (Evar v an))
+        /\ In (List.map fst xs, [Eapp f es2 er' (List.map snd xs)]) eqs.
+  Proof.
+    intros G is_control f es er anns es' eqs st st' H.
+    eapply unnest_exp_Eapp_inv in H
+      as (es1 & eqs1 & st1 & es2 & eqs2 & st2 & er' & eqs3 & st3 & xs
+          & _ & _ & Hrst & _ & _ & Heqs).
+    exists es2, er', xs. split.
+    - eapply unnest_reset_shape; eauto.
+    - subst eqs. now left.
+  Qed.
+
+  (** * What the call case reduces to
+
+      Both sides instantiate the *same* callee: the source expression looks [f]
+      up to build what it carries, and the equation unnesting emits looks [f]
+      up to build what it generates.  So the two constraint sets have the same
+      shape -- an instantiated block merged with what the arguments and the
+      reset carry -- and differ only in the arguments, which the induction
+      relates, and in the result names, which
+      [subst_constraints_out_map] relates.
+
+      Nothing structural is left in this case. *)
+
+  Lemma Eapp_and_emitted_shape :
+    forall GL GN env base_ty rst_ty cenv f es er anns ts sst sst'
+           x xs es'' er'' anns'' ce xst xst',
+      assign_lexp_type GL env base_ty rst_ty (Eapp f es er anns) sst
+        = OK (ts, sst') ->
+      (er'' = None \/ exists v an, er'' = Some (Evar v an)) ->
+      generate_leqn_constraint GN env base_ty rst_ty cenv
+        (x :: xs, [Eapp f es'' er'' anns'']) xst = OK (ce, xst') ->
+      anns <> [] ->
+      exists sgL sgN,
+        find_signature f GL = Some sgL
+        /\ find_signature f GN = Some sgN
+        /\ (exists (argts : list LST) (rstty : LST) (cs : list SymTypes.constraint),
+              carried ts = cmerge cs (cmerge (carried argts) (snd rstty)))
+        /\ (exists (argts' : list LST) (rstty' : LST) (ckty' : ST)
+                   (outs' : list ident) (cs0 : list SymTypes.constraint) sti stf,
+              generate_constraints sgN (List.map fst argts') ckty' (fst rstty')
+                outs' sti = OK (cs0, stf)
+              /\ ce = cmerge cs0 (cmerge (carried argts') (snd rstty'))).
+  Proof.
+    intros GL GN env base_ty rst_ty cenv f es er anns ts sst sst'
+           x xs es'' er'' anns'' ce xst xst' Hsrc Hshape Htgt Hne.
+    (* the source side *)
+    pose proof Hsrc as Hsrc0.
+    eapply assign_lexp_Eapp_inv in Hsrc0
+      as (sgL & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & EsgL & _ & _ & _).
+    eapply assign_lexp_Eapp_carried in Hsrc
+      as (sgL' & argts & rstty & ckty & cs & EsgL' & _ & Hcar); [|exact Hne].
+    rewrite EsgL in EsgL'. inversion EsgL'; subst sgL'.
+    (* the target side: the emitted equation, whose reset is a variable *)
+    destruct Hshape as [Hnone|(v & an & Hsome)]; subst er''.
+    - rewrite gen_leqn_Eapp in Htgt.
+      eapply generate_lcall_constraint_inv in Htgt
+        as (sgN & ckt & argt & outt & sti & cs0 & EsgN & _ & _ & _ & Hgc & Hce).
+      exists sgL, sgN. repeat split; auto.
+      + exists argts, rstty, cs. exact Hcar.
+      + exists argt, (lvar rst_ty), ckt, outt, cs0, sti, xst'.
+        split; [exact Hgc|exact Hce].
+    - destruct an as [ty [ckr nm]].
+      rewrite gen_leqn_Eapp_reset in Htgt.
+      eapply sec_bind_inv in Htgt as (rty & sta & Hrty & Htgt).
+      eapply sec_bind_inv in Htgt as (rstck & stb & Hrstck & Htgt).
+      eapply generate_lcall_constraint_inv in Htgt
+        as (sgN & ckt & argt & outt & sti & cs0 & EsgN & _ & _ & _ & Hgc & Hce).
+      exists sgL, sgN. repeat split; auto.
+      + exists argts, rstty, cs. exact Hcar.
+      + exists argt, (ljoin (lvar rst_ty) (merge [rty] rstck, [])), ckt, outt,
+               cs0, sti, xst'.
+        split; [exact Hgc|exact Hce].
+  Qed.
+
 End SECLUSUNNESTING.
 
 Module SecLusUnnesting
