@@ -1024,7 +1024,16 @@ Module Type SECLUSUNNESTING
     Variable scope   : list ident.
 
     (** The ambient every equation this expression gets lifted into sits
-        under. *)
+        under.  A parameter rather than a computed term: *which* ambient a
+        lifted equation sits under is a fact about clocks, and belongs where
+        the clocks are known.
+
+        The premise that ties it down is deliberately syntactic -- [amb]
+        contains the reset level and the clock level of every variable the
+        run's emitted equations define, as lists of names.  [hm_ext] is
+        monotone under inclusion, so domination follows; and a syntactic
+        premise passes to the sub-expressions for free, since their emitted
+        equations are a sublist of this one's. *)
     Variable amb     : ST.
 
     (** A program variable's security name, as the naming pass assigned it. *)
@@ -1147,6 +1156,11 @@ Module Type SECLUSUNNESTING
         (forall x, In x (moved_by st st') -> ~ In x scope) ->
         constraints_scoped scope (carried ts) ->
         Forall (fun t => st_scoped scope (fst t)) ts ->
+        (forall x ck ckty,
+            In x (vars_defined eqs) ->
+            find_clock cenv x = OK ck ->
+            assign_clk_type env base_ty ck = Some ckty ->
+            incl (merge [rst_ty] ckty) amb) ->
         unnest_exp P is_control e st = ((es', eqs), st') ->
         assign_lexp_type GL env base_ty rst_ty e sst = OK (ts, sst') ->
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs xst
@@ -1223,7 +1237,7 @@ Module Type SECLUSUNNESTING
     Lemma carries_Econst : forall P c, carries P (Econst c).
     Proof.
       intros P c is_control es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst'
-        dlt _ _ _ Hsc Hun Has Hgen Has' _.
+        dlt _ _ _ Hsc _ Hun Has Hgen Has' _.
       rewrite unnest_exp_Econst in Hun. inv Hun.
       apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -1235,7 +1249,7 @@ Module Type SECLUSUNNESTING
     Lemma carries_Evar : forall P x a, carries P (Evar x a).
     Proof.
       intros P x a is_control es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst'
-        dlt _ _ _ Hsc Hun Has Hgen Has' _.
+        dlt _ _ _ Hsc _ Hun Has Hgen Has' _.
       rewrite unnest_exp_Evar in Hun. inv Hun.
       apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -1279,7 +1293,7 @@ Module Type SECLUSUNNESTING
       forall P op e a, carries P e -> carries P (Eunop op e a).
     Proof.
       intros P op e a IH is_control es' eqs st st' ts sst sst' ce xst xst' ts''
-        yst yst' dlt Hwl Hmv Hsc Hsts Hun Has Hgen Has' Hcar.
+        yst yst' dlt Hwl Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
       inv Hwl.
       apply unnest_exp_Eunop_inv in Hun as (e1' & st1 & Hun & ? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -1321,6 +1335,18 @@ Module Type SECLUSUNNESTING
         + simpl. eapply sec_bind_ok; [exact Hc|].
           eapply sec_bind_ok; [exact H1|]. reflexivity.
         + now rewrite app_assoc.
+    Qed.
+
+    Lemma vars_defined_incl_l :
+      forall eqs1 eqs2, incl (vars_defined eqs1) (vars_defined (eqs1 ++ eqs2)).
+    Proof.
+      intros. rewrite vars_defined_app. apply incl_appl, incl_refl.
+    Qed.
+
+    Lemma vars_defined_incl_r :
+      forall eqs1 eqs2, incl (vars_defined eqs2) (vars_defined (eqs1 ++ eqs2)).
+    Proof.
+      intros. rewrite vars_defined_app. apply incl_appr, incl_refl.
     Qed.
 
     Lemma listSatisfiable_app :
@@ -1502,7 +1528,8 @@ Module Type SECLUSUNNESTING
         carries P e1 -> carries P e2 -> carries P (Ebinop op e1 e2 a).
     Proof.
       intros P op e1 e2 a IH1 IH2 is_control es' eqs st st' ts sst sst'
-        ce xst xst' ts'' yst yst' dlt Hwl Hmv Hsc Hsts Hun Has Hgen Has' Hcar.
+        ce xst xst' ts'' yst yst' dlt Hwl Hmv Hsc Hsts Hamb Hun Has Hgen Has'
+        Hcar.
       inv Hwl.
       apply unnest_exp_Ebinop_inv in Hun
         as (f1 & eqs1 & st1 & f2 & eqs2 & Hun1 & Hun2 & ? & ?); subst.
@@ -1552,6 +1579,8 @@ Module Type SECLUSUNNESTING
       { intros x Hx. apply Hmv. eapply moved_by_prefix; eauto. }
       { now rewrite Hc1. }
       { constructor; [exact Hst1|constructor]. }
+      { intros y cky ckty Hy. apply Hamb.
+        apply vars_defined_incl_l; exact Hy. }
       { exact Hun1. }
       { exact Ht1. }
       { exact Hgen1. }
@@ -1566,6 +1595,8 @@ Module Type SECLUSUNNESTING
       { intros x Hx. apply Hmv. eapply moved_by_suffix; eauto. }
       { now rewrite Hc2. }
       { constructor; [exact Hst2|constructor]. }
+      { intros y cky ckty Hy. apply Hamb.
+        apply vars_defined_incl_r; exact Hy. }
       { exact Hun2. }
       { exact Ht2. }
       { exact Hgen2. }
@@ -1683,45 +1714,50 @@ Module Type SECLUSUNNESTING
     Qed.
 
     Lemma map_bind2_unnest_cons :
-      forall P e es es' eqs st st',
-        map_bind2 (unnest_exp P false) (e :: es) st = ((es', eqs), st') ->
+      forall P ic e es es' eqs st st',
+        map_bind2 (unnest_exp P ic) (e :: es) st = ((es', eqs), st') ->
         exists e' eq1 st1 es'r eqsr,
-          unnest_exp P false e st = ((e', eq1), st1)
-          /\ map_bind2 (unnest_exp P false) es st1 = ((es'r, eqsr), st')
+          unnest_exp P ic e st = ((e', eq1), st1)
+          /\ map_bind2 (unnest_exp P ic) es st1 = ((es'r, eqsr), st')
           /\ es' = e' :: es'r
           /\ eqs = eq1 :: eqsr.
     Proof.
-      intros P e es es' eqs st st' H.
+      intros P ic e es es' eqs st st' H.
       simpl in H. repeat inv_bind. repeat esplit; eauto.
     Qed.
 
     Lemma map_bind2_unnest_nil :
-      forall P es' eqs st st',
-        map_bind2 (unnest_exp P false) [] st = ((es', eqs), st') ->
+      forall P ic es' eqs st st',
+        map_bind2 (unnest_exp P ic) [] st = ((es', eqs), st') ->
         es' = [] /\ eqs = [] /\ st' = st.
     Proof.
-      intros P es' eqs st st' H. simpl in H.
+      intros P ic es' eqs st st' H. simpl in H.
       rewrite ret_spec in H. inv H. repeat split.
     Qed.
 
     Lemma map_bind2_unnest_st_follows :
-      forall P es es' eqs st st',
-        map_bind2 (unnest_exp P false) es st = ((es', eqs), st') ->
+      forall P ic es es' eqs st st',
+        map_bind2 (unnest_exp P ic) es st = ((es', eqs), st') ->
         st_follows st st'.
     Proof.
-      intros P es es' eqs st st' H.
+      intros P ic es es' eqs st st' H.
       eapply map_bind2_st_follows; eauto.
       rewrite Forall_forall; intros; eauto.
     Qed.
 
     Definition carries_list (P : global) (es : list exp) : Prop :=
-      forall es' eqs st st' ts sst sst'
+      forall ic es' eqs st st' ts sst sst'
              ce xst xst' ts'' yst yst' dlt,
         Forall (wl_exp P) es ->
         (forall x, In x (moved_by st st') -> ~ In x scope) ->
         constraints_scoped scope (carried ts) ->
         Forall (fun t => st_scoped scope (fst t)) ts ->
-        map_bind2 (unnest_exp P false) es st = ((es', eqs), st') ->
+        (forall x ck ckty,
+            In x (vars_defined (List.concat eqs)) ->
+            find_clock cenv x = OK ck ->
+            assign_clk_type env base_ty ck = Some ckty ->
+            incl (merge [rst_ty] ckty) amb) ->
+        map_bind2 (unnest_exp P ic) es st = ((es', eqs), st') ->
         assign_lexps GL env base_ty rst_ty es sst = OK (ts, sst') ->
         generate_leqns_constraints GL env base_ty rst_ty cenv (List.concat eqs) xst
           = OK (ce, xst') ->
@@ -1741,8 +1777,8 @@ Module Type SECLUSUNNESTING
     Proof.
       intros P es Hall.
       induction Hall as [|e es IHe IHes IH];
-        intros es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-          Hwl Hmv Hsc Hsts Hun Has Hgen Has' Hcar.
+        intros ic es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
+          Hwl Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
 
       - (** nothing to unnest, nothing emitted *)
         apply map_bind2_unnest_nil in Hun as (? & ? & ?); subst.
@@ -1776,24 +1812,28 @@ Module Type SECLUSUNNESTING
         apply listSatisfiable_cmerge in Hcar as (Hcar1 & Hcar2).
         apply Forall_app in Hsts as (Hsts1 & Hsts2).
 
-        edestruct (IHe false f1 eq1 st st1 t sst sa ce1 xst xst1 u yst ya dlt)
+        edestruct (IHe ic f1 eq1 st st1 t sst sa ce1 xst xst1 u yst ya dlt)
           as (dlt1 & Hoff1 & Hce1 & Hrel1 & Hscope1 & Hts1).
         { assumption. }
         { intros x Hx. apply Hmv. eapply moved_by_prefix; eauto. }
         { exact Hsc1. }
         { exact Hsts1. }
+        { intros y cky ckty Hy. apply Hamb.
+          apply vars_defined_incl_l; exact Hy. }
         { exact Hun1. }
         { exact Ht. }
         { exact Hgen1. }
         { exact Hu. }
         { exact Hcar1. }
 
-        edestruct (IH fr eqsr st1 st' r sa sst' ce2 xst1 xst' v ya yst' dlt1)
+        edestruct (IH ic fr eqsr st1 st' r sa sst' ce2 xst1 xst' v ya yst' dlt1)
           as (dlt2 & Hoff2 & Hce2 & Hrel2 & Hscope2 & Hts2).
         { assumption. }
         { intros x Hx. apply Hmv. eapply moved_by_suffix; eauto. }
         { exact Hsc2. }
         { exact Hsts2. }
+        { intros y cky ckty Hy. apply Hamb.
+          apply vars_defined_incl_r; exact Hy. }
         { exact Hunr. }
         { exact Hr. }
         { exact Hgen2. }
@@ -1940,7 +1980,8 @@ Module Type SECLUSUNNESTING
       forall P es x b a, Forall (carries P) es -> carries P (Ewhen es x b a).
     Proof.
       intros P es x b [tys ck] Hall is_control es' eqs st st' ts sst sst'
-        ce xst xst' ts'' yst yst' dlt Hwl Hmv Hsc Hsts Hun Has Hgen Has' Hcar.
+        ce xst xst' ts'' yst yst' dlt Hwl Hmv Hsc Hsts Hamb Hun Has Hgen Has'
+        Hcar.
       inv Hwl.
       apply unnest_exp_Ewhen_inv in Hun as (es1 & Hunn & ?); subst.
       assert (List.length es1 = List.length tys) as Hlen
@@ -1975,7 +2016,7 @@ Module Type SECLUSUNNESTING
           apply st_scoped_merge_inv in Hz as (Hz & _); auto.
         - apply IH. inversion Hsts as [|z zs Hz Hzr]; subst; auto. }
 
-      edestruct (carries_list_intro P es Hall ess eqss st st' tes sst sa
+      edestruct (carries_list_intro P es Hall false ess eqss st st' tes sst sa
                    ce xst xst' tes'' yst yst' dlt)
         as (dlt' & Hoff & Hce & Hrel & Hscope & Hts); eauto.
 
