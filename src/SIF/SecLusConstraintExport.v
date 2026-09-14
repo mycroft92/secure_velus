@@ -205,8 +205,8 @@ Module Check (Lat : Lattice).
 
   (** And the unnesting leg, at the same concrete modules. *)
   Module LegU :=
-    SecLusUnnesting Ids Op OpAux SC L.Syn CE.Syn NL.Syn STEP SIG
-      ConcreteNameGen CE.IsF CE.Clo ConcreteSecCETyping TR.Tr
+    SecLusUnnesting Ids Op OpAux Lat SecT SC L.Syn CE.Syn NL.Syn STEP SIG
+      SIGPROOFS ConcreteNameGen CE.IsF CE.Clo ConcreteSecCETyping TR.Tr
       ConcreteSecLTyping L.Norm.Norm.Unnesting.
 
 End Check.

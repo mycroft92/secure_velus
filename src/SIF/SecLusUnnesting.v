@@ -34,7 +34,9 @@ From Velus Require Import CoreExpr.CEIsFree.
 From Velus Require Import CoreExpr.CEClocking.
 From Velus Require Import NLustre.NLSyntax.
 From Velus Require Import Transcription.Tr.
+From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SymTypes.
+From Velus Require Import SIF.SecTypes.
 From Velus Require Import SIF.SymLusTypes.
 From Velus Require Import SIF.SecCETyping.
 From Velus Require Import SIF.SecContext.
@@ -51,12 +53,15 @@ Module Type SECLUSUNNESTING
   (Import Ids     : IDS)
   (Import Op      : OPERATORS)
   (Import OpAux   : OPERATORS_AUX Op)
+  (Import Lat     : Lattice)
+  (Import SecT    : SECTYPES Lat)
   (Import SC      : SECMONAD Ids)
   (Import LSyn    : LSYNTAX Ids Op)
   (CESyn          : CESYNTAX Op)
   (NLSyn          : NLSYNTAX Ids Op CESyn)
   (Import STEP    : SECMONADSTEP Ids SC)
   (Import SIG     : SIGNATURE Ids SC)
+  (SIGPROOFS      : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn NLSyn)
   (CEIsF          : CEISFREE Ids Op CESyn)
   (CEClo          : CECLOCKING Ids Op CESyn)
@@ -701,8 +706,8 @@ Module Type SECLUSUNNESTING
     forall ty x v, ~ In x ty -> SIG.subst_ident_in_type ty x v = ty.
   Proof.
     intros ty x v Hnin. unfold SIG.subst_ident_in_type.
-    destruct (my_set_mem x ty) eqn:Em; [|reflexivity].
-    exfalso. apply Hnin. now apply my_set_mem_correct.
+    destruct (SymTypes.my_set_mem x ty) eqn:Em; [|reflexivity].
+    exfalso. apply Hnin. now apply SymTypes.my_set_mem_correct.
   Qed.
 
   (** What the cases that mint nothing need: a type mentioning none of the
@@ -769,18 +774,95 @@ Module Type SECLUSUNNESTING
     forall cs st, subst_constraints_out_map cs [] [] st = OK (cs, st).
   Proof. intros. reflexivity. Qed.
 
+  (** * Domination
+
+      The relation between a source type and the target type that replaces it
+      is not equality and not a renaming: the target is a name the emitted
+      equation constrains to sit *above* the source's type.  That is
+      [SecTypes.satisfiable] -- [hm_ext dlt s0 ⊑ hm_ext dlt s1] -- so no new
+      notion is needed, only its arithmetic.
+
+      These are the steps the induction takes: a target name dominates the
+      operands it was built from, and domination composes along a chain of
+      sub-expressions. *)
+
+  Lemma satisfiable_refl :
+    forall dlt s, satisfiable dlt s s.
+  Proof. intros dlt s. unfold satisfiable. apply Lat.order_refl, Lat.eq_refl. Qed.
+
+  Lemma satisfiable_trans :
+    forall dlt a b c,
+      satisfiable dlt a b -> satisfiable dlt b c -> satisfiable dlt a c.
+  Proof.
+    intros dlt a b c Hab Hbc. unfold satisfiable in *.
+    eapply Lat.order_trans; eauto.
+  Qed.
+
+  (** A merge dominates each of its sides, and is dominated by anything that
+      dominates both -- which is how a defining constraint of the form
+      [ambient ⊔ t ⊑ b] is taken apart and put back together. *)
+
+  Lemma satisfiable_merge_l :
+    forall dlt a b, satisfiable dlt a (merge a b).
+  Proof.
+    intros dlt a b. unfold satisfiable.
+    rewrite hm_ext_merge_eq. apply Lat.join_bound1.
+  Qed.
+
+  Lemma satisfiable_merge_r :
+    forall dlt a b, satisfiable dlt b (merge a b).
+  Proof.
+    intros dlt a b. unfold satisfiable.
+    rewrite hm_ext_merge_eq. apply Lat.join_bound2.
+  Qed.
+
+  Lemma satisfiable_merge_intro :
+    forall dlt a b c,
+      satisfiable dlt a c -> satisfiable dlt b c -> satisfiable dlt (merge a b) c.
+  Proof.
+    intros dlt a b c Ha Hb. unfold satisfiable in *.
+    rewrite hm_ext_merge_eq. now apply Lat.join_least_upper_bound.
+  Qed.
+
+  (** So a name constrained above a merge dominates each side of it -- the step
+      that carries a source operand's type up to the variable unnesting
+      created for the whole expression. *)
+
+  Corollary satisfiable_through_merge_l :
+    forall dlt a b c, satisfiable dlt (merge a b) c -> satisfiable dlt a c.
+  Proof.
+    intros dlt a b c H. eapply satisfiable_trans; [apply satisfiable_merge_l|exact H].
+  Qed.
+
+  Corollary satisfiable_through_merge_r :
+    forall dlt a b c, satisfiable dlt (merge a b) c -> satisfiable dlt b c.
+  Proof.
+    intros dlt a b c H. eapply satisfiable_trans; [apply satisfiable_merge_r|exact H].
+  Qed.
+
+  (** And the form a defining constraint arrives in: [constraintSatisfiable]
+      on [(lhs, [b])] is exactly domination of [b] over [lhs]. *)
+
+  Lemma constraint_is_domination :
+    forall dlt lhs b,
+      constraintSatisfiable dlt (lhs, [b]) <-> satisfiable dlt lhs [b].
+  Proof. intros. split; intro H; exact H. Qed.
+
 End SECLUSUNNESTING.
 
 Module SecLusUnnesting
   (Import Ids     : IDS)
   (Import Op      : OPERATORS)
   (Import OpAux   : OPERATORS_AUX Op)
+  (Import Lat     : Lattice)
+  (Import SecT    : SECTYPES Lat)
   (Import SC      : SECMONAD Ids)
   (Import LSyn    : LSYNTAX Ids Op)
   (CESyn          : CESYNTAX Op)
   (NLSyn          : NLSYNTAX Ids Op CESyn)
   (Import STEP    : SECMONADSTEP Ids SC)
   (Import SIG     : SIGNATURE Ids SC)
+  (SIGPROOFS      : SIGNATURE_PROOFS Ids SC SIG Lat SecT)
   (Import NAMEGEN : NAMEGEN Ids Op CESyn NLSyn)
   (CEIsF          : CEISFREE Ids Op CESyn)
   (CEClo          : CECLOCKING Ids Op CESyn)
@@ -789,8 +871,8 @@ Module SecLusUnnesting
   (Import SECL    : SECLTYPING Ids Op OpAux SC LSyn CESyn NLSyn SIG NAMEGEN
                       CEIsF CEClo SECCET TR)
   (Import UNN     : UNNESTING Ids Op OpAux LSyn)
-  <: SECLUSUNNESTING Ids Op OpAux SC LSyn CESyn NLSyn STEP SIG NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
+  <: SECLUSUNNESTING Ids Op OpAux Lat SecT SC LSyn CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
 
-Include SECLUSUNNESTING Ids Op OpAux SC LSyn CESyn NLSyn STEP SIG NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
+Include SECLUSUNNESTING Ids Op OpAux Lat SecT SC LSyn CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
 
 End SecLusUnnesting.
