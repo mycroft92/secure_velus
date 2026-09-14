@@ -678,6 +678,53 @@ Module Type SECLUSUNNESTING
     rewrite map_length. congruence.
   Qed.
 
+  (** * Renaming a type
+
+      [subst_constraints_out_map] reaches types that sit inside constraints,
+      but the induction also meets a type on its own: a call's actual argument
+      types are handed to [generate_constraints], which substitutes them for
+      the callee's formals.  So the renaming has to apply to a bare [ST] too.
+
+      That is not a new substitution.  [SIG.subst_ident_in_type] is the
+      primitive -- the one [subst_ident_constraint] is built from -- and the
+      list-wise version is its fold, shaped exactly like
+      [subst_constraints_inp_map]. *)
+
+  Fixpoint subst_idents_in_type (ty : ST) (xs vs : list ident) : ST :=
+    match xs, vs with
+    | x :: xs', v :: vs' =>
+        subst_idents_in_type (SIG.subst_ident_in_type ty x [v]) xs' vs'
+    | _, _ => ty
+    end.
+
+  Lemma subst_ident_in_type_notin :
+    forall ty x v, ~ In x ty -> SIG.subst_ident_in_type ty x v = ty.
+  Proof.
+    intros ty x v Hnin. unfold SIG.subst_ident_in_type.
+    destruct (my_set_mem x ty) eqn:Em; [|reflexivity].
+    exfalso. apply Hnin. now apply my_set_mem_correct.
+  Qed.
+
+  (** What the cases that mint nothing need: a type mentioning none of the
+      renamed names is left alone, so the renaming really is the identity
+      through [Eunop], [Ebinop], [Ewhen] and the base cases. *)
+
+  Lemma subst_idents_in_type_notin :
+    forall xs vs ty,
+      (forall x, In x xs -> ~ In x ty) ->
+      subst_idents_in_type ty xs vs = ty.
+  Proof.
+    induction xs as [|x xs IH]; intros vs ty Hnin; simpl.
+    - reflexivity.
+    - destruct vs as [|v vs]; [reflexivity|].
+      rewrite subst_ident_in_type_notin by (apply Hnin; now left).
+      apply IH. intros y Hy. apply Hnin. now right.
+  Qed.
+
+  Corollary subst_idents_in_type_nil :
+    forall ty vs, subst_idents_in_type ty [] vs = ty.
+  Proof. reflexivity. Qed.
+
 End SECLUSUNNESTING.
 
 Module SecLusUnnesting
