@@ -295,6 +295,52 @@ Module Type SECLUSUNNESTING
     - reflexivity.
   Qed.
 
+  (** * Argument lists
+
+      The induction decomposes an argument list on both sides at once, so it
+      needs [carried] to distribute over the concatenation [assign_lexps]
+      builds.  It does: [carried] is a [cmerge] fold, and [cmerge] is
+      associative with [[]] as unit. *)
+
+  Lemma carried_app :
+    forall ts us,
+      carried (ts ++ us) = cmerge (carried ts) (carried us).
+  Proof.
+    induction ts as [|t ts IH]; intros us; simpl.
+    - now rewrite cmerge_nil2.
+    - rewrite IH. now rewrite cmerge_assoc.
+  Qed.
+
+  (** So an argument list carries the merge of what its expressions carry,
+      which is the shape the [Eapp] case needs of its [carried argts]. *)
+
+  Lemma assign_lexps_carried_cons :
+    forall G env base_ty rst_ty e es ts st st',
+      assign_lexps G env base_ty rst_ty (e :: es) st = OK (ts, st') ->
+      exists t r sta,
+        assign_lexp_type G env base_ty rst_ty e st = OK (t, sta)
+        /\ assign_lexps G env base_ty rst_ty es sta = OK (r, st')
+        /\ ts = t ++ r
+        /\ carried ts = cmerge (carried t) (carried r).
+  Proof.
+    intros G env base_ty rst_ty e es ts st st' H.
+    rewrite assign_lexps_cons in H.
+    eapply sec_bind_inv in H as (t & sta & Ht & H).
+    eapply sec_bind_inv in H as (r & stb & Hr & Hret).
+    unfold ret in Hret. inv Hret.
+    exists t, r, sta. repeat split; auto. apply carried_app.
+  Qed.
+
+  Lemma assign_lexps_carried_nil :
+    forall G env base_ty rst_ty ts st st',
+      assign_lexps G env base_ty rst_ty [] st = OK (ts, st') ->
+      ts = [] /\ carried ts = [] /\ st' = st.
+  Proof.
+    intros G env base_ty rst_ty ts st st' H.
+    rewrite assign_lexps_nil in H. unfold ret in H. inv H.
+    repeat split; reflexivity.
+  Qed.
+
 End SECLUSUNNESTING.
 
 Module SecLusUnnesting
