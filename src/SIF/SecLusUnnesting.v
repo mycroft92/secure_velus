@@ -67,6 +67,7 @@ Module Type SECLUSUNNESTING
   (Import UNN     : UNNESTING Ids Op OpAux LSyn).
 
   Import SECMONADNotations.
+  Import UNN.Fresh.Tactics.
 
   (** * The security side of a call expression
 
@@ -121,6 +122,69 @@ Module Type SECLUSUNNESTING
       unfold ret in Hret'. inv Hret'.
       exists t1, a1, stm. auto.
     - unfold ret in Hrst. inv Hrst. auto.
+  Qed.
+
+  (** * The unnesting side of a call expression
+
+      The mirror of the previous lemma.  [unnest_exp] on an [Eapp] unnests the
+      arguments, the no-op arguments and the reset, takes one identifier per
+      result annotation, returns an [Evar] for each, and emits the call as an
+      equation in front of everything the sub-unnestings emitted.
+
+      [idents_for_anns'] does not always mint: when the annotation already
+      carries a name it *reuses* it.  So the correspondence with
+      [fresh_idents (length anns)] is not mint-for-mint.  It does not need to
+      be -- both lists have length [length anns]
+      ([idents_for_anns'_length]), so the bijection is positional over the
+      call's results, and whether a result's variable is new or reused only
+      changes which side of the bijection was already named. *)
+
+  Lemma unnest_exp_Eapp_inv :
+    forall G is_control f es er anns es' eqs st st',
+      unnest_exp G is_control (Eapp f es er anns) st = ((es', eqs), st') ->
+      exists es1 eqs1 st1 es2 eqs2 st2 er' eqs3 st3 xs,
+        unnest_exps G es st = ((es1, eqs1), st1)
+        /\ unnest_noops_exps (find_node_incks G f) es1 st1 = ((es2, eqs2), st2)
+        /\ unnest_reset (unnest_exp G true) er st2 = ((er', eqs3), st3)
+        /\ idents_for_anns' anns st3 = (xs, st')
+        /\ es' = List.map (fun '(id, ann) => Evar id ann) xs
+        /\ eqs = (List.map fst xs, [Eapp f es2 er' (List.map snd xs)])
+                 :: eqs1 ++ eqs2 ++ eqs3.
+  Proof.
+    intros G is_control f es er anns es' eqs st st' H.
+    simpl in H. repeat inv_bind.
+    repeat esplit; eauto.
+    unfold unnest_exps. apply bind2_spec.
+    do 3 eexists. split; [eassumption|apply ret_spec].
+  Qed.
+
+  (** The two lists of results have the same length, which is what makes the
+      bijection between a call's minted security names and its variables
+      positional. *)
+
+  Lemma fresh_idents_length :
+    forall n outs st st',
+      fresh_idents n st = OK (outs, st') ->
+      List.length outs = n.
+  Proof.
+    induction n as [|n IH]; intros outs st st' H; simpl in H.
+    - unfold ret in H. inv H. reflexivity.
+    - eapply sec_bind_inv in H as (x & st1 & Hx & H).
+      eapply sec_bind_inv in H as (xs & st2 & Hxs & Hret).
+      unfold ret in Hret. inv Hret. simpl. f_equal. eapply IH; eauto.
+  Qed.
+
+  Lemma assign_lexp_Eapp_length :
+    forall G env base_ty rst_ty f es er anns ts st st',
+      assign_lexp_type G env base_ty rst_ty (Eapp f es er anns) st = OK (ts, st') ->
+      List.length ts = List.length anns.
+  Proof.
+    intros G env base_ty rst_ty f es er anns ts st st' H.
+    eapply assign_lexp_Eapp_inv in H
+      as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
+          & Hargs & Hrst & Hck & Esg & Houts & Hcs & Hts).
+    subst ts. rewrite map_length.
+    eapply fresh_idents_length; eauto.
   Qed.
 
 End SECLUSUNNESTING.
