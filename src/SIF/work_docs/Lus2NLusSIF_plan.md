@@ -326,6 +326,130 @@ The noninterference pull-back will then have to relate two valuations across
 Leg N, the way the NLustre-to-Stc leg does, rather than keeping one as Leg A
 does.
 
+### The plan, redone around the passes that matter, 2026-09-14
+
+**Hard constraints.** Nothing at or below `SecNLusTyping.v` is edited -- the
+NLustre, Stc and Obc typing, correctness, translation and noninterference
+files are read-only, used through module parameters. Work happens in
+`SecLTyping.v`, `SecLNameInterface.v`, the Lus2NLus files, and new files.
+
+**The pipeline, and which leg owns which pass.**
+
+    source Lustre G
+      --unnest_global-->    G1     Leg U   nested calls and control lifted out
+      --check_causality-->         fails => no NLustre => nothing to prove
+      --normfby_global-->   G2     Leg I   fby initial values made constant
+      --to_global-->        P      Leg A   transcription            [DONE]
+      --> NLustre --> Stc --> Obc          [existing, untouched]
+
+A source program that does not normalise is rejected by the compiler. There is
+no "normalisable Lustre" side condition to carry: when a pass returns `Error`
+the obligation disappears.
+
+#### Leg U -- unnesting. The leg the refinement types exist for.
+
+`unnest_exp G false (Eapp f es er anns)` mints one variable per result with
+`idents_for_anns'`, returns `Evar id ann` for each, and emits the call as its
+own equation. `assign_lexp_type` on the same expression mints one security
+name per result with `fresh_idents`, returns a variable-shaped type `([o], held)`
+for each, and carries `held = cs ⊔ carried argts ⊔ snd rstty`.
+
+The theorem: **carried constraints are the constraints of the equations
+unnesting emits; minted security names are the variables unnesting adds.**
+
+- *Expression level.* `unnest_exp G is_control e st = ((es', eqs), st')` against
+  `assign_lexp_type e sst = OK (ts, sst')`: the types of `es'` are `map fst ts`,
+  and the constraints generated for `eqs` are `snd ts`. Every non-`Eapp` case
+  with `is_control = false` also lifts (merge, ite, fby, arrow all call
+  `idents_for_anns`), so this is not an `Eapp`-only argument.
+- *Equation level.* `unnest_equation` = `unnest_rhss` then `split_equation`;
+  the split is what turns a multi-result call into one equation per result,
+  which is what `generate_constraints` already produces one constraint per
+  result for.
+- *Node level.* `unnest_node` sets `n_vars := n_vars n ++ nvars` with
+  `nvars = st_anns (snd ...)`; `generate_lnode_sig` eliminates
+  `locals ++ minted st0 st1`. The two lists must correspond.
+- *Program level.* Two signature globals in lockstep, as Leg A does --
+  `Signature_entails` and its induction generalise directly, since callees are
+  themselves unnested.
+
+This is `preserves_on`, not `entails`. Unnesting introduces variables, so the
+witness valuation must be extended on them and the single-valuation
+simplification of Leg A does not survive.
+
+**The crux, and it is not settled.** The naming pass assigns security names to
+a node's declared variables; `fresh_idents` mints names for variables that do
+not exist yet in the source. For the source signature and the unnested one to
+be comparable, the `k`-th minted name must be the name the naming pass gives
+the `k`-th variable unnesting creates. Two ways:
+
+  1. *Make them equal.* Require the naming pass to allocate locals in the order
+     unnesting creates them and the security counter to start where the naming
+     pass stopped. Brittle: couples two unrelated allocators.
+  2. *Relate them by a bijection* and state preservation up to that renaming.
+     More robust, and `preserves_on` already tolerates a changed valuation, so
+     the renaming can be absorbed into the witness.
+
+Option 2 looks right. Decide before writing expression-level lemmas, because
+the statement shape depends on it.
+
+#### Leg I -- initialisation. The leg the two-operand fby rule exists for.
+
+`fby_equation` has three cases:
+
+- `([x], [Efby [e0] [e] [ann]])` with `is_constant e0`, not cut: unchanged.
+- same, cut: a fresh `x'` with `([x],[Evar x']) , ([x'],[Efby [e0] [e] [ann]])`.
+  A rename; the security type must travel with it.
+- `¬ is_constant e0`: `fby_iteexp` gives
+  `x = Eite (Evar initid) [e0] [Evar px]` together with
+  `([px], [Efby [<constant>] [e] [ann]])` and the equation defining `initid`.
+
+The third case is the content. Before the pass the initial value is arbitrary
+and its level flows into `x`; after it, the `fby`'s initial value is a literal
+constant and `e0`'s level reaches `x` only through the `Eite`. **That is why
+the Lustre `fby` rule joins both operands** (commit a15e9ba) while the NLustre
+rule types only the second: the source rule is the pre-initialisation rule.
+
+So Leg I must show the source's `e0 ⊔ e` for `x` is preserved as
+`ite(initid, e0, px)` with `px : e` -- and that `initid`, a fresh boolean on
+the clock, is at the clock's level, so it adds nothing the equation's clock
+type did not already contribute.
+
+`init_var_for_clock` *reuses* an existing init variable when one exists for the
+same clock (the `find` on `st_anns`). So the minted-name correspondence is not
+one-per-occurrence here; it is one-per-clock. Leg U's bijection has to allow
+for that, which is another reason to prefer option 2 above.
+
+#### What Leg A contributes, and what has to change about it
+
+Leg A stays: it is the tail, it is correct, and `entails` is sound there
+precisely because transcription introduces nothing. Reusable as is:
+`Signature_entails` and its program-level induction, `generate_all_signatures_domain`,
+`entails_simplify`, the `simplify`-on-right-hand-sides lemmas, and the whole
+`SecLusNonInterference` pull-back shape.
+
+What changes: with Legs U and I in front, the two globals no longer diverge for
+the reason Leg A assumes. Leg A's divergence came from applying the *source*
+`fby` rule to an already-normalised program, where the initial value is
+`add_whens (Econst _) ty ck` -- a constant under `when`s, whose type is the
+clock's variables, which the equation's clock type already contributes. Once
+Leg I has run, that difference should collapse. Worth re-examining whether
+`Signature_entails` can be strengthened back to equality on the transcription
+leg after Leg I is in place.
+
+#### Order of work
+
+1. Decide the naming correspondence (option 1 or 2 above). Everything else
+   depends on the statement shape.
+2. Leg U at expression level, `Eapp` case first -- it is the one that exercises
+   `carried`, `lrefine`, `fresh_idents` and `minted` together. If the
+   correspondence does not hold there, nothing downstream matters.
+3. Leg U equation and node level; then the program-level lockstep.
+4. Leg I, third case first for the same reason.
+5. Re-examine Leg A's two-globals generalisation in light of 4.
+6. Noninterference: the pull-back must now relate two valuations across U and
+   I, the way the NLustre-to-Stc leg does.
+
 ### TODO: rebasing onto Velus head
 
 Not started, and deliberately deferred. What a plan will have to account for:
