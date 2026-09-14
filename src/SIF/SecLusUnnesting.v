@@ -725,6 +725,50 @@ Module Type SECLUSUNNESTING
     forall ty vs, subst_idents_in_type ty [] vs = ty.
   Proof. reflexivity. Qed.
 
+  (** * Composing renamings
+
+      A constructor that combines sub-expressions inherits their renamings, so
+      the induction has to concatenate them.  Both levels compose the way the
+      folds are written -- renaming by [xs1 ++ xs2] is renaming by [xs1] and
+      then by [xs2] -- and at the constraint level the composition is exactly
+      the monadic sequencing the fixpoint already performs. *)
+
+  Lemma subst_idents_in_type_app :
+    forall xs1 vs1 xs2 vs2 ty,
+      List.length xs1 = List.length vs1 ->
+      subst_idents_in_type ty (xs1 ++ xs2) (vs1 ++ vs2)
+      = subst_idents_in_type (subst_idents_in_type ty xs1 vs1) xs2 vs2.
+  Proof.
+    induction xs1 as [|x xs1 IH]; intros vs1 xs2 vs2 ty Hlen.
+    - destruct vs1; [reflexivity|simpl in Hlen; discriminate].
+    - destruct vs1 as [|v vs1]; [simpl in Hlen; discriminate|].
+      simpl. apply IH. simpl in Hlen. congruence.
+  Qed.
+
+  Lemma subst_constraints_out_map_app :
+    forall xs1 vs1 xs2 vs2 cs cs1 cs2 st st1 st2,
+      subst_constraints_out_map cs xs1 vs1 st = OK (cs1, st1) ->
+      subst_constraints_out_map cs1 xs2 vs2 st1 = OK (cs2, st2) ->
+      subst_constraints_out_map cs (xs1 ++ xs2) (vs1 ++ vs2) st = OK (cs2, st2).
+  Proof.
+    induction xs1 as [|x xs1 IH]; intros vs1 xs2 vs2 cs cs1 cs2 st st1 st2 H1 H2.
+    - destruct vs1 as [|v vs1]; simpl in H1; [|discriminate].
+      unfold ret in H1. inv H1. exact H2.
+    - destruct vs1 as [|v vs1]; simpl in H1; [discriminate|].
+      simpl.
+      destruct (SymTypes.findST cs v) eqn:Ef; [discriminate|].
+      eapply sec_bind_inv in H1 as (cs' & sta & Hhd & Htl).
+      eapply sec_bind_ok; [exact Hhd|].
+      eapply IH; eauto.
+  Qed.
+
+  (** And the degenerate case the non-lifting constructors land in: renaming by
+      nothing is the identity, at both levels. *)
+
+  Lemma subst_constraints_out_map_nil :
+    forall cs st, subst_constraints_out_map cs [] [] st = OK (cs, st).
+  Proof. intros. reflexivity. Qed.
+
 End SECLUSUNNESTING.
 
 Module SecLusUnnesting
