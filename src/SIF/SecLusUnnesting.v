@@ -608,6 +608,76 @@ Module Type SECLUSUNNESTING
     exists us, g. repeat split; auto.
   Qed.
 
+  (** * The renaming, constructed
+
+      For a call the two sides' residual types are both lists of singletons:
+      the typer gives each result the singleton of its minted name, unnesting
+      gives each result an [Evar] on the variable it took.  So the renaming is
+      the pairing of those two lists, and both have length [length anns].
+
+      Nothing more is needed of it than that pairing.
+      [subst_constraints_out_map] renames occurrences of the first list by the
+      second *inside the left-hand sides as well as at the targets*
+      ([subst_ident_constraint] rewrites [ty] and [x'] together), so putting a
+      defining constraint into the set renames the type inside it too.  That is
+      why the induction does not have to carry a separate claim about types:
+      a type only ever appears inside a constraint, and the renaming reaches
+      it there. *)
+
+  Lemma assign_lexp_Eapp_result_types :
+    forall G env base_ty rst_ty f es er anns ts st st',
+      assign_lexp_type G env base_ty rst_ty (Eapp f es er anns) st
+        = OK (ts, st') ->
+      exists outs,
+        List.length outs = List.length anns
+        /\ List.map fst ts = List.map (fun o => ([o] : ST)) outs.
+  Proof.
+    intros G env base_ty rst_ty f es er anns ts st st' H.
+    eapply assign_lexp_Eapp_inv in H
+      as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
+          & _ & _ & _ & _ & Houts & _ & Hts).
+    exists outs. split.
+    - eapply fresh_idents_length; eauto.
+    - subst ts. now rewrite !map_map.
+  Qed.
+
+  Lemma unnest_exp_Eapp_result_vars :
+    forall G is_control f es er anns es' eqs st st',
+      unnest_exp G is_control (Eapp f es er anns) st = ((es', eqs), st') ->
+      exists xs,
+        List.length xs = List.length anns
+        /\ es' = List.map (fun '(id, an) => Evar id an) xs.
+  Proof.
+    intros G is_control f es er anns es' eqs st st' H.
+    eapply unnest_exp_Eapp_inv in H
+      as (es1 & eqs1 & st1 & es2 & eqs2 & st2 & er' & eqs3 & st3 & xs
+          & _ & _ & _ & Hxs & Hes' & _).
+    exists xs. split; [|exact Hes'].
+    eapply idents_for_anns'_length; eauto.
+  Qed.
+
+  (** The two lists to be paired, with the pairing's defining property: they
+      are the same length, so [subst_constraints_out_map] can consume them. *)
+
+  Corollary Eapp_renaming_lists :
+    forall G env base_ty rst_ty G' is_control f es er anns
+           ts st st' es' eqs sst sst',
+      assign_lexp_type G env base_ty rst_ty (Eapp f es er anns) st
+        = OK (ts, st') ->
+      unnest_exp G' is_control (Eapp f es er anns) sst = ((es', eqs), sst') ->
+      exists outs xs,
+        List.map fst ts = List.map (fun o => ([o] : ST)) outs
+        /\ es' = List.map (fun '(id, an) => Evar id an) xs
+        /\ List.length outs = List.length (List.map fst xs).
+  Proof.
+    intros G env base_ty rst_ty G' is_control f es er anns
+           ts st st' es' eqs sst sst' Hsrc Htgt.
+    eapply assign_lexp_Eapp_result_types in Hsrc as (outs & Hlo & Hts).
+    eapply unnest_exp_Eapp_result_vars in Htgt as (xs & Hlx & Hes').
+    exists outs, xs. repeat split; auto.
+    rewrite map_length. congruence.
+  Qed.
+
 End SECLUSUNNESTING.
 
 Module SecLusUnnesting
