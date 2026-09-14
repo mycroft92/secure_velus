@@ -528,6 +528,64 @@ of `sem_l_nl` needs both, so the semantic files should take `L : LUSTRE`,
 rather than the leaves, and reach the pieces as `L.Norm.Correct.*`,
 `TR.Correctness.*`, `NL.CoindToIdx.*`. That also removes the name clash.
 
+### Leg U: how the expression-level statement is shaped, 2026-09-14
+
+The blocker for the induction is not any case, it is the statement. At
+expression level the source's residual type `fst ts` mentions the *minted*
+security names, while the unnested expression's type mentions the naming
+pass's names for the variables unnesting created. Those are different names --
+`gensym sec _` against `gensym norm1 _` -- so the types are not equal, they are
+related by a renaming.
+
+**Decision: the renaming is internal.** The expression-level lemma carries it
+as an existential; nothing above expression level mentions it.
+
+    (* expression level -- sigma is internal to the induction *)
+    unnest_exp G is_control e st = ((es', eqs), st') ->
+    assign_lexp_type GL env base_ty rst_ty e sst = OK (ts, sst') ->
+    exists sigma,
+         (* the residual types agree up to the renaming *)
+         Forall2 (fun t e' => types_of e' = subst sigma (fst t)) ts es'
+         (* and what was carried becomes what the emitted equations generate *)
+      /\ preserves_on scope (subst sigma (carried ts))
+                            (constraints generated for eqs)
+
+    (* equation level and above -- no sigma *)
+    generate_leqn_constraint  (source equation)
+      preserves_on
+    generate_leqns_constraints (the unnested equations)
+
+Why it can stay internal: `sigma` maps minted names to the new variables'
+names, and *neither* side is in the node's visible scope -- the minted names
+are eliminated by `simplify raw (locals ++ minted st0 st1)`, the new variables
+by `simplify raw (locals ++ nvars)`. `preserves_on scope` lets the witness
+valuation differ exactly off `scope`, so composing a source valuation with
+`sigma` is a legal witness. Both allocators are injective, so `sigma` is too,
+which is what makes that composition well defined.
+
+This is why the design is `preserves_on` here and `entails` on transcription,
+and it is the same mechanism in both places -- transcription simply had an
+empty renaming.
+
+**Status of Leg U, 2026-09-14.** Fifteen lemmas, no admits:
+
+- `assign_lexp_Eapp_inv` / `unnest_exp_Eapp_inv` -- both sides of a call;
+- `unnest_exp_Efby_inv` -- the delay, which is also where Leg I picks up;
+- `fresh_idents_length`, `assign_lexp_Eapp_length`,
+  `idents_for_anns'_length` (Velus's) -- both result lists have length
+  `length anns`, which makes the bijection positional;
+- `assign_lexp_Evar_inv`, `unnested_call_results_carry_nothing` -- after
+  unnesting nothing is carried, which is the postcondition transcription was
+  silently relying on;
+- `unnest_exp_Econst`, `unnest_exp_Evar` -- base cases;
+- `carried_uniform`, `assign_lexp_Eapp_carried` -- a call's total carried set
+  is its emitted equation's constraint set;
+- `carried_app`, `assign_lexps_carried_{cons,nil}` -- argument lists decompose.
+
+Remaining for Leg U: the other lifting cases (`Earrow`, `Emerge`, `Eite` --
+same shape as `Efby`, simpler carried list), then the induction with the
+statement above, then equation, node and program level.
+
 ### TODO: rebasing onto Velus head
 
 Not started, and deliberately deferred. What a plan will have to account for:

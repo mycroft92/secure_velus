@@ -341,6 +341,33 @@ Module Type SECLUSUNNESTING
     repeat split; reflexivity.
   Qed.
 
+  (** * The delay, on the unnesting side
+
+      [Efby] lifts exactly as [Eapp] does -- one identifier per annotation, an
+      [Evar] returned for each, and one emitted equation per result.  The
+      difference is what the emitted equations are: a [fby] each, rather than
+      a single call.  This is also the case the initialisation leg picks up,
+      since those [fby]s are what [fby_equation] then looks at. *)
+
+  Lemma unnest_exp_Efby_inv :
+    forall G is_control e0s es anns es' eqs st st',
+      unnest_exp G is_control (Efby e0s es anns) st = ((es', eqs), st') ->
+      exists e0s' eqs1 st1 es'' eqs2 st2 xs,
+        unnest_exps G e0s st = ((e0s', eqs1), st1)
+        /\ unnest_exps G es st1 = ((es'', eqs2), st2)
+        /\ idents_for_anns anns st2 = (xs, st')
+        /\ es' = List.map (fun '(x, ann) => Evar x ann) xs
+        /\ eqs = (List.map (fun '((x, _), fby) => ([x], [fby]))
+                    (combine xs (unnest_fby e0s' es'' anns)))
+                 ++ eqs1 ++ eqs2.
+  Proof.
+    intros G is_control e0s es anns es' eqs st st' H.
+    simpl in H. repeat inv_bind.
+    repeat esplit; eauto.
+    all: unfold unnest_exps; apply bind2_spec;
+         repeat esplit; eauto using ret_spec.
+  Qed.
+
 End SECLUSUNNESTING.
 
 Module SecLusUnnesting
