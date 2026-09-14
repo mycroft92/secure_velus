@@ -533,6 +533,81 @@ Module Type SECLUSUNNESTING
         split; [exact Hgc|exact Hce].
   Qed.
 
+  (** * The cases where nothing is introduced
+
+      [Eunop], [Ebinop] and [Ewhen] do not lift: unnesting rebuilds the
+      expression and emits exactly what its sub-expressions emitted, and the
+      typer carries exactly what its sub-expressions carried.  Nothing is
+      minted on either side, so these cases of the induction are inherited
+      rather than argued -- the renaming stays empty through them. *)
+
+  Lemma unnest_exp_Eunop_inv :
+    forall G is_control op e1 an es' eqs st st',
+      unnest_exp G is_control (Eunop op e1 an) st = ((es', eqs), st') ->
+      exists e1' st1,
+        unnest_exp G false e1 st = ((e1', eqs), st1)
+        /\ st' = st1
+        /\ es' = [Eunop op (hd_default e1') an].
+  Proof.
+    intros G is_control op e1 an es' eqs st st' H.
+    simpl in H. repeat inv_bind. repeat esplit; eauto.
+  Qed.
+
+  Lemma unnest_exp_Ebinop_inv :
+    forall G is_control op e1 e2 an es' eqs st st',
+      unnest_exp G is_control (Ebinop op e1 e2 an) st = ((es', eqs), st') ->
+      exists e1' eqs1 st1 e2' eqs2,
+        unnest_exp G false e1 st = ((e1', eqs1), st1)
+        /\ unnest_exp G false e2 st1 = ((e2', eqs2), st')
+        /\ eqs = eqs1 ++ eqs2
+        /\ es' = [Ebinop op (hd_default e1') (hd_default e2') an].
+  Proof.
+    intros G is_control op e1 e2 an es' eqs st st' H.
+    simpl in H. repeat inv_bind. repeat esplit; eauto.
+  Qed.
+
+  Lemma unnest_exp_Ewhen_inv :
+    forall G is_control es ckid b tys ck es' eqs st st',
+      unnest_exp G is_control (Ewhen es ckid b (tys, ck)) st
+        = ((es', eqs), st') ->
+      exists es1,
+        unnest_exps G es st = ((es1, eqs), st')
+        /\ es' = unnest_when ckid b es1 tys ck.
+  Proof.
+    intros G is_control es ckid b tys ck es' eqs st st' H.
+    simpl in H. repeat inv_bind.
+    repeat esplit; eauto.
+    unfold unnest_exps. apply bind2_spec.
+    repeat esplit; eauto using ret_spec.
+  Qed.
+
+  (** And the typer's side of the same three: the unary case is literally its
+      operand's, and the other two carry the merge of their operands'. *)
+
+  Lemma assign_lexp_Eunop_inv :
+    forall G env base_ty rst_ty op e1 an ts st st',
+      assign_lexp_type G env base_ty rst_ty (Eunop op e1 an) st = OK (ts, st') ->
+      assign_lexp_type G env base_ty rst_ty e1 st = OK (ts, st').
+  Proof. intros. exact H. Qed.
+
+  Lemma assign_lexp_Ewhen_carried :
+    forall G env base_ty rst_ty es x b tys ck ts st st',
+      assign_lexp_type G env base_ty rst_ty (Ewhen es x b (tys, ck)) st
+        = OK (ts, st') ->
+      exists us g,
+        assign_lexps G env base_ty rst_ty es st = OK (us, st')
+        /\ Env.find x env = Some g
+        /\ ts = List.map (fun t => ljoin t (lvar g)) us.
+  Proof.
+    intros G env base_ty rst_ty es x b tys ck ts st st' H.
+    simpl in H.
+    eapply sec_bind_inv in H as (us & sta & Hus & H).
+    eapply sec_bind_inv in H as (g & stb & Hg & Hret).
+    apply find_env_inv in Hg as [Hg Hst]; subst stb.
+    unfold ret in Hret. inv Hret.
+    exists us, g. repeat split; auto.
+  Qed.
+
 End SECLUSUNNESTING.
 
 Module SecLusUnnesting
