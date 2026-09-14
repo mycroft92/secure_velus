@@ -600,6 +600,45 @@ Remaining for Leg U: the other lifting cases (`Earrow`, `Emerge`, `Eite` --
 same shape as `Efby`, simpler carried list), then the induction with the
 statement above, then equation, node and program level.
 
+### Leg U: exactly where it stops, and the next lemma
+
+Everything structural in the `Eapp` case is done. Both sides instantiate the
+*same* signature -- the source expression looks `f` up to build what it
+carries, the equation unnesting emits looks `f` up to build what it generates
+-- so the two constraint sets have the same shape,
+
+    cmerge (generate_constraints sg _ _ _ <results>)
+           (cmerge (carried args) (snd rst))
+
+and differ only in two places, both of which now have their lemma:
+
+- the **arguments**: `carried_app` and `assign_lexps_carried_{cons,nil}` let the
+  argument list decompose on both sides, so the induction applies pointwise;
+- the **result names**: minted on one side, the variables unnesting created on
+  the other, both lists of length `length anns`
+  (`fresh_idents_length`, `idents_for_anns'_length`), related by
+  `subst_constraints_out_map` whose two directions are already proved.
+
+**The next lemma**, and why it was not written here: packaging that as
+
+    Eapp_and_emitted_share_signature :
+      assign_lexp_type ... (Eapp f es er anns) = OK (ts, _) ->
+      generate_leqn_constraint ... (x :: xs, [Eapp f es'' er'' anns'']) = OK (ce, _) ->
+      ... both sides are generate_constraints at the same sg ...
+
+needs a case analysis on the *emitted* equation's reset expression. The
+emitted `er''` is whatever `unnest_reset` produced -- an `Evar` in the normal
+case, but `unnest_reset` also has a branch that mints a variable and emits an
+equation when the head is not already a variable. So the target-side inversion
+is not a single `generate_lcall_constraint_inv`; it needs
+`unnest_reset_spec` (`Unnesting.v:288`) first, to know which of the two shapes
+`er''` has. Write that step before attempting the lemma.
+
+After it: the expression-level induction, mutual over `unnest_exp` at both
+control flags and `map_bind2` over lists, with the statement recorded above.
+Then equation, node and program level, reusing `Signature_entails` and the
+scoped lockstep from the transcription work.
+
 ### TODO: rebasing onto Velus head
 
 Not started, and deliberately deferred. What a plan will have to account for:
