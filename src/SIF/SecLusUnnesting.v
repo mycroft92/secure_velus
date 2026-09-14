@@ -368,6 +368,72 @@ Module Type SECLUSUNNESTING
          repeat esplit; eauto using ret_spec.
   Qed.
 
+  (** * The remaining lifting cases
+
+      [Earrow] lifts exactly as [Efby].  [Emerge] and [Eite] lift only when
+      [is_control] is false; their branches are unnested at [is_control =
+      true], where nothing lifts, so the induction has to run at both flags.
+      [unnest_controls] is a local [let] with no global counterpart, so these
+      are stated directly over [map_bind2 (unnest_exp G true)]. *)
+
+  Lemma unnest_exp_Earrow_inv :
+    forall G is_control e0s es anns es' eqs st st',
+      unnest_exp G is_control (Earrow e0s es anns) st = ((es', eqs), st') ->
+      exists e0s' eqs1 st1 es'' eqs2 st2 xs,
+        unnest_exps G e0s st = ((e0s', eqs1), st1)
+        /\ unnest_exps G es st1 = ((es'', eqs2), st2)
+        /\ idents_for_anns anns st2 = (xs, st')
+        /\ es' = List.map (fun '(id, ann) => Evar id ann) xs
+        /\ eqs = (combine (List.map (fun '(id, _) => [id]) xs)
+                    (List.map (fun e => [e]) (unnest_arrow e0s' es'' anns)))
+                 ++ eqs1 ++ eqs2.
+  Proof.
+    intros G is_control e0s es anns es' eqs st st' H.
+    simpl in H. repeat inv_bind.
+    repeat esplit; eauto.
+    all: unfold unnest_exps; apply bind2_spec;
+         repeat esplit; eauto using ret_spec.
+  Qed.
+
+  Lemma unnest_exp_Emerge_inv :
+    forall G ckid es1 es2 tys cl es' eqs st st',
+      unnest_exp G false (Emerge ckid es1 es2 (tys, cl)) st = ((es', eqs), st') ->
+      exists es1' eqs1 st1 es2' eqs2 st2 xs,
+        map_bind2 (unnest_exp G true) es1 st = ((es1', eqs1), st1)
+        /\ map_bind2 (unnest_exp G true) es2 st1 = ((es2', eqs2), st2)
+        /\ idents_for_anns (List.map (fun ty => (ty, cl)) tys) st2 = (xs, st')
+        /\ es' = List.map (fun '(id, ann) => Evar id ann) xs
+        /\ eqs = (combine (List.map (fun '(id, _) => [id]) xs)
+                    (List.map (fun e => [e])
+                       (unnest_merge ckid (List.concat es1') (List.concat es2')
+                          tys cl)))
+                 ++ List.concat eqs1 ++ List.concat eqs2.
+  Proof.
+    intros G ckid es1 es2 tys cl es' eqs st st' H.
+    simpl in H. repeat inv_bind.
+    repeat esplit; eauto.
+  Qed.
+
+  Lemma unnest_exp_Eite_inv :
+    forall G e es1 es2 tys ck es' eqs st st',
+      unnest_exp G false (Eite e es1 es2 (tys, ck)) st = ((es', eqs), st') ->
+      exists e' eqs0 st0 es1' eqs1 st1 es2' eqs2 st2 xs,
+        unnest_exp G false e st = ((e', eqs0), st0)
+        /\ map_bind2 (unnest_exp G true) es1 st0 = ((es1', eqs1), st1)
+        /\ map_bind2 (unnest_exp G true) es2 st1 = ((es2', eqs2), st2)
+        /\ idents_for_anns (List.map (fun ty => (ty, ck)) tys) st2 = (xs, st')
+        /\ es' = List.map (fun '(id, ann) => Evar id ann) xs
+        /\ eqs = (combine (List.map (fun '(id, _) => [id]) xs)
+                    (List.map (fun e => [e])
+                       (unnest_ite (hd_default e') (List.concat es1')
+                          (List.concat es2') tys ck)))
+                 ++ eqs0 ++ List.concat eqs1 ++ List.concat eqs2.
+  Proof.
+    intros G e es1 es2 tys ck es' eqs st st' H.
+    simpl in H. repeat inv_bind.
+    repeat esplit; eauto.
+  Qed.
+
 End SECLUSUNNESTING.
 
 Module SecLusUnnesting
