@@ -187,4 +187,51 @@ Module Type SECLUSUNNESTING
     eapply fresh_idents_length; eauto.
   Qed.
 
+  (** * Why the carried component is empty after unnesting
+
+      The results of an unnested expression are variables, and a variable
+      carries nothing: [assign_lexp_type] on an [Evar] is [lvar] of its
+      security name, whose constraint component is [[]].  Everything the
+      expression was carrying has become an equation.
+
+      That is the bridge between this leg and the transcription leg, and it is
+      why [to_lexps_assign_rev] could conclude the argument types come back as
+      [map (fun t => (t, [])) tys] there: by the time transcription runs, both
+      passes have already turned every carried constraint into an equation. *)
+
+  Lemma assign_lexp_Evar_inv :
+    forall G env base_ty rst_ty x a t st st',
+      assign_lexp_type G env base_ty rst_ty (Evar x a) st = OK (t, st') ->
+      exists xt,
+        Env.find x env = Some xt
+        /\ t = [(([xt] : ST), [])]
+        /\ st' = st.
+  Proof.
+    intros G env base_ty rst_ty x a t st st' H.
+    simpl in H.
+    eapply sec_bind_inv in H as (xt & st1 & Hx & Hret).
+    apply find_env_inv in Hx as [Hx Hst]; subst st1.
+    unfold ret in Hret. inv Hret.
+    exists xt. repeat split; auto.
+  Qed.
+
+  Corollary unnested_call_results_carry_nothing :
+    forall G env base_ty rst_ty G' is_control f es er anns es' eqs st st',
+      unnest_exp G' is_control (Eapp f es er anns) st = ((es', eqs), st') ->
+      Forall (fun e' =>
+                forall t sst sst',
+                  assign_lexp_type G env base_ty rst_ty e' sst = OK (t, sst') ->
+                  Forall (fun p => snd p = []) t)
+             es'.
+  Proof.
+    intros G env base_ty rst_ty G' is_control f es er anns es' eqs st st' H.
+    eapply unnest_exp_Eapp_inv in H
+      as (es1 & eqs1 & st1 & es2 & eqs2 & st2 & er' & eqs3 & st3 & xs
+          & _ & _ & _ & _ & Hes' & _).
+    subst es'.
+    apply Forall_map, Forall_forall. intros [id an] _ t sst sst' Ht.
+    eapply assign_lexp_Evar_inv in Ht as (xt & _ & Ht & _). subst t.
+    now repeat constructor.
+  Qed.
+
 End SECLUSUNNESTING.
