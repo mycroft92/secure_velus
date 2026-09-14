@@ -1632,6 +1632,230 @@ Module Type SECLUSUNNESTING
           apply incl_appr, moved_by_suffix; auto.
     Qed.
 
+    (** * Expression lists
+
+        Every remaining constructor recurses through a list -- [unnest_exps]
+        on one side, [assign_lexps] on the other -- so this is the gate.  The
+        argument is the [Ebinop] argument folded: each element runs over the
+        stretch of the fresh state the previous one left, so the witnesses
+        chain, and each element's conclusion survives the rest because the
+        rest moves elsewhere. *)
+
+    Lemma assign_lexps_app_inv :
+      forall es1 es2 ts st st',
+        assign_lexps GL env base_ty rst_ty (es1 ++ es2) st = OK (ts, st') ->
+        exists ts1 ts2 st1,
+          assign_lexps GL env base_ty rst_ty es1 st = OK (ts1, st1)
+          /\ assign_lexps GL env base_ty rst_ty es2 st1 = OK (ts2, st')
+          /\ ts = ts1 ++ ts2.
+    Proof.
+      induction es1 as [|e es1 IH]; intros es2 ts st st' H.
+      - exists [], ts, st. rewrite assign_lexps_nil. auto.
+      - rewrite <- app_comm_cons, assign_lexps_cons in H.
+        eapply sec_bind_inv in H as (t & sta & Ht & H).
+        eapply sec_bind_inv in H as (r & stb & Hr & Hret).
+        unfold ret in Hret. inv Hret.
+        apply IH in Hr as (ts1 & ts2 & st1 & H1 & H2 & ?); subst.
+        exists (t ++ ts1), ts2, st1. split; [|split]; auto.
+        + rewrite assign_lexps_cons.
+          eapply sec_bind_ok; [exact Ht|].
+          eapply sec_bind_ok; [exact H1|]. reflexivity.
+        + now rewrite app_assoc.
+    Qed.
+
+    Lemma assign_lexps_app_intro :
+      forall es1 es2 ts1 ts2 st st1 st',
+        assign_lexps GL env base_ty rst_ty es1 st = OK (ts1, st1) ->
+        assign_lexps GL env base_ty rst_ty es2 st1 = OK (ts2, st') ->
+        assign_lexps GL env base_ty rst_ty (es1 ++ es2) st
+          = OK (ts1 ++ ts2, st').
+    Proof.
+      induction es1 as [|e es1 IH]; intros es2 ts1 ts2 st st1 st' H1 H2.
+      - rewrite assign_lexps_nil in H1. unfold ret in H1. inv H1. exact H2.
+      - rewrite assign_lexps_cons in H1.
+        eapply sec_bind_inv in H1 as (t & sta & Ht & H1).
+        eapply sec_bind_inv in H1 as (r & stb & Hr & Hret).
+        unfold ret in Hret. inv Hret.
+        rewrite <- app_comm_cons, assign_lexps_cons.
+        eapply sec_bind_ok; [exact Ht|].
+        eapply sec_bind_ok; [eapply IH; eauto|].
+        unfold ret. now rewrite app_assoc.
+    Qed.
+
+    Lemma map_bind2_unnest_cons :
+      forall P e es es' eqs st st',
+        map_bind2 (unnest_exp P false) (e :: es) st = ((es', eqs), st') ->
+        exists e' eq1 st1 es'r eqsr,
+          unnest_exp P false e st = ((e', eq1), st1)
+          /\ map_bind2 (unnest_exp P false) es st1 = ((es'r, eqsr), st')
+          /\ es' = e' :: es'r
+          /\ eqs = eq1 :: eqsr.
+    Proof.
+      intros P e es es' eqs st st' H.
+      simpl in H. repeat inv_bind. repeat esplit; eauto.
+    Qed.
+
+    Lemma map_bind2_unnest_nil :
+      forall P es' eqs st st',
+        map_bind2 (unnest_exp P false) [] st = ((es', eqs), st') ->
+        es' = [] /\ eqs = [] /\ st' = st.
+    Proof.
+      intros P es' eqs st st' H. simpl in H.
+      rewrite ret_spec in H. inv H. repeat split.
+    Qed.
+
+    Lemma map_bind2_unnest_st_follows :
+      forall P es es' eqs st st',
+        map_bind2 (unnest_exp P false) es st = ((es', eqs), st') ->
+        st_follows st st'.
+    Proof.
+      intros P es es' eqs st st' H.
+      eapply map_bind2_st_follows; eauto.
+      rewrite Forall_forall; intros; eauto.
+    Qed.
+
+    Definition carries_list (P : global) (es : list exp) : Prop :=
+      forall es' eqs st st' ts sst sst'
+             ce xst xst' ts'' yst yst' dlt,
+        Forall (wl_exp P) es ->
+        (forall x, In x (moved_by st st') -> ~ In x scope) ->
+        constraints_scoped scope (carried ts) ->
+        Forall (fun t => st_scoped scope (fst t)) ts ->
+        map_bind2 (unnest_exp P false) es st = ((es', eqs), st') ->
+        assign_lexps GL env base_ty rst_ty es sst = OK (ts, sst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv (List.concat eqs) xst
+          = OK (ce, xst') ->
+        assign_lexps GL env base_ty rst_ty (List.concat es') yst = OK (ts'', yst') ->
+        listSatisfiable dlt (carried ts) ->
+        exists dlt',
+          agree_off (moved_by st st') dlt dlt'
+          /\ listSatisfiable dlt' ce
+          /\ Forall2 (fun t t'' => satisfiable dlt' (fst t'') (merge amb (fst t)))
+               ts ts''
+          /\ constraints_scoped (scope ++ moved_by st st') ce
+          /\ Forall (fun t'' => st_scoped (scope ++ moved_by st st') (fst t''))
+               ts''.
+
+    Lemma carries_list_intro :
+      forall P es, Forall (carries P) es -> carries_list P es.
+    Proof.
+      intros P es Hall.
+      induction Hall as [|e es IHe IHes IH];
+        intros es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
+          Hwl Hmv Hsc Hsts Hun Has Hgen Has' Hcar.
+
+      - (** nothing to unnest, nothing emitted *)
+        apply map_bind2_unnest_nil in Hun as (? & ? & ?); subst.
+        apply (assign_lexps_carried_nil GL env base_ty rst_ty) in Has
+          as (? & _ & ?); subst.
+        apply (assign_lexps_carried_nil GL env base_ty rst_ty) in Has'
+          as (? & _ & ?); subst.
+        apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
+        exists dlt. split; [|split; [|split; [|split]]];
+          solve [apply agree_off_refl | constructor].
+
+      - (** head, then tail on top of it *)
+        inv Hwl.
+        apply map_bind2_unnest_cons in Hun
+          as (f1 & eq1 & st1 & fr & eqsr & Hun1 & Hunr & ? & ?); subst.
+        assert (st_follows st st1) as Hf1 by (eapply unnest_exp_st_follows; eauto).
+        assert (st_follows st1 st') as Hf2
+            by (eapply map_bind2_unnest_st_follows; eauto).
+
+        apply assign_lexps_carried_cons in Has
+          as (t & r & sa & Ht & Hr & ? & Hcts); subst.
+        simpl in Has'.
+        apply assign_lexps_app_inv in Has'
+          as (u & v & ya & Hu & Hv & ?); subst.
+        simpl in Hgen.
+        apply generate_leqns_constraints_app in Hgen
+          as (ce1 & ce2 & xst1 & Hgen1 & Hgen2 & ?); subst.
+
+        rewrite Hcts in Hsc, Hcar.
+        apply constraints_scoped_cmerge in Hsc as (Hsc1 & Hsc2).
+        apply listSatisfiable_cmerge in Hcar as (Hcar1 & Hcar2).
+        apply Forall_app in Hsts as (Hsts1 & Hsts2).
+
+        edestruct (IHe false f1 eq1 st st1 t sst sa ce1 xst xst1 u yst ya dlt)
+          as (dlt1 & Hoff1 & Hce1 & Hrel1 & Hscope1 & Hts1).
+        { assumption. }
+        { intros x Hx. apply Hmv. eapply moved_by_prefix; eauto. }
+        { exact Hsc1. }
+        { exact Hsts1. }
+        { exact Hun1. }
+        { exact Ht. }
+        { exact Hgen1. }
+        { exact Hu. }
+        { exact Hcar1. }
+
+        edestruct (IH fr eqsr st1 st' r sa sst' ce2 xst1 xst' v ya yst' dlt1)
+          as (dlt2 & Hoff2 & Hce2 & Hrel2 & Hscope2 & Hts2).
+        { assumption. }
+        { intros x Hx. apply Hmv. eapply moved_by_suffix; eauto. }
+        { exact Hsc2. }
+        { exact Hsts2. }
+        { exact Hunr. }
+        { exact Hr. }
+        { exact Hgen2. }
+        { exact Hv. }
+        { eapply listSatisfiable_off with (xs := moved_by st st1).
+          - exact Hsc2.
+          - intros x Hx. apply Hmv. eapply moved_by_prefix; eauto.
+          - exact Hoff1.
+          - exact Hcar2. }
+
+        exists dlt2. split; [|split; [|split; [|split]]].
+        + eapply agree_off_trans.
+          * eapply agree_off_incl; [|exact Hoff1]. apply moved_by_prefix; auto.
+          * eapply agree_off_incl; [|exact Hoff2]. apply moved_by_suffix; auto.
+        + apply listSatisfiable_app. split; [|exact Hce2].
+          eapply listSatisfiable_off_scope
+            with (sc := scope ++ moved_by st st1) (xs := moved_by st1 st').
+          * exact Hscope1.
+          * intros x Hin Hx. apply in_app_or in Hx as [Hx|Hx].
+            -- eapply (Hmv x); [|exact Hx].
+               apply (moved_by_suffix st st1 st' Hf1). exact Hin.
+            -- exact (moved_by_disjoint st st1 st' x Hx Hin).
+          * exact Hoff2.
+          * exact Hce1.
+        + apply Forall2_app; [|exact Hrel2].
+          (** the head's bound survives the tail's witness: the head's target
+              names were created before the tail started *)
+          eapply Forall2_impl_In; [|exact Hrel1].
+          intros p q Hp Hq Hpq.
+          eapply satisfiable_off with (xs := moved_by st1 st'); eauto.
+          * intros x Hx Hin.
+            eapply Forall_forall in Hts1; [|exact Hq]. apply Hts1 in Hx.
+            apply in_app_or in Hx as [Hx|Hx].
+            -- eapply (Hmv x); [|exact Hx].
+               apply (moved_by_suffix st st1 st' Hf1). exact Hin.
+            -- exact (moved_by_disjoint st st1 st' x Hx Hin).
+          * intros x Hx Hin. apply in_merge_inv in Hx as [Hx|Hx].
+            -- eapply (Hmv x); [|now apply amb_scoped].
+               apply (moved_by_suffix st st1 st' Hf1). exact Hin.
+            -- eapply (Hmv x); [|].
+               ++ apply (moved_by_suffix st st1 st' Hf1). exact Hin.
+               ++ eapply Forall_forall in Hsts1; [|exact Hp]. now apply Hsts1.
+        + apply Forall_app. split.
+          * eapply Forall_impl; [|exact Hscope1].
+            intros c Hc. eapply constraint_scoped_incl; [|exact Hc].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr, moved_by_prefix; auto.
+          * eapply Forall_impl; [|exact Hscope2].
+            intros c Hc. eapply constraint_scoped_incl; [|exact Hc].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr, moved_by_suffix; auto.
+        + apply Forall_app. split.
+          * eapply Forall_impl; [|exact Hts1].
+            intros q Hq. eapply st_scoped_weaken; [|exact Hq].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr, moved_by_prefix; auto.
+          * eapply Forall_impl; [|exact Hts2].
+            intros q Hq. eapply st_scoped_weaken; [|exact Hq].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr, moved_by_suffix; auto.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
