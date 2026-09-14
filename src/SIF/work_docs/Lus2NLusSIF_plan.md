@@ -1400,3 +1400,60 @@ docker exec funny_franklin bash -lc 'cd /workspace && make -j4; echo $?'
 Only bare `make` is evidence. Single-file iteration via
 `coqc <the -R lines of _CoqProject> src/SIF/F.v`, but always finish with
 configure + `make`.
+
+---
+
+## 11. Leg U — where the induction stands
+
+**Blocker 1, cleared: the clock environment.** `generate_leqns_constraints`
+reads declared clocks through `eqn_clock_type`, so the two generators cannot
+be compared until the two `lnode_clock_env`s are known to agree. Unnesting
+leaves `n_in`/`n_out` alone and appends to `n_vars`; the *target* node's own
+`n_nodup` says the appended names are fresh for the declared ones, which
+rules out `Env.adds'` shadowing. `lnode_clock_env_extended` /
+`find_clock_extended`. Freshness is read off the node the pass returns, not
+assumed.
+
+**Blocker 2, found and designed around: `agree_on` does not compose.**
+The first statement had the witness only fixing `scope`. That is too weak:
+it leaves the witness free to move the names the security monad minted for a
+*sibling* sub-expression, and the sibling's hypothesis still has to be applied
+to constraints over exactly those names. The statement now bounds where the
+witness may move (`agree_off`), and indexes that bound by the **pair** of
+fresh states (`moved_by st st'`), so siblings move over disjoint stretches.
+`agree_on scope` comes back out via `agree_off_agree_on`.
+
+Two further conclusions were forced by the same argument and are now part of
+the statement: `constraints_scoped (scope ++ moved_by st st') ce` and the
+same bound on the target types. Without them nothing stops a later sibling
+from moving the names an earlier one's conclusion mentions.
+
+Two hypotheses are now explicit: `env_injective env` (distinct variables get
+distinct security names — so disjoint variable sets give disjoint name sets)
+and `st_scoped scope amb` (the ambient names program variables only).
+
+**Cases proved:** `Econst`, `Evar`, `Eunop`, `Ebinop`. `Ebinop` is the first
+real composition and validates the whole design.
+
+**Remaining, in order of content:**
+- the list cases (`unnest_exps` / `map_bind2`) — a fold of the `Ebinop`
+  argument, needs `Forall (carries P) es -> carries_list P es`;
+- `Ewhen` — no lifting, but list-shaped, and `unnest_when` is a map;
+- `Emerge` / `Eite` — split on `is_control`: the control branch does not
+  lift, the other mints with `idents_for_anns`;
+- `Efby` / `Earrow` — lift, four of the five lifting constructors; the
+  target type is a fresh variable and the emitted equation's constraint is
+  what pins it, so the witness is *chosen* to make the domination tight;
+- `Eapp` — the case the refinement machinery exists for; the helper lemmas
+  (`Eapp_and_emitted_shape`, `Eapp_renaming_lists`,
+  `subst_constraints_out_map_{correct,complete}`) are already in place.
+
+**The one honest premise still to discharge**, and it is a clocking fact,
+not a security one: `amb` must dominate the ambient of every equation the
+pass lifts out. For `Efby`/`Earrow` the lifted variable carries the
+annotation's own clock, so it matches the enclosing equation exactly. Under a
+`merge`/`ite` branch the lifted clock is `ck on x`, higher than the equation's
+`ck` — but `x`'s level is in the *source type* of the `merge`, so the bound
+still holds. Turning that into a lemma needs `wc_exp` and a
+"clock level is dominated by expression type" fact about `assign_clk_type`,
+which does not exist yet.
