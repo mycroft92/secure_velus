@@ -35,6 +35,7 @@ From Velus Require Import CoreExpr.CEIsFree.
 From Velus Require Import CoreExpr.CEClocking.
 From Velus Require Import NLustre.NLSyntax.
 From Velus Require Import Transcription.Tr.
+From Velus Require Import SIF.Helpers.
 From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF.SecTypes.
@@ -1145,6 +1146,7 @@ Module Type SECLUSUNNESTING
         wl_exp P e ->
         (forall x, In x (moved_by st st') -> ~ In x scope) ->
         constraints_scoped scope (carried ts) ->
+        Forall (fun t => st_scoped scope (fst t)) ts ->
         unnest_exp P is_control e st = ((es', eqs), st') ->
         assign_lexp_type GL env base_ty rst_ty e sst = OK (ts, sst') ->
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs xst
@@ -1155,7 +1157,15 @@ Module Type SECLUSUNNESTING
           agree_off (moved_by st st') dlt dlt'
           /\ listSatisfiable dlt' ce
           /\ Forall2 (fun t t'' => satisfiable dlt' (fst t'') (merge amb (fst t)))
-               ts ts''.
+               ts ts''
+          (** What the emitted constraints and the target types are allowed to
+              mention.  Without this the third conjunct does not survive a
+              sibling's witness: the emitted set names the variables this run
+              created, those are invisible to [scope], and nothing would then
+              stop the sibling from moving them. *)
+          /\ constraints_scoped (scope ++ moved_by st st') ce
+          /\ Forall (fun t'' => st_scoped (scope ++ moved_by st st') (fst t''))
+               ts''.
 
     (** Nothing was emitted, so nothing has to be satisfied. *)
 
@@ -1189,24 +1199,31 @@ Module Type SECLUSUNNESTING
       forall mv (ts ts'' : list LST) (ce : list constraint) dlt,
         ts'' = ts ->
         ce = [] ->
+        Forall (fun t => st_scoped scope (fst t)) ts ->
         exists dlt',
           agree_off mv dlt dlt'
           /\ listSatisfiable dlt' ce
           /\ Forall2 (fun t t'' => satisfiable dlt' (fst t'') (merge amb (fst t)))
-               ts ts''.
+               ts ts''
+          /\ constraints_scoped (scope ++ mv) ce
+          /\ Forall (fun t'' => st_scoped (scope ++ mv) (fst t'')) ts''.
     Proof.
-      intros mv ts ts'' ce dlt Hts Hce; subst.
-      exists dlt. split; [|split].
+      intros mv ts ts'' ce dlt Hts Hce Hsc; subst.
+      exists dlt. split; [|split; [|split; [|split]]].
       - apply agree_off_refl.
       - constructor.
-      - induction ts as [|t ts IH]; [constructor|].
+      - clear Hsc. induction ts as [|t ts IH]; [constructor|].
         constructor; [apply satisfiable_merge_r|exact IH].
+      - constructor.
+      - eapply Forall_impl; [|exact Hsc].
+        intros t Ht. eapply st_scoped_weaken; [|exact Ht].
+        apply incl_appl, incl_refl.
     Qed.
 
     Lemma carries_Econst : forall P c, carries P (Econst c).
     Proof.
       intros P c is_control es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst'
-        dlt _ _ _ Hun Has Hgen Has' _.
+        dlt _ _ _ Hsc Hun Has Hgen Has' _.
       rewrite unnest_exp_Econst in Hun. inv Hun.
       apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -1218,7 +1235,7 @@ Module Type SECLUSUNNESTING
     Lemma carries_Evar : forall P x a, carries P (Evar x a).
     Proof.
       intros P x a is_control es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst'
-        dlt _ _ _ Hun Has Hgen Has' _.
+        dlt _ _ _ Hsc Hun Has Hgen Has' _.
       rewrite unnest_exp_Evar in Hun. inv Hun.
       apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -1262,7 +1279,7 @@ Module Type SECLUSUNNESTING
       forall P op e a, carries P e -> carries P (Eunop op e a).
     Proof.
       intros P op e a IH is_control es' eqs st st' ts sst sst' ce xst xst' ts''
-        yst yst' dlt Hwl Hincl Hsc Hun Has Hgen Has' Hcar.
+        yst yst' dlt Hwl Hmv Hsc Hsts Hun Has Hgen Has' Hcar.
       inv Hwl.
       apply unnest_exp_Eunop_inv in Hun as (e1' & st1 & Hun & ? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -1387,6 +1404,232 @@ Module Type SECLUSUNNESTING
       - apply satisfiable_merge_l.
       - eapply satisfiable_trans; [apply satisfiable_merge_r|].
         apply satisfiable_merge_r.
+    Qed.
+
+    (** * Two operands, two witnesses
+
+        The first genuine composition.  The two operands run over consecutive
+        stretches of the fresh state, so the names the first witness moved are
+        already in the state when the second starts, and the second therefore
+        does not move them.  That is the whole argument, and it needs the
+        naming pass to be injective: two distinct variables never share a
+        security name, so disjoint variable sets give disjoint name sets. *)
+
+    Hypothesis env_inj : env_injective env.
+
+    (** The ambient names program variables only. *)
+    Hypothesis amb_scoped : st_scoped scope amb.
+
+    Lemma moved_by_disjoint :
+      forall sta stb stc x,
+        In x (moved_by sta stb) -> ~ In x (moved_by stb stc).
+    Proof.
+      intros sta stb stc x Hx Hy.
+      unfold moved_by, sec_of in *.
+      apply in_flat_map in Hx as (u & Hu & Hx).
+      apply in_flat_map in Hy as (v & Hv & Hy).
+      destruct (Env.find u env) as [bu|] eqn:Eu; simpl in Hx; [|contradiction].
+      destruct (Env.find v env) as [bv|] eqn:Ev; simpl in Hy; [|contradiction].
+      destruct Hx as [Hx|[]]; destruct Hy as [Hy|[]]; subst.
+      assert (u = v) as ? by (eapply env_inj; eauto); subst.
+      apply new_ids_spec in Hu as (Hu & _).
+      apply new_ids_spec in Hv as (_ & Hv). contradiction.
+    Qed.
+
+    (** The same transfer as [listSatisfiable_off], at whatever scope the
+        constraints actually have -- the emitted ones name variables the
+        source never had. *)
+
+    Lemma listSatisfiable_off_scope :
+      forall cs sc xs dlt dlt',
+        constraints_scoped sc cs ->
+        (forall x, In x xs -> ~ In x sc) ->
+        agree_off xs dlt dlt' ->
+        listSatisfiable dlt cs ->
+        listSatisfiable dlt' cs.
+    Proof.
+      intros cs sc xs dlt dlt' Hsc Hfresh Hoff Hsat.
+      assert (agree_on sc dlt dlt') as Hagree
+        by (intros x Hx; apply Hoff; intro Hm; eapply Hfresh; eauto).
+      clear Hoff.
+      unfold constraints_scoped, SymTypes.constraints_scoped in Hsc.
+      unfold listSatisfiable in *.
+      rewrite Forall_forall in Hsc, Hsat |- *.
+      intros c Hin.
+      eapply constraintSatisfiable_ext with (scope := sc); eauto.
+      apply Hsc; exact Hin.
+    Qed.
+
+    Lemma constraints_scoped_cmerge :
+      forall sc c1 c2,
+        constraints_scoped sc (cmerge c1 c2)
+        <-> constraints_scoped sc c1 /\ constraints_scoped sc c2.
+    Proof.
+      intros sc c1 c2.
+      unfold constraints_scoped, SymTypes.constraints_scoped.
+      rewrite !Forall_forall. split.
+      - intros H. split; intros c Hin; apply H, cmerge_In; tauto.
+      - intros (H1 & H2) c Hin. apply cmerge_In in Hin. destruct Hin; auto.
+    Qed.
+
+    Lemma st_scoped_merge :
+      forall sc u v,
+        st_scoped sc u -> st_scoped sc v -> st_scoped sc (merge u v).
+    Proof.
+      intros sc u v Hu Hv x Hx. apply in_merge_inv in Hx as [Hx|Hx]; auto.
+    Qed.
+
+    Lemma st_scoped_merge_inv :
+      forall sc u v,
+        st_scoped sc (merge u v) -> st_scoped sc u /\ st_scoped sc v.
+    Proof.
+      intros sc u v H. split; intros x Hx; apply H.
+      - now apply in_merge_left.
+      - now apply in_merge_right.
+    Qed.
+
+    Lemma single_inv :
+      forall (ts : list LST) t st st',
+        single ts st = OK (t, st') -> ts = [t] /\ st' = st.
+    Proof.
+      intros ts t st st' H. unfold single in H.
+      destruct ts as [|t0 [|]]; try discriminate.
+      unfold ret in H. inv H. auto.
+    Qed.
+
+    Lemma carries_Ebinop :
+      forall P op e1 e2 a,
+        carries P e1 -> carries P e2 -> carries P (Ebinop op e1 e2 a).
+    Proof.
+      intros P op e1 e2 a IH1 IH2 is_control es' eqs st st' ts sst sst'
+        ce xst xst' ts'' yst yst' dlt Hwl Hmv Hsc Hsts Hun Has Hgen Has' Hcar.
+      inv Hwl.
+      apply unnest_exp_Ebinop_inv in Hun
+        as (f1 & eqs1 & st1 & f2 & eqs2 & Hun1 & Hun2 & ? & ?); subst.
+      assert (st_follows st st1) as Hf1 by (eapply unnest_exp_st_follows; eauto).
+      assert (st_follows st1 st') as Hf2 by (eapply unnest_exp_st_follows; eauto).
+
+      (** the source side: two operand types, each a single flow *)
+      rewrite assign_lexp_Ebinop in Has.
+      eapply sec_bind_inv in Has as (t1 & sa & Ht1 & Has).
+      eapply sec_bind_inv in Has as (t2 & sb & Ht2 & Has).
+      eapply sec_bind_inv in Has as (a1 & sc1 & Ha1 & Has).
+      eapply sec_bind_inv in Has as (a2 & sc2 & Ha2 & Hret).
+      unfold ret in Hret. inv Hret.
+      apply single_inv in Ha1 as (? & ?); subst.
+      apply single_inv in Ha2 as (? & ?); subst.
+
+      (** the target side, the same shape on the unnested operands *)
+      apply assign_lexps_single in Has'.
+      rewrite assign_lexp_Ebinop in Has'.
+      eapply sec_bind_inv in Has' as (u1 & ya & Hu1 & Has').
+      eapply sec_bind_inv in Has' as (u2 & yb & Hu2 & Has').
+      eapply sec_bind_inv in Has' as (b1 & yc & Hb1 & Has').
+      eapply sec_bind_inv in Has' as (b2 & yd & Hb2 & Hret').
+      unfold ret in Hret'. inv Hret'.
+      apply single_inv in Hb1 as (? & ?); subst.
+      apply single_inv in Hb2 as (? & ?); subst.
+      eapply unnest_exp_one in Hun1 as Hone1; eauto.
+      eapply unnest_exp_one in Hun2 as Hone2; eauto.
+
+      (** the emitted set splits with the emitted equations *)
+      apply generate_leqns_constraints_app in Hgen
+        as (ce1 & ce2 & xst1 & Hgen1 & Hgen2 & ?); subst.
+
+      (** what each operand carries, and where its names live *)
+      rewrite carried_ljoin in Hsc, Hcar.
+      apply constraints_scoped_cmerge in Hsc as (Hsc1 & Hsc2).
+      apply listSatisfiable_cmerge in Hcar as (Hcar1 & Hcar2).
+      inversion Hsts as [|z zs Hsts0 Hstsr]; subst. simpl in Hsts0.
+      apply st_scoped_merge_inv in Hsts0 as (Hst1 & Hst2).
+      assert (carried [a1] = snd a1) as Hc1 by (simpl; apply cmerge_nil).
+      assert (carried [a2] = snd a2) as Hc2 by (simpl; apply cmerge_nil).
+
+      (** the first operand *)
+      edestruct (IH1 false f1 eqs1 st st1 [a1] sst sa ce1 xst xst1 [b1] yst ya dlt)
+        as (dlt1 & Hoff1 & Hce1 & Hrel1 & Hscope1 & Hts1).
+      { assumption. }
+      { intros x Hx. apply Hmv. eapply moved_by_prefix; eauto. }
+      { now rewrite Hc1. }
+      { constructor; [exact Hst1|constructor]. }
+      { exact Hun1. }
+      { exact Ht1. }
+      { exact Hgen1. }
+      { rewrite Hone1 at 1. apply assign_lexps_single_intro. exact Hu1. }
+      { now rewrite Hc1. }
+
+      (** the second, on top of the first: its obligations name only what the
+          source can see, and the first witness left all of that alone *)
+      edestruct (IH2 false f2 eqs2 st1 st' [a2] sa sb ce2 xst1 xst' [b2] ya yb dlt1)
+        as (dlt2 & Hoff2 & Hce2 & Hrel2 & Hscope2 & Hts2).
+      { assumption. }
+      { intros x Hx. apply Hmv. eapply moved_by_suffix; eauto. }
+      { now rewrite Hc2. }
+      { constructor; [exact Hst2|constructor]. }
+      { exact Hun2. }
+      { exact Ht2. }
+      { exact Hgen2. }
+      { rewrite Hone2 at 1. apply assign_lexps_single_intro. exact Hu2. }
+      { eapply listSatisfiable_off with (xs := moved_by st st1).
+        - now rewrite Hc2.
+        - intros x Hx. apply Hmv. eapply moved_by_prefix; eauto.
+        - exact Hoff1.
+        - now rewrite Hc2. }
+
+      inversion Hrel1 as [|p q ps qs Hr1 Hrel1r]; subst.
+      inversion Hrel2 as [|p q ps qs Hr2 Hrel2r]; subst.
+      inversion Hts1 as [|p ps Hb1s Hts1r]; subst.
+      inversion Hts2 as [|p ps Hb2s Hts2r]; subst.
+
+      (** the composite witness *)
+      exists dlt2. split; [|split; [|split; [|split]]].
+      - eapply agree_off_trans.
+        + eapply agree_off_incl; [|exact Hoff1]. apply moved_by_prefix; auto.
+        + eapply agree_off_incl; [|exact Hoff2]. apply moved_by_suffix; auto.
+      - apply listSatisfiable_app. split; [|exact Hce2].
+        eapply listSatisfiable_off_scope
+          with (sc := scope ++ moved_by st st1) (xs := moved_by st1 st').
+        + exact Hscope1.
+        + intros x Hin Hx. apply in_app_or in Hx as [Hx|Hx].
+          * eapply (Hmv x); [|exact Hx].
+            apply (moved_by_suffix st st1 st' Hf1). exact Hin.
+          * exact (moved_by_disjoint st st1 st' x Hx Hin).
+        + exact Hoff2.
+        + exact Hce1.
+      - constructor; [|constructor]. unfold ljoin; simpl.
+        apply satisfiable_merge_intro.
+        + apply satisfiable_merge_grow_l.
+          eapply satisfiable_off with (xs := moved_by st1 st').
+          * exact Hoff2.
+          * intros x Hx Hin. apply Hb1s in Hx.
+            apply in_app_or in Hx as [Hx|Hx].
+            -- eapply (Hmv x); [|exact Hx].
+               apply (moved_by_suffix st st1 st' Hf1). exact Hin.
+            -- exact (moved_by_disjoint st st1 st' x Hx Hin).
+          * intros x Hx Hin. apply in_merge_inv in Hx as [Hx|Hx].
+            -- eapply (Hmv x); [|now apply amb_scoped].
+               apply (moved_by_suffix st st1 st' Hf1). exact Hin.
+            -- eapply (Hmv x); [|now apply Hst1].
+               apply (moved_by_suffix st st1 st' Hf1). exact Hin.
+          * exact Hr1.
+        + now apply satisfiable_merge_grow_r.
+      - apply Forall_app. split.
+        + eapply Forall_impl; [|exact Hscope1].
+          intros c Hc. eapply constraint_scoped_incl; [|exact Hc].
+          apply incl_app; [apply incl_appl, incl_refl|].
+          apply incl_appr, moved_by_prefix; auto.
+        + eapply Forall_impl; [|exact Hscope2].
+          intros c Hc. eapply constraint_scoped_incl; [|exact Hc].
+          apply incl_app; [apply incl_appl, incl_refl|].
+          apply incl_appr, moved_by_suffix; auto.
+      - constructor; [|constructor]. unfold ljoin; simpl.
+        apply st_scoped_merge.
+        + eapply st_scoped_weaken; [|exact Hb1s].
+          apply incl_app; [apply incl_appl, incl_refl|].
+          apply incl_appr, moved_by_prefix; auto.
+        + eapply st_scoped_weaken; [|exact Hb2s].
+          apply incl_app; [apply incl_appl, incl_refl|].
+          apply incl_appr, moved_by_suffix; auto.
     Qed.
 
   End Preservation.
