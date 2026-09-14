@@ -537,35 +537,49 @@ pass's names for the variables unnesting created. Those are different names --
 `gensym sec _` against `gensym norm1 _` -- so the types are not equal, they are
 related by a renaming.
 
-**Decision: the renaming is internal.** The expression-level lemma carries it
-as an existential; nothing above expression level mentions it.
+**Decision: the renaming is internal, and it is not a new operation.**
+`SIFSignature.v` already has it. The renaming of a constraint list's target
+identifiers, list-wise and with a capture check, is
 
-    (* expression level -- sigma is internal to the induction *)
+    subst_constraints_out_map (cs : list constraint)
+                              (xs vs : list ident) : Sec (list constraint)
+
+and it is not incidental machinery: `generate_constraints` *is* four
+substitutions in sequence -- `subst_constraints_inp_map` for the formals,
+`subst_ident_in_constraints` for the clock and the reset, then
+`subst_constraints_out_map` for the results, then `reorder_constraints`.
+Instantiating a signature at a call site and renaming minted names to the
+variables unnesting created are the same operation.
+
+Both directions are already proved, and they are exactly the two halves a
+`preserves_on` needs:
+
+    subst_constraints_out_map_correct  (2506)
+      dlt satisfies cs  ->  Forall2 (fun x v => dlt v = dlt x) xs vs
+      ->  dlt satisfies cs'
+    subst_constraints_out_map_complete (2650)
+      dlt satisfies cs' ->  upd_idents_rev dlt xs vs  satisfies cs
+
+`upd_idents_rev` (`SecTypes.v:1403`) is the witness constructor -- the same one
+`lat_valuation` uses to instantiate a callee. So the expression-level statement
+is phrased over these, not over an invented substitution:
+
     unnest_exp G is_control e st = ((es', eqs), st') ->
     assign_lexp_type GL env base_ty rst_ty e sst = OK (ts, sst') ->
-    exists sigma,
-         (* the residual types agree up to the renaming *)
-         Forall2 (fun t e' => types_of e' = subst sigma (fst t)) ts es'
-         (* and what was carried becomes what the emitted equations generate *)
-      /\ preserves_on scope (subst sigma (carried ts))
-                            (constraints generated for eqs)
+    exists outs news,
+         (* the minted names and the variables unnesting created, in order *)
+         subst_constraints_out_map (carried ts) outs news sst0 = OK (cs, sst1)
+      /\ (* and those renamed constraints are what the emitted equations give *)
+         preserves_on scope cs (constraints generated for eqs)
 
-    (* equation level and above -- no sigma *)
-    generate_leqn_constraint  (source equation)
-      preserves_on
-    generate_leqns_constraints (the unnested equations)
+with the residual types related by the same `outs`/`news` pairing rather than
+by a substitution written for the purpose. Above expression level neither list
+appears: both are eliminated by `simplify`, the minted names through
+`locals ++ minted st0 st1` and the new variables through `locals ++ nvars`, so
+`preserves_on scope` closes over them.
 
-Why it can stay internal: `sigma` maps minted names to the new variables'
-names, and *neither* side is in the node's visible scope -- the minted names
-are eliminated by `simplify raw (locals ++ minted st0 st1)`, the new variables
-by `simplify raw (locals ++ nvars)`. `preserves_on scope` lets the witness
-valuation differ exactly off `scope`, so composing a source valuation with
-`sigma` is a legal witness. Both allocators are injective, so `sigma` is too,
-which is what makes that composition well defined.
-
-This is why the design is `preserves_on` here and `entails` on transcription,
-and it is the same mechanism in both places -- transcription simply had an
-empty renaming.
+Do not define a second substitution. If something is missing it is a *lemma*
+about `subst_constraints_out_map`, not a new operation.
 
 **Status of Leg U, 2026-09-14.** Fifteen lemmas, no admits:
 
