@@ -211,28 +211,6 @@ Module Type SECLUSNLUSTRANSLATION
       NLustre side always succeeds, this hands the Lustre side the same
       constraints, and the two sets are then equal. *)
 
-  Theorem to_equation_constraint_eq_def :
-    forall G env base_ty rst_ty cenv envo x e eq' cs st st',
-      to_equation cenv envo ([x], [e]) = OK eq' ->
-      (forall f args ro a, e <> Eapp f args ro a) ->
-      (forall e0s es an, e <> Efby e0s es an) ->
-      generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st') ->
-      generate_leqn_constraint G env base_ty rst_ty cenv ([x], [e]) st
-        = OK (cs, st').
-  Proof.
-    intros G env base_ty rst_ty cenv envo x e eq' cs st st' Htr Hnapp Hnfby Hnl.
-    edestruct to_equation_def_inv as (ck & ce & Hck & Hce & Heq); eauto.
-    subst eq'.
-    eapply nl_EqDef_inv in Hnl
-      as (cky & sy & by0 & Hcky & Hsy & Hby & Hcs & Hst).
-    subst cs st'.
-    destruct e;
-      try (exfalso; eapply Hnapp; reflexivity);
-      try (exfalso; eapply Hnfby; reflexivity);
-      (eapply generate_ldef_constraint_eq; try eassumption;
-       eapply to_cexp_assign_eq; eassumption).
-  Qed.
-
   (** The delayed definition is where the equality stops, now that the
       generator types *both* operands of an [Efby].
 
@@ -893,60 +871,6 @@ Module Type SECLUSNLUSTRANSLATION
         ssec Houts. exact HgcN.
       + subst cs'. rewrite carried_plain.
         unfold ljoin, lvar. cbn [snd]. rewrite !cmerge_nil. exact Hent.
-  Qed.
-
-  Theorem to_equation_constraint_eq_app :
-    forall G env base_ty rst_ty cenv envo xs f args a eq' cs st st',
-      to_equation cenv envo (xs, [Eapp f args None a]) = OK eq' ->
-      generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st') ->
-      generate_leqn_constraint G env base_ty rst_ty cenv
-        (xs, [Eapp f args None a]) st = OK (cs, st').
-  Proof.
-    intros G env base_ty rst_ty cenv envo xs f args a eq' cs st st' Htr Hnl.
-    edestruct to_equation_app_inv as (les & Hles & Heq); eauto. subst eq'.
-    destruct xs as [|x xs'].
-    - (* a call defining nothing: both sides give the empty list *)
-      simpl in Hnl. unfold ret in Hnl. inv Hnl. reflexivity.
-    - eapply nl_EqApp_inv in Hnl
-        as (sg & ckty & inptyp & outtyp & sti & Esg & Hck & Hall & Hout & Hgc).
-      rewrite gen_leqn_Eapp.
-      unfold generate_lcall_constraint. rewrite Esg.
-      erewrite bind_OK by (unfold option_to_sec; rewrite Hck; reflexivity).
-      erewrite bind_OK by (eapply to_lexps_assign_eq; eassumption).
-      erewrite bind_OK by exact Hout.
-      rewrite map_fst_plain.
-      erewrite bind_OK by (unfold lvar; cbn [fst]; exact Hgc).
-      unfold ret. rewrite carried_plain.
-      unfold lvar. cbn [snd]. now rewrite !cmerge_nil.
-  Qed.
-
-  Theorem to_equation_constraint_eq_app_reset :
-    forall G env base_ty rst_ty cenv envo xs f args r ty ckr nm a eq' cs st st',
-      to_equation cenv envo (xs, [Eapp f args (Some (Evar r (ty, (ckr, nm)))) a])
-        = OK eq' ->
-      generate_eqn_constraint G env base_ty rst_ty eq' st = OK (cs, st') ->
-      generate_leqn_constraint G env base_ty rst_ty cenv
-        (xs, [Eapp f args (Some (Evar r (ty, (ckr, nm)))) a]) st = OK (cs, st').
-  Proof.
-    intros G env base_ty rst_ty cenv envo xs f args r ty ckr nm a eq' cs st st'
-           Htr Hnl.
-    edestruct to_equation_app_reset_inv as (les & Hles & Heq); eauto. subst eq'.
-    destruct xs as [|x xs'].
-    - simpl in Hnl. unfold ret in Hnl. inv Hnl. reflexivity.
-    - eapply nl_EqApp_reset_inv in Hnl
-        as (sg & ckty & rty & rstty & inptyp & outtyp & sti
-            & Esg & Hck & Hrty & Hrst & Hall & Hout & Hgc).
-      rewrite gen_leqn_Eapp_reset.
-      erewrite bind_OK by (unfold find_env; rewrite Hrty; reflexivity).
-      erewrite bind_OK by (unfold option_to_sec; rewrite Hrst; reflexivity).
-      unfold generate_lcall_constraint. rewrite Esg.
-      erewrite bind_OK by (unfold option_to_sec; rewrite Hck; reflexivity).
-      erewrite bind_OK by (eapply to_lexps_assign_eq; eassumption).
-      erewrite bind_OK by exact Hout.
-      rewrite map_fst_plain.
-      erewrite bind_OK by (unfold ljoin, lvar; cbn [fst snd]; exact Hgc).
-      unfold ret. rewrite carried_plain.
-      unfold ljoin, lvar. cbn [snd]. now rewrite !cmerge_nil.
   Qed.
 
   (** * One equation, all shapes
@@ -1638,99 +1562,6 @@ Module Type SECLUSNLUSTRANSLATION
       SECNL.generate_node_sig_scoped_env accN n' envs aux_names = OK nsig ->
       Signature_head_entails lsig nsig.
 
-  (** The step, reduced to one node at a time.
-
-      The two drivers look their environment up by node name, and
-      transcription keeps that name, so both read the same one -- which is why
-      the per-node obligation can be stated about the plain generators over a
-      single [env].  Everything else in [node_bridge] is a fact about the
-      NLustre node or about the accumulators; [SecNLusTypingCorrectness.v]
-      proves each of them for a generated NLustre global. *)
-
-  Definition node_bridge (P : NLSyn.global) (envs : node_scoped_env)
-      (aux_names : list node_aux_names) : Prop :=
-    forall accL accN n n' Hp env lsig nsig st st',
-      to_node n Hp = OK n' ->
-      find_node_env n.(n_name) envs = Some env ->
-      Signature_entails accL accN ->
-      generate_lnode_sig accL n env aux_names st = OK (lsig, st') ->
-      generate_node_sig accN n' env aux_names = OK nsig ->
-      exists vars scope clk_id rst_id clk_type rst_type,
-        get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id)
-        /\ Env.find clk_id env = Some clk_type
-        /\ Env.find rst_id env = Some rst_type
-        /\ call_context P vars scope env clk_type rst_type n.(n_name) accL accN
-        /\ ~ LOrd.Is_node_in n.(n_name) n.(n_eqs)
-        /\ Forall (NLClo.wc_equation P vars) n'.(NLSyn.n_eqs)
-        /\ (forall locals cns,
-               get_mappings_from_node n.(n_vars) env = Some locals ->
-               generate_eqns_constraints accN env clk_type rst_type
-                 n'.(NLSyn.n_eqs) st = OK (cns, st) ->
-               wf_constraints cns
-               /\ (forall x, In x locals -> ~ In x (signature_scope nsig)))
-        /\ signature_good nsig
-        /\ NoDup (signature_scope nsig)
-        /\ signature_scoped nsig.
-
-  Theorem node_step_entails_from_bridge :
-    forall P envs aux_names,
-      node_bridge P envs aux_names -> node_step_entails envs aux_names.
-  Proof.
-    intros P envs aux_names Hbr accL accN n n' Hp lsig nsig st st' Htn Hent Hl Hn.
-    unfold generate_lnode_sig_scoped_env in Hl.
-    unfold SECNL.generate_node_sig_scoped_env in Hn.
-    rewrite <- (to_node_name _ _ _ Htn) in Hn.
-    destruct (find_node_env n.(n_name) envs) as [env|] eqn:Eenv; [|discriminate].
-    destruct (Hbr accL accN n n' Hp env lsig nsig st st' Htn Eenv Hent Hl Hn)
-      as (vars & scope & clk_id & rst_id & clk_type & rst_type
-          & Haux & Hclk & Hrst & Hctx & Hself & Hwceqs & Hside & Hgood & Hnd
-          & Hsc).
-    eapply to_node_head_entails; eauto.
-  Qed.
-
-  Theorem generate_all_signatures_entails' :
-    forall G P envs aux_names accL accN st GLout stf GNout,
-      transcribed G P ->
-      node_step_entails envs aux_names ->
-      Signature_entails accL accN ->
-      generate_all_lsignatures' accL G envs aux_names st = OK (GLout, stf) ->
-      SECNL.generate_all_signatures_scoped_env' accN P envs aux_names = OK GNout ->
-      Signature_entails GLout GNout.
-  Proof.
-    intros G P envs aux_names accL accN st GLout stf GNout Htr Hstep.
-    revert accL accN st.
-    induction Htr as [|n n' G P Htn Htr IH]; intros accL accN st Hent Hl Hn.
-    - simpl in Hl, Hn. inv Hl. inv Hn. exact Hent.
-    - destruct Htn as [Hp Htn].
-      simpl in Hl, Hn.
-      destruct (generate_lnode_sig_scoped_env accL n envs aux_names st)
-        as [[lsig st1]|] eqn:El; [|discriminate].
-      destruct (SECNL.generate_node_sig_scoped_env accN n' envs aux_names)
-        as [nsig|] eqn:En; simpl in Hn; [|discriminate].
-      eapply IH; [|exact Hl|exact Hn].
-      eapply Signature_entails_cons; eauto.
-  Qed.
-
-  (** The whole program.  [generate_all_lsignatures_scoped_env] and
-      [generate_all_signatures_scoped_env] are the two drivers, each started
-      on the empty accumulator. *)
-
-  Corollary generate_all_signatures_entails :
-    forall G P envs aux_names st GLout GNout,
-      transcribed G P ->
-      node_step_entails envs aux_names ->
-      generate_all_lsignatures_scoped_env G envs aux_names st = OK GLout ->
-      SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GNout ->
-      Signature_entails GLout GNout.
-  Proof.
-    intros G P envs aux_names st GLout GNout Htr Hstep Hl Hn.
-    unfold generate_all_lsignatures_scoped_env in Hl.
-    destruct (generate_all_lsignatures' [] G envs aux_names st)
-      as [[sigs stf]|] eqn:El; [|discriminate]. inv Hl.
-    unfold SECNL.generate_all_signatures_scoped_env in Hn.
-    eapply generate_all_signatures_entails'; eauto using Signature_entails_nil.
-  Qed.
-
   (** * The whole program, with the accumulators' invariants carried
 
       [node_step_entails] leaves the accumulators' invariants to the caller.
@@ -1926,35 +1757,6 @@ Module Type SECLUSNLUSTRANSLATION
     eapply generate_all_signatures_entails_scoped; eauto.
     - now apply Ordered_nodes_not_self.
     - eapply TRC.wc_transcription; eauto.
-  Qed.
-
-  (** What the layer above reads off [Signature_entails]: a valuation
-      satisfying a Lustre signature's stored constraints extends to one
-      satisfying its NLustre counterpart's, agreeing on the scope -- which is
-      the same list on both sides, the interface fields being equal.  This is
-      the form [SecNLusNonInterferenceSupport.signature_satisfied] is stated
-      in, so a secure Lustre callee hands the NLustre noninterference theorem
-      the signature hypothesis it wants. *)
-
-  Corollary signature_constraints_entail :
-    forall GL GN f sgL sgN dlt,
-      Signature_entails GL GN ->
-      find_signature f GL = Some sgL ->
-      find_signature f GN = Some sgN ->
-      listSatisfiable dlt sgL.(s_constraints) ->
-      exists dlt',
-        agree_on (signature_scope sgL) dlt dlt'
-        /\ listSatisfiable dlt' sgN.(s_constraints)
-        /\ signature_scope sgL = signature_scope sgN.
-  Proof.
-    intros GL GN f sgL sgN dlt Hent HfindL HfindN Hsat.
-    destruct (Hent f sgL HfindL) as (sgN' & HfindN' & _ & Hpres & _).
-    rewrite HfindN in HfindN'. inversion HfindN'; subst sgN'.
-    destruct Hpres as [Hfields Hpres].
-    destruct (Hpres dlt Hsat) as (dlt' & Hagree & Hsat').
-    exists dlt'. split; [exact Hagree|].
-    split; [exact Hsat'|].
-    eapply signature_scope_agree; exact Hfields.
   Qed.
 
   (** * The two globals have the same domain

@@ -450,6 +450,84 @@ leg after Leg I is in place.
 6. Noninterference: the pull-back must now relate two valuations across U and
    I, the way the NLustre-to-Stc leg does.
 
+### Source Lustre is the only entry, 2026-09-14
+
+Normalised Lustre is not a statement-level input. Any theorem whose
+hypothesis is "G is already normalised" is deprecated: such a G is not a
+program anyone wrote, it is an intermediate the compiler produced. The
+typing, the preservation and the noninterference all start at source Lustre
+and go **through unnesting and initialisation**.
+
+    source Lustre G                    <- the only entry
+      --unnest_global-->   G1          Leg U
+      --check_causality->              failure => no obligation
+      --normfby_global-->  G2          Leg I
+      --to_global-->       P           the last step, not an entry
+      --> NLustre --> Stc --> Obc      pre-existing, untouched
+
+Transcription stays in the chain because the chain has to reach NLustre, but
+it is demoted: it is the step where nothing is introduced and therefore
+nothing interesting happens, and it must never again appear as the place a
+statement begins.
+
+**Top-level shapes to aim at.**
+
+    (preservation)
+      normalize_global G _ _ = OK G' ->  to_global G' _ = OK P ->
+      generate_all_lsignatures G ...  preserves  generate_all_signatures P ...
+
+    (noninterference)
+      normalize_global G _ _ = OK G' ->  to_global G' _ = OK P ->
+      lnode_security ... (on the SOURCE node) ->
+      LSem.sem_node G f ins outs -> LSem.sem_node G f ins' outs' ->
+      low inputs agree -> low outputs agree
+
+Both compose U ; I ; A. Neither mentions a normalised program in its
+hypotheses beyond naming the pass outputs.
+
+**What the transcription work contributes.** Everything generic over two
+signature globals, which is most of it:
+
+- `Signature_entails`, `Signature_head_entails`, `Signature_call_entails`,
+  `Signature_entails_{nil,cons}`, `call_block_step`, `call_context`;
+- `Signature_domain_incl` and its induction;
+- `entails`, `entails_{refl,rhs,sat,app}`, `entails_simplify`,
+  `simplify_rhs_eq`, `subAll_rhs_eq`, `wf_constraints_of_rhs`,
+  `signature_good_of_rhs`, `signature_scope_agree`;
+- the program-level lockstep `generate_all_signatures_entails_scoped'`, whose
+  shape Legs U and I reuse with their own per-node step;
+- `SecLusNonInterference`'s `lnode_security` and the pull-back *shape*
+  (`generated_signature_provenance`, `node_callees_scope_fresh_proved`,
+  `security_data_transports`).
+
+Legs U and I differ from it in one structural way: they introduce variables,
+so they are `preserves_on` and their pull-backs relate two valuations. The
+single-valuation simplification is transcription-only and does not generalise.
+
+**What was deleted, 2026-09-14.** Checked by build, not by eye:
+
+- `to_equation_constraint_eq_{def,app,app_reset}` -- the equality-direction
+  theorems from before the leg became preservation, superseded by the
+  `entails` versions and referenced by nothing;
+- the abstract program-level chain `node_step_entails`, `node_bridge`,
+  `node_step_entails_from_bridge`, `generate_all_signatures_entails'`,
+  `generate_all_signatures_entails` -- superseded by the scoped chain that
+  `to_global_signatures_entail` actually runs;
+- `signature_constraints_entail` -- written as an interface for the layer
+  above, which ended up using `signatures_preserved` directly.
+
+198 lines. Nothing else in the transcription work is dead: the
+`to_equation_*_inv` inversions and the `entails` theorems are what the
+scoped chain runs on, and transcription is still the last step of the chain.
+
+**Semantic files: take the bundles.** `SecLusNonInterferenceStreams.v`
+currently imports `Transcription.Correctness`, and `Lustre/Normalization/`
+has a module type of the same name. Composing `normalize_global_sem` in front
+of `sem_l_nl` needs both, so the semantic files should take `L : LUSTRE`,
+`NL : NLUSTRE` and `TR : TRANSCRIPTION` -- the bundles `Instantiator` uses --
+rather than the leaves, and reach the pieces as `L.Norm.Correct.*`,
+`TR.Correctness.*`, `NL.CoindToIdx.*`. That also removes the name clash.
+
 ### TODO: rebasing onto Velus head
 
 Not started, and deliberately deferred. What a plan will have to account for:
