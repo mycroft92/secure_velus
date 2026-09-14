@@ -28,6 +28,7 @@ From Velus Require Import SIF.SecLTyping.
 From Velus Require Import SIF.SecNLusTyping.
 From Velus Require Import SIF.SecNLusTypingCorrectness.
 From Velus Require Import SIF.SecLusNLusTranslation.
+From Velus Require Import SIF.SecLusTypes.
 From Velus Require Import SIF.SecLusUnnesting.
 
 From Coq Require Import String List.
@@ -182,6 +183,7 @@ Definition generate_lustre_constraint_dump
 Module Check (Lat : Lattice).
 
   Module SecT := SecTypes.SecTypes Lat.
+  Module SLT := SecLusTypesFun Lat SecT.
   Module STEP := SecMonadStep Ids SC.
 
   Module SIGPROOFS <: SIGNATURE_PROOFS Ids SC SIG Lat SecT.
@@ -205,7 +207,7 @@ Module Check (Lat : Lattice).
 
   (** And the unnesting leg, at the same concrete modules. *)
   Module LegU :=
-    SecLusUnnesting Ids Op OpAux Lat SecT SC L.Syn CE.Syn NL.Syn STEP SIG
+    SecLusUnnesting Ids Op OpAux Lat SecT SLT SC L.Syn CE.Syn NL.Syn STEP SIG
       SIGPROOFS ConcreteNameGen CE.IsF CE.Clo ConcreteSecCETyping TR.Tr
       ConcreteSecLTyping L.Norm.Norm.Unnesting.
 

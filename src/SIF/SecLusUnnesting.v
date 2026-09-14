@@ -21,6 +21,7 @@
     the visible scope, which is exactly where the renamed names live. *)
 
 From Coq Require Import List.
+From Coq Require Import Permutation.
 From Coq Require Import String.
 
 From Velus Require Import Common.
@@ -37,6 +38,7 @@ From Velus Require Import Transcription.Tr.
 From Velus Require Import SIF.SecLattice.
 From Velus Require Import SIF.SymTypes.
 From Velus Require Import SIF.SecTypes.
+From Velus Require Import SIF.SecLusTypes.
 From Velus Require Import SIF.SymLusTypes.
 From Velus Require Import SIF.SecCETyping.
 From Velus Require Import SIF.SecContext.
@@ -55,6 +57,7 @@ Module Type SECLUSUNNESTING
   (Import OpAux   : OPERATORS_AUX Op)
   (Import Lat     : Lattice)
   (Import SecT    : SECTYPES Lat)
+  (Import SLT     : SECLUSTYPES Lat SecT)
   (Import SC      : SECMONAD Ids)
   (Import LSyn    : LSYNTAX Ids Op)
   (CESyn          : CESYNTAX Op)
@@ -892,6 +895,502 @@ Module Type SECLUSUNNESTING
   Lemma carried_lbot : carried [lbot] = [].
   Proof. reflexivity. Qed.
 
+
+  (** * The clock environment survives the pass
+
+      [generate_leqns_constraints] does not read the equations alone: through
+      [eqn_clock_type] it looks every defined variable up in the node's
+      [lnode_clock_env] to recover the clock it is defined on.  So comparing
+      the two generators equation by equation is only meaningful once the two
+      environments are known to answer the same way.
+
+      Unnesting leaves [n_in] and [n_out] untouched and only *appends* to
+      [n_vars].  Extension by itself would not be enough -- [Env.adds'] lets a
+      later binding shadow an earlier one, so an appended name colliding with
+      a declared one would silently change the answer -- but the target node
+      carries its own [n_nodup], and that is exactly the statement that the
+      appended names are fresh for the declared ones.  Freshness is therefore
+      not assumed here; it is read off the node the pass returns. *)
+
+  Lemma Env_find_adds'_app_notin {A : Type} :
+    forall (xs ys : list (ident * A)) (m : Env.t A) x,
+      ~ InMembers x ys ->
+      Env.find x (Env.adds' (xs ++ ys) m) = Env.find x (Env.adds' xs m).
+  Proof.
+    intros * Hnin. rewrite <- Env.adds'_app. now apply Env.gsso'.
+  Qed.
+
+  (** The disjointness, stated on the shape of the pass rather than on its
+      code: any node whose inputs and outputs are the source's and whose
+      locals extend the source's has its extension fresh for the source. *)
+
+  Lemma unnested_locals_fresh :
+    forall n n' nvars,
+      n'.(n_in)   = n.(n_in) ->
+      n'.(n_out)  = n.(n_out) ->
+      n'.(n_vars) = n.(n_vars) ++ nvars ->
+      forall x,
+        InMembers x (n.(n_in) ++ n.(n_vars) ++ n.(n_out)) ->
+        ~ InMembers x nvars.
+  Proof.
+    intros n n' nvars Hin Hout Hvars x Hx.
+    pose proof (n_nodup n') as Hnd.
+    rewrite Hin, Hout, Hvars in Hnd.
+    assert (Permutation (n_in n ++ (n_vars n ++ nvars) ++ n_out n
+                           ++ anon_in_eqs (n_eqs n'))
+                        ((n_in n ++ n_vars n ++ n_out n)
+                           ++ nvars ++ anon_in_eqs (n_eqs n'))) as Hp.
+    { repeat rewrite <- app_assoc.
+      apply Permutation_app_head, Permutation_app_head, Permutation_swap. }
+    rewrite Hp in Hnd.
+    eapply NoDupMembers_app_InMembers in Hnd; [|exact Hx].
+    intros Hn; apply Hnd, InMembers_app; auto.
+  Qed.
+
+  (** Hence the two generators read the same clocks. *)
+
+  Lemma lnode_clock_env_extended :
+    forall n n' nvars,
+      n'.(n_in)   = n.(n_in) ->
+      n'.(n_out)  = n.(n_out) ->
+      n'.(n_vars) = n.(n_vars) ++ nvars ->
+      forall x,
+        InMembers x (n.(n_in) ++ n.(n_vars) ++ n.(n_out)) ->
+        Env.find x (lnode_clock_env n') = Env.find x (lnode_clock_env n).
+  Proof.
+    intros n n' nvars Hin Hout Hvars x Hx.
+    unfold lnode_clock_env. rewrite Hin, Hout, Hvars.
+    apply Env_find_adds'_app_notin.
+    eapply unnested_locals_fresh; eauto.
+  Qed.
+
+  (** What the equation level actually consumes: [find_clock], and through it
+      [eqn_clock_type], cannot tell the two environments apart. *)
+
+  Corollary find_clock_extended :
+    forall n n' nvars,
+      n'.(n_in)   = n.(n_in) ->
+      n'.(n_out)  = n.(n_out) ->
+      n'.(n_vars) = n.(n_vars) ++ nvars ->
+      forall x,
+        InMembers x (n.(n_in) ++ n.(n_vars) ++ n.(n_out)) ->
+        find_clock (lnode_clock_env n') x = find_clock (lnode_clock_env n) x.
+  Proof.
+    intros. unfold find_clock.
+    erewrite lnode_clock_env_extended; eauto.
+  Qed.
+
+
+  (** * The expression-level statement
+
+      One valuation goes in, one comes out.  [dlt] satisfies what the source
+      expression *carries* -- the constraints its nested calls impose on the
+      fresh names the security monad minted for them.  [dlt'] satisfies what
+      unnesting *emitted* -- the constraints generated for the equations the
+      pass lifted out.  The two differ only off [scope]: on every security
+      name the source node can see they are the same valuation, which is what
+      makes this composable with the rest of the node.
+
+      The third conjunct is the part that took the longest to get right.  It
+      is not "the two sides give the expression the same type": in four of the
+      five lifting cases the pass replaces a compound expression by a variable
+      whose defining equation carries an ambient (the reset level joined with
+      the clock the variable is defined on), so the target type is the source
+      type *raised by that ambient*.  Domination in this direction --
+      target below source-plus-ambient -- is exactly what the enclosing
+      equation needs, because the enclosing equation sits under the same
+      ambient and so absorbs it.
+
+      [amb] is a parameter rather than a computed term: which ambient a lifted
+      equation sits under is a fact about clocks, and is discharged where the
+      clocks are known, not here. *)
+
+  Section Preservation.
+
+    Variable GL      : secglobal.
+    Variable env     : Env.t ident.
+    Variable base_ty : ident.
+    Variable rst_ty  : ident.
+
+    (** The *target* node's declared clocks.  [lnode_clock_env_extended] above
+        is what says using the target's here loses nothing: on every variable
+        the source equations mention, the two environments answer alike. *)
+    Variable cenv    : Env.t (type * clock).
+
+    (** Every security name the *source* expression can mention: the names of
+        the source node's own variables, and the names the security monad
+        mints for its nested calls. *)
+    Variable scope   : list ident.
+
+    (** The ambient every equation this expression gets lifted into sits
+        under. *)
+    Variable amb     : ST.
+
+    (** A program variable's security name, as the naming pass assigned it. *)
+    Definition sec_of (xs : list ident) : list ident :=
+      flat_map (fun x => match Env.find x env with
+                         | Some b => [b]
+                         | None   => []
+                         end) xs.
+
+    (** The variables unnesting created during one run, and their security
+        names.  Indexed by the *pair* of states, not fixed once for the node:
+        two sibling sub-expressions run over disjoint stretches of the fresh
+        state, and it is exactly that disjointness that lets one sibling's
+        conclusion survive the other's witness. *)
+    Definition new_ids (st st' : fresh_st (type * clock)) : list ident :=
+      filter (fun x => if in_dec ident_eq_dec x (st_ids st) then false else true)
+        (st_ids st').
+
+    Definition moved_by (st st' : fresh_st (type * clock)) : list ident :=
+      sec_of (new_ids st st').
+
+    Lemma new_ids_spec :
+      forall st st' x,
+        In x (new_ids st st') <-> In x (st_ids st') /\ ~ In x (st_ids st).
+    Proof.
+      intros st st' x. unfold new_ids. rewrite filter_In.
+      destruct (in_dec ident_eq_dec x (st_ids st)); split;
+        (intros (?&?) || intros ?); try tauto; try discriminate; auto.
+    Qed.
+
+    (** Widening a run widens what it may have moved, in both directions:
+        a prefix and a suffix of a run both move inside the whole run's set.
+        This is what passes the premise down to the sub-expressions and the
+        conclusions back up. *)
+    Lemma new_ids_prefix :
+      forall st st1 st', st_follows st1 st' ->
+        incl (new_ids st st1) (new_ids st st').
+    Proof.
+      intros st st1 st' Hf x Hx. apply new_ids_spec in Hx as (Hx & Hn).
+      apply new_ids_spec. split; auto.
+      unfold st_ids in *. apply in_map_iff in Hx as ((y&a) & ? & Hin); simpl in *; subst.
+      apply in_map_iff. exists (x, a). split; auto.
+      eapply st_follows_incl; eauto.
+    Qed.
+
+    Lemma new_ids_suffix :
+      forall st st1 st', st_follows st st1 ->
+        incl (new_ids st1 st') (new_ids st st').
+    Proof.
+      intros st st1 st' Hf x Hx. apply new_ids_spec in Hx as (Hx & Hn).
+      apply new_ids_spec. split; auto.
+      intro Hin. apply Hn.
+      unfold st_ids in *. apply in_map_iff in Hin as ((y&a) & ? & Hin); simpl in *; subst.
+      apply in_map_iff. exists (x, a). split; auto.
+      eapply st_follows_incl; eauto.
+    Qed.
+
+    Lemma sec_of_incl :
+      forall xs ys, incl xs ys -> incl (sec_of xs) (sec_of ys).
+    Proof.
+      intros xs ys Hincl b Hb.
+      unfold sec_of in *. apply in_flat_map in Hb as (x & Hx & Hb).
+      apply in_flat_map. exists x. auto.
+    Qed.
+
+    Corollary moved_by_prefix :
+      forall st st1 st', st_follows st1 st' ->
+        incl (moved_by st st1) (moved_by st st').
+    Proof. intros. apply sec_of_incl, new_ids_prefix; auto. Qed.
+
+    Corollary moved_by_suffix :
+      forall st st1 st', st_follows st st1 ->
+        incl (moved_by st1 st') (moved_by st st').
+    Proof. intros. apply sec_of_incl, new_ids_suffix; auto. Qed.
+
+    (** The complement of [agree_on]: the two valuations coincide everywhere
+        *outside* a set.  This, and not [agree_on], is what the induction can
+        carry.  [agree_on scope] says the witness keeps the visible names
+        fixed but says nothing about the rest -- and "the rest" includes the
+        names the security monad minted for a *sibling* sub-expression, whose
+        constraints the sibling's own hypothesis still has to be applied to.
+        A witness free to move those cannot be composed with its sibling's.
+        Bounding the movement instead makes composition immediate: sibling
+        constraints mention [scope] only, and [moved] misses [scope]. *)
+    Definition agree_off (xs : list ident) (dlt1 dlt2 : ident -> Lat.t) : Prop :=
+      forall x, ~ In x xs -> dlt1 x = dlt2 x.
+
+    Lemma agree_off_refl : forall xs dlt, agree_off xs dlt dlt.
+    Proof. intros xs dlt x _. reflexivity. Qed.
+
+    Lemma agree_off_incl :
+      forall xs ys dlt dlt',
+        incl xs ys -> agree_off xs dlt dlt' -> agree_off ys dlt dlt'.
+    Proof. intros xs ys d d' Hincl H x Hx. apply H. auto. Qed.
+
+    Lemma agree_off_trans :
+      forall xs dlt1 dlt2 dlt3,
+        agree_off xs dlt1 dlt2 -> agree_off xs dlt2 dlt3 ->
+        agree_off xs dlt1 dlt3.
+    Proof.
+      intros xs d1 d2 d3 H12 H23 x Hx.
+      rewrite H12 by exact Hx. now apply H23.
+    Qed.
+
+    (** And nothing is lost: bounded movement still gives the visible
+        agreement the node level asks for. *)
+    Lemma agree_off_agree_on :
+      forall xs dlt dlt',
+        (forall x, In x xs -> ~ In x scope) ->
+        agree_off xs dlt dlt' -> agree_on scope dlt dlt'.
+    Proof.
+      intros xs dlt dlt' Hfresh H x Hx. apply H. intro Hm.
+      eapply Hfresh; eauto.
+    Qed.
+
+    Definition carries (P : global) (e : exp) : Prop :=
+      forall is_control es' eqs st st' ts sst sst'
+             ce xst xst' ts'' yst yst' dlt,
+        wl_exp P e ->
+        (forall x, In x (moved_by st st') -> ~ In x scope) ->
+        constraints_scoped scope (carried ts) ->
+        unnest_exp P is_control e st = ((es', eqs), st') ->
+        assign_lexp_type GL env base_ty rst_ty e sst = OK (ts, sst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs xst
+          = OK (ce, xst') ->
+        assign_lexps GL env base_ty rst_ty es' yst = OK (ts'', yst') ->
+        listSatisfiable dlt (carried ts) ->
+        exists dlt',
+          agree_off (moved_by st st') dlt dlt'
+          /\ listSatisfiable dlt' ce
+          /\ Forall2 (fun t t'' => satisfiable dlt' (fst t'') (merge amb (fst t)))
+               ts ts''.
+
+    (** Nothing was emitted, so nothing has to be satisfied. *)
+
+    Lemma generate_leqns_constraints_nil :
+      forall ce xst xst',
+        generate_leqns_constraints GL env base_ty rst_ty cenv [] xst
+          = OK (ce, xst') ->
+        ce = [] /\ xst' = xst.
+    Proof.
+      intros ce xst xst' H. simpl in H. unfold ret in H. inv H. auto.
+    Qed.
+
+    (** A one-element expression list is typed by its element. *)
+
+    Lemma assign_lexps_single :
+      forall e ts st st',
+        assign_lexps GL env base_ty rst_ty [e] st = OK (ts, st') ->
+        assign_lexp_type GL env base_ty rst_ty e st = OK (ts, st').
+    Proof.
+      intros e ts st st' H.
+      apply assign_lexps_carried_cons in H as (t & r & sta & Ht & Hr & Hts & _).
+      apply assign_lexps_carried_nil in Hr as (Hr & _ & ?); subst.
+      now rewrite app_nil_r.
+    Qed.
+
+    (** The shape both leaves land in: the pass returned the expression
+        untouched, so the two generators ran on the same term, and the
+        witness is the valuation we started with. *)
+
+    Lemma carries_unchanged :
+      forall mv (ts ts'' : list LST) (ce : list constraint) dlt,
+        ts'' = ts ->
+        ce = [] ->
+        exists dlt',
+          agree_off mv dlt dlt'
+          /\ listSatisfiable dlt' ce
+          /\ Forall2 (fun t t'' => satisfiable dlt' (fst t'') (merge amb (fst t)))
+               ts ts''.
+    Proof.
+      intros mv ts ts'' ce dlt Hts Hce; subst.
+      exists dlt. split; [|split].
+      - apply agree_off_refl.
+      - constructor.
+      - induction ts as [|t ts IH]; [constructor|].
+        constructor; [apply satisfiable_merge_r|exact IH].
+    Qed.
+
+    Lemma carries_Econst : forall P c, carries P (Econst c).
+    Proof.
+      intros P c is_control es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst'
+        dlt _ _ _ Hun Has Hgen Has' _.
+      rewrite unnest_exp_Econst in Hun. inv Hun.
+      apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
+      apply assign_lexps_single in Has'.
+      rewrite assign_lexp_Econst in Has, Has'.
+      unfold ret in Has, Has'. inv Has. inv Has'.
+      eapply carries_unchanged; auto.
+    Qed.
+
+    Lemma carries_Evar : forall P x a, carries P (Evar x a).
+    Proof.
+      intros P x a is_control es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst'
+        dlt _ _ _ Hun Has Hgen Has' _.
+      rewrite unnest_exp_Evar in Hun. inv Hun.
+      apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
+      apply assign_lexps_single in Has'.
+      apply assign_lexp_Evar_inv in Has as (b & Hb & ? & ?); subst.
+      apply assign_lexp_Evar_inv in Has' as (b' & Hb' & ? & ?); subst.
+      rewrite Hb in Hb'. inv Hb'.
+      eapply carries_unchanged; auto.
+    Qed.
+
+    Lemma assign_lexps_single_intro :
+      forall e ts st st',
+        assign_lexp_type GL env base_ty rst_ty e st = OK (ts, st') ->
+        assign_lexps GL env base_ty rst_ty [e] st = OK (ts, st').
+    Proof.
+      intros e ts st st' H.
+      rewrite assign_lexps_cons.
+      eapply sec_bind_ok; [exact H|].
+      eapply sec_bind_ok with (y := ([] : list LST));
+        [rewrite assign_lexps_nil; reflexivity|].
+      unfold ret. now rewrite app_nil_r.
+    Qed.
+
+    (** A one-stream sub-expression comes back as a one-element list, so
+        [hd_default] is not losing anything -- which is why the unary and
+        binary cases can hand their operand straight to the hypothesis. *)
+
+    Lemma unnest_exp_one :
+      forall P e es' eqs st st',
+        wl_exp P e ->
+        numstreams e = 1 ->
+        unnest_exp P false e st = ((es', eqs), st') ->
+        es' = [hd_default es'].
+    Proof.
+      intros P e es' eqs st st' Hwl Hnum Hun.
+      eapply unnest_exp_length in Hun; eauto.
+      rewrite Hnum in Hun.
+      destruct es' as [|x [|]]; simpl in Hun; try discriminate; auto.
+    Qed.
+
+    Lemma carries_Eunop :
+      forall P op e a, carries P e -> carries P (Eunop op e a).
+    Proof.
+      intros P op e a IH is_control es' eqs st st' ts sst sst' ce xst xst' ts''
+        yst yst' dlt Hwl Hincl Hsc Hun Has Hgen Has' Hcar.
+      inv Hwl.
+      apply unnest_exp_Eunop_inv in Hun as (e1' & st1 & Hun & ? & ?); subst.
+      apply assign_lexps_single in Has'.
+      rewrite assign_lexp_Eunop in Has, Has'.
+      eapply IH; eauto.
+      - eapply unnest_exp_one in Hun as Hone; eauto.
+        rewrite Hone at 1.
+        apply assign_lexps_single_intro. exact Has'.
+    Qed.
+
+    (** * Composing two sub-expressions
+
+        A compound expression emits the concatenation of what its operands
+        emitted, and the generator is a fold over the equation list, so the
+        generated set splits the same way.  This is the join point of the
+        induction: the operands' hypotheses each produce a witness, and these
+        are the lemmas that let the second witness be applied on top of the
+        first without undoing it. *)
+
+    Lemma generate_leqns_constraints_app :
+      forall eqs1 eqs2 ce xst xst',
+        generate_leqns_constraints GL env base_ty rst_ty cenv (eqs1 ++ eqs2) xst
+          = OK (ce, xst') ->
+        exists ce1 ce2 xst1,
+          generate_leqns_constraints GL env base_ty rst_ty cenv eqs1 xst
+            = OK (ce1, xst1)
+          /\ generate_leqns_constraints GL env base_ty rst_ty cenv eqs2 xst1
+            = OK (ce2, xst')
+          /\ ce = ce1 ++ ce2.
+    Proof.
+      induction eqs1 as [|eq eqs1 IH]; intros eqs2 ce xst xst' H.
+      - exists [], ce, xst. simpl. repeat split; auto.
+      - simpl in H.
+        eapply sec_bind_inv in H as (c & sta & Hc & H).
+        eapply sec_bind_inv in H as (cs & stb & Hcs & Hret).
+        unfold ret in Hret. inv Hret.
+        apply IH in Hcs as (ce1 & ce2 & xst1 & H1 & H2 & ?); subst.
+        exists (c ++ ce1), ce2, xst1. split; [|split]; auto.
+        + simpl. eapply sec_bind_ok; [exact Hc|].
+          eapply sec_bind_ok; [exact H1|]. reflexivity.
+        + now rewrite app_assoc.
+    Qed.
+
+    Lemma listSatisfiable_app :
+      forall dlt cs1 cs2,
+        listSatisfiable dlt (cs1 ++ cs2)
+        <-> listSatisfiable dlt cs1 /\ listSatisfiable dlt cs2.
+    Proof. intros. unfold listSatisfiable. apply Forall_app. Qed.
+
+    (** A type whose names the witness did not move keeps its meaning. *)
+
+    Lemma hm_ext_off :
+      forall (s : ST) xs dlt dlt',
+        agree_off xs dlt dlt' ->
+        (forall x, In x s -> ~ In x xs) ->
+        hm_ext dlt s = hm_ext dlt' s.
+    Proof.
+      induction s as [|y s IH]; intros xs d d' Hoff Havoid; simpl; auto.
+      rewrite (Hoff y) by (apply Havoid; now left).
+      erewrite (IH xs); eauto.
+      intros x Hx. apply Havoid. now right.
+    Qed.
+
+    Corollary satisfiable_off :
+      forall u v xs dlt dlt',
+        agree_off xs dlt dlt' ->
+        (forall x, In x u -> ~ In x xs) ->
+        (forall x, In x v -> ~ In x xs) ->
+        satisfiable dlt u v -> satisfiable dlt' u v.
+    Proof.
+      intros u v xs dlt dlt' Hoff Hu Hv H. unfold satisfiable in *.
+      erewrite <- (hm_ext_off u xs), <- (hm_ext_off v xs); eauto.
+    Qed.
+
+    (** The sibling transfer itself: a sub-expression's obligations mention
+        only names the source can see, and a witness never moves those. *)
+
+    Lemma listSatisfiable_off :
+      forall cs xs dlt dlt',
+        constraints_scoped scope cs ->
+        (forall x, In x xs -> ~ In x scope) ->
+        agree_off xs dlt dlt' ->
+        listSatisfiable dlt cs ->
+        listSatisfiable dlt' cs.
+    Proof.
+      intros cs xs dlt dlt' Hsc Hfresh Hoff Hsat.
+      assert (agree_on scope dlt dlt') as Hagree
+        by (eapply agree_off_agree_on; eauto).
+      clear Hoff.
+      unfold constraints_scoped, SymTypes.constraints_scoped in Hsc.
+      unfold listSatisfiable in *.
+      rewrite Forall_forall in Hsc, Hsat |- *.
+      intros c Hin.
+      eapply constraintSatisfiable_ext with (scope := scope); eauto.
+      apply Hsc; exact Hin.
+    Qed.
+
+    (** And the arithmetic the joining rules need: an operand's bound still
+        holds once the other operand is joined on the right. *)
+
+    Lemma satisfiable_merge_grow_l :
+      forall dlt a u v,
+        satisfiable dlt a (merge u v) ->
+        forall w, satisfiable dlt a (merge u (merge v w)).
+    Proof.
+      intros dlt a u v H w.
+      eapply satisfiable_trans; [exact H|].
+      apply satisfiable_merge_intro.
+      - apply satisfiable_merge_l.
+      - eapply satisfiable_trans; [apply satisfiable_merge_l|].
+        apply satisfiable_merge_r.
+    Qed.
+
+    Lemma satisfiable_merge_grow_r :
+      forall dlt a u w,
+        satisfiable dlt a (merge u w) ->
+        forall v, satisfiable dlt a (merge u (merge v w)).
+    Proof.
+      intros dlt a u w H v.
+      eapply satisfiable_trans; [exact H|].
+      apply satisfiable_merge_intro.
+      - apply satisfiable_merge_l.
+      - eapply satisfiable_trans; [apply satisfiable_merge_r|].
+        apply satisfiable_merge_r.
+    Qed.
+
+  End Preservation.
+
 End SECLUSUNNESTING.
 
 Module SecLusUnnesting
@@ -900,6 +1399,7 @@ Module SecLusUnnesting
   (Import OpAux   : OPERATORS_AUX Op)
   (Import Lat     : Lattice)
   (Import SecT    : SECTYPES Lat)
+  (Import SLT     : SECLUSTYPES Lat SecT)
   (Import SC      : SECMONAD Ids)
   (Import LSyn    : LSYNTAX Ids Op)
   (CESyn          : CESYNTAX Op)
@@ -915,8 +1415,8 @@ Module SecLusUnnesting
   (Import SECL    : SECLTYPING Ids Op OpAux SC LSyn CESyn NLSyn SIG NAMEGEN
                       CEIsF CEClo SECCET TR)
   (Import UNN     : UNNESTING Ids Op OpAux LSyn)
-  <: SECLUSUNNESTING Ids Op OpAux Lat SecT SC LSyn CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
+  <: SECLUSUNNESTING Ids Op OpAux Lat SecT SLT SC LSyn CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
 
-Include SECLUSUNNESTING Ids Op OpAux Lat SecT SC LSyn CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
+Include SECLUSUNNESTING Ids Op OpAux Lat SecT SLT SC LSyn CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
 
 End SecLusUnnesting.
