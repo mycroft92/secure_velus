@@ -639,6 +639,55 @@ control flags and `map_bind2` over lists, with the statement recorded above.
 Then equation, node and program level, reusing `Signature_entails` and the
 scoped lockstep from the transcription work.
 
+### Correction: the two sides do not mint together, 2026-09-14
+
+Checked, not assumed: `fresh_idents` occurs **once** in `SecLTyping.v`, at
+line 183, in the `Eapp` case. `Efby`, `Earrow`, `Emerge` and `Eite` all just
+`ljoin_list` their operands' types and mint nothing.
+
+Unnesting lifts all five. So the two allocators coincide only for calls.
+
+For `Efby` at `is_control = false`:
+
+    source type : ljoin_list ts us          -- a compound type
+    target type : [env x]                   -- a single variable
+    emitted     : (x, [fby e0' e'])         -- constrains env x to dominate
+                                               the operands' join
+
+The target type is *not* a renaming of the source type. It is a fresh name
+constrained to sit above it. So the statement recorded earlier -- residual
+types related by the renaming -- is wrong for four of the five lifting
+constructors, and would have failed four cases into the induction.
+
+**The corrected statement.** One relation for every constructor, and it is
+`preserves_on` throughout:
+
+    unnest_exp G is_control e st = ((es', eqs), st') ->
+    assign_lexp_type GL env base_ty rst_ty e sst = OK (ts, sst') ->
+    generate_leqns_constraints GN env base_ty rst_ty cenv eqs xst = OK (ce, xst') ->
+    preserves_on scope <the source's contribution> <the target's contribution>
+
+where a contribution is the carried constraints together with the defining
+constraint of whatever consumes the expression. A valuation satisfying the
+source's set extends to one satisfying the target's by giving each variable
+unnesting created the value of the source type it stands for -- which is what
+the emitted equation constrains it to.
+
+**Where the renaming machinery belongs.** Not in the type clause, which is
+gone. It belongs to the `Eapp` case alone, where the typer *did* mint: there
+the carried constraints mention minted names, the emitted equation mentions
+the call's result variables, and `subst_constraints_out_map` matches them.
+`subst_idents_in_type` is for the actual argument types handed to
+`generate_constraints` in that same case. Everything proved for the renaming
+stands; its scope is narrower than the plan claimed.
+
+**Why this is the right shape anyway.** For the four non-call lifting
+constructors the target name is *freer* than the source type -- constrained
+to dominate it, not equal to it -- which is exactly the direction preservation
+wants, and exactly why the leg is `preserves_on` and not `entails`. The
+transcription leg got `entails` because it introduced nothing; this leg
+cannot, and now for two independent reasons rather than one.
+
 ### TODO: rebasing onto Velus head
 
 Not started, and deliberately deferred. What a plan will have to account for:
