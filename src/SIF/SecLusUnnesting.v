@@ -1856,6 +1856,150 @@ Module Type SECLUSUNNESTING
             apply incl_appr, moved_by_suffix; auto.
     Qed.
 
+    (** * Sampling
+
+        [Ewhen] lifts nothing: unnesting pushes the sampling inward, one
+        [Ewhen] per resulting stream, and the typer's rule is a map.  So the
+        target types are the source's transformation applied to the operands'
+        target types, and the only thing to check is that the sampling
+        variable's own level rides along on both sides -- which it does, by
+        the same [ljoin _ (lvar g)]. *)
+
+    Lemma unnest_exps_inv :
+      forall P es es1 eqs st st',
+        unnest_exps P es st = ((es1, eqs), st') ->
+        exists ess eqss,
+          map_bind2 (unnest_exp P false) es st = ((ess, eqss), st')
+          /\ es1 = List.concat ess
+          /\ eqs = List.concat eqss.
+    Proof.
+      intros P es es1 eqs st st' H.
+      unfold unnest_exps in H. repeat inv_bind. repeat esplit; eauto.
+    Qed.
+
+    Lemma unnest_when_nil :
+      forall ckid b tys ck, unnest_when ckid b [] tys ck = [].
+    Proof. reflexivity. Qed.
+
+    Lemma unnest_when_cons :
+      forall ckid b e es ty tys ck,
+        unnest_when ckid b (e :: es) (ty :: tys) ck
+        = Ewhen [e] ckid b ([ty], ck) :: unnest_when ckid b es tys ck.
+    Proof. reflexivity. Qed.
+
+    Lemma assign_lexps_unnest_when_inv :
+      forall ckid b (tys : list type) ck g (es : list exp) ts'' st st',
+        Env.find ckid env = Some g ->
+        List.length es = List.length tys ->
+        assign_lexps GL env base_ty rst_ty (unnest_when ckid b es tys ck) st
+          = OK (ts'', st') ->
+        exists ts,
+          assign_lexps GL env base_ty rst_ty es st = OK (ts, st')
+          /\ ts'' = List.map (fun t => ljoin t (lvar g)) ts.
+    Proof.
+      intros ckid b tys ck g es. revert tys.
+      induction es as [|e es IH]; intros tys ts'' st st' Hg Hlen Has.
+      - destruct tys; simpl in Hlen; try discriminate.
+        rewrite unnest_when_nil in Has.
+        apply (assign_lexps_carried_nil GL env base_ty rst_ty) in Has
+          as (? & _ & ?); subst.
+        exists []. rewrite assign_lexps_nil. auto.
+      - destruct tys as [|ty tys]; simpl in Hlen; try discriminate.
+        rewrite unnest_when_cons in Has.
+        apply (assign_lexps_carried_cons GL env base_ty rst_ty) in Has
+          as (t & r & sta & Ht & Hr & ? & _); subst.
+        rewrite assign_lexp_Ewhen in Ht.
+        eapply sec_bind_inv in Ht as (te & stm & Hte & Ht).
+        eapply sec_bind_inv in Ht as (g' & stn & Hg' & Hret).
+        unfold ret in Hret. inv Hret.
+        apply find_env_inv in Hg' as (Hg' & ?); subst.
+        rewrite Hg in Hg'. inv Hg'.
+        apply assign_lexps_single in Hte.
+        apply IH in Hr as (ts & Hts & ?); subst; auto.
+        exists (te ++ ts). split.
+        + rewrite assign_lexps_cons.
+          eapply sec_bind_ok; [exact Hte|].
+          eapply sec_bind_ok; [exact Hts|]. reflexivity.
+        + now rewrite map_app.
+    Qed.
+
+    Lemma carried_cons :
+      forall t ts, carried (t :: ts) = cmerge (snd t) (carried ts).
+    Proof. reflexivity. Qed.
+
+    Lemma carried_map_when :
+      forall g ts,
+        carried (List.map (fun t => ljoin t (lvar g)) ts) = carried ts.
+    Proof.
+      induction ts as [|t ts IH]; [reflexivity|].
+      simpl List.map. rewrite !carried_cons, IH.
+      unfold ljoin, lvar. simpl snd. now rewrite cmerge_nil.
+    Qed.
+
+    Lemma carries_Ewhen :
+      forall P es x b a, Forall (carries P) es -> carries P (Ewhen es x b a).
+    Proof.
+      intros P es x b [tys ck] Hall is_control es' eqs st st' ts sst sst'
+        ce xst xst' ts'' yst yst' dlt Hwl Hmv Hsc Hsts Hun Has Hgen Has' Hcar.
+      inv Hwl.
+      apply unnest_exp_Ewhen_inv in Hun as (es1 & Hunn & ?); subst.
+      assert (List.length es1 = List.length tys) as Hlen
+          by (erewrite unnest_exps_length; eauto).
+      apply unnest_exps_inv in Hunn as (ess & eqss & Hmap & ? & ?); subst.
+
+      (** the source: the operands' types, each sampled *)
+      rewrite assign_lexp_Ewhen in Has.
+      eapply sec_bind_inv in Has as (tes & sa & Htes & Has).
+      eapply sec_bind_inv in Has as (g & sb & Hg & Hret).
+      unfold ret in Hret. inv Hret.
+      apply find_env_inv in Hg as (Hg & ?); subst.
+
+      (** the target: the same map, over the unnested operands *)
+      eapply assign_lexps_unnest_when_inv in Has' as (tes'' & Htes'' & ?);
+        eauto.
+      subst.
+
+      (** the sampling variable is visible -- unless there are no streams at
+          all, in which case it never appears and nothing needs it.  Its
+          level is already inside the source type, and the source type is
+          scoped, so this is read off the premises rather than assumed. *)
+      assert (tes = [] \/ In g scope) as Hgs.
+      { destruct tes as [|t0 tes0]; [now left|right].
+        inversion Hsts as [|z zs Hz Hzr]; subst. simpl in Hz.
+        apply Hz. apply in_merge_right. now left. }
+
+      rewrite carried_map_when in Hsc, Hcar.
+      assert (Forall (fun t => st_scoped scope (fst t)) tes) as Hstes.
+      { clear - Hsts. induction tes as [|t tes IH]; constructor.
+        - inversion Hsts as [|z zs Hz Hzr]; subst. simpl in Hz.
+          apply st_scoped_merge_inv in Hz as (Hz & _); auto.
+        - apply IH. inversion Hsts as [|z zs Hz Hzr]; subst; auto. }
+
+      edestruct (carries_list_intro P es Hall ess eqss st st' tes sst sa
+                   ce xst xst' tes'' yst yst' dlt)
+        as (dlt' & Hoff & Hce & Hrel & Hscope & Hts); eauto.
+
+      exists dlt'. split; [|split; [|split; [|split]]]; auto.
+      - (** the sampling rides along on both sides *)
+        clear - Hrel.
+        induction Hrel as [|t t'' tes tes'' Hr Hrest IH]; [constructor|].
+        constructor; auto.
+        unfold ljoin; simpl. apply satisfiable_merge_intro.
+        + now apply satisfiable_merge_grow_l.
+        + eapply satisfiable_trans; [apply satisfiable_merge_r|].
+          apply satisfiable_merge_r.
+      - (** and stays inside the same bound *)
+        destruct Hgs as [?|Hgs]; subst.
+        + inversion Hrel; subst. constructor.
+        + clear - Hts Hgs.
+          induction Hts as [|t'' tes'' Hz Hzr IH]; [constructor|].
+          constructor; auto.
+          unfold ljoin; simpl. apply st_scoped_merge.
+          * eapply st_scoped_weaken; [|exact Hz]. apply incl_refl.
+          * intros y Hy. destruct Hy as [|[]]; subst.
+            apply in_or_app; now left.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
