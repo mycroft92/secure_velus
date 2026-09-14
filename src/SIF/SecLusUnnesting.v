@@ -234,4 +234,65 @@ Module Type SECLUSUNNESTING
     now repeat constructor.
   Qed.
 
+  (** * Base cases
+
+      On a constant or a variable unnesting does nothing and emits nothing,
+      and the security typer returns a type carrying nothing.  Those are the
+      two ends of the induction meeting trivially. *)
+
+  Lemma unnest_exp_Econst :
+    forall G is_control c st,
+      unnest_exp G is_control (Econst c) st = (([Econst c], []), st).
+  Proof. intros. simpl. apply ret_spec. Qed.
+
+  Lemma unnest_exp_Evar :
+    forall G is_control x a st,
+      unnest_exp G is_control (Evar x a) st = (([Evar x a], []), st).
+  Proof. intros. simpl. apply ret_spec. Qed.
+
+  (** * A call carries exactly what its emitted equation generates
+
+      Every result of a call carries the same list, so merging them all
+      collapses back to that one list -- [cmerge] is idempotent.  Which means
+      the call's total carried constraints are the instantiated block joined
+      with what the arguments and the reset carried, and that is, term for
+      term, what [generate_lcall_constraint] produces for the equation
+      unnesting emits. *)
+
+  Lemma carried_uniform :
+    forall (held : list SymTypes.constraint) outs,
+      carried (List.map (fun o => (([o] : ST), held)) outs)
+      = match outs with [] => [] | _ => held end.
+  Proof.
+    intros held outs. induction outs as [|o os IH]; [reflexivity|].
+    simpl in *. rewrite IH. destruct os.
+    - apply cmerge_nil.
+    - apply cmerge_refl.
+  Qed.
+
+  Corollary assign_lexp_Eapp_carried :
+    forall G env base_ty rst_ty f es er anns ts st st',
+      assign_lexp_type G env base_ty rst_ty (Eapp f es er anns) st = OK (ts, st') ->
+      anns <> [] ->
+      exists sg (argts : list LST) (rstty : LST) (ckty : ST)
+             (cs : list SymTypes.constraint),
+        find_signature f G = Some sg
+        /\ assign_clk_type env base_ty (find_base_clock (LSyn.clocksof es))
+           = Some ckty
+        /\ carried ts = cmerge cs (cmerge (carried argts) (snd rstty)).
+  Proof.
+    intros G env base_ty rst_ty f es er anns ts st st' H Hne.
+    eapply assign_lexp_Eapp_inv in H
+      as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
+          & Hargs & Hrst & Hck & Esg & Houts & Hcs & Hts).
+    exists sg, argts, rstty, ckty, cs.
+    split; [exact Esg|]. split; [exact Hck|].
+    subst ts. rewrite carried_uniform.
+    destruct outs as [|o os] eqn:Eouts.
+    - exfalso. apply Hne.
+      apply fresh_idents_length in Houts. simpl in Houts.
+      destruct anns; [reflexivity|discriminate].
+    - reflexivity.
+  Qed.
+
 End SECLUSUNNESTING.
