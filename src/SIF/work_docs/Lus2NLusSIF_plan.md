@@ -249,6 +249,83 @@ applies to `generated_callers_scope_fresh` in `SecNLusTypingCorrectness.v`,
 which is assumed rather than proved and has the same shape -- worth checking
 before anyone tries to discharge it.
 
+### Correction of scope: the pass that matters is normalisation, 2026-09-14
+
+Leg A targets *transcription* -- normalised Lustre to NLustre. That is the
+wrong half, and the codebase proves it.
+
+`to_lexp` rejects `Eapp` outright (`Tr.v:48`, "expression not normalized").
+So on any program that transcribes, `assign_lexp_type`'s `Eapp` branch is
+unreachable, `fresh_idents` is never called, and `minted st st' = []` --
+which is exactly `minted_refl`, the lemma `to_node_sig_preserved` leans on.
+`to_lexps_assign_rev` states the consequence outright: the argument types come
+back as `map (fun t => (t, [])) tys`. **The carried-constraint component of
+`LST` is empty on every expression Leg A ever sees.** The refinement type
+degenerates to a plain `ST` throughout.
+
+That machinery is not incidental. It is the point. `LST = ST * list
+constraint`, `carried`, `lrefine`, `ljoin`, `fresh_idents`, `minted` and the
+`simplify raw (locals ++ minted st0 st1)` in `generate_lnode_sig` were all
+built for nested calls -- ICTAC's (LTncall) -- and nested calls are what
+*normalisation* removes, not what transcription sees.
+
+**The correspondence the design was written for.** Unnesting, on a nested call
+(`Unnesting.v:433`):
+
+    | Eapp f es er anns =>
+        do (es', eqs1) <- unnest_exps es; ...
+        do xs <- idents_for_anns' anns;
+        ret (map (fun '(id, ann) => Evar id ann) xs,
+             (map fst xs, [Eapp f es' er' ...]) :: eqs1 ++ eqs2 ++ eqs3)
+
+and `assign_lexp_type` on the same expression (`SecLTyping.v:168`):
+
+    | Eapp f es er anns =>
+        do argts <- assign_lexps es; ...
+        do outs <- fresh_idents (length anns);
+        do cs   <- generate_constraints sg (map fst argts) ckty (fst rstty) outs;
+        let held := cmerge cs (cmerge (carried argts) (snd rstty)) in
+        ret (map (fun o => (([o] : ST), held)) outs)
+
+Term for term:
+
+- `idents_for_anns' anns` mints one fresh *variable* per result;
+  `fresh_idents (length anns)` mints one fresh *security name* per result.
+- unnesting returns `Evar id ann`; the typer returns `([o], held)` -- a
+  variable-shaped type.
+- unnesting *emits an equation* `(map fst xs, [Eapp f es' er' _])`; the typer
+  *carries* `held`, which is that equation's constraint set joined with what
+  the arguments and the reset were carrying.
+- `unnest_node` sets `n_vars := n_vars n ++ nvars` with `nvars` the minted
+  variables in order; `generate_lnode_sig` eliminates `locals ++ minted st0 st1`.
+
+So: **carried constraints are the constraints of the equations unnesting
+emits, and minted security names are the variables unnesting adds.** That is
+the theorem, and nothing in Leg A states it.
+
+**Abandoning on failure is the right discipline.** `normalize_global` is
+`unnest_global`, then `check_causality`, then `normfby_global` -- it returns
+`Error` if causality fails. A source program that does not normalise produces
+no NLustre, so there is nothing to preserve. Non-normalisable programs are not
+a fragment to weaken the theorem for; they are programs the compiler rejects.
+
+**What to build.**
+
+- *Leg N (new, the real one).* Source Lustre to unnested Lustre. Expression
+  level: `unnest_exp G false e st = (es', eqs, st')` against
+  `assign_lexp_type e sst = OK (ts, sst')`, concluding that the types of `es'`
+  are `map fst ts` and that the constraints generated for `eqs` are `snd ts`.
+  Equation and node level follow, with `minted` in bijection with `nvars`.
+  This is `preserves_on`, not `entails`: unnesting introduces variables.
+- *Leg N2.* `normfby_global`, the second half of normalisation.
+- *Leg A (keep).* Transcription stays as the tail. It is correct and needed;
+  it is simply the easy half, and it is where `entails` suffices precisely
+  because transcription introduces nothing.
+
+The noninterference pull-back will then have to relate two valuations across
+Leg N, the way the NLustre-to-Stc leg does, rather than keeping one as Leg A
+does.
+
 ### TODO: rebasing onto Velus head
 
 Not started, and deliberately deferred. What a plan will have to account for:
