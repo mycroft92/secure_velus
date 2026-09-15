@@ -5374,6 +5374,193 @@ Module Type SECLUSUNNESTING
         split; [now apply in_map|]. rewrite Hb. now left.
     Qed.
 
+    Lemma unnest_ite_tys_nil :
+      forall e0 es1 es2 ck, unnest_ite e0 es1 es2 [] ck = [].
+    Proof.
+      intros. unfold unnest_ite. destruct (combine es1 es2); reflexivity.
+    Qed.
+
+    Lemma assign_lexp_ite_type :
+      forall e0 e1 e2 ty ck th t0 t1 tf s s',
+        (forall s, assign_lexp_type GL env base_ty rst_ty e0 s = OK ([th], s)) ->
+        (forall s, assign_lexp_type GL env base_ty rst_ty e1 s = OK ([t0], s)) ->
+        (forall s, assign_lexp_type GL env base_ty rst_ty e2 s = OK ([t1], s)) ->
+        assign_lexp_type GL env base_ty rst_ty
+          (Eite e0 [e1] [e2] ([ty], ck)) s = OK ([tf], s') ->
+        tf = ljoin (ljoin th t0) t1.
+    Proof.
+      intros e0 e1 e2 ty ck th t0 t1 tf s s' Hh H0 H1 H.
+      rewrite assign_lexp_Eite in H.
+      eapply sec_bind_inv in H as (t0' & sa & Ht0' & H).
+      eapply sec_bind_inv in H as (th' & sb & Hth' & H).
+      eapply sec_bind_inv in H as (t & sc & Ht & H).
+      eapply sec_bind_inv in H as (u & sd & Hu & Hj).
+      rewrite Hh in Ht0'. inv Ht0'.
+      apply single_inv in Hth' as (Heq & ?); subst.
+      inv Heq.
+      apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
+      rewrite H0 in Ht. inv Ht. rewrite H1 in Hu. inv Hu.
+      simpl in Hj. eapply sec_bind_inv in Hj as (r & se & Hr & Hret).
+      unfold ret in Hret. inv Hret.
+      simpl in Hr. unfold ret in Hr. now inv Hr.
+    Qed.
+
+    Lemma assign_lexp_ite_pure :
+      forall e0 e1 e2 ty ck th t0 t1,
+        (forall s, assign_lexp_type GL env base_ty rst_ty e0 s = OK ([th], s)) ->
+        (forall s, assign_lexp_type GL env base_ty rst_ty e1 s = OK ([t0], s)) ->
+        (forall s, assign_lexp_type GL env base_ty rst_ty e2 s = OK ([t1], s)) ->
+        snd th = [] -> snd t0 = [] -> snd t1 = [] ->
+        forall ts s s',
+          assign_lexp_type GL env base_ty rst_ty
+            (Eite e0 [e1] [e2] ([ty], ck)) s = OK (ts, s') ->
+          s' = s /\ List.length ts = 1 /\ carried ts = [].
+    Proof.
+      intros e0 e1 e2 ty ck th t0 t1 Hh H0 H1 Hch Hc0 Hc1 ts s s' H.
+      rewrite assign_lexp_Eite in H.
+      eapply sec_bind_inv in H as (t0' & sa & Ht0' & H).
+      eapply sec_bind_inv in H as (th' & sb & Hth' & H).
+      eapply sec_bind_inv in H as (t & sc & Ht & H).
+      eapply sec_bind_inv in H as (u & sd & Hu & Hj).
+      rewrite Hh in Ht0'. inv Ht0'.
+      apply single_inv in Hth' as (Heq & ?); subst. inv Heq.
+      apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
+      rewrite H0 in Ht. inv Ht. rewrite H1 in Hu. inv Hu.
+      simpl in Hj. eapply sec_bind_inv in Hj as (r & se & Hr & Hret).
+      unfold ret in Hret. inv Hret.
+      simpl in Hr. unfold ret in Hr. inv Hr.
+      split; [reflexivity|split; [reflexivity|]].
+      rewrite carried_single. unfold ljoin. simpl snd.
+      rewrite Hch, Hc0, Hc1. reflexivity.
+    Qed.
+
+    Lemma unnest_ite_types :
+      forall e0 ck th (es1 es2 : list exp) (tys : list type) ts1 ts2 s,
+        (forall s, assign_lexp_type GL env base_ty rst_ty e0 s = OK ([th], s)) ->
+        snd th = [] ->
+        Forall2 (fun e t =>
+                   (forall s,
+                      assign_lexp_type GL env base_ty rst_ty e s = OK ([t], s))
+                   /\ snd t = []) es1 ts1 ->
+        Forall2 (fun e t =>
+                   (forall s,
+                      assign_lexp_type GL env base_ty rst_ty e s = OK ([t], s))
+                   /\ snd t = []) es2 ts2 ->
+        List.length es1 = List.length tys ->
+        List.length es2 = List.length tys ->
+        exists rs,
+          ljoin_list (List.map (fun t => ljoin th t) ts1) ts2 s = OK (rs, s)
+          /\ Forall2 (fun e r =>
+                (match e with Eapp _ _ _ _ => False | _ => True end)
+                /\ (forall ts s0 s0',
+                      assign_lexp_type GL env base_ty rst_ty e s0 = OK (ts, s0') ->
+                      s0' = s0 /\ List.length ts = 1 /\ carried ts = [])
+                /\ (forall tf s0 s0',
+                      assign_lexp_type GL env base_ty rst_ty e s0 = OK ([tf], s0') ->
+                      tf = r))
+               (unnest_ite e0 es1 es2 tys ck) rs.
+    Proof.
+      intros e0 ck th es1. revert e0 ck th.
+      induction es1 as [|e1 es1 IH];
+        intros e0 ck th es2 tys ts1 ts2 s Hh Hch H1 H2 Hl1 Hl2.
+      - inv H1. destruct tys; simpl in Hl1; [|discriminate].
+        destruct es2; simpl in Hl2; [|discriminate]. inv H2.
+        exists []. split; [reflexivity|rewrite unnest_ite_nil; constructor].
+      - destruct tys as [|ty tys]; simpl in Hl1; [discriminate|].
+        destruct es2 as [|e2 es2]; simpl in Hl2; [discriminate|].
+        inversion H1 as [|p q ps qs Hp H1r]; subst.
+        inversion H2 as [|p2 q2 ps2 qs2 Hp2 H2r]; subst.
+        destruct Hp as (Hs0 & Hc0). destruct Hp2 as (Hs1 & Hc1).
+        edestruct (IH e0 ck th es2 tys qs qs2 s) as (rs & Hj & Hall); eauto.
+        exists (ljoin (ljoin th q) q2 :: rs). split.
+        + simpl. eapply sec_bind_ok; [exact Hj|]. reflexivity.
+        + rewrite unnest_ite_cons. constructor; auto.
+          split; [exact I|split].
+          * eapply assign_lexp_ite_pure; eauto.
+          * intros tf s0 s0' Htf. eapply assign_lexp_ite_type; eauto.
+    Qed.
+
+    Lemma defs_operand_types_ite :
+      forall (bs : list ident) e0 ck (es1 es2 : list exp)
+             (tys : list type) ce xst xst',
+        normalized_lexp e0 ->
+        Forall normalized_cexp es1 ->
+        Forall normalized_cexp es2 ->
+        List.length bs = List.length tys ->
+        List.length es1 = List.length tys ->
+        List.length es2 = List.length tys ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv
+          (List.map (fun '(x, e) => ([x], [e]))
+             (combine bs (unnest_ite e0 es1 es2 tys ck))) xst
+          = OK (ce, xst') ->
+        exists ts1 ts2,
+          assign_lexps GL env base_ty rst_ty es1 xst = OK (ts1, xst)
+          /\ assign_lexps GL env base_ty rst_ty es2 xst = OK (ts2, xst)
+          /\ (bs = [] \/ exists th,
+                 forall s, assign_lexp_type GL env base_ty rst_ty e0 s
+                            = OK ([th], s)).
+    Proof.
+      induction bs as [|b bs IH];
+        intros e0 ck es1 es2 tys ce xst xst' Hn0 Hn1 Hn2 Hlb Hl1 Hl2 Hgen.
+      - destruct tys; simpl in Hlb; [|discriminate].
+        destruct es1; simpl in Hl1; [|discriminate].
+        destruct es2; simpl in Hl2; [|discriminate].
+        exists [], []. rewrite assign_lexps_nil. auto.
+      - destruct tys as [|ty tys]; simpl in Hlb; [discriminate|].
+        destruct es1 as [|e1 es1]; simpl in Hl1; [discriminate|].
+        destruct es2 as [|e2 es2]; simpl in Hl2; [discriminate|].
+        inv Hn1. inv Hn2.
+        rewrite unnest_ite_cons in Hgen.
+        replace (List.map (fun '(x0, e) => ([x0], [e]))
+                   (combine (b :: bs)
+                      (Eite e0 [e1] [e2] ([ty], ck)
+                       :: unnest_ite e0 es1 es2 tys ck)))
+          with (([b], [Eite e0 [e1] [e2] ([ty], ck)])
+                :: List.map (fun '(x0, e) => ([x0], [e]))
+                     (combine bs (unnest_ite e0 es1 es2 tys ck)))
+          in Hgen by reflexivity.
+        rewrite generate_leqns_constraints_cons in Hgen.
+        eapply sec_bind_inv in Hgen as (c & xst1 & Hc & Hgen).
+        eapply sec_bind_inv in Hgen as (cs & xst2 & Hcs & Hret).
+        unfold ret in Hret. inv Hret.
+        rewrite generate_leqn_constraint_def in Hc by exact I.
+        apply generate_ldef_constraint_inv in Hc
+          as (ck' & ckty & tf & b' & xstm & Hck & Hcl & Htf & Hb & ? & ?); subst.
+        rewrite assign_lexp_Eite in Htf.
+        eapply sec_bind_inv in Htf as (t0' & sa & Ht0' & Htf).
+        eapply sec_bind_inv in Htf as (th & sb & Hth & Htf).
+        eapply sec_bind_inv in Htf as (t & sc & Ht & Htf).
+        eapply sec_bind_inv in Htf as (u & sd & Hu & Hj).
+        assert (sa = xst /\ List.length t0' = 1 /\ carried t0' = []
+                /\ forall s, assign_lexp_type GL env base_ty rst_ty e0 s
+                              = OK (t0', s)) as (? & Hl0' & _ & Hs0')
+          by (eapply assign_lexp_normalized_lexp_pure with (e := e0); eauto).
+        subst sa.
+        apply single_inv in Hth as (? & ?); subst.
+        apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
+        assert (sc = xst /\ List.length t = 1 /\ carried t = []
+                /\ forall s, assign_lexp_type GL env base_ty rst_ty e1 s
+                              = OK (t, s)) as (? & _ & _ & Hs1)
+          by (eapply assign_lexp_normalized_cexp_pure with (e := e1); eauto).
+        subst sc.
+        assert (sd = xst /\ List.length u = 1 /\ carried u = []
+                /\ forall s, assign_lexp_type GL env base_ty rst_ty e2 s
+                              = OK (u, s)) as (? & _ & _ & Hs2)
+          by (eapply assign_lexp_normalized_cexp_pure with (e := e2); eauto).
+        subst sd.
+        assert (xstm = xst) as ? by (eapply ljoin_list_pure; eauto). subst xstm.
+        edestruct (IH e0 ck es1 es2 tys cs xst xst')
+          as (ts1 & ts2 & Hts1 & Hts2 & _); eauto.
+        exists (t ++ ts1), (u ++ ts2). split; [|split].
+        + rewrite assign_lexps_cons.
+          eapply sec_bind_ok; [apply Hs1|].
+          eapply sec_bind_ok; [exact Hts1|]. reflexivity.
+        + rewrite assign_lexps_cons.
+          eapply sec_bind_ok; [apply Hs2|].
+          eapply sec_bind_ok; [exact Hts2|]. reflexivity.
+        + right. exists th. exact Hs0'.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
