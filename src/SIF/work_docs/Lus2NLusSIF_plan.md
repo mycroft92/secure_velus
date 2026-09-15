@@ -1488,3 +1488,33 @@ containment premise.
 
 Next: assemble `carries_at P true (Eite ...)` from the pieces (all now in
 place), then the two lifting branches, `Efby`/`Earrow`, and `Eapp`.
+
+### The next decision: which state-validity invariant to carry
+
+The four lifting constructors (`Emerge`/`Eite` without `is_control`,
+`Efby`/`Earrow`) and `Eapp` all end by minting one variable per result with
+`idents_for_anns` (`idents_for_anns'` for the call).  The witness is then
+*chosen* on those names -- each gets exactly the value its emitted equation's
+constraint demands -- and `upds` / `hm_ext_upds` are in place for that.
+
+What is missing is that the minted names are **new**, i.e. that their
+security names land in `moved_by st st'` rather than somewhere the statement
+forbids moving.  In Velus that is only true under the pass's own
+state-validity invariant, and the shape of that invariant is a real choice:
+
+- `st_valid_after st norm1 aft` is the simpler one, and
+  `idents_for_anns_st_valid_after` preserves it -- but Velus proves **no**
+  `st_valid_after` preservation for `unnest_exp` itself, only for
+  `idents_for_anns`.
+- `st_valid_reuse` is what `unnest_exp_st_valid` actually threads, and it is
+  what `Eapp` needs anyway, since `idents_for_anns'` may *reuse* a name from
+  the reusable set rather than mint one.  The cost is that the premise is not
+  uniform across a constructor's operands: the reusable set shrinks, so the
+  premise for a sub-expression is `ps_adds (map fst (fresh_in e)) reusable`
+  where the parent's is `reusable`.
+
+`st_valid_reuse` is the one to carry: it is what the pass's own induction
+carries, it is the only one strong enough for the call case, and matching the
+pass's discipline is what makes `unnest_exp_st_valid` reusable rather than
+re-derived. The shrinking set is threaded exactly as `unnest_exp_st_valid`
+threads it.
