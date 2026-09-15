@@ -1035,6 +1035,12 @@ Module Type SECLUSUNNESTING
     unfold ret. now rewrite app_nil_r.
   Qed.
 
+  Lemma fst_ljoin : forall a b, fst (ljoin a b) = merge (fst a) (fst b).
+  Proof. reflexivity. Qed.
+
+  Lemma fst_lvar : forall d, fst (lvar d) = [d].
+  Proof. reflexivity. Qed.
+
   Lemma single_inv :
     forall (ts : list LST) t st st',
       single ts st = OK (t, st') -> ts = [t] /\ st' = st.
@@ -1163,6 +1169,102 @@ Module Type SECLUSUNNESTING
       eapply assign_lexp_normalized_cexp_pure in Ht as (? & Hlt); eauto; subst.
       apply IH in Hr as (? & Hlr); subst.
       split; auto. rewrite app_length, Hlt, Hlr. reflexivity.
+  Qed.
+
+  (** Under [is_control] the merge does not lift: the branches are unnested
+      and the sampling is pushed inward, one [Emerge] per resulting stream,
+      exactly as [Ewhen] pushes its own. *)
+
+  Lemma unnest_exp_Emerge_control_inv :
+    forall G ckid es1 es2 tys cl es' eqs st st',
+      unnest_exp G true (Emerge ckid es1 es2 (tys, cl)) st = ((es', eqs), st') ->
+      exists es1' eqs1 st1 es2' eqs2,
+        map_bind2 (unnest_exp G true) es1 st = ((es1', eqs1), st1)
+        /\ map_bind2 (unnest_exp G true) es2 st1 = ((es2', eqs2), st')
+        /\ es' = unnest_merge ckid (List.concat es1') (List.concat es2') tys cl
+        /\ eqs = List.concat eqs1 ++ List.concat eqs2.
+  Proof.
+    intros G ckid es1 es2 tys cl es' eqs st st' H.
+    simpl in H. repeat inv_bind. repeat esplit; eauto.
+  Qed.
+
+  Lemma unnest_merge_nil :
+    forall ckid es2 tys cl, unnest_merge ckid [] es2 tys cl = [].
+  Proof. reflexivity. Qed.
+
+  Lemma unnest_merge_cons :
+    forall ckid e1 es1 e2 es2 ty tys cl,
+      unnest_merge ckid (e1 :: es1) (e2 :: es2) (ty :: tys) cl
+      = Emerge ckid [e1] [e2] ([ty], cl) :: unnest_merge ckid es1 es2 tys cl.
+  Proof. reflexivity. Qed.
+
+  (** And the typer reads it back as the same function of the branches'
+      types that the source rule is of the source branches' types.  Purity is
+      what makes the interleaving harmless: every sub-call starts and ends at
+      the state the whole list started at. *)
+
+  Lemma assign_lexps_unnest_merge_inv :
+    forall G env base_ty rst_ty ckid cl g (es1 es2 : list exp)
+           (tys : list type) ts'' st st',
+      Env.find ckid env = Some g ->
+      Forall normalized_cexp es1 ->
+      Forall normalized_cexp es2 ->
+      List.length es1 = List.length tys ->
+      List.length es2 = List.length tys ->
+      assign_lexps G env base_ty rst_ty (unnest_merge ckid es1 es2 tys cl) st
+        = OK (ts'', st') ->
+      exists ts us,
+        assign_lexps G env base_ty rst_ty es1 st = OK (ts, st)
+        /\ assign_lexps G env base_ty rst_ty es2 st = OK (us, st)
+        /\ st' = st
+        /\ ljoin_list (List.map (fun t => ljoin (lvar g) t) ts) us st
+           = OK (ts'', st).
+  Proof.
+    intros G env base_ty rst_ty ckid cl g es1.
+    induction es1 as [|e1 es1 IH];
+      intros es2 tys ts'' st st' Hg Hn1 Hn2 Hl1 Hl2 Has.
+    - destruct tys; simpl in Hl1; try discriminate.
+      destruct es2; simpl in Hl2; try discriminate.
+      rewrite unnest_merge_nil in Has.
+      apply assign_lexps_carried_nil in Has as (? & _ & ?); subst.
+      exists [], []. rewrite assign_lexps_nil. repeat split; reflexivity.
+    - destruct tys as [|ty tys]; simpl in Hl1; try discriminate.
+      destruct es2 as [|e2 es2]; simpl in Hl2; try discriminate.
+      inv Hn1. inv Hn2.
+      rewrite unnest_merge_cons in Has.
+      apply assign_lexps_carried_cons in Has
+        as (t0 & r & sta & Ht0 & Hr & ? & _); subst.
+      (** the head merge *)
+      rewrite assign_lexp_Emerge in Ht0.
+      eapply sec_bind_inv in Ht0 as (g' & sa & Hg' & Ht0).
+      eapply sec_bind_inv in Ht0 as (t & sb & Ht & Ht0).
+      eapply sec_bind_inv in Ht0 as (u & sc & Hu & Hj).
+      apply find_env_inv in Hg' as (Hg' & ?); subst.
+      rewrite Hg in Hg'. inv Hg'.
+      apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
+      assert (sb = st /\ List.length t = 1) as (? & Hlt)
+        by (eapply assign_lexp_normalized_cexp_pure with (e := e1); eauto).
+      subst sb.
+      assert (sc = st /\ List.length u = 1) as (? & Hlu)
+        by (eapply assign_lexp_normalized_cexp_pure with (e := e2); eauto).
+      subst sc.
+      assert (sta = st) as ? by (eapply ljoin_list_pure; eauto). subst sta.
+      apply IH in Hr as (ts & us & Hts & Hus & ? & Hjr); auto; subst.
+      exists (t ++ ts), (u ++ us). split; [|split; [|split]]; auto.
+      + rewrite assign_lexps_cons.
+        eapply sec_bind_ok; [exact Ht|].
+        eapply sec_bind_ok; [exact Hts|]. reflexivity.
+      + rewrite assign_lexps_cons.
+        eapply sec_bind_ok; [exact Hu|].
+        eapply sec_bind_ok; [exact Hus|]. reflexivity.
+      + destruct t as [|a [|]]; simpl in Hlt; try discriminate.
+        destruct u as [|b [|]]; simpl in Hlu; try discriminate.
+        simpl List.map. simpl List.app.
+        eapply sec_bind_ok; [exact Hjr|].
+        simpl in Hj.
+        eapply sec_bind_inv in Hj as (r0 & sd & Hr0 & Hret).
+        unfold ret in Hret. inv Hret.
+        simpl in Hr0. unfold ret in Hr0. inv Hr0. reflexivity.
   Qed.
 
   Section Preservation.
@@ -1308,8 +1410,8 @@ Module Type SECLUSUNNESTING
       eapply Hfresh; eauto.
     Qed.
 
-    Definition carries (P : global) (e : exp) : Prop :=
-      forall is_control es' eqs st st' ts sst sst'
+    Definition carries_at (P : global) (is_control : bool) (e : exp) : Prop :=
+      forall es' eqs st st' ts sst sst'
              ce xst xst' ts'' yst yst' dlt,
         wl_exp P e ->
         (forall x, In x (moved_by st st') -> ~ In x scope) ->
@@ -1339,6 +1441,12 @@ Module Type SECLUSUNNESTING
           /\ constraints_scoped (scope ++ moved_by st st') ce
           /\ Forall (fun t'' => st_scoped (scope ++ moved_by st st') (fst t''))
                ts''.
+
+    (** The two [is_control] branches of [Emerge] and [Eite] are different
+        proofs -- one lifts and one does not -- so the statement is indexed by
+        the flag and the expression-level property quantifies over it. *)
+    Definition carries (P : global) (e : exp) : Prop :=
+      forall is_control, carries_at P is_control e.
 
     (** Nothing was emitted, so nothing has to be satisfied. *)
 
@@ -2163,6 +2271,115 @@ Module Type SECLUSUNNESTING
           * eapply st_scoped_weaken; [|exact Hz]. apply incl_refl.
           * intros y Hy. destruct Hy as [|[]]; subst.
             apply in_or_app; now left.
+    Qed.
+
+    (** * The componentwise join, related on both sides
+
+        [Emerge] and [Eite] both build their result with
+        [ljoin_list (map (ljoin (lvar g)) _) _], on the source and on the
+        target alike.  So the relation between the two sides is established
+        once, by walking the two joins together, and the two constructors
+        then differ only in how they get their operands. *)
+
+    Lemma ljoin_list_rel :
+      forall dlt g ts us rs ts' us' rs' s1 s1' s2 s2',
+        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts) us s1
+          = OK (rs, s1') ->
+        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts') us' s2
+          = OK (rs', s2') ->
+        Forall2 (fun t t' => satisfiable dlt (fst t') (merge amb (fst t)))
+          ts ts' ->
+        Forall2 (fun u u' => satisfiable dlt (fst u') (merge amb (fst u)))
+          us us' ->
+        Forall2 (fun r r' => satisfiable dlt (fst r') (merge amb (fst r)))
+          rs rs'.
+    Proof.
+      intros dlt g ts. revert g.
+      induction ts as [|t ts IH];
+        intros g us rs ts' us' rs' s1 s1' s2 s2' Hj Hj' Hts Hus.
+      - inv Hts. destruct us; simpl in Hj; [|discriminate].
+        unfold ret in Hj. inv Hj.
+        inv Hus. simpl in Hj'. unfold ret in Hj'. inv Hj'. constructor.
+      - inversion Hts as [|t0 t0' ts0 ts0' Ht Htsr]; subst.
+        destruct us as [|u us]; simpl in Hj; [discriminate|].
+        inversion Hus as [|u0 u0' us0 us0' Hu Husr]; subst.
+        eapply sec_bind_inv in Hj as (r & sa & Hr & Hret).
+        unfold ret in Hret. inv Hret.
+        simpl in Hj'.
+        eapply sec_bind_inv in Hj' as (r' & sb & Hr' & Hret').
+        unfold ret in Hret'. inv Hret'.
+        constructor; [|eapply IH; eauto].
+        rewrite !fst_ljoin, !fst_lvar.
+        apply satisfiable_merge_intro; [apply satisfiable_merge_intro|].
+        + (** the sampling variable is on both sides *)
+          eapply satisfiable_trans; [apply satisfiable_merge_l|].
+          eapply satisfiable_trans; [apply satisfiable_merge_l|].
+          apply satisfiable_merge_r.
+        + apply satisfiable_merge_grow_l.
+          eapply satisfiable_trans; [exact Ht|].
+          apply satisfiable_merge_intro.
+          * apply satisfiable_merge_l.
+          * eapply satisfiable_trans; [apply satisfiable_merge_r|].
+            apply satisfiable_merge_r.
+        + now apply satisfiable_merge_grow_r.
+    Qed.
+
+    Lemma ljoin_list_scoped :
+      forall sc g ts us rs s s',
+        In g sc ->
+        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts) us s = OK (rs, s') ->
+        Forall (fun t => st_scoped sc (fst t)) ts ->
+        Forall (fun u => st_scoped sc (fst u)) us ->
+        Forall (fun r => st_scoped sc (fst r)) rs.
+    Proof.
+      intros sc g ts. revert g.
+      induction ts as [|t ts IH]; intros g us rs s s' Hg Hj Hts Hus.
+      - destruct us; simpl in Hj; [|discriminate].
+        unfold ret in Hj. inv Hj. constructor.
+      - destruct us as [|u us]; simpl in Hj; [discriminate|].
+        eapply sec_bind_inv in Hj as (r & sa & Hr & Hret).
+        unfold ret in Hret. inv Hret.
+        inversion Hts as [|z zs Hz Hzr]; subst.
+        inversion Hus as [|w ws Hw Hwr]; subst.
+        constructor; [|eapply IH; eauto].
+        rewrite !fst_ljoin, !fst_lvar.
+        apply st_scoped_merge; [apply st_scoped_merge|]; auto.
+        intros y Hy. destruct Hy as [|[]]; subst; auto.
+    Qed.
+
+    Lemma ljoin_list_scoped_inv :
+      forall sc g ts us rs s s',
+        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts) us s = OK (rs, s') ->
+        Forall (fun r => st_scoped sc (fst r)) rs ->
+        Forall (fun t => st_scoped sc (fst t)) ts
+        /\ Forall (fun u => st_scoped sc (fst u)) us
+        /\ (ts = [] \/ In g sc).
+    Proof.
+      intros sc g ts. revert g.
+      induction ts as [|t ts IH]; intros g us rs s s' Hj Hrs.
+      - destruct us; simpl in Hj; [|discriminate].
+        unfold ret in Hj. inv Hj. auto.
+      - destruct us as [|u us]; simpl in Hj; [discriminate|].
+        eapply sec_bind_inv in Hj as (r & sa & Hr & Hret).
+        unfold ret in Hret. inv Hret.
+        inversion Hrs as [|z zs Hz Hzr]; subst.
+        apply IH in Hr as (Hts & Hus & _); auto.
+        rewrite !fst_ljoin, !fst_lvar in Hz.
+        apply st_scoped_merge_inv in Hz as (Hz & Hu).
+        apply st_scoped_merge_inv in Hz as (Hgz & Ht).
+        split; [|split].
+        + constructor; auto.
+        + constructor; auto.
+        + right. apply Hgz. now left.
+    Qed.
+
+    Lemma carried_map_merge_l :
+      forall g ts,
+        carried (List.map (fun t => ljoin (lvar g) t) ts) = carried ts.
+    Proof.
+      induction ts as [|t ts IH]; [reflexivity|].
+      simpl List.map. rewrite !carried_cons, IH.
+      unfold ljoin, lvar. simpl snd. now rewrite cmerge_nil2.
     Qed.
 
   End Preservation.
