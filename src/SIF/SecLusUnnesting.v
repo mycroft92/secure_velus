@@ -1717,6 +1717,14 @@ Module Type SECLUSUNNESTING
 
     (** Nothing was emitted, so nothing has to be satisfied. *)
 
+    Lemma generate_leqns_constraints_cons :
+      forall eq eqs,
+        generate_leqns_constraints GL env base_ty rst_ty cenv (eq :: eqs)
+        = (do c  <- generate_leqn_constraint GL env base_ty rst_ty cenv eq;
+           do cs <- generate_leqns_constraints GL env base_ty rst_ty cenv eqs;
+           SC.ret (c ++ cs)).
+    Proof. reflexivity. Qed.
+
     Lemma generate_leqns_constraints_nil :
       forall ce xst xst',
         generate_leqns_constraints GL env base_ty rst_ty cenv [] xst
@@ -3338,6 +3346,311 @@ Module Type SECLUSUNNESTING
       intros s bs vs dlt Havoid. symmetry.
       eapply hm_ext_off with (xs := bs); [apply upds_agree_off|].
       intros x Hx. now apply Havoid.
+    Qed.
+
+    (** * The shape every lifting constructor ends in
+
+        The pass returns one [Evar] per result and emits one equation per
+        result.  [Efby] and [Earrow] spell the emitted list differently --
+        one maps over a [combine], the other combines two maps -- so both are
+        first put in the same form, and everything after is shared. *)
+
+    Lemma assign_lexps_evars :
+      forall (xs : list (ident * ann)) ts'' st st',
+        assign_lexps GL env base_ty rst_ty
+          (List.map (fun '(x, a) => Evar x a) xs) st = OK (ts'', st') ->
+        st' = st
+        /\ Forall2 (fun xa t => exists b, Env.find (fst xa) env = Some b
+                                          /\ t = lvar b) xs ts''.
+    Proof.
+      induction xs as [|[x a] xs IH]; intros ts'' st st' H.
+      - simpl List.map in H.
+        apply (assign_lexps_carried_nil GL env base_ty rst_ty) in H
+          as (? & _ & ?); subst.
+        split; auto.
+      - simpl List.map in H.
+        apply (assign_lexps_carried_cons GL env base_ty rst_ty) in H
+          as (t & r & sta & Ht & Hr & ? & _); subst.
+        apply assign_lexp_Evar_inv in Ht as (b & Hb & ? & ?); subst.
+        apply IH in Hr as (? & Hall); subst.
+        split; auto. simpl List.app.
+        constructor; auto. exists b. auto.
+    Qed.
+
+    Lemma emitted_defs_map_form :
+      forall (xs : list (ident * ann)) (rhss : list exp),
+        List.map (fun '((x, _), e) => ([x], [e])) (combine xs rhss)
+        = List.map (fun '(x, e) => ([x], [e]))
+            (combine (List.map fst xs) rhss).
+    Proof.
+      induction xs as [|[x a] xs IH]; intros rhss; [reflexivity|].
+      destruct rhss as [|e rhss]; [reflexivity|].
+      simpl. f_equal. apply IH.
+    Qed.
+
+    Lemma emitted_defs_combine_form :
+      forall (xs : list (ident * ann)) (rhss : list exp),
+        combine (List.map (fun '(id, _) => [id]) xs)
+          (List.map (fun e => [e]) rhss)
+        = List.map (fun '(x, e) => ([x], [e]))
+            (combine (List.map fst xs) rhss).
+    Proof.
+      induction xs as [|[x a] xs IH]; intros rhss; [reflexivity|].
+      destruct rhss as [|e rhss]; [reflexivity|].
+      simpl. f_equal. apply IH.
+    Qed.
+
+    Lemma hm_ext_single :
+      forall dlt b, hm_ext dlt [b] = Lat.join (dlt b) Lat.bottom.
+    Proof. reflexivity. Qed.
+
+    Lemma upd_same : forall b v dlt, upd b v dlt b = v.
+    Proof.
+      intros b v dlt. unfold upd.
+      destruct (ident_eq_dec b b) as [?|Hne]; [reflexivity|now elim Hne].
+    Qed.
+
+    Lemma satisfiable_singleton :
+      forall dlt b X,
+        Lat.order (dlt b) (hm_ext dlt X) -> satisfiable dlt [b] X.
+    Proof.
+      intros dlt b X H. unfold satisfiable. simpl.
+      apply Lat.join_least_upper_bound; auto.
+    Qed.
+
+    Lemma sec_of_cons_In :
+      forall x xs b, Env.find x env = Some b -> In b (sec_of (x :: xs)).
+    Proof.
+      intros x xs b Hb. unfold sec_of. apply in_flat_map.
+      exists x. split; [now left|]. rewrite Hb. now left.
+    Qed.
+
+    Lemma sec_of_incl_cons :
+      forall x xs, incl (sec_of xs) (sec_of (x :: xs)).
+    Proof.
+      intros x xs b Hb. unfold sec_of in *.
+      apply in_flat_map in Hb as (y & Hy & Hb).
+      apply in_flat_map. exists y. split; auto. now right.
+    Qed.
+
+    Lemma sec_of_nIn :
+      forall x xs b,
+        ~ In x xs -> Env.find x env = Some b -> ~ In b (sec_of xs).
+    Proof.
+      intros x xs b Hx Hb Hin. unfold sec_of in Hin.
+      apply in_flat_map in Hin as (y & Hy & Hin).
+      destruct (Env.find y env) as [c|] eqn:Ey; simpl in Hin; [|contradiction].
+      destruct Hin as [|[]]; subst.
+      apply Hx. replace x with y; auto. symmetry. eapply env_inj; eauto.
+    Qed.
+
+    (** A defining equation of a minted variable, reduced.  The right-hand
+        sides the lifting constructors emit are never calls, so the equation
+        generator takes its ordinary-definition branch. *)
+
+    Lemma generate_leqn_constraint_def :
+      forall x e,
+        (match e with Eapp _ _ _ _ => False | _ => True end) ->
+        generate_leqn_constraint GL env base_ty rst_ty cenv ([x], [e])
+        = generate_ldef_constraint GL env base_ty rst_ty cenv x e.
+    Proof. intros x e He. destruct e; try reflexivity; contradiction. Qed.
+
+    Lemma generate_ldef_constraint_inv :
+      forall x e c xst xst',
+        generate_ldef_constraint GL env base_ty rst_ty cenv x e xst
+          = OK (c, xst') ->
+        exists ck ckty tf b xst1,
+          find_clock cenv x = OK ck
+          /\ assign_clk_type env base_ty ck = Some ckty
+          /\ assign_lexp_type GL env base_ty rst_ty e xst = OK ([tf], xst1)
+          /\ Env.find x env = Some b
+          /\ c = cmerge [(merge (merge [rst_ty] ckty) (fst tf), [b])] (snd tf).
+    Proof.
+      intros x e c xst xst' H.
+      unfold generate_ldef_constraint in H.
+      eapply sec_bind_inv in H as (ckty & sa & Hck & H).
+      eapply sec_bind_inv in H as (ts & sb & Hts & H).
+      eapply sec_bind_inv in H as (tf & sc & Htf & H).
+      eapply sec_bind_inv in H as (b & sd & Hb & Hret).
+      unfold ret in Hret. inv Hret.
+      apply single_inv in Htf as (? & ?); subst.
+      apply find_env_inv in Hb as (Hb & ?); subst.
+      unfold eqn_clock_type in Hck.
+      eapply sec_bind_inv in Hck as (ck & se & Hckr & Hcl).
+      destruct (find_clock cenv x) as [ck'|] eqn:Ecl; [|discriminate].
+      unfold res_to_sec, ret in Hckr. inv Hckr.
+      apply option_to_sec_inv in Hcl as (Hcl & ?); subst.
+      exists ck, ckty, tf, b, sb.
+      split; [first [reflexivity|exact Ecl]|].
+      split; [exact Hcl|].
+      split; [exact Hts|].
+      split; [exact Hb|].
+      unfold lconstrain, ambient.
+      rewrite !fst_ljoin, fst_lvar. simpl snd.
+      now rewrite cmerge_nil2.
+    Qed.
+
+    (** * The emitted definitions of a lifting constructor
+
+        One constraint per result, and the witness is chosen to satisfy it
+        exactly.  The values are computed from types that live inside
+        [bound], and the names being given values are outside [bound], so
+        nothing here is self-referential. *)
+
+    Lemma lifted_defs :
+      forall bound (xs : list ident) (rhss : list exp) (srcs : list LST)
+             ce xst xst' dlt,
+        NoDup xs ->
+        List.length xs = List.length rhss ->
+        (forall b, In b (sec_of xs) -> ~ In b bound) ->
+        (forall x ck ckty, In x xs ->
+             find_clock cenv x = OK ck ->
+             assign_clk_type env base_ty ck = Some ckty ->
+             incl (merge [rst_ty] ckty) amb) ->
+        st_scoped bound amb ->
+        Forall (fun e => (match e with Eapp _ _ _ _ => False | _ => True end)
+                         /\ forall ts s s',
+                              assign_lexp_type GL env base_ty rst_ty e s
+                                = OK (ts, s') ->
+                              s' = s /\ List.length ts = 1 /\ carried ts = [])
+          rhss ->
+        Forall (fun src => st_scoped bound (fst src)) srcs ->
+        Forall2 (fun e src =>
+            forall tf s s',
+              assign_lexp_type GL env base_ty rst_ty e s = OK ([tf], s') ->
+              satisfiable dlt (fst tf) (merge amb (fst src))
+              /\ st_scoped bound (fst tf)) rhss srcs ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv
+          (List.map (fun '(x, e) => ([x], [e])) (combine xs rhss)) xst
+          = OK (ce, xst') ->
+        exists dlt',
+          agree_off (sec_of xs) dlt dlt'
+          /\ listSatisfiable dlt' ce
+          /\ constraints_scoped (bound ++ sec_of xs) ce
+          /\ Forall2 (fun x src => forall b, Env.find x env = Some b ->
+                          satisfiable dlt' [b] (merge amb (fst src)))
+               xs srcs.
+    Proof.
+      intros bound xs. revert bound.
+      induction xs as [|x xs IH];
+        intros bound rhss srcs ce xst xst' dlt
+          Hnd Hlen Hsep Hamb Hambsc Hpure Hsrcsc Hrel Hgen.
+      - destruct rhss; simpl in Hlen; [|discriminate].
+        inv Hrel. simpl in Hgen.
+        apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
+        exists dlt. split; [apply agree_off_refl|].
+        split; [constructor|split; [constructor|constructor]].
+      - destruct rhss as [|e rhss]; simpl in Hlen; [discriminate|].
+        inversion Hrel as [|e0 src0 rhss0 srcs0 Hr Hrelr]; subst.
+        inversion Hnd as [|x0 xs0 Hxn Hndr]; subst.
+        inversion Hpure as [|e1 rhss1 Hhead Hpurer]; subst.
+        inversion Hsrcsc as [|s0 srcs1 Hs0 Hsrcsr]; subst.
+        replace (List.map (fun '(x0, e0) => ([x0], [e0]))
+                   (combine (x :: xs) (e :: rhss)))
+          with (([x], [e])
+                :: List.map (fun '(x0, e0) => ([x0], [e0])) (combine xs rhss))
+          in Hgen by reflexivity.
+        rewrite generate_leqns_constraints_cons in Hgen.
+        eapply sec_bind_inv in Hgen as (c & xst1 & Hc & Hgen).
+        eapply sec_bind_inv in Hgen as (cs & xst2 & Hcs & Hret).
+        unfold ret in Hret. inv Hret.
+        rewrite generate_leqn_constraint_def in Hc by tauto.
+        apply generate_ldef_constraint_inv in Hc
+          as (ck & ckty & tf & b & xstm & Hck & Hcl & Htf & Hb & ?); subst.
+        destruct Hhead as (_ & Hp).
+        specialize (Hp _ _ _ Htf) as (? & _ & Hcar); subst xstm.
+        rewrite carried_single in Hcar. rewrite Hcar, cmerge_nil.
+        specialize (Hr _ _ _ Htf) as (Hdom & Hsc).
+
+        (** the rest of the results *)
+        edestruct (IH bound rhss srcs0 cs xst1 xst' dlt)
+          as (dlt1 & Hoff1 & Hce1 & Hscope1 & Hrel1); auto.
+        { intros b' Hb'. apply Hsep. now apply sec_of_incl_cons. }
+        { intros y cky ckty' Hy. apply Hamb. now right. }
+
+        (** this result: its name gets exactly what its constraint demands *)
+        assert (~ In b (sec_of xs)) as Hbx by (eapply sec_of_nIn; eauto).
+        assert (~ In b bound) as Hbb by (apply Hsep; eapply sec_of_cons_In; eauto).
+        assert (forall X, st_scoped bound X ->
+                          hm_ext dlt1 X = hm_ext dlt X) as Hstable.
+        { intros X HX. symmetry. eapply hm_ext_off with (xs := sec_of xs); eauto.
+          intros y Hy Hin. eapply Hsep; [now apply sec_of_incl_cons; exact Hin|].
+          now apply HX. }
+        assert (st_scoped bound (merge (merge [rst_ty] ckty) (fst tf))) as Hlsc.
+        { apply st_scoped_merge; auto.
+          intros y Hy. apply Hambsc. eapply Hamb; eauto. now left. }
+        assert (st_scoped bound (merge amb (fst src0))) as Hmsc
+            by (apply st_scoped_merge; auto).
+        assert (forall X, st_scoped bound X ->
+                  hm_ext (upd b (hm_ext dlt1
+                                   (merge (merge [rst_ty] ckty) (fst tf)))
+                            dlt1) X = hm_ext dlt1 X) as Hstable'.
+        { intros X HX. symmetry.
+          eapply hm_ext_off with (xs := [b]).
+          - intros y Hy. unfold upd.
+            destruct (ident_eq_dec y b) as [?|?];
+              [exfalso; apply Hy; now left|reflexivity].
+          - intros y Hy Hin. destruct Hin as [|[]]; subst. now apply Hbb, HX. }
+        assert (satisfiable dlt (merge (merge [rst_ty] ckty) (fst tf))
+                  (merge amb (fst src0))) as Hkey.
+        { apply satisfiable_merge_intro; [|exact Hdom].
+          eapply Lat.order_trans;
+            [apply hm_ext_incl, (Hamb x ck ckty); auto; now left|].
+          apply satisfiable_merge_l. }
+
+        exists (upd b (hm_ext dlt1 (merge (merge [rst_ty] ckty) (fst tf))) dlt1).
+        split; [|split; [|split]].
+        + (** only the minted names moved *)
+          intros y Hy. rewrite (Hoff1 y); [|intro; apply Hy;
+                                            now apply sec_of_incl_cons].
+          unfold upd. destruct (ident_eq_dec y b) as [?|?]; [|reflexivity].
+          subst. exfalso. apply Hy. eapply sec_of_cons_In; eauto.
+        + (** the emitted constraints hold, by construction *)
+          apply listSatisfiable_app. split.
+          * constructor; [|constructor].
+            unfold constraintSatisfiable, satisfiable.
+            rewrite hm_ext_single, upd_same, (Hstable' _ Hlsc).
+            apply Lat.join_bound1.
+          * eapply listSatisfiable_off_scope
+              with (sc := bound ++ sec_of xs) (xs := [b]); eauto.
+            -- intros y Hy Hin. destruct Hy as [|[]]; subst.
+               apply in_app_or in Hin as [Hin|Hin]; [now apply Hbb|now apply Hbx].
+            -- intros y Hy. unfold upd.
+               destruct (ident_eq_dec y b) as [?|?];
+                 [exfalso; apply Hy; now left|reflexivity].
+        + (** and stay inside the bound *)
+          apply Forall_app. split.
+          * constructor; [|constructor].
+            intros y Hy. unfold constraint_scope in Hy. simpl in Hy.
+            apply in_app_or in Hy as [Hy|Hy].
+            -- apply in_or_app. left. now apply Hlsc.
+            -- destruct Hy as [|[]]; subst. apply in_or_app. right.
+               eapply sec_of_cons_In; eauto.
+          * eapply Forall_impl; [|exact Hscope1].
+            intros c0 Hc0. eapply constraint_scoped_incl; [|exact Hc0].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr, sec_of_incl_cons.
+        + (** each result's name dominates the source it replaced *)
+          constructor.
+          * intros b' Hb'. rewrite Hb in Hb'. inv Hb'.
+            apply satisfiable_singleton. rewrite upd_same.
+            rewrite (Hstable' _ Hmsc), (Hstable _ Hlsc), (Hstable _ Hmsc).
+            exact Hkey.
+          * eapply Forall2_impl_In; [|exact Hrel1].
+            intros y src Hy Hsrc Hyr b' Hb'.
+            eapply satisfiable_off with (xs := [b]); eauto.
+            -- intros z Hz. unfold upd.
+               destruct (ident_eq_dec z b) as [?|?];
+                 [exfalso; apply Hz; now left|reflexivity].
+            -- intros z Hz Hin. destruct Hz as [|[]]; subst.
+               destruct Hin as [|[]]; subst.
+               apply Hbx. unfold sec_of. apply in_flat_map.
+               exists y. split; auto. rewrite Hb'. now left.
+            -- intros z Hz Hin. destruct Hin as [|[]]; subst.
+               apply in_merge_inv in Hz as [Hz|Hz].
+               ++ now apply Hbb, Hambsc.
+               ++ apply Hbb. eapply Forall_forall in Hsrcsr; [|exact Hsrc].
+                  now apply Hsrcsr.
     Qed.
 
   End Preservation.
