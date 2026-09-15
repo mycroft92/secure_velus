@@ -319,6 +319,31 @@ This is worth recording as a case where the obvious route — match the pass's
 own induction — was the more expensive one, and a derived fact the pass
 already proves was enough.
 
+### The operands are not in the target expression list
+
+One thing the delay cases forced that nothing before them did.  The
+operands' hypotheses need the operands' *target* typings as a premise, and
+for `Ewhen`, `Emerge` and `Eite` those are available: the target expression
+list is built out of the unnested operands, so inverting the target typing
+of the whole expression yields them.
+
+For `Efby` and `Earrow` it is not.  The target expression list is the minted
+variables — the operands appear nowhere in it.  They appear only inside the
+*emitted equations*, as the operands of the delays those equations bind.  So
+the operands' typings have to be recovered from the emitted block rather
+than from the returned expressions, which is a small extra induction
+(`defs_operand_types`, still to write) over the same zipped list
+`lifted_defs` walks.
+
+It is worth recording because it is the first place where the returned
+expressions and the emitted equations carry genuinely different information,
+and because it is a symptom of the statement's shape: the target typing is a
+*premise* rather than a conclusion.  Making it a conclusion — proving the
+target types whenever the source does, which is the stronger and more
+natural "type preservation" statement — would remove this wrinkle and the
+`Eite` zero-stream one together.  That is a larger change and is not being
+made now.
+
 ### The block lemma
 
 `lifted_defs` is what the four non-call lifting cases share: given the
@@ -395,13 +420,15 @@ the mechanisation going through:
 
 Proved, no admits: `Econst`, `Evar`, `Eunop`, `Ebinop`, the list level,
 `Ewhen`, `Emerge` under `is_control`, `Eite` under `is_control`, all the
-infrastructure above, and `lifted_defs` — the block the four non-call
-lifting cases share.
+infrastructure above, `lifted_defs` — the block the four non-call lifting
+cases share — and the delay machinery (`unnest_fby_types`,
+`unnest_arrow_types`, and the state-independence and elementwise-typing
+results they rest on).
 
-Remaining: assembling those four cases from `lifted_defs` and their
-control-branch counterparts; `Eapp`; then the equation, node and program
-levels (reusing `Signature_entails` for the two-globals lockstep), then
-Leg I (`normfby_global`).
+Remaining: `defs_operand_types`, then assembling the four lifting cases;
+`Eapp`; then the equation, node and program levels (reusing
+`Signature_entails` for the two-globals lockstep), then Leg I
+(`normfby_global`).
 
 ## Downstream use
 
