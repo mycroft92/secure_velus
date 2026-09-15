@@ -1267,6 +1267,111 @@ Module Type SECLUSUNNESTING
         simpl in Hr0. unfold ret in Hr0. inv Hr0. reflexivity.
   Qed.
 
+  Lemma unnest_exp_Eite_control_inv :
+    forall G e es1 es2 tys ck es' eqs st st',
+      unnest_exp G true (Eite e es1 es2 (tys, ck)) st = ((es', eqs), st') ->
+      exists e' eqs0 st0 es1' eqs1 st1 es2' eqs2,
+        unnest_exp G false e st = ((e', eqs0), st0)
+        /\ map_bind2 (unnest_exp G true) es1 st0 = ((es1', eqs1), st1)
+        /\ map_bind2 (unnest_exp G true) es2 st1 = ((es2', eqs2), st')
+        /\ es' = unnest_ite (hd_default e') (List.concat es1')
+                   (List.concat es2') tys ck
+        /\ eqs = eqs0 ++ List.concat eqs1 ++ List.concat eqs2.
+  Proof.
+    intros G e es1 es2 tys ck es' eqs st st' H.
+    simpl in H. repeat inv_bind. repeat esplit; eauto.
+  Qed.
+
+  Lemma unnest_ite_nil :
+    forall e es2 tys ck, unnest_ite e [] es2 tys ck = [].
+  Proof. reflexivity. Qed.
+
+  Lemma unnest_ite_cons :
+    forall e e1 es1 e2 es2 ty tys ck,
+      unnest_ite e (e1 :: es1) (e2 :: es2) (ty :: tys) ck
+      = Eite e [e1] [e2] ([ty], ck) :: unnest_ite e es1 es2 tys ck.
+  Proof. reflexivity. Qed.
+
+  (** The scrutinee is typed once per resulting stream rather than once, but
+      it is normalized, so the generator gives it the same answer every time
+      and never moves the state.  That is the whole difference from the merge
+      inversion above. *)
+
+  Lemma assign_lexps_unnest_ite_inv :
+    forall G env base_ty rst_ty e0 ck (es1 es2 : list exp)
+           (tys : list type) ts'' st st',
+      normalized_lexp e0 ->
+      Forall normalized_cexp es1 ->
+      Forall normalized_cexp es2 ->
+      List.length es1 = List.length tys ->
+      List.length es2 = List.length tys ->
+      assign_lexps G env base_ty rst_ty (unnest_ite e0 es1 es2 tys ck) st
+        = OK (ts'', st') ->
+      st' = st
+      /\ exists ts us,
+           assign_lexps G env base_ty rst_ty es1 st = OK (ts, st)
+           /\ assign_lexps G env base_ty rst_ty es2 st = OK (us, st)
+           /\ ((exists th,
+                   assign_lexp_type G env base_ty rst_ty e0 st = OK ([th], st)
+                   /\ ljoin_list (List.map (fun t => ljoin th t) ts) us st
+                      = OK (ts'', st))
+               \/ (ts = [] /\ us = [] /\ ts'' = [])).
+  Proof.
+    intros G env base_ty rst_ty e0 ck es1.
+    induction es1 as [|e1 es1 IH];
+      intros es2 tys ts'' st st' Hn0 Hn1 Hn2 Hl1 Hl2 Has.
+    - destruct tys; simpl in Hl1; try discriminate.
+      destruct es2; simpl in Hl2; try discriminate.
+      rewrite unnest_ite_nil in Has.
+      apply assign_lexps_carried_nil in Has as (? & _ & ?); subst.
+      split; auto. exists [], []. rewrite assign_lexps_nil.
+      split; [reflexivity|split; [reflexivity|]]. right; auto.
+    - destruct tys as [|ty tys]; simpl in Hl1; try discriminate.
+      destruct es2 as [|e2 es2]; simpl in Hl2; try discriminate.
+      inv Hn1. inv Hn2.
+      rewrite unnest_ite_cons in Has.
+      apply assign_lexps_carried_cons in Has
+        as (t0 & r & sta & Ht0 & Hr & ? & _); subst.
+      rewrite assign_lexp_Eite in Ht0.
+      eapply sec_bind_inv in Ht0 as (t0' & sa & Ht0' & Ht0).
+      eapply sec_bind_inv in Ht0 as (th & sb & Hth & Ht0).
+      eapply sec_bind_inv in Ht0 as (t & sc & Ht & Ht0).
+      eapply sec_bind_inv in Ht0 as (u & sd & Hu & Hj).
+      assert (sa = st) as ? by
+          (eapply assign_lexp_normalized_lexp_pure with (e := e0); eauto).
+      subst sa.
+      apply single_inv in Hth as (? & ?); subst.
+      apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
+      assert (sc = st /\ List.length t = 1) as (? & Hlt)
+        by (eapply assign_lexp_normalized_cexp_pure with (e := e1); eauto).
+      subst sc.
+      assert (sd = st /\ List.length u = 1) as (? & Hlu)
+        by (eapply assign_lexp_normalized_cexp_pure with (e := e2); eauto).
+      subst sd.
+      assert (sta = st) as ? by (eapply ljoin_list_pure; eauto). subst sta.
+      apply IH in Hr as (? & ts & us & Hts & Hus & Hrest); auto. subst.
+      destruct t as [|a [|]]; simpl in Hlt; try discriminate.
+      destruct u as [|b [|]]; simpl in Hlu; try discriminate.
+      simpl in Hj.
+      eapply sec_bind_inv in Hj as (r0 & se & Hr0 & Hret).
+      unfold ret in Hret. inv Hret.
+      simpl in Hr0. unfold ret in Hr0. inv Hr0.
+      split; auto.
+      exists (a :: ts), (b :: us). split; [|split].
+      + rewrite assign_lexps_cons.
+        eapply sec_bind_ok; [exact Ht|].
+        eapply sec_bind_ok; [exact Hts|]. reflexivity.
+      + rewrite assign_lexps_cons.
+        eapply sec_bind_ok; [exact Hu|].
+        eapply sec_bind_ok; [exact Hus|]. reflexivity.
+      + left. exists th. split; [exact Ht0'|].
+        simpl List.map.
+        eapply sec_bind_ok; [|reflexivity].
+        destruct Hrest as [(th' & Hth' & Hjr)|(? & ? & ?)]; subst.
+        * rewrite Ht0' in Hth'. inv Hth'. exact Hjr.
+        * simpl. reflexivity.
+  Qed.
+
   Section Preservation.
 
     Variable GL      : secglobal.
