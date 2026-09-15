@@ -1656,6 +1656,7 @@ Module Type SECLUSUNNESTING
              ce xst xst' ts'' yst yst' dlt,
         wl_exp P e ->
         wc_exp P vars e ->
+        NoDup (vars_defined eqs ++ st_ids st) ->
         (forall x, In x (moved_by st st') -> ~ In x scope) ->
         constraints_scoped scope (carried ts) ->
         Forall (fun t => st_scoped scope (fst t)) ts ->
@@ -1733,7 +1734,7 @@ Module Type SECLUSUNNESTING
     Lemma carries_Econst : forall P c, carries P (Econst c).
     Proof.
       intros P c is_control es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst'
-        dlt _ _ _ _ Hsc _ Hun Has Hgen Has' _.
+        dlt _ _ _ _ _ Hsc _ Hun Has Hgen Has' _.
       rewrite unnest_exp_Econst in Hun. inv Hun.
       apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -1745,7 +1746,7 @@ Module Type SECLUSUNNESTING
     Lemma carries_Evar : forall P x a, carries P (Evar x a).
     Proof.
       intros P x a is_control es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst'
-        dlt _ _ _ _ Hsc _ Hun Has Hgen Has' _.
+        dlt _ _ _ _ _ Hsc _ Hun Has Hgen Has' _.
       rewrite unnest_exp_Evar in Hun. inv Hun.
       apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -1776,7 +1777,7 @@ Module Type SECLUSUNNESTING
       forall P op e a, carries P e -> carries P (Eunop op e a).
     Proof.
       intros P op e a IH is_control es' eqs st st' ts sst sst' ce xst xst' ts''
-        yst yst' dlt Hwl Hwc Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+        yst yst' dlt Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
       inv Hwl. inv Hwc.
       apply unnest_exp_Eunop_inv in Hun as (e1' & st1 & Hun & ? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -1818,6 +1819,84 @@ Module Type SECLUSUNNESTING
         + simpl. eapply sec_bind_ok; [exact Hc|].
           eapply sec_bind_ok; [exact H1|]. reflexivity.
         + now rewrite app_assoc.
+    Qed.
+
+    (** * What the run moved is what its equations define
+
+        [unnest_exp_vars_perm] says the pass adds to the fresh state exactly
+        the variables its emitted equations define.  With no duplicates, that
+        turns the abstract [moved_by] into something concrete and checkable:
+        the names this run may move are the security names of
+        [vars_defined eqs] -- the same list the ambient premise quantifies
+        over.
+
+        This is also why the state-validity invariant does not have to be
+        carried in Velus's own form.  All the lifting cases need of it is
+        that what the run minted is new, and the permutation plus a single
+        [NoDup] premise deliver exactly that, without the shrinking reusable
+        set that [unnest_exp_st_valid] threads. *)
+
+    Lemma map_bind2_unnest_vars_perm :
+      forall P ic es es' eqs st st',
+        Forall (wl_exp P) es ->
+        map_bind2 (unnest_exp P ic) es st = ((es', eqs), st') ->
+        Permutation (vars_defined (List.concat eqs) ++ st_ids st) (st_ids st').
+    Proof.
+      intros P ic es es' eqs st st' Hwl Hmap.
+      eapply map_bind2_vars_perm; eauto.
+      eapply Forall_impl; [|exact Hwl].
+      intros e He es'0 eqs0 st0 st0' Hun.
+      eapply unnest_exp_vars_perm; eauto.
+    Qed.
+
+    Lemma NoDup_vd_app_l :
+      forall (eqs1 eqs2 : list equation) (s : list ident),
+        NoDup (vars_defined (eqs1 ++ eqs2) ++ s) ->
+        NoDup (vars_defined eqs1 ++ s).
+    Proof.
+      intros eqs1 eqs2 s H.
+      rewrite vars_defined_app, <- app_assoc in H.
+      rewrite Permutation_swap in H.
+      eapply NoDup_app_r; eauto.
+    Qed.
+
+    Lemma NoDup_vd_app_r :
+      forall (eqs1 eqs2 : list equation) (s s1 : list ident),
+        Permutation (vars_defined eqs1 ++ s) s1 ->
+        NoDup (vars_defined (eqs1 ++ eqs2) ++ s) ->
+        NoDup (vars_defined eqs2 ++ s1).
+    Proof.
+      intros eqs1 eqs2 s s1 Hperm H.
+      rewrite <- Hperm.
+      rewrite vars_defined_app, <- app_assoc in H.
+      now rewrite Permutation_swap.
+    Qed.
+
+    Lemma vars_defined_in_new_ids :
+      forall eqs st st' x,
+        Permutation (vars_defined eqs ++ st_ids st) (st_ids st') ->
+        NoDup (vars_defined eqs ++ st_ids st) ->
+        In x (vars_defined eqs) ->
+        In x (new_ids st st').
+    Proof.
+      intros eqs st st' x Hperm Hnd Hx.
+      apply new_ids_spec. split.
+      - rewrite <- Hperm. apply in_or_app. now left.
+      - eapply NoDup_app_In; eauto.
+    Qed.
+
+    Corollary sec_of_vars_defined_moved :
+      forall eqs st st' x b,
+        Permutation (vars_defined eqs ++ st_ids st) (st_ids st') ->
+        NoDup (vars_defined eqs ++ st_ids st) ->
+        In x (vars_defined eqs) ->
+        Env.find x env = Some b ->
+        In b (moved_by st st').
+    Proof.
+      intros eqs st st' x b Hperm Hnd Hx Hb.
+      unfold moved_by, sec_of. apply in_flat_map.
+      exists x. split; [eapply vars_defined_in_new_ids; eauto|].
+      rewrite Hb. now left.
     Qed.
 
     Lemma vars_defined_incl_l :
@@ -2002,8 +2081,8 @@ Module Type SECLUSUNNESTING
         carries P e1 -> carries P e2 -> carries P (Ebinop op e1 e2 a).
     Proof.
       intros P op e1 e2 a IH1 IH2 is_control es' eqs st st' ts sst sst'
-        ce xst xst' ts'' yst yst' dlt Hwl Hwc Hmv Hsc Hsts Hamb Hun Has Hgen
-        Has' Hcar.
+        ce xst xst' ts'' yst yst' dlt Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has
+        Hgen Has' Hcar.
       inv Hwl. inv Hwc.
       apply unnest_exp_Ebinop_inv in Hun
         as (f1 & eqs1 & st1 & f2 & eqs2 & Hun1 & Hun2 & ? & ?); subst.
@@ -2047,10 +2126,13 @@ Module Type SECLUSUNNESTING
       assert (carried [a2] = snd a2) as Hc2 by (simpl; apply cmerge_nil).
 
       (** the first operand *)
+      assert (Permutation (vars_defined eqs1 ++ st_ids st) (st_ids st1)) as Hp1
+          by (eapply unnest_exp_vars_perm with (e := e1); eauto).
       edestruct (IH1 false f1 eqs1 st st1 [a1] sst sa ce1 xst xst1 [b1] yst ya dlt)
         as (dlt1 & Hoff1 & Hce1 & Hrel1 & Hscope1 & Hts1).
       { assumption. }
       { assumption. }
+      { eapply NoDup_vd_app_l; exact Hnd. }
       { intros x Hx. apply Hmv. eapply moved_by_prefix; eauto. }
       { now rewrite Hc1. }
       { constructor; [exact Hst1|constructor]. }
@@ -2068,6 +2150,7 @@ Module Type SECLUSUNNESTING
         as (dlt2 & Hoff2 & Hce2 & Hrel2 & Hscope2 & Hts2).
       { assumption. }
       { assumption. }
+      { eapply NoDup_vd_app_r; [exact Hp1|exact Hnd]. }
       { intros x Hx. apply Hmv. eapply moved_by_suffix; eauto. }
       { now rewrite Hc2. }
       { constructor; [exact Hst2|constructor]. }
@@ -2226,6 +2309,7 @@ Module Type SECLUSUNNESTING
              ce xst xst' ts'' yst yst' dlt,
         Forall (wl_exp P) es ->
         Forall (wc_exp P vars) es ->
+        NoDup (vars_defined (List.concat eqs) ++ st_ids st) ->
         (forall x, In x (moved_by st st') -> ~ In x scope) ->
         constraints_scoped scope (carried ts) ->
         Forall (fun t => st_scoped scope (fst t)) ts ->
@@ -2255,7 +2339,7 @@ Module Type SECLUSUNNESTING
       intros P es Hall.
       induction Hall as [|e es IHe IHes IH];
         intros ic es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-          Hwl Hwc Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+          Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
 
       - (** nothing to unnest, nothing emitted *)
         apply map_bind2_unnest_nil in Hun as (? & ? & ?); subst.
@@ -2289,10 +2373,13 @@ Module Type SECLUSUNNESTING
         apply listSatisfiable_cmerge in Hcar as (Hcar1 & Hcar2).
         apply Forall_app in Hsts as (Hsts1 & Hsts2).
 
+        assert (Permutation (vars_defined eq1 ++ st_ids st) (st_ids st1)) as Hp1
+            by (eapply unnest_exp_vars_perm with (e := e); eauto).
         edestruct (IHe ic f1 eq1 st st1 t sst sa ce1 xst xst1 u yst ya dlt)
           as (dlt1 & Hoff1 & Hce1 & Hrel1 & Hscope1 & Hts1).
         { assumption. }
         { assumption. }
+        { eapply NoDup_vd_app_l; exact Hnd. }
         { intros x Hx. apply Hmv. eapply moved_by_prefix; eauto. }
         { exact Hsc1. }
         { exact Hsts1. }
@@ -2308,6 +2395,7 @@ Module Type SECLUSUNNESTING
           as (dlt2 & Hoff2 & Hce2 & Hrel2 & Hscope2 & Hts2).
         { assumption. }
         { assumption. }
+        { eapply NoDup_vd_app_r; [exact Hp1|exact Hnd]. }
         { intros x Hx. apply Hmv. eapply moved_by_suffix; eauto. }
         { exact Hsc2. }
         { exact Hsts2. }
@@ -2459,8 +2547,8 @@ Module Type SECLUSUNNESTING
       forall P es x b a, Forall (carries P) es -> carries P (Ewhen es x b a).
     Proof.
       intros P es x b [tys ck] Hall is_control es' eqs st st' ts sst sst'
-        ce xst xst' ts'' yst yst' dlt Hwl Hwc Hmv Hsc Hsts Hamb Hun Has Hgen
-        Has' Hcar.
+        ce xst xst' ts'' yst yst' dlt Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has
+        Hgen Has' Hcar.
       inv Hwl. inv Hwc.
       apply unnest_exp_Ewhen_inv in Hun as (es1 & Hunn & ?); subst.
       assert (List.length es1 = List.length tys) as Hlen
@@ -2695,7 +2783,7 @@ Module Type SECLUSUNNESTING
     Proof.
       intros P ckid es1 es2 tys cl Hall1 Hall2
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
       inv Hwl. inv Hwc.
       apply unnest_exp_Emerge_control_inv in Hun
         as (f1 & eqs1 & st1 & f2 & eqs2 & Hun1 & Hun2 & ? & ?); subst.
@@ -2737,11 +2825,15 @@ Module Type SECLUSUNNESTING
       eapply ljoin_list_scoped_inv in Hsts as (Hsts1 & Hsts2 & Hgs);
         [|exact Hj].
 
+      assert (Permutation (vars_defined (List.concat eqs1) ++ st_ids st)
+                (st_ids st1)) as Hp1
+          by (eapply map_bind2_unnest_vars_perm with (es := es1); eauto).
       edestruct (carries_list_intro P es1 Hall1 true f1 eqs1 st st1 tes1 sst sb
                    ce1 xst xst1 tes1'' yst yst dlt)
         as (dlt1 & Hoff1 & Hce1 & Hrel1 & Hscope1 & Hts1).
       { assumption. }
       { assumption. }
+      { eapply NoDup_vd_app_l; exact Hnd. }
       { intros x Hx. apply Hmv. eapply moved_by_prefix; eauto. }
       { exact Hsc1. }
       { exact Hsts1. }
@@ -2758,6 +2850,7 @@ Module Type SECLUSUNNESTING
         as (dlt2 & Hoff2 & Hce2 & Hrel2 & Hscope2 & Hts2).
       { assumption. }
       { assumption. }
+      { eapply NoDup_vd_app_r; [exact Hp1|exact Hnd]. }
       { intros x Hx. apply Hmv. eapply moved_by_suffix; eauto. }
       { exact Hsc2. }
       { exact Hsts2. }
@@ -2898,7 +2991,7 @@ Module Type SECLUSUNNESTING
     Proof.
       intros P e0 es1 es2 tys ck IH0 Hall1 Hall2
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
       inv Hwl. inv Hwc.
       apply unnest_exp_Eite_control_inv in Hun
         as (f0 & eqs0 & st0 & f1 & eqs1 & st1 & f2 & eqs2
@@ -2984,11 +3077,20 @@ Module Type SECLUSUNNESTING
           by (destruct Hgs as [Hx|Hx]; [discriminate|exact Hx]).
 
       (** the scrutinee *)
+      assert (Permutation (vars_defined eqs0 ++ st_ids st) (st_ids st0)) as Hp0
+          by (eapply unnest_exp_vars_perm with (e := e0); eauto).
+      assert (NoDup (vars_defined (List.concat eqs1 ++ List.concat eqs2)
+                       ++ st_ids st0)) as Hnd0
+          by (eapply NoDup_vd_app_r; [exact Hp0|exact Hnd]).
+      assert (Permutation (vars_defined (List.concat eqs1) ++ st_ids st0)
+                (st_ids st1)) as Hp1
+          by (eapply map_bind2_unnest_vars_perm with (es := es1); eauto).
       edestruct (IH0 false f0 eqs0 st st0 [th] sst sa ce0 xst xst0
                    [th''] yst yst dlt)
         as (dlt0 & Hoff0 & Hce0 & Hrel0 & Hscope0 & Hts0).
       { assumption. }
       { assumption. }
+      { eapply NoDup_vd_app_l; exact Hnd. }
       { intros x Hx. apply Hmv.
         apply (moved_by_prefix st st0 st' Hf0'). exact Hx. }
       { simpl. now rewrite cmerge_nil. }
@@ -3007,6 +3109,7 @@ Module Type SECLUSUNNESTING
         as (dlt1 & Hoff1 & Hce1 & Hrel1 & Hscope1 & Hts1).
       { assumption. }
       { assumption. }
+      { eapply NoDup_vd_app_l; exact Hnd0. }
       { intros x Hx. apply Hmv.
         apply (moved_by_suffix st st0 st' Hf0).
         apply (moved_by_prefix st0 st1 st' Hf2). exact Hx. }
@@ -3028,6 +3131,7 @@ Module Type SECLUSUNNESTING
         as (dlt2 & Hoff2 & Hce2 & Hrel2 & Hscope2 & Hts2).
       { assumption. }
       { assumption. }
+      { eapply NoDup_vd_app_r; [exact Hp1|exact Hnd0]. }
       { intros x Hx. apply Hmv.
         apply (moved_by_suffix st st1 st' Hf01). exact Hx. }
       { exact Hsc2. }
