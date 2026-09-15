@@ -1951,6 +1951,16 @@ Module Type SECLUSUNNESTING
       now rewrite Permutation_swap.
     Qed.
 
+    Lemma NoDup_vd_drop :
+      forall (eqs1 eqs2 : list equation) (s : list ident),
+        NoDup (vars_defined (eqs1 ++ eqs2) ++ s) ->
+        NoDup (vars_defined eqs2 ++ s).
+    Proof.
+      intros eqs1 eqs2 s H.
+      rewrite vars_defined_app, <- app_assoc in H.
+      eapply NoDup_app_r; eauto.
+    Qed.
+
     Lemma vars_defined_in_new_ids :
       forall eqs st st' x,
         Permutation (vars_defined eqs ++ st_ids st) (st_ids st') ->
@@ -4137,6 +4147,35 @@ Module Type SECLUSUNNESTING
         + rewrite assign_lexps_cons.
           eapply sec_bind_ok; [apply Hs1|].
           eapply sec_bind_ok; [exact Hus|]. reflexivity.
+    Qed.
+
+    Lemma map_bind2_unnest_normalized_lexp :
+      forall P es es' eqs st st',
+        map_bind2 (unnest_exp P false) es st = ((es', eqs), st') ->
+        Forall normalized_lexp (List.concat es').
+    Proof.
+      induction es as [|e es IH]; intros es' eqs st st' H.
+      - apply map_bind2_unnest_nil in H as (? & ? & ?); subst. constructor.
+      - apply map_bind2_unnest_cons in H
+          as (e' & eq1 & st1 & es'r & eqsr & H1 & H2 & ? & ?); subst.
+        simpl List.concat. apply Forall_app. split.
+        + eapply unnest_exp_normalized_lexp; eauto.
+        + eapply IH; eauto.
+    Qed.
+
+    Lemma Forall2_combine_via :
+      forall {A B C : Type} (P : A -> C -> Prop) (Q : B -> C -> Prop)
+             (R : A -> B -> Prop) (l1 : list A) (l2 : list B) (l3 : list C),
+        Forall2 P l1 l3 -> Forall2 Q l2 l3 ->
+        (forall a b c, P a c -> Q b c -> R a b) ->
+        Forall2 R l1 l2.
+    Proof.
+      intros A B C P Q R l1. revert l1.
+      induction l1 as [|a l1 IH]; intros l2 l3 H1 H2 Himp.
+      - inv H1. inv H2. constructor.
+      - inversion H1 as [|a0 c0 l1' l3' Hac H1r]; subst.
+        inversion H2 as [|b0 c1 l2' l3'' Hbc H2r]; subst.
+        constructor; [eapply Himp; eauto|eapply IH; eauto].
     Qed.
 
   End Preservation.
