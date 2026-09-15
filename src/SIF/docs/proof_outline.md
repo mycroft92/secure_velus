@@ -111,6 +111,39 @@ of the source node, the conclusion constrains the emitted code.  The Obc-level
 input hypothesis and the inward-reading transport proofs make that easy to
 misread, which is why each exported theorem carries a direction note.
 
+## Lustre Layer
+
+The Lustre layer sits above everything listed so far, and reaches NLustre
+through the compiler's own passes rather than through a bespoke translation.
+
+- `SymLusTypes.v`, `SecLusTypes.v`, `LusTypes.v`
+  the refinement term algebra of ICTAC 2021 Figure 5, its interpretation in a
+  security lattice, and the two assembled behind one name.
+- `SecLNameInterface.v`
+  Lustre's own security-name allocator, built by reusing `NameInterface.v`'s
+  monad rather than duplicating it, together with the theorem that it agrees
+  with the NLustre one: transcription preserves a node's name, interface and
+  called instances definitionally, so the two environments are *equal*.
+  Across unnesting and fby-initialisation, which add locals, the two are
+  related by inclusion and freshness instead.
+- `SecLTyping.v`
+  Lustre-side constraint and signature generation, including the call rule
+  that gives each result of a nested call a fresh name refined by the
+  callee's instantiated constraints.
+- `SecLusUnnesting.v`
+  that those constraints survive `unnest_exp` -- the pass that turns a
+  carried refinement into an emitted equation, and so the only pass that
+  exercises the refinement machinery at all.  See
+  `docs/SecLusUnnesting.md`, which records the statement's shape, the
+  invariants the induction needs, and which case forced each of them.
+- `SecLusNLusTranslation.v`
+  preservation across transcription, from equations up to whole programs.
+  Unconditional, but blind to refinements: `to_lexp` rejects `Eapp`, so by
+  the time it runs every call has been lifted and nothing is carried.
+- `SecLusNonInterference.v`, `SecLusNonInterferenceStreams.v`
+  the Lustre-level noninterference statements, and the descent from Lustre
+  semantics through NLustre back to Lustre semantics.
+
 ## Constraint Export
 
 - `SecNLusConstraintExport.v`
