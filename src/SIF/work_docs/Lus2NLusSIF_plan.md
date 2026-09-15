@@ -1457,3 +1457,34 @@ annotation's own clock, so it matches the enclosing equation exactly. Under a
 still holds. Turning that into a lemma needs `wc_exp` and a
 "clock level is dominated by expression type" fact about `assign_clk_type`,
 which does not exist yet.
+
+### Leg U — cases proved, and what each one forced
+
+`Econst`, `Evar`, `Eunop`, `Ebinop`, the list level, `Ewhen`,
+`Emerge` under `is_control`.  Each new case has changed the statement once,
+and in every case the change was forced rather than chosen:
+
+- **`Ebinop`** forced the witness bound (`agree_off`, indexed by the pair of
+  fresh states) and the two scoping conclusions.
+- **the list level** forced nothing — it is the `Ebinop` argument folded,
+  which is the evidence that the statement had settled.
+- **`Emerge`/`Eite`** forced `is_control` into the statement (their branches
+  unnest under `true`), and forced the *purity* of the generator on the
+  pass's output: `unnest_merge` interleaves the two branches where
+  `assign_lexps` takes one and then the other, and purity is what makes the
+  order stop mattering.
+- **`Eite`** forced the clocking judgement in.  An `Eite` with no result
+  streams drops its scrutinee from the target expression list while still
+  emitting the scrutinee's equations, so the scrutinee's hypothesis could not
+  be applied; `wc_Eifte` requires at least one stream and rules it out.
+  `wc_exp` is needed later anyway — it is what will discharge the ambient.
+- **`Eite`** also forced the generator's result length (one flow per stream),
+  since the scrutinee's target type is read out of the first resulting
+  stream.
+
+Standing hypotheses, all true and all discharged at the node level:
+`env_injective env`, `st_scoped scope amb`, and the ambient's syntactic
+containment premise.
+
+Next: assemble `carries_at P true (Eite ...)` from the pieces (all now in
+place), then the two lifting branches, `Efby`/`Earrow`, and `Eapp`.
