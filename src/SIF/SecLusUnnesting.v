@@ -1066,6 +1066,9 @@ Module Type SECLUSUNNESTING
       the two branches, where [assign_lexps] would take one branch then the
       other. *)
 
+  Lemma carried_single : forall t, carried [t] = snd t.
+  Proof. intros t. simpl. apply cmerge_nil. Qed.
+
   Lemma ljoin_list_pure :
     forall ts us rs st st',
       ljoin_list ts us st = OK (rs, st') -> st' = st.
@@ -1083,7 +1086,7 @@ Module Type SECLUSUNNESTING
       normalized_lexp e ->
       forall ts st st',
         assign_lexp_type G env base_ty rst_ty e st = OK (ts, st') ->
-        st' = st /\ List.length ts = 1.
+        st' = st /\ List.length ts = 1 /\ carried ts = [].
   Proof.
     intros G env base_ty rst_ty e Hn.
     induction Hn; intros ts st st' H.
@@ -1098,16 +1101,24 @@ Module Type SECLUSUNNESTING
       unfold ret in Hret. inv Hret.
       apply single_inv in Ha1 as (? & ?); subst.
       apply single_inv in Ha2 as (? & ?); subst.
-      apply IHHn1 in Ht1 as (? & _); subst.
-      apply IHHn2 in Ht2 as (? & _); subst. auto.
+      apply IHHn1 in Ht1 as (? & _ & Hc1); subst.
+      apply IHHn2 in Ht2 as (? & _ & Hc2); subst.
+      rewrite carried_single in Hc1, Hc2 |- *.
+      split; [reflexivity|split; [reflexivity|]].
+      unfold ljoin. simpl snd. rewrite Hc1, Hc2. reflexivity.
     - rewrite assign_lexp_Ewhen in H.
       eapply sec_bind_inv in H as (t & sa & Ht & H).
       eapply sec_bind_inv in H as (g & sb & Hg & Hret).
       unfold ret in Hret. inv Hret.
       apply find_env_inv in Hg as (_ & ?); subst.
       apply assign_lexps_single in Ht.
-      apply IHHn in Ht as (? & Hlen); subst.
-      split; auto. now rewrite map_length.
+      apply IHHn in Ht as (? & Hlen & Hc); subst.
+      destruct t as [|a [|]]; simpl in Hlen; try discriminate.
+      split; [reflexivity|split].
+      + reflexivity.
+      + simpl List.map. rewrite carried_single.
+        rewrite carried_single in Hc.
+        unfold ljoin. simpl snd. rewrite Hc. apply cmerge_nil.
   Qed.
 
   Lemma assign_lexp_normalized_cexp_pure :
@@ -1115,7 +1126,7 @@ Module Type SECLUSUNNESTING
       normalized_cexp e ->
       forall ts st st',
         assign_lexp_type G env base_ty rst_ty e st = OK (ts, st') ->
-        st' = st /\ List.length ts = 1.
+        st' = st /\ List.length ts = 1 /\ carried ts = [].
   Proof.
     intros G env base_ty rst_ty e Hn.
     induction Hn as [x et ef ty cl Het IHet Hef IHef
@@ -1128,32 +1139,41 @@ Module Type SECLUSUNNESTING
       eapply sec_bind_inv in Hty as (u & sc & Hu & Hj).
       apply find_env_inv in Hg as (_ & ?); subst.
       apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
-      apply IHet in Ht as (? & Hlt); subst.
-      apply IHef in Hu as (? & Hlu); subst.
+      apply IHet in Ht as (? & Hlt & Hct); subst.
+      apply IHef in Hu as (? & Hlu & Hcu); subst.
       assert (st' = st) as ? by (eapply ljoin_list_pure; eauto); subst.
-      split; auto.
       destruct t as [|t0 [|]]; simpl in Hlt; try discriminate.
       destruct u as [|u0 [|]]; simpl in Hlu; try discriminate.
       simpl in Hj. eapply sec_bind_inv in Hj as (r & sd & Hr & Hret).
       unfold ret in Hret. inv Hret.
-      simpl in Hr. unfold ret in Hr. inv Hr. reflexivity.
+      simpl in Hr. unfold ret in Hr. inv Hr.
+      rewrite carried_single in Hct, Hcu |- *.
+      split; [reflexivity|split; [reflexivity|]].
+      unfold ljoin, lvar. simpl snd. rewrite Hct, Hcu. reflexivity.
     - rewrite assign_lexp_Eite in Hty.
       eapply sec_bind_inv in Hty as (t0 & sa & Ht0 & Hty).
       eapply sec_bind_inv in Hty as (th & sb & Hth & Hty).
       eapply sec_bind_inv in Hty as (t & sc & Ht & Hty).
       eapply sec_bind_inv in Hty as (u & sd & Hu & Hj).
       apply single_inv in Hth as (? & ?); subst.
-      eapply assign_lexp_normalized_lexp_pure in Ht0 as (? & _); eauto; subst.
+      assert (sa = st /\ carried [th] = []) as (? & Hcth)
+        by (eapply assign_lexp_normalized_lexp_pure with (e := e1) in Ht0
+              as (? & _ & ?); eauto).
+      subst sa.
+      rewrite carried_single in Hcth.
       apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
-      apply IHet in Ht as (? & Hlt); subst.
-      apply IHef in Hu as (? & Hlu); subst.
+      apply IHet in Ht as (? & Hlt & Hct); subst.
+      apply IHef in Hu as (? & Hlu & Hcu); subst.
       assert (st' = st) as ? by (eapply ljoin_list_pure; eauto); subst.
-      split; auto.
       destruct t as [|t1 [|]]; simpl in Hlt; try discriminate.
       destruct u as [|u1 [|]]; simpl in Hlu; try discriminate.
       simpl in Hj. eapply sec_bind_inv in Hj as (r & se & Hr & Hret).
       unfold ret in Hret. inv Hret.
-      simpl in Hr. unfold ret in Hr. inv Hr. reflexivity.
+      simpl in Hr. unfold ret in Hr. inv Hr.
+      rewrite carried_single in Hct, Hcu |- *.
+      split; [reflexivity|split; [reflexivity|]].
+      unfold ljoin. simpl snd.
+      rewrite Hct, Hcu, Hcth. reflexivity.
     - eapply assign_lexp_normalized_lexp_pure; eauto.
   Qed.
 
@@ -1162,16 +1182,19 @@ Module Type SECLUSUNNESTING
       Forall normalized_cexp es ->
       forall ts st st',
         assign_lexps G env base_ty rst_ty es st = OK (ts, st') ->
-        st' = st /\ List.length ts = List.length es.
+        st' = st /\ List.length ts = List.length es /\ carried ts = [].
   Proof.
     intros G env base_ty rst_ty es Hn.
     induction Hn as [|e es He Hes IH]; intros ts st st' H.
-    - apply assign_lexps_carried_nil in H as (? & _ & ?); subst. auto.
-    - apply assign_lexps_carried_cons in H as (t & r & sta & Ht & Hr & ? & _);
-        subst.
-      eapply assign_lexp_normalized_cexp_pure in Ht as (? & Hlt); eauto; subst.
-      apply IH in Hr as (? & Hlr); subst.
-      split; auto. rewrite app_length, Hlt, Hlr. reflexivity.
+    - apply assign_lexps_carried_nil in H as (? & Hc & ?); subst. auto.
+    - apply assign_lexps_carried_cons in H
+        as (t & r & sta & Ht & Hr & ? & Hct); subst.
+      eapply assign_lexp_normalized_cexp_pure in Ht as (? & Hlt & Hc1);
+        eauto; subst.
+      apply IH in Hr as (? & Hlr & Hc2); subst.
+      split; [reflexivity|split].
+      + rewrite app_length, Hlt, Hlr. reflexivity.
+      + rewrite Hct, Hc1, Hc2. reflexivity.
   Qed.
 
   (** Under [is_control] the merge does not lift: the branches are unnested
@@ -1245,10 +1268,10 @@ Module Type SECLUSUNNESTING
       apply find_env_inv in Hg' as (Hg' & ?); subst.
       rewrite Hg in Hg'. inv Hg'.
       apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
-      assert (sb = st /\ List.length t = 1) as (? & Hlt)
+      assert (sb = st /\ List.length t = 1 /\ carried t = []) as (? & Hlt & _)
         by (eapply assign_lexp_normalized_cexp_pure with (e := e1); eauto).
       subst sb.
-      assert (sc = st /\ List.length u = 1) as (? & Hlu)
+      assert (sc = st /\ List.length u = 1 /\ carried u = []) as (? & Hlu & _)
         by (eapply assign_lexp_normalized_cexp_pure with (e := e2); eauto).
       subst sc.
       assert (sta = st) as ? by (eapply ljoin_list_pure; eauto). subst sta.
@@ -1340,15 +1363,16 @@ Module Type SECLUSUNNESTING
       eapply sec_bind_inv in Ht0 as (th & sb & Hth & Ht0).
       eapply sec_bind_inv in Ht0 as (t & sc & Ht & Ht0).
       eapply sec_bind_inv in Ht0 as (u & sd & Hu & Hj).
-      assert (sa = st) as ? by
-          (eapply assign_lexp_normalized_lexp_pure with (e := e0); eauto).
+      assert (sa = st /\ List.length t0' = 1 /\ carried t0' = [])
+        as (? & _ & _)
+        by (eapply assign_lexp_normalized_lexp_pure with (e := e0); eauto).
       subst sa.
       apply single_inv in Hth as (? & ?); subst.
       apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
-      assert (sc = st /\ List.length t = 1) as (? & Hlt)
+      assert (sc = st /\ List.length t = 1 /\ carried t = []) as (? & Hlt & _)
         by (eapply assign_lexp_normalized_cexp_pure with (e := e1); eauto).
       subst sc.
-      assert (sd = st /\ List.length u = 1) as (? & Hlu)
+      assert (sd = st /\ List.length u = 1 /\ carried u = []) as (? & Hlu & _)
         by (eapply assign_lexp_normalized_cexp_pure with (e := e2); eauto).
       subst sd.
       assert (sta = st) as ? by (eapply ljoin_list_pure; eauto). subst sta.
