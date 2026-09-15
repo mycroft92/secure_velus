@@ -1006,6 +1006,165 @@ Module Type SECLUSUNNESTING
       equation sits under is a fact about clocks, and is discharged where the
       clocks are known, not here. *)
 
+  (** * A one-element list, and what the typer does with it
+
+      Stated at module level rather than inside the preservation section:
+      these are facts about the generator, not about the pass. *)
+
+  Lemma assign_lexps_single :
+    forall G env base_ty rst_ty e ts st st',
+      assign_lexps G env base_ty rst_ty [e] st = OK (ts, st') ->
+      assign_lexp_type G env base_ty rst_ty e st = OK (ts, st').
+  Proof.
+    intros G env base_ty rst_ty e ts st st' H.
+    apply assign_lexps_carried_cons in H as (t & r & sta & Ht & Hr & Hts & _).
+    apply assign_lexps_carried_nil in Hr as (Hr & _ & ?); subst.
+    now rewrite app_nil_r.
+  Qed.
+
+  Lemma assign_lexps_single_intro :
+    forall G env base_ty rst_ty e ts st st',
+      assign_lexp_type G env base_ty rst_ty e st = OK (ts, st') ->
+      assign_lexps G env base_ty rst_ty [e] st = OK (ts, st').
+  Proof.
+    intros G env base_ty rst_ty e ts st st' H.
+    rewrite assign_lexps_cons.
+    eapply sec_bind_ok; [exact H|].
+    eapply sec_bind_ok with (y := ([] : list LST));
+      [rewrite assign_lexps_nil; reflexivity|].
+    unfold ret. now rewrite app_nil_r.
+  Qed.
+
+  Lemma single_inv :
+    forall (ts : list LST) t st st',
+      single ts st = OK (t, st') -> ts = [t] /\ st' = st.
+  Proof.
+    intros ts t st st' H. unfold single in H.
+    destruct ts as [|t0 [|]]; try discriminate.
+    unfold ret in H. inv H. auto.
+  Qed.
+
+  (** * What the typer does to an already-unnested expression
+
+      Unnesting returns normalized expressions, and a normalized expression
+      contains no call.  The call case is the *only* place the security
+      generator touches its state, so on the pass's output the generator is
+      state-pure, and a normalized expression is given exactly one flow.
+
+      Both facts are about what the generator does on the target side, and
+      both are what let the target's types be read off in whatever order a
+      constructor happens to visit its operands -- [unnest_merge] interleaves
+      the two branches, where [assign_lexps] would take one branch then the
+      other. *)
+
+  Lemma ljoin_list_pure :
+    forall ts us rs st st',
+      ljoin_list ts us st = OK (rs, st') -> st' = st.
+  Proof.
+    induction ts as [|t ts IH]; intros us rs st st' H.
+    - destruct us; simpl in H; [|discriminate].
+      unfold ret in H. now inv H.
+    - destruct us as [|u us]; simpl in H; [discriminate|].
+      eapply sec_bind_inv in H as (r & sta & Hr & Hret).
+      unfold ret in Hret. inv Hret. eauto.
+  Qed.
+
+  Lemma assign_lexp_normalized_lexp_pure :
+    forall G env base_ty rst_ty e,
+      normalized_lexp e ->
+      forall ts st st',
+        assign_lexp_type G env base_ty rst_ty e st = OK (ts, st') ->
+        st' = st /\ List.length ts = 1.
+  Proof.
+    intros G env base_ty rst_ty e Hn.
+    induction Hn; intros ts st st' H.
+    - rewrite assign_lexp_Econst in H. unfold ret in H. inv H. auto.
+    - apply assign_lexp_Evar_inv in H as (b & _ & ? & ?); subst. auto.
+    - rewrite assign_lexp_Eunop in H. now apply IHHn in H.
+    - rewrite assign_lexp_Ebinop in H.
+      eapply sec_bind_inv in H as (t1 & sa & Ht1 & H).
+      eapply sec_bind_inv in H as (t2 & sb & Ht2 & H).
+      eapply sec_bind_inv in H as (a1 & sc & Ha1 & H).
+      eapply sec_bind_inv in H as (a2 & sd & Ha2 & Hret).
+      unfold ret in Hret. inv Hret.
+      apply single_inv in Ha1 as (? & ?); subst.
+      apply single_inv in Ha2 as (? & ?); subst.
+      apply IHHn1 in Ht1 as (? & _); subst.
+      apply IHHn2 in Ht2 as (? & _); subst. auto.
+    - rewrite assign_lexp_Ewhen in H.
+      eapply sec_bind_inv in H as (t & sa & Ht & H).
+      eapply sec_bind_inv in H as (g & sb & Hg & Hret).
+      unfold ret in Hret. inv Hret.
+      apply find_env_inv in Hg as (_ & ?); subst.
+      apply assign_lexps_single in Ht.
+      apply IHHn in Ht as (? & Hlen); subst.
+      split; auto. now rewrite map_length.
+  Qed.
+
+  Lemma assign_lexp_normalized_cexp_pure :
+    forall G env base_ty rst_ty e,
+      normalized_cexp e ->
+      forall ts st st',
+        assign_lexp_type G env base_ty rst_ty e st = OK (ts, st') ->
+        st' = st /\ List.length ts = 1.
+  Proof.
+    intros G env base_ty rst_ty e Hn.
+    induction Hn as [x et ef ty cl Het IHet Hef IHef
+                    | e1 et ef ty cl Hle Het IHet Hef IHef
+                    | e1 Hle];
+      intros ts st st' Hty.
+    - rewrite assign_lexp_Emerge in Hty.
+      eapply sec_bind_inv in Hty as (g & sa & Hg & Hty).
+      eapply sec_bind_inv in Hty as (t & sb & Ht & Hty).
+      eapply sec_bind_inv in Hty as (u & sc & Hu & Hj).
+      apply find_env_inv in Hg as (_ & ?); subst.
+      apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
+      apply IHet in Ht as (? & Hlt); subst.
+      apply IHef in Hu as (? & Hlu); subst.
+      assert (st' = st) as ? by (eapply ljoin_list_pure; eauto); subst.
+      split; auto.
+      destruct t as [|t0 [|]]; simpl in Hlt; try discriminate.
+      destruct u as [|u0 [|]]; simpl in Hlu; try discriminate.
+      simpl in Hj. eapply sec_bind_inv in Hj as (r & sd & Hr & Hret).
+      unfold ret in Hret. inv Hret.
+      simpl in Hr. unfold ret in Hr. inv Hr. reflexivity.
+    - rewrite assign_lexp_Eite in Hty.
+      eapply sec_bind_inv in Hty as (t0 & sa & Ht0 & Hty).
+      eapply sec_bind_inv in Hty as (th & sb & Hth & Hty).
+      eapply sec_bind_inv in Hty as (t & sc & Ht & Hty).
+      eapply sec_bind_inv in Hty as (u & sd & Hu & Hj).
+      apply single_inv in Hth as (? & ?); subst.
+      eapply assign_lexp_normalized_lexp_pure in Ht0 as (? & _); eauto; subst.
+      apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
+      apply IHet in Ht as (? & Hlt); subst.
+      apply IHef in Hu as (? & Hlu); subst.
+      assert (st' = st) as ? by (eapply ljoin_list_pure; eauto); subst.
+      split; auto.
+      destruct t as [|t1 [|]]; simpl in Hlt; try discriminate.
+      destruct u as [|u1 [|]]; simpl in Hlu; try discriminate.
+      simpl in Hj. eapply sec_bind_inv in Hj as (r & se & Hr & Hret).
+      unfold ret in Hret. inv Hret.
+      simpl in Hr. unfold ret in Hr. inv Hr. reflexivity.
+    - eapply assign_lexp_normalized_lexp_pure; eauto.
+  Qed.
+
+  Lemma assign_lexps_normalized_pure :
+    forall G env base_ty rst_ty es,
+      Forall normalized_cexp es ->
+      forall ts st st',
+        assign_lexps G env base_ty rst_ty es st = OK (ts, st') ->
+        st' = st /\ List.length ts = List.length es.
+  Proof.
+    intros G env base_ty rst_ty es Hn.
+    induction Hn as [|e es He Hes IH]; intros ts st st' H.
+    - apply assign_lexps_carried_nil in H as (? & _ & ?); subst. auto.
+    - apply assign_lexps_carried_cons in H as (t & r & sta & Ht & Hr & ? & _);
+        subst.
+      eapply assign_lexp_normalized_cexp_pure in Ht as (? & Hlt); eauto; subst.
+      apply IH in Hr as (? & Hlr); subst.
+      split; auto. rewrite app_length, Hlt, Hlr. reflexivity.
+  Qed.
+
   Section Preservation.
 
     Variable GL      : secglobal.
@@ -1192,19 +1351,6 @@ Module Type SECLUSUNNESTING
       intros ce xst xst' H. simpl in H. unfold ret in H. inv H. auto.
     Qed.
 
-    (** A one-element expression list is typed by its element. *)
-
-    Lemma assign_lexps_single :
-      forall e ts st st',
-        assign_lexps GL env base_ty rst_ty [e] st = OK (ts, st') ->
-        assign_lexp_type GL env base_ty rst_ty e st = OK (ts, st').
-    Proof.
-      intros e ts st st' H.
-      apply assign_lexps_carried_cons in H as (t & r & sta & Ht & Hr & Hts & _).
-      apply assign_lexps_carried_nil in Hr as (Hr & _ & ?); subst.
-      now rewrite app_nil_r.
-    Qed.
-
     (** The shape both leaves land in: the pass returned the expression
         untouched, so the two generators ran on the same term, and the
         witness is the valuation we started with. *)
@@ -1257,19 +1403,6 @@ Module Type SECLUSUNNESTING
       apply assign_lexp_Evar_inv in Has' as (b' & Hb' & ? & ?); subst.
       rewrite Hb in Hb'. inv Hb'.
       eapply carries_unchanged; auto.
-    Qed.
-
-    Lemma assign_lexps_single_intro :
-      forall e ts st st',
-        assign_lexp_type GL env base_ty rst_ty e st = OK (ts, st') ->
-        assign_lexps GL env base_ty rst_ty [e] st = OK (ts, st').
-    Proof.
-      intros e ts st st' H.
-      rewrite assign_lexps_cons.
-      eapply sec_bind_ok; [exact H|].
-      eapply sec_bind_ok with (y := ([] : list LST));
-        [rewrite assign_lexps_nil; reflexivity|].
-      unfold ret. now rewrite app_nil_r.
     Qed.
 
     (** A one-stream sub-expression comes back as a one-element list, so
@@ -1512,15 +1645,6 @@ Module Type SECLUSUNNESTING
       intros sc u v H. split; intros x Hx; apply H.
       - now apply in_merge_left.
       - now apply in_merge_right.
-    Qed.
-
-    Lemma single_inv :
-      forall (ts : list LST) t st st',
-        single ts st = OK (t, st') -> ts = [t] /\ st' = st.
-    Proof.
-      intros ts t st st' H. unfold single in H.
-      destruct ts as [|t0 [|]]; try discriminate.
-      unfold ret in H. inv H. auto.
     Qed.
 
     Lemma carries_Ebinop :
