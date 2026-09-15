@@ -29,6 +29,7 @@ From Velus Require Import Environment.
 From Velus Require Import Operators.
 From Velus Require Import Clocks.
 From Velus Require Import Lustre.LSyntax.
+From Velus Require Import Lustre.LClocking.
 From Velus Require Import Lustre.Normalization.Unnesting.
 From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import CoreExpr.CEIsFree.
@@ -61,6 +62,7 @@ Module Type SECLUSUNNESTING
   (Import SLT     : SECLUSTYPES Lat SecT)
   (Import SC      : SECMONAD Ids)
   (Import LSyn    : LSYNTAX Ids Op)
+  (Import LClo    : LCLOCKING Ids Op LSyn)
   (CESyn          : CESYNTAX Op)
   (NLSyn          : NLSYNTAX Ids Op CESyn)
   (Import STEP    : SECMONADSTEP Ids SC)
@@ -1379,6 +1381,10 @@ Module Type SECLUSUNNESTING
     Variable base_ty : ident.
     Variable rst_ty  : ident.
 
+    (** The source node's variables, with their clocks.  Only the source
+        expressions are ever checked against it. *)
+    Variable vars    : list (ident * clock).
+
     (** The *target* node's declared clocks.  [lnode_clock_env_extended] above
         is what says using the target's here loses nothing: on every variable
         the source equations mention, the two environments answer alike. *)
@@ -1519,6 +1525,7 @@ Module Type SECLUSUNNESTING
       forall es' eqs st st' ts sst sst'
              ce xst xst' ts'' yst yst' dlt,
         wl_exp P e ->
+        wc_exp P vars e ->
         (forall x, In x (moved_by st st') -> ~ In x scope) ->
         constraints_scoped scope (carried ts) ->
         Forall (fun t => st_scoped scope (fst t)) ts ->
@@ -1596,7 +1603,7 @@ Module Type SECLUSUNNESTING
     Lemma carries_Econst : forall P c, carries P (Econst c).
     Proof.
       intros P c is_control es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst'
-        dlt _ _ _ Hsc _ Hun Has Hgen Has' _.
+        dlt _ _ _ _ Hsc _ Hun Has Hgen Has' _.
       rewrite unnest_exp_Econst in Hun. inv Hun.
       apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -1608,7 +1615,7 @@ Module Type SECLUSUNNESTING
     Lemma carries_Evar : forall P x a, carries P (Evar x a).
     Proof.
       intros P x a is_control es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst'
-        dlt _ _ _ Hsc _ Hun Has Hgen Has' _.
+        dlt _ _ _ _ Hsc _ Hun Has Hgen Has' _.
       rewrite unnest_exp_Evar in Hun. inv Hun.
       apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -1639,8 +1646,8 @@ Module Type SECLUSUNNESTING
       forall P op e a, carries P e -> carries P (Eunop op e a).
     Proof.
       intros P op e a IH is_control es' eqs st st' ts sst sst' ce xst xst' ts''
-        yst yst' dlt Hwl Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
-      inv Hwl.
+        yst yst' dlt Hwl Hwc Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+      inv Hwl. inv Hwc.
       apply unnest_exp_Eunop_inv in Hun as (e1' & st1 & Hun & ? & ?); subst.
       apply assign_lexps_single in Has'.
       rewrite assign_lexp_Eunop in Has, Has'.
@@ -1865,9 +1872,9 @@ Module Type SECLUSUNNESTING
         carries P e1 -> carries P e2 -> carries P (Ebinop op e1 e2 a).
     Proof.
       intros P op e1 e2 a IH1 IH2 is_control es' eqs st st' ts sst sst'
-        ce xst xst' ts'' yst yst' dlt Hwl Hmv Hsc Hsts Hamb Hun Has Hgen Has'
-        Hcar.
-      inv Hwl.
+        ce xst xst' ts'' yst yst' dlt Hwl Hwc Hmv Hsc Hsts Hamb Hun Has Hgen
+        Has' Hcar.
+      inv Hwl. inv Hwc.
       apply unnest_exp_Ebinop_inv in Hun
         as (f1 & eqs1 & st1 & f2 & eqs2 & Hun1 & Hun2 & ? & ?); subst.
       assert (st_follows st st1) as Hf1 by (eapply unnest_exp_st_follows; eauto).
@@ -1913,6 +1920,7 @@ Module Type SECLUSUNNESTING
       edestruct (IH1 false f1 eqs1 st st1 [a1] sst sa ce1 xst xst1 [b1] yst ya dlt)
         as (dlt1 & Hoff1 & Hce1 & Hrel1 & Hscope1 & Hts1).
       { assumption. }
+      { assumption. }
       { intros x Hx. apply Hmv. eapply moved_by_prefix; eauto. }
       { now rewrite Hc1. }
       { constructor; [exact Hst1|constructor]. }
@@ -1928,6 +1936,7 @@ Module Type SECLUSUNNESTING
           source can see, and the first witness left all of that alone *)
       edestruct (IH2 false f2 eqs2 st1 st' [a2] sa sb ce2 xst1 xst' [b2] ya yb dlt1)
         as (dlt2 & Hoff2 & Hce2 & Hrel2 & Hscope2 & Hts2).
+      { assumption. }
       { assumption. }
       { intros x Hx. apply Hmv. eapply moved_by_suffix; eauto. }
       { now rewrite Hc2. }
@@ -2086,6 +2095,7 @@ Module Type SECLUSUNNESTING
       forall ic es' eqs st st' ts sst sst'
              ce xst xst' ts'' yst yst' dlt,
         Forall (wl_exp P) es ->
+        Forall (wc_exp P vars) es ->
         (forall x, In x (moved_by st st') -> ~ In x scope) ->
         constraints_scoped scope (carried ts) ->
         Forall (fun t => st_scoped scope (fst t)) ts ->
@@ -2115,7 +2125,7 @@ Module Type SECLUSUNNESTING
       intros P es Hall.
       induction Hall as [|e es IHe IHes IH];
         intros ic es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-          Hwl Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+          Hwl Hwc Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
 
       - (** nothing to unnest, nothing emitted *)
         apply map_bind2_unnest_nil in Hun as (? & ? & ?); subst.
@@ -2128,7 +2138,7 @@ Module Type SECLUSUNNESTING
           solve [apply agree_off_refl | constructor].
 
       - (** head, then tail on top of it *)
-        inv Hwl.
+        inv Hwl. inv Hwc.
         apply map_bind2_unnest_cons in Hun
           as (f1 & eq1 & st1 & fr & eqsr & Hun1 & Hunr & ? & ?); subst.
         assert (st_follows st st1) as Hf1 by (eapply unnest_exp_st_follows; eauto).
@@ -2152,6 +2162,7 @@ Module Type SECLUSUNNESTING
         edestruct (IHe ic f1 eq1 st st1 t sst sa ce1 xst xst1 u yst ya dlt)
           as (dlt1 & Hoff1 & Hce1 & Hrel1 & Hscope1 & Hts1).
         { assumption. }
+        { assumption. }
         { intros x Hx. apply Hmv. eapply moved_by_prefix; eauto. }
         { exact Hsc1. }
         { exact Hsts1. }
@@ -2165,6 +2176,7 @@ Module Type SECLUSUNNESTING
 
         edestruct (IH ic fr eqsr st1 st' r sa sst' ce2 xst1 xst' v ya yst' dlt1)
           as (dlt2 & Hoff2 & Hce2 & Hrel2 & Hscope2 & Hts2).
+        { assumption. }
         { assumption. }
         { intros x Hx. apply Hmv. eapply moved_by_suffix; eauto. }
         { exact Hsc2. }
@@ -2317,9 +2329,9 @@ Module Type SECLUSUNNESTING
       forall P es x b a, Forall (carries P) es -> carries P (Ewhen es x b a).
     Proof.
       intros P es x b [tys ck] Hall is_control es' eqs st st' ts sst sst'
-        ce xst xst' ts'' yst yst' dlt Hwl Hmv Hsc Hsts Hamb Hun Has Hgen Has'
-        Hcar.
-      inv Hwl.
+        ce xst xst' ts'' yst yst' dlt Hwl Hwc Hmv Hsc Hsts Hamb Hun Has Hgen
+        Has' Hcar.
+      inv Hwl. inv Hwc.
       apply unnest_exp_Ewhen_inv in Hun as (es1 & Hunn & ?); subst.
       assert (List.length es1 = List.length tys) as Hlen
           by (erewrite unnest_exps_length; eauto).
@@ -2553,8 +2565,8 @@ Module Type SECLUSUNNESTING
     Proof.
       intros P ckid es1 es2 tys cl Hall1 Hall2
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
-      inv Hwl.
+        Hwl Hwc Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+      inv Hwl. inv Hwc.
       apply unnest_exp_Emerge_control_inv in Hun
         as (f1 & eqs1 & st1 & f2 & eqs2 & Hun1 & Hun2 & ? & ?); subst.
       assert (st_follows st st1) as Hf1
@@ -2599,6 +2611,7 @@ Module Type SECLUSUNNESTING
                    ce1 xst xst1 tes1'' yst yst dlt)
         as (dlt1 & Hoff1 & Hce1 & Hrel1 & Hscope1 & Hts1).
       { assumption. }
+      { assumption. }
       { intros x Hx. apply Hmv. eapply moved_by_prefix; eauto. }
       { exact Hsc1. }
       { exact Hsts1. }
@@ -2613,6 +2626,7 @@ Module Type SECLUSUNNESTING
       edestruct (carries_list_intro P es2 Hall2 true f2 eqs2 st1 st' tes2 sb sc
                    ce2 xst1 xst' tes2'' yst yst dlt1)
         as (dlt2 & Hoff2 & Hce2 & Hrel2 & Hscope2 & Hts2).
+      { assumption. }
       { assumption. }
       { intros x Hx. apply Hmv. eapply moved_by_suffix; eauto. }
       { exact Hsc2. }
@@ -2702,6 +2716,7 @@ Module SecLusUnnesting
   (Import SLT     : SECLUSTYPES Lat SecT)
   (Import SC      : SECMONAD Ids)
   (Import LSyn    : LSYNTAX Ids Op)
+  (Import LClo    : LCLOCKING Ids Op LSyn)
   (CESyn          : CESYNTAX Op)
   (NLSyn          : NLSYNTAX Ids Op CESyn)
   (Import STEP    : SECMONADSTEP Ids SC)
@@ -2715,8 +2730,8 @@ Module SecLusUnnesting
   (Import SECL    : SECLTYPING Ids Op OpAux SC LSyn CESyn NLSyn SIG NAMEGEN
                       CEIsF CEClo SECCET TR)
   (Import UNN     : UNNESTING Ids Op OpAux LSyn)
-  <: SECLUSUNNESTING Ids Op OpAux Lat SecT SLT SC LSyn CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
+  <: SECLUSUNNESTING Ids Op OpAux Lat SecT SLT SC LSyn LClo CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
 
-Include SECLUSUNNESTING Ids Op OpAux Lat SecT SLT SC LSyn CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
+Include SECLUSUNNESTING Ids Op OpAux Lat SecT SLT SC LSyn LClo CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
 
 End SecLusUnnesting.
