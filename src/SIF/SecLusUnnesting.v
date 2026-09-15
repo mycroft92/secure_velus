@@ -1575,6 +1575,24 @@ Module Type SECLUSUNNESTING
     eapply assign_lexp_type_length; eauto.
   Qed.
 
+  (** The clocking rules pin the annotation's clock, so inverting one
+      substitutes it away.  These keep the annotation abstract, which the
+      lifting cases need because they mention it. *)
+
+  Lemma wc_Emerge_inv :
+    forall P vars ckid es1 es2 tys cl,
+      wc_exp P vars (Emerge ckid es1 es2 (tys, cl)) ->
+      Forall (wc_exp P vars) es1 /\ Forall (wc_exp P vars) es2.
+  Proof. intros * H. inv H. auto. Qed.
+
+  Lemma wc_Eifte_inv :
+    forall P vars e es1 es2 tys cl,
+      wc_exp P vars (Eite e es1 es2 (tys, cl)) ->
+      wc_exp P vars e
+      /\ Forall (wc_exp P vars) es1 /\ Forall (wc_exp P vars) es2
+      /\ 0 < List.length tys.
+  Proof. intros * H. inv H. auto. Qed.
+
   Section Preservation.
 
     Variable GL      : secglobal.
@@ -4860,6 +4878,12 @@ Module Type SECLUSUNNESTING
         for the merge, the scrutinee's whole type for the conditional -- so
         the join lemmas are used at that head rather than at [lbot]. *)
 
+    Lemma unnest_merge_tys_nil :
+      forall ckid es1 es2 cl, unnest_merge ckid es1 es2 [] cl = [].
+    Proof.
+      intros. unfold unnest_merge. destruct (combine es1 es2); reflexivity.
+    Qed.
+
     Lemma assign_lexp_merge_type :
       forall ckid e1 e2 ty cl g t0 t1 tf s s',
         Env.find ckid env = Some g ->
@@ -5024,6 +5048,330 @@ Module Type SECLUSUNNESTING
         + rewrite assign_lexps_cons.
           eapply sec_bind_ok; [apply Hs1|].
           eapply sec_bind_ok; [exact Hts2|]. reflexivity.
+    Qed.
+
+    (** The merge, when it does lift.  Same skeleton as the delay, with the
+        sampling variable's level as the head of both joins.  Its visibility
+        is read off the source types as in the control branch, and the case
+        where there are no streams at all -- which [wc_Emerge], unlike
+        [wc_Eifte], does not rule out -- is handled by the same disjunction. *)
+
+    Lemma carries_Emerge_lift :
+      forall P ckid es1 es2 tys cl,
+        Forall (carries P) es1 -> Forall (carries P) es2 ->
+        carries_at P false (Emerge ckid es1 es2 (tys, cl)).
+    Proof.
+      intros P ckid es1 es2 tys cl Hall0 Hall1
+        es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+      pose proof Hun as Hunm. pose proof Hwl as Hwlm.
+      inv Hwl. apply wc_Emerge_inv in Hwc as (Hwc1 & Hwc2).
+      apply unnest_exp_Emerge_inv in Hun
+        as (ess0 & eqss0 & st1 & ess1 & eqss1 & st2 & xs
+            & Hmap0 & Hmap1 & Hids & ? & ?); subst.
+      assert (st_follows st st1) as Hf0
+          by (eapply map_bind2_unnest_st_follows; eauto).
+      assert (st_follows st1 st2) as Hf1
+          by (eapply map_bind2_unnest_st_follows; eauto).
+      assert (st_follows st2 st') as Hf2
+          by (eapply idents_for_anns_st_follows; eauto).
+      assert (st_follows st st2) as Hf02 by (etransitivity; eauto).
+      assert (st_follows st1 st') as Hf1' by (etransitivity; eauto).
+
+      (** the source *)
+      rewrite assign_lexp_Emerge in Has.
+      eapply sec_bind_inv in Has as (g & s0 & Hg & Has).
+      eapply sec_bind_inv in Has as (ts0 & sa & Hts0 & Has).
+      eapply sec_bind_inv in Has as (us & sb & Hus & Hj).
+      apply find_env_inv in Hg as (Hgf & ?); subst.
+
+      (** the target *)
+      apply assign_lexps_evars in Has' as (? & Hevars); subst.
+
+      rewrite emitted_defs_combine_form in Hgen.
+      apply generate_leqns_constraints_app in Hgen
+        as (ced & cer & xstd & Hgend & Hgenr & ?); subst.
+      apply generate_leqns_constraints_app in Hgenr
+        as (ce1 & ce2 & xstm & Hgen1 & Hgen2 & ?); subst.
+
+      assert (Forall normalized_cexp (List.concat ess0)) as Hc0
+          by (eapply map_bind2_unnest_normalized; eauto).
+      assert (Forall normalized_cexp (List.concat ess1)) as Hc1
+          by (eapply map_bind2_unnest_normalized; eauto).
+      assert (List.length (List.concat ess0) = List.length tys) as Hle0
+          by (erewrite map_bind2_unnest_exp_length with (es := es1); eauto).
+      assert (List.length (List.concat ess1) = List.length tys) as Hle1
+          by (erewrite map_bind2_unnest_exp_length with (es := es2); eauto).
+      assert (List.length xs = List.length tys) as Hlxs.
+      { rewrite (idents_for_anns_length _ _ _ _ Hids). apply map_length. }
+
+      assert (NoDup (st_ids st')) as Hndst'.
+      { eapply Permutation_NoDup; [|exact Hnd].
+        eapply unnest_exp_vars_perm; eauto. }
+      assert (Permutation (List.map fst xs ++ st_ids st2) (st_ids st')) as Hpx
+          by (eapply idents_for_anns_vars_perm; eauto).
+      assert (NoDup (List.map fst xs ++ st_ids st2)) as Hndx
+          by (rewrite Hpx; exact Hndst').
+      assert (NoDup (List.map fst xs)) as Hndfst
+          by (eapply NoDup_app_l; exact Hndx).
+      assert (forall b, In b (sec_of (List.map fst xs)) ->
+                        In b (moved_by st2 st')) as Hbnew.
+      { intros b Hb. unfold sec_of, moved_by in *.
+        apply in_flat_map in Hb as (x & Hx & Hb).
+        apply in_flat_map. exists x. split; auto.
+        apply new_ids_spec. split.
+        - eapply idents_for_anns_incl_ids; eauto.
+        - eapply NoDup_app_In; eauto. }
+      assert (forall b, In b (sec_of (List.map fst xs)) ->
+                        ~ In b (scope ++ moved_by st st2)) as Hsepx.
+      { intros b Hb Hin. apply Hbnew in Hb.
+        apply in_app_or in Hin as [Hin|Hin].
+        - eapply (Hmv b); [|exact Hin].
+          apply (moved_by_suffix st st2 st' Hf02). exact Hb.
+        - exact (moved_by_disjoint st st2 st' b Hin Hb). }
+
+      (** the branches' target typings, off the emitted merges *)
+      assert (exists ts1x ts2x,
+                 assign_lexps GL env base_ty rst_ty (List.concat ess0) xst
+                   = OK (ts1x, xst)
+                 /\ assign_lexps GL env base_ty rst_ty (List.concat ess1) xst
+                   = OK (ts2x, xst)) as (ts1x & ts2x & Ht1x & Ht2x).
+      { eapply defs_operand_types_merge
+          with (bs := List.map fst xs) (tys := tys); eauto.
+        rewrite map_length. exact Hlxs. }
+      assert (assign_lexps GL env base_ty rst_ty (List.concat ess0) yst
+                = OK (ts1x, yst)) as Ht1y
+          by (eapply assign_lexps_normalized_pure; eauto).
+      assert (assign_lexps GL env base_ty rst_ty (List.concat ess1) yst
+                = OK (ts2x, yst)) as Ht2y
+          by (eapply assign_lexps_normalized_pure; eauto).
+
+      (** what the source carries *)
+      assert (carried ts = cmerge (carried ts0) (carried us)) as Hct.
+      { erewrite ljoin_list_carried by exact Hj.
+        now rewrite carried_map_merge_l. }
+      rewrite Hct in Hsc, Hcar.
+      apply constraints_scoped_cmerge in Hsc as (Hsc0 & Hsc1).
+      apply listSatisfiable_cmerge in Hcar as (Hcar0 & Hcar1).
+      pose proof Hsts as Hstsall.
+      eapply ljoin_list_scoped_inv in Hsts as (Hsts0 & Hsts1 & Hgs);
+        [|exact Hj].
+
+      assert (Permutation (vars_defined (List.concat eqss0) ++ st_ids st)
+                (st_ids st1)) as Hp0
+          by (eapply map_bind2_unnest_vars_perm with (es := es1); eauto).
+      assert (NoDup (vars_defined (List.concat eqss0 ++ List.concat eqss1)
+                       ++ st_ids st)) as Hndr
+          by (eapply NoDup_vd_drop; exact Hnd).
+
+      edestruct (carries_list_intro P es1 Hall0 true ess0 eqss0 st st1 ts0
+                   sst sa ce1 xstd xstm ts1x yst yst dlt)
+        as (dlt1 & Hoff1 & Hce1 & Hrel1 & Hscope1 & Hts1).
+      { assumption. }
+      { assumption. }
+      { eapply NoDup_vd_app_l; exact Hndr. }
+      { intros y Hy. apply Hmv.
+        apply (moved_by_prefix st st1 st' Hf1'). exact Hy. }
+      { exact Hsc0. }
+      { exact Hsts0. }
+      { intros y cky ckty Hy. apply Hamb.
+        rewrite vars_defined_app. apply in_or_app. right.
+        rewrite vars_defined_app. apply in_or_app. now left. }
+      { exact Hmap0. }
+      { exact Hts0. }
+      { exact Hgen1. }
+      { exact Ht1y. }
+      { exact Hcar0. }
+
+      edestruct (carries_list_intro P es2 Hall1 true ess1 eqss1 st1 st2 us
+                   sa sb ce2 xstm xst' ts2x yst yst dlt1)
+        as (dlt2 & Hoff2 & Hce2 & Hrel2 & Hscope2 & Hts2).
+      { assumption. }
+      { assumption. }
+      { eapply NoDup_vd_app_r; [exact Hp0|exact Hndr]. }
+      { intros y Hy. apply Hmv.
+        apply (moved_by_suffix st st1 st' Hf0).
+        apply (moved_by_prefix st1 st2 st' Hf2). exact Hy. }
+      { exact Hsc1. }
+      { exact Hsts1. }
+      { intros y cky ckty Hy. apply Hamb.
+        rewrite vars_defined_app. apply in_or_app. right.
+        rewrite vars_defined_app. apply in_or_app. now right. }
+      { exact Hmap1. }
+      { exact Hus. }
+      { exact Hgen2. }
+      { exact Ht2y. }
+      { eapply listSatisfiable_off with (xs := moved_by st st1); eauto.
+        intros y Hy. apply Hmv.
+        apply (moved_by_prefix st st1 st' Hf1'). exact Hy. }
+
+      (** the merges the pass built *)
+      assert (Forall2 (fun e t =>
+                (forall s, assign_lexp_type GL env base_ty rst_ty e s
+                            = OK ([t], s)) /\ snd t = [])
+                (List.concat ess0) ts1x) as Hew0
+          by (eapply assign_lexps_elementwise; eauto).
+      assert (Forall2 (fun e t =>
+                (forall s, assign_lexp_type GL env base_ty rst_ty e s
+                            = OK ([t], s)) /\ snd t = [])
+                (List.concat ess1) ts2x) as Hew1
+          by (eapply assign_lexps_elementwise; eauto).
+      edestruct (unnest_merge_types ckid cl g (List.concat ess0)
+                   (List.concat ess1) tys ts1x ts2x xst)
+        as (rs & Hjr & Hallr); eauto.
+
+      assert (forall y, In y (moved_by st1 st2) ->
+                        ~ In y (scope ++ moved_by st st1)) as Hsep12.
+      { intros y Hin Hy. apply in_app_or in Hy as [Hy|Hy].
+        - eapply (Hmv y); [|exact Hy].
+          apply (moved_by_suffix st st1 st' Hf0).
+          apply (moved_by_prefix st1 st2 st' Hf2). exact Hin.
+        - exact (moved_by_disjoint st st1 st2 y Hy Hin). }
+      assert (Forall2 (fun t t' => satisfiable dlt2 (fst t') (merge amb (fst t)))
+                ts0 ts1x) as Hrel1'.
+      { eapply Forall2_impl_In; [|exact Hrel1].
+        intros p q Hp Hq Hpq.
+        eapply satisfiable_off with (xs := moved_by st1 st2); eauto.
+        - intros z Hz Hin. apply (Hsep12 z Hin).
+          eapply Forall_forall in Hts1; [|exact Hq]. now apply Hts1.
+        - intros z Hz Hin. apply in_merge_inv in Hz as [Hz|Hz].
+          + apply (Hsep12 z Hin). apply in_or_app. left. now apply amb_scoped.
+          + apply (Hsep12 z Hin). apply in_or_app. left.
+            eapply Forall_forall in Hsts0; [|exact Hp]. now apply Hsts0. }
+
+      assert (Forall2 (fun src r => satisfiable dlt2 (fst r) (merge amb (fst src)))
+                ts rs) as Hrelr0
+          by (eapply ljoin_list_rel; eauto).
+
+      (** where the merges' names live *)
+      assert (Forall (fun r => st_scoped (scope ++ moved_by st st2) (fst r)) rs)
+        as Hscr.
+      { destruct Hgs as [Hnil|Hg2].
+        - assert (tys = []) as ?.
+          { assert (List.length ts0 = List.length tys) as Hlt
+                by (erewrite assign_lexps_length with (es := es1); eauto).
+            rewrite Hnil in Hlt. simpl in Hlt.
+            destruct tys; simpl in Hlt; congruence. }
+          subst tys. rewrite unnest_merge_tys_nil in Hallr.
+          inv Hallr. constructor.
+        - eapply ljoin_list_scoped; [|exact Hjr| |].
+          + apply in_or_app. now left.
+          + eapply Forall_impl; [|exact Hts1].
+            intros q Hq. eapply st_scoped_weaken; [|exact Hq].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr, (moved_by_prefix st st1 st2 Hf1).
+          + eapply Forall_impl; [|exact Hts2].
+            intros q Hq. eapply st_scoped_weaken; [|exact Hq].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr, (moved_by_suffix st st1 st2 Hf0). }
+
+      assert (Forall2 (fun src r =>
+                satisfiable dlt2 (fst r) (merge amb (fst src))
+                /\ st_scoped (scope ++ moved_by st st2) (fst r)) ts rs)
+        as Hrelr.
+      { clear - Hrelr0 Hscr.
+        revert Hscr. induction Hrelr0 as [|src r ts0 rs0 Hq Hrest IH];
+          intros Hscr; [constructor|].
+        inversion Hscr as [|z zs Hz Hzr]; subst.
+        constructor; [split; assumption|]. apply IH; assumption. }
+
+      (** the emitted definitions *)
+      edestruct (lifted_defs (scope ++ moved_by st st2) (List.map fst xs)
+                   (unnest_merge ckid (List.concat ess0) (List.concat ess1)
+                      tys cl)
+                   ts ced xst xstd dlt2)
+        as (dlt3 & Hoff3 & Hce3 & Hscope3 & Hrel3).
+      { exact Hndfst. }
+      { rewrite map_length, Hlxs. symmetry.
+        apply unnest_merge_length; auto. }
+      { exact Hsepx. }
+      { intros y cky ckty Hy. apply Hamb.
+        rewrite vars_defined_app. apply in_or_app. left.
+        rewrite emitted_defs_combine_form, vars_defined_defs; [exact Hy|].
+        rewrite map_length, Hlxs. symmetry.
+        apply unnest_merge_length; auto. }
+      { intros y Hy. apply in_or_app. left. now apply amb_scoped. }
+      { eapply Forall2_left; [exact Hallr|].
+        intros a0 b0 (Ha1 & Ha2 & _). split; assumption. }
+      { eapply Forall_impl; [|exact Hstsall].
+        intros q Hq. eapply st_scoped_weaken; [|exact Hq].
+        apply incl_appl, incl_refl. }
+      { eapply Forall2_combine_via; [exact Hallr|exact Hrelr|].
+        intros e src r (_ & _ & Hr) (Hq & Hqs).
+        intros tf s s' Htf. rewrite (Hr tf s s' Htf). split; assumption. }
+      { exact Hgend. }
+
+      (** the composite witness *)
+      assert (Forall2 (fun xa src => forall b, Env.find (fst xa) env = Some b ->
+                        satisfiable dlt3 [b] (merge amb (fst src))) xs ts)
+        as Hrel3'.
+      { clear - Hrel3. revert ts Hrel3.
+        induction xs as [|xa xs IH]; intros ts H; simpl in H.
+        - inv H. constructor.
+        - inversion H as [|p q ps qs Hpq Hr]; subst.
+          constructor; auto. }
+      assert (incl (sec_of (List.map fst xs)) (moved_by st st')) as Hincx.
+      { intros b Hb. apply (moved_by_suffix st st2 st' Hf02). now apply Hbnew. }
+      exists dlt3. split; [|split; [|split; [|split]]].
+      - eapply agree_off_trans; [eapply agree_off_trans|].
+        + eapply agree_off_incl; [|exact Hoff1].
+          apply (moved_by_prefix st st1 st' Hf1').
+        + eapply agree_off_incl; [|exact Hoff2].
+          eapply incl_tran;
+            [apply (moved_by_prefix st1 st2 st' Hf2)
+            |apply (moved_by_suffix st st1 st' Hf0)].
+        + eapply agree_off_incl; [|exact Hoff3]. exact Hincx.
+      - apply listSatisfiable_app. split; [exact Hce3|].
+        apply listSatisfiable_app. split.
+        + eapply listSatisfiable_off_scope
+            with (sc := scope ++ moved_by st st1)
+                 (xs := sec_of (List.map fst xs)); eauto.
+          * intros y Hy Hin. apply (Hsepx y Hy).
+            apply in_app_or in Hin as [Hin|Hin]; apply in_or_app; [now left|].
+            right. apply (moved_by_prefix st st1 st2 Hf1). exact Hin.
+          * eapply listSatisfiable_off_scope
+              with (sc := scope ++ moved_by st st1) (xs := moved_by st1 st2);
+              eauto.
+        + eapply listSatisfiable_off_scope
+            with (sc := scope ++ moved_by st1 st2)
+                 (xs := sec_of (List.map fst xs)); eauto.
+          intros y Hy Hin. apply (Hsepx y Hy).
+          apply in_app_or in Hin as [Hin|Hin]; apply in_or_app; [now left|].
+          right. apply (moved_by_suffix st st1 st2 Hf0). exact Hin.
+      - eapply Forall2_combine_via
+          with (l3 := xs)
+               (P0 := fun src xa => forall b, Env.find (fst xa) env = Some b ->
+                        satisfiable dlt3 [b] (merge amb (fst src)))
+               (Q := fun t xa => exists b, Env.find (fst xa) env = Some b
+                                           /\ t = lvar b).
+        + apply Forall2_flip, Hrel3'.
+        + apply Forall2_flip, Hevars.
+        + intros src t xa Hp (b & Hb & ?); subst.
+          rewrite fst_lvar. now apply Hp.
+      - apply Forall_app. split.
+        + eapply Forall_impl; [|exact Hscope3].
+          intros cc Hcc. eapply constraint_scoped_incl; [|exact Hcc].
+          apply incl_app; [|eapply incl_tran; [exact Hincx|apply incl_appr,
+                                                            incl_refl]].
+          apply incl_app; [apply incl_appl, incl_refl|].
+          apply incl_appr, (moved_by_prefix st st2 st' Hf2).
+        + apply Forall_app. split.
+          * eapply Forall_impl; [|exact Hscope1].
+            intros cc Hcc. eapply constraint_scoped_incl; [|exact Hcc].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr, (moved_by_prefix st st1 st' Hf1').
+          * eapply Forall_impl; [|exact Hscope2].
+            intros cc Hcc. eapply constraint_scoped_incl; [|exact Hcc].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr. eapply incl_tran;
+              [apply (moved_by_prefix st1 st2 st' Hf2)
+              |apply (moved_by_suffix st st1 st' Hf0)].
+      - eapply Forall2_right_In; [exact Hevars|].
+        intros xa t Hxa (b & Hb & ?); subst.
+        rewrite fst_lvar. intros y Hy. destruct Hy as [|[]]; subst.
+        apply in_or_app. right. apply Hincx.
+        unfold sec_of. apply in_flat_map. exists (fst xa).
+        split; [now apply in_map|]. rewrite Hb. now left.
     Qed.
 
   End Preservation.
