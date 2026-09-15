@@ -1518,3 +1518,10 @@ carries, it is the only one strong enough for the call case, and matching the
 pass's discipline is what makes `unnest_exp_st_valid` reusable rather than
 re-derived. The shrinking set is threaded exactly as `unnest_exp_st_valid`
 threads it.
+
+
+**Superseded.** The state-validity decision above is no longer the one taken.
+`unnest_exp_vars_perm` gives `Permutation (vars_defined eqs ++ st_ids st)
+(st_ids st')`, so a single `NoDup` premise delivers everything the lifting
+cases need of freshness, uniformly and without the shrinking reusable set.
+See `docs/SecLusUnnesting.md`.

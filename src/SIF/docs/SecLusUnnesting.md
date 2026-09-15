@@ -290,28 +290,45 @@ moving them is inside the bound the statement allows; and nothing the values
 are computed from mentions them, since everything else was minted earlier or
 is visible.
 
-### The open decision: which state-validity invariant
+### How the pass's freshness is obtained
 
-The first of those two is what is still missing.  That the minted names are
-**new** — that their security names land in `moved_by st st'` — is in Velus
-only true under the pass's state-validity invariant, and which one to carry
-is a real choice:
+The other half — that the minted names are **new**, so that their security
+names land in `moved_by st st'` rather than somewhere the statement forbids
+moving — looked at first as though it required carrying Velus's own
+state-validity invariant, `st_valid_reuse`, with the shrinking reusable set
+that `unnest_exp_st_valid` threads.
 
-- `st_valid_after st norm1 aft` is simpler, and
-  `idents_for_anns_st_valid_after` preserves it — but Velus proves **no**
-  `st_valid_after` preservation for `unnest_exp` itself, only for
-  `idents_for_anns`.
-- `st_valid_reuse` is what `unnest_exp_st_valid` actually threads, and it is
-  the only one strong enough for `Eapp`, since `idents_for_anns'` may
-  *reuse* a name from the reusable set rather than mint one.  Its cost is a
-  non-uniform premise: the reusable set shrinks, so a sub-expression's
-  premise is `ps_adds (map fst (fresh_in e)) reusable` where the parent's is
-  `reusable`.
+It does not.  `unnest_exp_vars_perm` says the pass adds to the fresh state
+exactly the variables its emitted equations define:
 
-`st_valid_reuse` is the one to carry — it is what the pass's own induction
-carries, it is the only one that covers the call case, and matching the
-pass's discipline is what lets `unnest_exp_st_valid` be reused rather than
-re-derived.
+    Permutation (vars_defined eqs ++ st_ids st) (st_ids st')
+
+With a single `NoDup (vars_defined eqs ++ st_ids st)` premise that turns the
+abstract moved-set into something concrete and checkable — the names a run
+may move are the security names of `vars_defined eqs`, which is the *same
+list the ambient premise already quantifies over*.  `vars_defined_in_new_ids`
+and `sec_of_vars_defined_moved` are the bridge.
+
+The premise is uniform across a constructor's operands and splits along the
+concatenation of their emitted equations (`NoDup_vd_app_l`,
+`NoDup_vd_app_r`), so it threads without the non-uniformity
+`st_valid_reuse` would have forced.  It is discharged once, at the node
+level, from `st_valid_NoDup`.
+
+This is worth recording as a case where the obvious route — match the pass's
+own induction — was the more expensive one, and a derived fact the pass
+already proves was enough.
+
+### The block lemma
+
+`lifted_defs` is what the four non-call lifting cases share: given the
+operands' relation, it produces the extended witness together with all four
+conclusions for the emitted block.  Its supporting pieces are
+`generate_leqn_constraint_def` (the emitted right-hand sides are never
+calls, so the equation generator takes its ordinary-definition branch),
+`generate_ldef_constraint_inv`, `assign_lexps_evars` (the target types are
+the minted variables' names), and the two form lemmas that put `Efby`'s and
+`Earrow`'s differently-spelled emitted lists into one shape.
 
 ### What is already in place for the call case
 
@@ -377,10 +394,12 @@ the mechanisation going through:
 ## Status
 
 Proved, no admits: `Econst`, `Evar`, `Eunop`, `Ebinop`, the list level,
-`Ewhen`, `Emerge` under `is_control`, `Eite` under `is_control`, together
-with all the infrastructure above.
+`Ewhen`, `Emerge` under `is_control`, `Eite` under `is_control`, all the
+infrastructure above, and `lifted_defs` — the block the four non-call
+lifting cases share.
 
-Remaining: the five lifting cases, then the equation, node and program
+Remaining: assembling those four cases from `lifted_defs` and their
+control-branch counterparts; `Eapp`; then the equation, node and program
 levels (reusing `Signature_entails` for the two-globals lockstep), then
 Leg I (`normfby_global`).
 
