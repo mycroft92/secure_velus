@@ -2281,12 +2281,11 @@ Module Type SECLUSUNNESTING
         once, by walking the two joins together, and the two constructors
         then differ only in how they get their operands. *)
 
-    Lemma ljoin_list_rel :
-      forall dlt g ts us rs ts' us' rs' s1 s1' s2 s2',
-        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts) us s1
-          = OK (rs, s1') ->
-        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts') us' s2
-          = OK (rs', s2') ->
+    Lemma ljoin_list_rel_head :
+      forall dlt h h' ts us rs ts' us' rs' s1 s1' s2 s2',
+        ljoin_list (List.map (fun t => ljoin h t) ts) us s1 = OK (rs, s1') ->
+        ljoin_list (List.map (fun t => ljoin h' t) ts') us' s2 = OK (rs', s2') ->
+        satisfiable dlt (fst h') (merge amb (fst h)) ->
         Forall2 (fun t t' => satisfiable dlt (fst t') (merge amb (fst t)))
           ts ts' ->
         Forall2 (fun u u' => satisfiable dlt (fst u') (merge amb (fst u)))
@@ -2294,9 +2293,9 @@ Module Type SECLUSUNNESTING
         Forall2 (fun r r' => satisfiable dlt (fst r') (merge amb (fst r)))
           rs rs'.
     Proof.
-      intros dlt g ts. revert g.
+      intros dlt h h' ts. revert h h'.
       induction ts as [|t ts IH];
-        intros g us rs ts' us' rs' s1 s1' s2 s2' Hj Hj' Hts Hus.
+        intros h h' us rs ts' us' rs' s1 s1' s2 s2' Hj Hj' Hh Hts Hus.
       - inv Hts. destruct us; simpl in Hj; [|discriminate].
         unfold ret in Hj. inv Hj.
         inv Hus. simpl in Hj'. unfold ret in Hj'. inv Hj'. constructor.
@@ -2309,12 +2308,10 @@ Module Type SECLUSUNNESTING
         eapply sec_bind_inv in Hj' as (r' & sb & Hr' & Hret').
         unfold ret in Hret'. inv Hret'.
         constructor; [|eapply IH; eauto].
-        rewrite !fst_ljoin, !fst_lvar.
+        rewrite !fst_ljoin.
         apply satisfiable_merge_intro; [apply satisfiable_merge_intro|].
-        + (** the sampling variable is on both sides *)
-          eapply satisfiable_trans; [apply satisfiable_merge_l|].
-          eapply satisfiable_trans; [apply satisfiable_merge_l|].
-          apply satisfiable_merge_r.
+        + (** the head -- a sampling variable, or the scrutinee's own type *)
+          apply satisfiable_merge_grow_l, satisfiable_merge_grow_l. exact Hh.
         + apply satisfiable_merge_grow_l.
           eapply satisfiable_trans; [exact Ht|].
           apply satisfiable_merge_intro.
@@ -2324,16 +2321,32 @@ Module Type SECLUSUNNESTING
         + now apply satisfiable_merge_grow_r.
     Qed.
 
-    Lemma ljoin_list_scoped :
-      forall sc g ts us rs s s',
-        In g sc ->
-        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts) us s = OK (rs, s') ->
+    Corollary ljoin_list_rel :
+      forall dlt g ts us rs ts' us' rs' s1 s1' s2 s2',
+        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts) us s1
+          = OK (rs, s1') ->
+        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts') us' s2
+          = OK (rs', s2') ->
+        Forall2 (fun t t' => satisfiable dlt (fst t') (merge amb (fst t)))
+          ts ts' ->
+        Forall2 (fun u u' => satisfiable dlt (fst u') (merge amb (fst u)))
+          us us' ->
+        Forall2 (fun r r' => satisfiable dlt (fst r') (merge amb (fst r)))
+          rs rs'.
+    Proof.
+      intros. eapply ljoin_list_rel_head; eauto.
+    Qed.
+
+    Lemma ljoin_list_scoped_head :
+      forall sc h ts us rs s s',
+        st_scoped sc (fst h) ->
+        ljoin_list (List.map (fun t => ljoin h t) ts) us s = OK (rs, s') ->
         Forall (fun t => st_scoped sc (fst t)) ts ->
         Forall (fun u => st_scoped sc (fst u)) us ->
         Forall (fun r => st_scoped sc (fst r)) rs.
     Proof.
-      intros sc g ts. revert g.
-      induction ts as [|t ts IH]; intros g us rs s s' Hg Hj Hts Hus.
+      intros sc h ts. revert h.
+      induction ts as [|t ts IH]; intros h us rs s s' Hh Hj Hts Hus.
       - destruct us; simpl in Hj; [|discriminate].
         unfold ret in Hj. inv Hj. constructor.
       - destruct us as [|u us]; simpl in Hj; [discriminate|].
@@ -2341,22 +2354,33 @@ Module Type SECLUSUNNESTING
         unfold ret in Hret. inv Hret.
         inversion Hts as [|z zs Hz Hzr]; subst.
         inversion Hus as [|w ws Hw Hwr]; subst.
-        constructor; [|eapply IH; eauto].
-        rewrite !fst_ljoin, !fst_lvar.
+        constructor; [|eapply IH with (h := h); eauto].
+        rewrite !fst_ljoin.
         apply st_scoped_merge; [apply st_scoped_merge|]; auto.
-        intros y Hy. destruct Hy as [|[]]; subst; auto.
     Qed.
 
-    Lemma ljoin_list_scoped_inv :
+    Corollary ljoin_list_scoped :
       forall sc g ts us rs s s',
+        In g sc ->
         ljoin_list (List.map (fun t => ljoin (lvar g) t) ts) us s = OK (rs, s') ->
+        Forall (fun t => st_scoped sc (fst t)) ts ->
+        Forall (fun u => st_scoped sc (fst u)) us ->
+        Forall (fun r => st_scoped sc (fst r)) rs.
+    Proof.
+      intros. eapply ljoin_list_scoped_head; eauto.
+      rewrite fst_lvar. intros y Hy. destruct Hy as [|[]]; subst; auto.
+    Qed.
+
+    Lemma ljoin_list_scoped_head_inv :
+      forall sc h ts us rs s s',
+        ljoin_list (List.map (fun t => ljoin h t) ts) us s = OK (rs, s') ->
         Forall (fun r => st_scoped sc (fst r)) rs ->
         Forall (fun t => st_scoped sc (fst t)) ts
         /\ Forall (fun u => st_scoped sc (fst u)) us
-        /\ (ts = [] \/ In g sc).
+        /\ (ts = [] \/ st_scoped sc (fst h)).
     Proof.
-      intros sc g ts. revert g.
-      induction ts as [|t ts IH]; intros g us rs s s' Hj Hrs.
+      intros sc h ts. revert h.
+      induction ts as [|t ts IH]; intros h us rs s s' Hj Hrs.
       - destruct us; simpl in Hj; [|discriminate].
         unfold ret in Hj. inv Hj. auto.
       - destruct us as [|u us]; simpl in Hj; [discriminate|].
@@ -2364,13 +2388,27 @@ Module Type SECLUSUNNESTING
         unfold ret in Hret. inv Hret.
         inversion Hrs as [|z zs Hz Hzr]; subst.
         apply IH in Hr as (Hts & Hus & _); auto.
-        rewrite !fst_ljoin, !fst_lvar in Hz.
+        rewrite !fst_ljoin in Hz.
         apply st_scoped_merge_inv in Hz as (Hz & Hu).
         apply st_scoped_merge_inv in Hz as (Hgz & Ht).
         split; [|split].
         + constructor; auto.
         + constructor; auto.
-        + right. apply Hgz. now left.
+        + right; auto.
+    Qed.
+
+    Corollary ljoin_list_scoped_inv :
+      forall sc g ts us rs s s',
+        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts) us s = OK (rs, s') ->
+        Forall (fun r => st_scoped sc (fst r)) rs ->
+        Forall (fun t => st_scoped sc (fst t)) ts
+        /\ Forall (fun u => st_scoped sc (fst u)) us
+        /\ (ts = [] \/ In g sc).
+    Proof.
+      intros sc g ts us rs s s' Hj Hrs.
+      eapply ljoin_list_scoped_head_inv in Hj as (? & ? & [?|Hg]); eauto.
+      rewrite fst_lvar in Hg. repeat split; auto.
+      right. apply Hg. now left.
     Qed.
 
     Lemma carried_map_merge_l :
