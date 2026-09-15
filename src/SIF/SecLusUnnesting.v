@@ -3137,6 +3137,81 @@ Module Type SECLUSUNNESTING
           apply incl_appr, (moved_by_suffix st st1 st' Hf01).
     Qed.
 
+    (** * Extending the witness on the names the pass minted
+
+        Every lifting constructor ends the same way: [idents_for_anns] mints
+        one variable per result, the pass returns an [Evar] for each, and it
+        emits one equation per result binding that variable to the compound
+        expression it replaced.  So the target's type for a result is a bare
+        name, and what pins that name down is the emitted equation's own
+        constraint.
+
+        The witness is therefore *chosen* rather than inherited: give each
+        minted name exactly the value its defining constraint demands, and the
+        emitted constraints hold by construction.  Two things make that
+        legitimate.  The names are minted in this run, so moving them is
+        within the bound the statement allows; and nothing the values are
+        computed from mentions them, since everything else was minted earlier
+        or is visible. *)
+
+    Definition upd (b : ident) (v : Lat.t) (dlt : ident -> Lat.t)
+      : ident -> Lat.t :=
+      fun x => if ident_eq_dec x b then v else dlt x.
+
+    Fixpoint upds (bs : list ident) (vs : list Lat.t) (dlt : ident -> Lat.t)
+      : ident -> Lat.t :=
+      match bs, vs with
+      | b :: bs', v :: vs' => upd b v (upds bs' vs' dlt)
+      | _, _ => dlt
+      end.
+
+    Lemma upds_notin :
+      forall bs vs dlt x, ~ In x bs -> upds bs vs dlt x = dlt x.
+    Proof.
+      induction bs as [|b bs IH]; intros vs dlt x Hx; simpl; auto.
+      destruct vs as [|v vs]; auto.
+      unfold upd. destruct (ident_eq_dec x b) as [?|?]; subst.
+      - exfalso. apply Hx. now left.
+      - apply IH. intro; apply Hx. now right.
+    Qed.
+
+    Corollary upds_agree_off :
+      forall bs vs dlt, agree_off bs dlt (upds bs vs dlt).
+    Proof. intros bs vs dlt x Hx. symmetry. now apply upds_notin. Qed.
+
+    Lemma upds_nth :
+      forall bs vs dlt b v,
+        NoDup bs ->
+        List.length bs = List.length vs ->
+        In (b, v) (combine bs vs) ->
+        upds bs vs dlt b = v.
+    Proof.
+      induction bs as [|b0 bs IH]; intros vs dlt b v Hnd Hlen Hin;
+        [contradiction|].
+      destruct vs as [|v0 vs]; simpl in Hlen; [discriminate|].
+      inv Hnd. simpl in Hin. destruct Hin as [Heq|Hin].
+      - inv Heq. simpl. unfold upd.
+        destruct (ident_eq_dec b b) as [?|Hne]; [reflexivity|].
+        now elim Hne.
+      - simpl. unfold upd.
+        destruct (ident_eq_dec b b0) as [?|Hne]; subst.
+        + exfalso. apply H1. eapply in_combine_l; eauto.
+        + eapply IH; eauto.
+    Qed.
+
+    (** And the values themselves: a type whose names the extension did not
+        touch means the same before and after. *)
+
+    Lemma hm_ext_upds :
+      forall (s : ST) bs vs dlt,
+        (forall x, In x s -> ~ In x bs) ->
+        hm_ext (upds bs vs dlt) s = hm_ext dlt s.
+    Proof.
+      intros s bs vs dlt Havoid. symmetry.
+      eapply hm_ext_off with (xs := bs); [apply upds_agree_off|].
+      intros x Hx. now apply Havoid.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
