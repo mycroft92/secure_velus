@@ -3764,9 +3764,10 @@ Module Type SECLUSUNNESTING
       forall es ts st st',
         Forall normalized_cexp es ->
         assign_lexps GL env base_ty rst_ty es st = OK (ts, st') ->
-        Forall2 (fun e t => forall s,
-                    assign_lexp_type GL env base_ty rst_ty e s = OK ([t], s))
-          es ts.
+        Forall2 (fun e t =>
+                   (forall s,
+                      assign_lexp_type GL env base_ty rst_ty e s = OK ([t], s))
+                   /\ snd t = []) es ts.
     Proof.
       induction es as [|e es IH]; intros ts st st' Hn H.
       - apply (assign_lexps_carried_nil GL env base_ty rst_ty) in H
@@ -3777,11 +3778,12 @@ Module Type SECLUSUNNESTING
         assert (sta = st /\ List.length t = 1 /\ carried t = []
                 /\ forall s, assign_lexp_type GL env base_ty rst_ty e s
                               = OK (t, s))
-          as (? & Hlt & _ & Hs)
+          as (? & Hlt & Hc & Hs)
           by (eapply assign_lexp_normalized_cexp_pure; eauto).
         subst sta.
         destruct t as [|a [|]]; simpl in Hlt; try discriminate.
-        simpl List.app. constructor; [exact Hs|].
+        rewrite carried_single in Hc.
+        simpl List.app. constructor; [split; [exact Hs|exact Hc]|].
         eapply IH; eauto.
     Qed.
 
@@ -3843,6 +3845,155 @@ Module Type SECLUSUNNESTING
       simpl in Hj. eapply sec_bind_inv in Hj as (r & sc & Hr & Hret).
       unfold ret in Hret. inv Hret.
       simpl in Hr. unfold ret in Hr. now inv Hr.
+    Qed.
+
+    Lemma vars_defined_defs :
+      forall (bs : list ident) (rhss : list exp),
+        List.length bs = List.length rhss ->
+        vars_defined (List.map (fun '(x, e) => ([x], [e])) (combine bs rhss))
+        = bs.
+    Proof.
+      induction bs as [|b bs IH]; intros rhss Hlen; [reflexivity|].
+      destruct rhss as [|e rhss]; simpl in Hlen; [discriminate|].
+      simpl. f_equal. apply IH. congruence.
+    Qed.
+
+    Lemma assign_lexp_fby_pure :
+      forall e0 e a t0 t1,
+        (forall s, assign_lexp_type GL env base_ty rst_ty e0 s = OK ([t0], s)) ->
+        (forall s, assign_lexp_type GL env base_ty rst_ty e s = OK ([t1], s)) ->
+        snd t0 = [] -> snd t1 = [] ->
+        forall ts s s',
+          assign_lexp_type GL env base_ty rst_ty (Efby [e0] [e] [a]) s
+            = OK (ts, s') ->
+          s' = s /\ List.length ts = 1 /\ carried ts = [].
+    Proof.
+      intros e0 e a t0 t1 H0 H1 Hc0 Hc1 ts s s' H.
+      rewrite assign_lexp_Efby in H.
+      eapply sec_bind_inv in H as (t & sa & Ht & H).
+      eapply sec_bind_inv in H as (u & sb & Hu & Hj).
+      apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
+      rewrite H0 in Ht. inv Ht. rewrite H1 in Hu. inv Hu.
+      simpl in Hj. eapply sec_bind_inv in Hj as (r & sc & Hr & Hret).
+      unfold ret in Hret. inv Hret.
+      simpl in Hr. unfold ret in Hr. inv Hr.
+      split; [reflexivity|split; [reflexivity|]].
+      rewrite carried_single. unfold ljoin. simpl snd.
+      rewrite Hc0, Hc1. reflexivity.
+    Qed.
+
+    Lemma assign_lexp_arrow_pure :
+      forall e0 e a t0 t1,
+        (forall s, assign_lexp_type GL env base_ty rst_ty e0 s = OK ([t0], s)) ->
+        (forall s, assign_lexp_type GL env base_ty rst_ty e s = OK ([t1], s)) ->
+        snd t0 = [] -> snd t1 = [] ->
+        forall ts s s',
+          assign_lexp_type GL env base_ty rst_ty (Earrow [e0] [e] [a]) s
+            = OK (ts, s') ->
+          s' = s /\ List.length ts = 1 /\ carried ts = [].
+    Proof.
+      intros e0 e a t0 t1 H0 H1 Hc0 Hc1 ts s s' H.
+      rewrite assign_lexp_Earrow in H.
+      eapply sec_bind_inv in H as (t & sa & Ht & H).
+      eapply sec_bind_inv in H as (u & sb & Hu & Hj).
+      apply assign_lexps_single in Ht. apply assign_lexps_single in Hu.
+      rewrite H0 in Ht. inv Ht. rewrite H1 in Hu. inv Hu.
+      simpl in Hj. eapply sec_bind_inv in Hj as (r & sc & Hr & Hret).
+      unfold ret in Hret. inv Hret.
+      simpl in Hr. unfold ret in Hr. inv Hr.
+      split; [reflexivity|split; [reflexivity|]].
+      rewrite carried_single. unfold ljoin. simpl snd.
+      rewrite Hc0, Hc1. reflexivity.
+    Qed.
+
+    (** The delays the pass builds, typed: the i-th delay's type is the i-th
+        componentwise join of the operands' types, which is the same function
+        of them that the source rule is of the source operands' types. *)
+
+    Lemma unnest_fby_types :
+      forall (e0s es : list exp) (anns : list ann) ts0 us s,
+        Forall2 (fun e t =>
+                   (forall s,
+                      assign_lexp_type GL env base_ty rst_ty e s = OK ([t], s))
+                   /\ snd t = []) e0s ts0 ->
+        Forall2 (fun e t =>
+                   (forall s,
+                      assign_lexp_type GL env base_ty rst_ty e s = OK ([t], s))
+                   /\ snd t = []) es us ->
+        List.length e0s = List.length anns ->
+        List.length es = List.length anns ->
+        exists rs,
+          ljoin_list ts0 us s = OK (rs, s)
+          /\ Forall2 (fun e r =>
+                (match e with Eapp _ _ _ _ => False | _ => True end)
+                /\ (forall ts s0 s0',
+                      assign_lexp_type GL env base_ty rst_ty e s0 = OK (ts, s0') ->
+                      s0' = s0 /\ List.length ts = 1 /\ carried ts = [])
+                /\ (forall tf s0 s0',
+                      assign_lexp_type GL env base_ty rst_ty e s0 = OK ([tf], s0') ->
+                      tf = r))
+               (unnest_fby e0s es anns) rs.
+    Proof.
+      induction e0s as [|e0 e0s IH];
+        intros es anns ts0 us s H0 H1 Hl0 Hl1.
+      - inv H0. destruct anns; simpl in Hl0; [|discriminate].
+        destruct es; simpl in Hl1; [|discriminate]. inv H1.
+        exists []. split; [reflexivity|constructor].
+      - destruct anns as [|a anns]; simpl in Hl0; [discriminate|].
+        destruct es as [|e es]; simpl in Hl1; [discriminate|].
+        inversion H0 as [|p q ps qs Hp H0r]; subst.
+        inversion H1 as [|p2 q2 ps2 qs2 Hp2 H1r]; subst.
+        destruct Hp as (Hs0 & Hc0). destruct Hp2 as (Hs1 & Hc1).
+        edestruct IH as (rs & Hj & Hall); eauto.
+        exists (ljoin q q2 :: rs). split.
+        + simpl. eapply sec_bind_ok; [exact Hj|]. reflexivity.
+        + rewrite unnest_fby_cons. constructor; auto.
+          split; [exact I|split].
+          * eapply assign_lexp_fby_pure; eauto.
+          * intros tf s0 s0' Htf. eapply assign_lexp_fby_type; eauto.
+    Qed.
+
+    Lemma unnest_arrow_types :
+      forall (e0s es : list exp) (anns : list ann) ts0 us s,
+        Forall2 (fun e t =>
+                   (forall s,
+                      assign_lexp_type GL env base_ty rst_ty e s = OK ([t], s))
+                   /\ snd t = []) e0s ts0 ->
+        Forall2 (fun e t =>
+                   (forall s,
+                      assign_lexp_type GL env base_ty rst_ty e s = OK ([t], s))
+                   /\ snd t = []) es us ->
+        List.length e0s = List.length anns ->
+        List.length es = List.length anns ->
+        exists rs,
+          ljoin_list ts0 us s = OK (rs, s)
+          /\ Forall2 (fun e r =>
+                (match e with Eapp _ _ _ _ => False | _ => True end)
+                /\ (forall ts s0 s0',
+                      assign_lexp_type GL env base_ty rst_ty e s0 = OK (ts, s0') ->
+                      s0' = s0 /\ List.length ts = 1 /\ carried ts = [])
+                /\ (forall tf s0 s0',
+                      assign_lexp_type GL env base_ty rst_ty e s0 = OK ([tf], s0') ->
+                      tf = r))
+               (unnest_arrow e0s es anns) rs.
+    Proof.
+      induction e0s as [|e0 e0s IH];
+        intros es anns ts0 us s H0 H1 Hl0 Hl1.
+      - inv H0. destruct anns; simpl in Hl0; [|discriminate].
+        destruct es; simpl in Hl1; [|discriminate]. inv H1.
+        exists []. split; [reflexivity|constructor].
+      - destruct anns as [|a anns]; simpl in Hl0; [discriminate|].
+        destruct es as [|e es]; simpl in Hl1; [discriminate|].
+        inversion H0 as [|p q ps qs Hp H0r]; subst.
+        inversion H1 as [|p2 q2 ps2 qs2 Hp2 H1r]; subst.
+        destruct Hp as (Hs0 & Hc0). destruct Hp2 as (Hs1 & Hc1).
+        edestruct IH as (rs & Hj & Hall); eauto.
+        exists (ljoin q q2 :: rs). split.
+        + simpl. eapply sec_bind_ok; [exact Hj|]. reflexivity.
+        + rewrite unnest_arrow_cons. constructor; auto.
+          split; [exact I|split].
+          * eapply assign_lexp_arrow_pure; eauto.
+          * intros tf s0 s0' Htf. eapply assign_lexp_arrow_type; eauto.
     Qed.
 
   End Preservation.
