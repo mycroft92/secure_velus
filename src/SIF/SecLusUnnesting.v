@@ -1374,6 +1374,135 @@ Module Type SECLUSUNNESTING
         * simpl. reflexivity.
   Qed.
 
+  (** * How many flows the generator returns
+
+      One per stream, exactly as the pass returns one expression per stream.
+      Needed wherever the two sides have to be lined up positionally, and at
+      the equation level to match a defined variable to its flow. *)
+
+  Lemma ljoin_list_length :
+    forall ts us rs st st',
+      ljoin_list ts us st = OK (rs, st') -> List.length rs = List.length ts.
+  Proof.
+    induction ts as [|t ts IH]; intros us rs st st' H.
+    - destruct us; simpl in H; [|discriminate].
+      unfold ret in H. inv H. reflexivity.
+    - destruct us as [|u us]; simpl in H; [discriminate|].
+      eapply sec_bind_inv in H as (r & sa & Hr & Hret).
+      unfold ret in Hret. inv Hret. simpl. f_equal. eauto.
+  Qed.
+
+  Lemma assign_lexps_length_aux :
+    forall P G env base_ty rst_ty es,
+      Forall (fun e => wl_exp P e -> forall ts st st',
+                  assign_lexp_type G env base_ty rst_ty e st = OK (ts, st') ->
+                  List.length ts = numstreams e) es ->
+      Forall (wl_exp P) es ->
+      forall ts st st',
+        assign_lexps G env base_ty rst_ty es st = OK (ts, st') ->
+        List.length ts = List.length (annots es).
+  Proof.
+    intros P G env base_ty rst_ty es Hall.
+    induction Hall as [|e es He Hes IH]; intros Hwl ts st st' H.
+    - apply assign_lexps_carried_nil in H as (? & _ & ?); subst. reflexivity.
+    - inv Hwl.
+      apply assign_lexps_carried_cons in H as (t & r & sta & Ht & Hr & ? & _);
+        subst.
+      unfold annots. simpl List.flat_map. fold (annots es).
+      rewrite !app_length. f_equal.
+      + rewrite length_annot_numstreams. eapply He; eauto.
+      + eapply IH; eauto.
+  Qed.
+
+  Lemma assign_lexp_type_length :
+    forall P G env base_ty rst_ty e,
+      wl_exp P e ->
+      forall ts st st',
+        assign_lexp_type G env base_ty rst_ty e st = OK (ts, st') ->
+        List.length ts = numstreams e.
+  Proof.
+    intros P G env base_ty rst_ty e.
+    induction e using exp_ind2; intros Hwl ts st st' Hty; inv Hwl.
+    - rewrite assign_lexp_Econst in Hty. unfold ret in Hty. now inv Hty.
+    - apply assign_lexp_Evar_inv in Hty as (? & _ & ? & _); subst. reflexivity.
+    - rewrite assign_lexp_Eunop in Hty.
+      assert (List.length ts = numstreams e) as Hl by (eapply IHe; eauto).
+      simpl. rewrite Hl. assumption.
+    - rewrite assign_lexp_Ebinop in Hty.
+      eapply sec_bind_inv in Hty as (? & ? & _ & Hty).
+      eapply sec_bind_inv in Hty as (? & ? & _ & Hty).
+      eapply sec_bind_inv in Hty as (? & ? & _ & Hty).
+      eapply sec_bind_inv in Hty as (? & ? & _ & Hret).
+      unfold ret in Hret. now inv Hret.
+    - (** fby *)
+      rewrite assign_lexp_Efby in Hty.
+      eapply sec_bind_inv in Hty as (t & sa & Ht & Hty).
+      eapply sec_bind_inv in Hty as (u & sb & Hu & Hj).
+      apply ljoin_list_length in Hj. rewrite Hj.
+      assert (List.length t = List.length (annots e0s)) as Hl
+        by (eapply assign_lexps_length_aux; eauto).
+      rewrite Hl. simpl. assumption.
+    - (** arrow *)
+      rewrite assign_lexp_Earrow in Hty.
+      eapply sec_bind_inv in Hty as (t & sa & Ht & Hty).
+      eapply sec_bind_inv in Hty as (u & sb & Hu & Hj).
+      apply ljoin_list_length in Hj. rewrite Hj.
+      assert (List.length t = List.length (annots e0s)) as Hl
+        by (eapply assign_lexps_length_aux; eauto).
+      rewrite Hl. simpl. assumption.
+    - (** when *)
+      rewrite assign_lexp_Ewhen in Hty.
+      eapply sec_bind_inv in Hty as (t & sa & Ht & Hty).
+      eapply sec_bind_inv in Hty as (g & sb & Hg & Hret).
+      unfold ret in Hret. inv Hret.
+      assert (List.length t = List.length (annots es)) as Hl
+        by (eapply assign_lexps_length_aux; eauto).
+      simpl. rewrite !map_length, Hl. assumption.
+    - (** merge *)
+      rewrite assign_lexp_Emerge in Hty.
+      eapply sec_bind_inv in Hty as (g & sa & Hg & Hty).
+      eapply sec_bind_inv in Hty as (t & sb & Ht & Hty).
+      eapply sec_bind_inv in Hty as (u & sc & Hu & Hj).
+      apply ljoin_list_length in Hj. rewrite Hj.
+      assert (List.length t = List.length (annots ets)) as Hl
+        by (eapply assign_lexps_length_aux; eauto).
+      simpl. rewrite !map_length, Hl. assumption.
+    - (** ite *)
+      rewrite assign_lexp_Eite in Hty.
+      eapply sec_bind_inv in Hty as (t0 & sa & Ht0 & Hty).
+      eapply sec_bind_inv in Hty as (th & sb & Hth & Hty).
+      eapply sec_bind_inv in Hty as (t & sc & Ht & Hty).
+      eapply sec_bind_inv in Hty as (u & sd & Hu & Hj).
+      apply ljoin_list_length in Hj. rewrite Hj.
+      assert (List.length t = List.length (annots ets)) as Hl
+        by (eapply assign_lexps_length_aux; eauto).
+      simpl. rewrite !map_length, Hl. assumption.
+    - (** call, and call with a reset: [wl_exp] has a rule for each, and the
+          generator does not distinguish them here *)
+      apply assign_lexp_Eapp_inv in Hty
+        as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
+            & _ & _ & _ & _ & Houts & _ & ?); subst.
+      apply fresh_idents_length in Houts.
+      simpl. rewrite map_length. assumption.
+    - apply assign_lexp_Eapp_inv in Hty
+        as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
+            & _ & _ & _ & _ & Houts & _ & ?); subst.
+      apply fresh_idents_length in Houts.
+      simpl. rewrite map_length. assumption.
+  Qed.
+
+  Corollary assign_lexps_length :
+    forall P G env base_ty rst_ty es,
+      Forall (wl_exp P) es ->
+      forall ts st st',
+        assign_lexps G env base_ty rst_ty es st = OK (ts, st') ->
+        List.length ts = List.length (annots es).
+  Proof.
+    intros. eapply assign_lexps_length_aux; eauto.
+    apply Forall_forall. intros e He Hwl.
+    eapply assign_lexp_type_length; eauto.
+  Qed.
+
   Section Preservation.
 
     Variable GL      : secglobal.

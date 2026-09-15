@@ -278,6 +278,15 @@ Module Type SECLTYPING
            ljoin_list ts us).
     Proof. reflexivity. Qed.
 
+    (** [Earrow] has the same body as [Efby]: the initialisation pass, not
+        this one, is where the two part company. *)
+    Lemma assign_lexp_Earrow : forall e0s es ans,
+        assign_lexp_type (Earrow e0s es ans)
+        = (do ts <- assign_lexps e0s;
+           do us <- assign_lexps es;
+           ljoin_list ts us).
+    Proof. reflexivity. Qed.
+
     Lemma assign_lexps_nil : assign_lexps [] = ret [].
     Proof. reflexivity. Qed.
 
