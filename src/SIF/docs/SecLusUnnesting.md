@@ -419,16 +419,23 @@ the mechanisation going through:
 ## Status
 
 Proved, no admits: `Econst`, `Evar`, `Eunop`, `Ebinop`, the list level,
-`Ewhen`, `Emerge` under `is_control`, `Eite` under `is_control`, all the
-infrastructure above, `lifted_defs` — the block the four non-call lifting
-cases share — and the delay machinery (`unnest_fby_types`,
-`unnest_arrow_types`, and the state-independence and elementwise-typing
-results they rest on).
+`Ewhen`, `Emerge` and `Eite` under `is_control`, **`Efby` and `Earrow`**,
+all the infrastructure above, `lifted_defs` — the block the four non-call
+lifting cases share — and the support each lifting constructor needs
+(`unnest_fby_types`, `unnest_arrow_types`, `unnest_merge_types`, the
+`defs_operand_types_*` family, and the state-independence and
+elementwise-typing results they rest on).
 
-Remaining: `defs_operand_types`, then assembling the four lifting cases;
-`Eapp`; then the equation, node and program levels (reusing
-`Signature_entails` for the two-globals lockstep), then Leg I
-(`normfby_global`).
+`Earrow` was obtained from `Efby` by substituting the constructor and the
+emitted list's spelling, and went through unchanged — which is the intended
+reading of "the two differ only in what the initialisation pass will later
+act on".
+
+Remaining: `Emerge` and `Eite` without `is_control` (all their support is in
+place; they are `Efby` with a head on the join and the empty-`tys` case
+handled by a disjunction, as in their control branches); `Eapp`; then the
+equation, node and program levels (reusing `Signature_entails` for the
+two-globals lockstep), then Leg I (`normfby_global`).
 
 ## Downstream use
 
