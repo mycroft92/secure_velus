@@ -6246,6 +6246,97 @@ Module Type SECLUSUNNESTING
         with one more formal dropped, joined with the actual -- which is the
         shape the invariant is stated in, one step further along. *)
 
+    (** The core of a substitution step, on one source type.  Both phases of
+        the chain use it: the input map substitutes an actual type for a
+        formal input, the output map substitutes a single actual name for a
+        formal output, and as far as the *sources* go those are the same
+        operation.  Only the targets tell the two phases apart. *)
+
+    Lemma subst_type_step :
+      forall dlt rest x s1 s2 v1 v2,
+        (forall y, In y (x :: rest) -> (In y s1 <-> In y s2)) ->
+        (forall R, (forall y, In y R -> In y (x :: rest)) ->
+           satisfiable dlt (remove_all R s2) (remove_all R s1)) ->
+        ~ In x rest ->
+        (forall y, In y (x :: rest) -> ~ In y v1) ->
+        (forall y, In y (x :: rest) -> ~ In y v2) ->
+        satisfiable dlt v2 v1 ->
+        (forall y, In y rest ->
+           (In y (SIG.subst_ident_in_type s1 x v1)
+            <-> In y (SIG.subst_ident_in_type s2 x v2)))
+        /\ (forall R, (forall y, In y R -> In y rest) ->
+              satisfiable dlt (remove_all R (SIG.subst_ident_in_type s2 x v2))
+                (remove_all R (SIG.subst_ident_in_type s1 x v1))).
+    Proof.
+      intros dlt rest x s1 s2 v1 v2 Hiff Hdom Hxr Hv1 Hv2 Hdv.
+      destruct (in_dec ident_eq_dec x s1) as [Hin1|Hnin1].
+      - assert (In x s2) as Hin2 by (apply Hiff; [now left|exact Hin1]).
+        assert (forall z, In z (SIG.subst_ident_in_type s1 x v1)
+                          <-> ((In z s1 /\ z <> x) \/ In z v1)) as Hm1
+          by (intros; apply subst_ident_in_type_In;
+              [exact Hin1|apply Hv1; now left]).
+        assert (forall z, In z (SIG.subst_ident_in_type s2 x v2)
+                          <-> ((In z s2 /\ z <> x) \/ In z v2)) as Hm2
+          by (intros; apply subst_ident_in_type_In;
+              [exact Hin2|apply Hv2; now left]).
+        split.
+        + intros z Hz. rewrite Hm1, Hm2.
+          assert (~ In z v1) as Hzv1 by (apply Hv1; now right).
+          assert (~ In z v2) as Hzv2 by (apply Hv2; now right).
+          split.
+          * intros [(Hs & Hne)|Hvz]; [|contradiction].
+            left. split; [apply Hiff; [now right|exact Hs]|exact Hne].
+          * intros [(Hs & Hne)|Hvz]; [|contradiction].
+            left. split; [apply Hiff; [now right|exact Hs]|exact Hne].
+        + intros R HR.
+          assert (forall (si vi : ST),
+                    (forall z, In z (SIG.subst_ident_in_type si x vi)
+                               <-> ((In z si /\ z <> x) \/ In z vi)) ->
+                    forall z,
+                      In z (remove_all R (SIG.subst_ident_in_type si x vi)) ->
+                      In z (remove_all (x :: R) si) \/ In z vi) as Hsub.
+          { intros si vi Hm z Hz.
+            apply remove_all_In in Hz as (Hz & HzR).
+            apply Hm in Hz as [(Hs & Hne)|Hvz]; [|now right].
+            left. apply remove_all_In. split; [exact Hs|].
+            intros [Heq|HR']; [now apply Hne|now apply HzR]. }
+          assert (forall (si vi : ST),
+                    (forall z, In z (SIG.subst_ident_in_type si x vi)
+                               <-> ((In z si /\ z <> x) \/ In z vi)) ->
+                    (forall y0, In y0 (x :: rest) -> ~ In y0 vi) ->
+                    forall z,
+                      In z (remove_all (x :: R) si) \/ In z vi ->
+                      In z (remove_all R (SIG.subst_ident_in_type si x vi)))
+            as Hsup.
+          { intros si vi Hm Hvi z [Hz|Hz].
+            - apply remove_all_In in Hz as (Hz & HzR).
+              apply remove_all_In. split.
+              + apply Hm. left. split;
+                  [exact Hz|intro; subst; apply HzR; now left].
+              + intro; apply HzR; now right.
+            - apply remove_all_In. split.
+              + apply Hm. now right.
+              + intro HzR. eapply (Hvi z); [|exact Hz]. right. now apply HR. }
+          unfold satisfiable.
+          eapply Lat.order_trans;
+            [apply hm_ext_union_le with
+               (a := remove_all (x :: R) s2) (b := v2);
+             intros z Hz; now apply (Hsub s2 v2 Hm2)|].
+          eapply Lat.order_trans;
+            [|apply hm_ext_union_ge with
+                (a := remove_all (x :: R) s1) (b := v1);
+              intros z Hz; apply (Hsup s1 v1 Hm1 Hv1); auto].
+          apply join_mono; [|exact Hdv].
+          apply (Hdom (x :: R)). intros z [Hz|Hz]; subst; [now left|].
+          right. now apply HR.
+      - assert (~ In x s2) as Hnin2
+          by (intro Hc; apply Hnin1, Hiff; [now left|exact Hc]).
+        rewrite !subst_ident_in_type_notin by assumption.
+        split.
+        + intros z Hz. apply Hiff. now right.
+        + intros R HR. apply Hdom. intros z Hz. right. now apply HR.
+    Qed.
+
     Lemma subst_ident_in_constraints_chain :
       forall dlt rest x cs1 cs2 v1 v2 d1 d2 sa sa' sb sb',
         cs_chain dlt (x :: rest) cs1 cs2 ->
@@ -6278,74 +6369,7 @@ Module Type SECLUSUNNESTING
         destruct (ident_eqb x y) eqn:Hxy; try discriminate.
         unfold ret in He1, He2. inv He1. inv He2.
         simpl. split; [reflexivity|].
-        destruct (in_dec ident_eq_dec x s1) as [Hin1|Hnin1].
-        + assert (In x s2) as Hin2 by (apply Hiff; [now left|exact Hin1]).
-          assert (forall z, In z (SIG.subst_ident_in_type s1 x v1)
-                            <-> ((In z s1 /\ z <> x) \/ In z v1)) as Hm1
-            by (intros; apply subst_ident_in_type_In;
-                [exact Hin1|apply Hv1; now left]).
-          assert (forall z, In z (SIG.subst_ident_in_type s2 x v2)
-                            <-> ((In z s2 /\ z <> x) \/ In z v2)) as Hm2
-            by (intros; apply subst_ident_in_type_In;
-                [exact Hin2|apply Hv2; now left]).
-          split.
-          * (** the remaining formals occur alike *)
-            intros z Hz. rewrite Hm1, Hm2.
-            assert (~ In z v1) as Hzv1 by (apply Hv1; now right).
-            assert (~ In z v2) as Hzv2 by (apply Hv2; now right).
-            split.
-            -- intros [(Hs & Hne)|Hvz]; [|contradiction].
-               left. split; [apply Hiff; [now right|exact Hs]|exact Hne].
-            -- intros [(Hs & Hne)|Hvz]; [|contradiction].
-               left. split; [apply Hiff; [now right|exact Hs]|exact Hne].
-          * (** domination survives one more removal *)
-            intros R HR.
-            assert (forall (si vi : ST),
-                      (forall z, In z (SIG.subst_ident_in_type si x vi)
-                                 <-> ((In z si /\ z <> x) \/ In z vi)) ->
-                      forall z,
-                        In z (remove_all R (SIG.subst_ident_in_type si x vi)) ->
-                        In z (remove_all (x :: R) si) \/ In z vi) as Hsub.
-            { intros si vi Hm z Hz.
-              apply remove_all_In in Hz as (Hz & HzR).
-              apply Hm in Hz as [(Hs & Hne)|Hvz]; [|now right].
-              left. apply remove_all_In. split; [exact Hs|].
-              intros [Heq|HR']; [now apply Hne|now apply HzR]. }
-            assert (forall (si vi : ST),
-                      (forall z, In z (SIG.subst_ident_in_type si x vi)
-                                 <-> ((In z si /\ z <> x) \/ In z vi)) ->
-                      (forall y0, In y0 (x :: rest) -> ~ In y0 vi) ->
-                      forall z,
-                        In z (remove_all (x :: R) si) \/ In z vi ->
-                        In z (remove_all R (SIG.subst_ident_in_type si x vi)))
-              as Hsup.
-            { intros si vi Hm Hvi z [Hz|Hz].
-              - apply remove_all_In in Hz as (Hz & HzR).
-                apply remove_all_In. split.
-                + apply Hm. left. split;
-                    [exact Hz|intro; subst; apply HzR; now left].
-                + intro; apply HzR; now right.
-              - apply remove_all_In. split.
-                + apply Hm. now right.
-                + intro HzR. eapply (Hvi z); [|exact Hz]. right. now apply HR. }
-            unfold satisfiable.
-            eapply Lat.order_trans;
-              [apply hm_ext_union_le with
-                 (a := remove_all (x :: R) s2) (b := v2);
-               intros z Hz; now apply (Hsub s2 v2 Hm2)|].
-            eapply Lat.order_trans;
-              [|apply hm_ext_union_ge with
-                  (a := remove_all (x :: R) s1) (b := v1);
-                intros z Hz; apply (Hsup s1 v1 Hm1 Hv1); auto].
-            apply join_mono; [|exact Hdv].
-            apply (Hdom (x :: R)). intros z [Hz|Hz]; subst; [now left|].
-            right. now apply HR.
-        + assert (~ In x s2) as Hnin2
-            by (intro Hc; apply Hnin1, Hiff; [now left|exact Hc]).
-          rewrite !subst_ident_in_type_notin by assumption.
-          split.
-          * intros z Hz. apply Hiff. now right.
-          * intros R HR. apply Hdom. intros z Hz. right. now apply HR.
+        eapply subst_type_step; eauto.
     Qed.
 
     (** The whole input map.  [rest] is what the clock and reset steps will
