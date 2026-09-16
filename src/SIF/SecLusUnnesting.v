@@ -6431,6 +6431,159 @@ Module Type SECLUSUNNESTING
         |exact H1|exact H2].
     Qed.
 
+    (** * The output phase
+
+        The sources are substituted exactly as in the input phase, so clauses
+        two and three of the chain are still what carries them -- which is why
+        the chain has to be run leaving the outputs in [rest] rather than
+        emptied.  What is new is the targets: the two sides rename them to
+        *different* actuals, and all that survives is that the two actuals
+        agree under the witness.  That agreement is how the witness was chosen
+        on the target names in the first place. *)
+
+    Definition cs_le (dlt : ident -> Lat.t) (cs1 cs2 : list constraint)
+      : Prop :=
+      Forall2 (fun c1 c2 => satisfiable dlt (fst c2) (fst c1)
+                            /\ satisfiable dlt (snd c1) (snd c2)) cs1 cs2.
+
+    Lemma cs_le_satisfaction :
+      forall dlt cs1 cs2,
+        cs_le dlt cs1 cs2 -> listSatisfiable dlt cs1 -> listSatisfiable dlt cs2.
+    Proof.
+      intros dlt cs1 cs2 Hle Hs.
+      induction Hle as [|c1 c2 l1 l2 (Hsrc & Htgt) Hr IH]; [constructor|].
+      inversion Hs as [|z zs Hz Hzr]; subst.
+      constructor; [|now apply IH].
+      destruct c1 as (s1 & t1). destruct c2 as (s2 & t2).
+      simpl in Hsrc, Htgt. unfold constraintSatisfiable in *.
+      eapply satisfiable_trans; [exact Hsrc|].
+      eapply satisfiable_trans; [exact Hz|exact Htgt].
+    Qed.
+
+    Lemma satisfiable_singleton_eq :
+      forall dlt a b, dlt a = dlt b -> satisfiable dlt [a] [b].
+    Proof.
+      intros dlt a b H. unfold satisfiable. simpl. rewrite H.
+      apply Lat.order_refl, Lat.eq_refl.
+    Qed.
+
+    Definition cs_out (dlt : ident -> Lat.t) (rest : list ident)
+      (cs1 cs2 : list constraint) : Prop :=
+      Forall2 (fun c1 c2 =>
+        (exists t1 t2, snd c1 = [t1] /\ snd c2 = [t2]
+                       /\ dlt t1 = dlt t2
+                       /\ (forall x, In x rest -> (x = t1 <-> x = t2)))
+        /\ (forall x, In x rest -> (In x (fst c1) <-> In x (fst c2)))
+        /\ (forall R, (forall y, In y R -> In y rest) ->
+              satisfiable dlt (remove_all R (fst c2))
+                (remove_all R (fst c1))))
+        cs1 cs2.
+
+    Lemma cs_chain_out :
+      forall dlt rest cs1 cs2,
+        cs_chain dlt rest cs1 cs2 ->
+        Forall (fun c => exists t, snd c = [t]) cs1 ->
+        cs_out dlt rest cs1 cs2.
+    Proof.
+      intros dlt rest cs1 cs2 Hch Hsing.
+      induction Hch as [|c1 c2 l1 l2 (Ht & Hiff & Hdom) Hr IH]; [constructor|].
+      inversion Hsing as [|z zs (t & Hz) Hzr]; subst.
+      constructor; [|now apply IH].
+      split; [|split; assumption].
+      assert (snd c2 = [t]) as Hz2 by (rewrite <- Ht; exact Hz).
+      exists t, t.
+      split; [exact Hz|split; [exact Hz2|split; [reflexivity|]]].
+      intros x Hx. tauto.
+    Qed.
+
+    Lemma cs_out_nil_le :
+      forall dlt cs1 cs2, cs_out dlt [] cs1 cs2 -> cs_le dlt cs1 cs2.
+    Proof.
+      intros dlt cs1 cs2 H.
+      induction H as [|c1 c2 l1 l2 ((t1 & t2 & Ht1 & Ht2 & Hdt & _)
+                                    & _ & Hdom) Hr IH];
+        [constructor|].
+      constructor; [|exact IH].
+      destruct c1 as (s1 & tg1). destruct c2 as (s2 & tg2).
+      simpl in Ht1, Ht2, Hdom. subst tg1 tg2.
+      split.
+      - specialize (Hdom [] (fun y Hy => Hy)). exact Hdom.
+      - unfold satisfiable. simpl. rewrite Hdt.
+        apply Lat.order_refl, Lat.eq_refl.
+    Qed.
+
+    (** One output, renamed differently on the two sides. *)
+
+    Lemma subst_ident_constraints_out :
+      forall dlt rest x o b cs1 cs2 d1 d2 sa sa' sb sb',
+        cs_out dlt (x :: rest) cs1 cs2 ->
+        ~ In x rest ->
+        dlt b = dlt o ->
+        ~ In o (x :: rest) -> ~ In b (x :: rest) ->
+        SIG.subst_ident_constraints cs1 x o sa = OK (d1, sa') ->
+        SIG.subst_ident_constraints cs2 x b sb = OK (d2, sb') ->
+        cs_out dlt rest d1 d2.
+    Proof.
+      intros dlt rest x o b cs1 cs2 d1 d2 sa sa' sb sb'
+        Hout Hxr Hdob Hno Hnb H1 H2.
+      unfold SIG.subst_ident_constraints in H1, H2.
+      revert d1 d2 sa sa' sb sb' H1 H2.
+      induction Hout as [|c1 c2 l1 l2
+                          ((t1 & t2 & Ht1 & Ht2 & Hdt & Hteq) & Hiff & Hdom)
+                          Hr IH];
+        intros d1 d2 sa sa' sb sb' H1 H2.
+      - simpl in H1, H2. unfold ret in H1, H2. inv H1. inv H2. constructor.
+      - simpl in H1, H2.
+        eapply sec_bind_inv in H1 as (e1 & u1 & He1 & H1).
+        eapply sec_bind_inv in H1 as (r1 & w1 & Hr1 & Hret1).
+        unfold ret in Hret1. inv Hret1.
+        eapply sec_bind_inv in H2 as (e2 & u2 & He2 & H2).
+        eapply sec_bind_inv in H2 as (r2 & w2 & Hr2 & Hret2).
+        unfold ret in Hret2. inv Hret2.
+        constructor; [|eapply IH; eauto].
+        destruct c1 as (s1 & tg1). destruct c2 as (s2 & tg2).
+        simpl in Ht1, Ht2, Hiff, Hdom. subst tg1 tg2.
+        unfold SIG.subst_ident_constraint in He1, He2.
+        destruct (ident_eqb x o) eqn:Hxo; [discriminate|].
+        destruct (ident_eqb x b) eqn:Hxb; [discriminate|].
+        assert (x = t1 <-> x = t2) as Htt by (apply Hteq; now left).
+        assert (forall y, In y (x :: rest) -> ~ In y [o]) as Hfo
+          by (intros y Hy Hc; destruct Hc as [Hc|[]]; subst; now apply Hno).
+        assert (forall y, In y (x :: rest) -> ~ In y [b]) as Hfb
+          by (intros y Hy Hc; destruct Hc as [Hc|[]]; subst; now apply Hnb).
+        assert (satisfiable dlt [b] [o]) as Hsob
+          by (apply satisfiable_singleton_eq; exact Hdob).
+        assert ((forall y, In y rest ->
+                   (In y (SIG.subst_ident_in_type s1 x [o])
+                    <-> In y (SIG.subst_ident_in_type s2 x [b])))
+                /\ (forall R, (forall y, In y R -> In y rest) ->
+                      satisfiable dlt
+                        (remove_all R (SIG.subst_ident_in_type s2 x [b]))
+                        (remove_all R (SIG.subst_ident_in_type s1 x [o]))))
+          as Hsrc
+          by (eapply subst_type_step with (rest := rest);
+              [exact Hiff|exact Hdom|exact Hxr|exact Hfo|exact Hfb|exact Hsob]).
+        destruct (ident_eqb x t1) eqn:Hx1; destruct (ident_eqb x t2) eqn:Hx2.
+        + (** both targets are this formal: both get renamed *)
+          unfold ret in He1, He2. inv He1. inv He2.
+          split; [|exact Hsrc].
+          exists o, b. simpl.
+          split; [reflexivity|split; [reflexivity|split; [now symmetry|]]].
+          intros y Hy. split.
+          * intros ?; subst. exfalso. apply Hno. now right.
+          * intros ?; subst. exfalso. apply Hnb. now right.
+        + exfalso. apply ident_eqb_eq in Hx1.
+          apply ident_eqb_neq in Hx2. apply Hx2, Htt, Hx1.
+        + exfalso. apply ident_eqb_eq in Hx2.
+          apply ident_eqb_neq in Hx1. apply Hx1, Htt, Hx2.
+        + (** neither is: the targets stay where they were *)
+          unfold ret in He1, He2. inv He1. inv He2.
+          split; [|exact Hsrc].
+          exists t1, t2. simpl.
+          split; [reflexivity|split; [reflexivity|split; [exact Hdt|]]].
+          intros y Hy. apply Hteq. now right.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
