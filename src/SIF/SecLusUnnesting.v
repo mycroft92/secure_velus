@@ -6348,6 +6348,65 @@ Module Type SECLUSUNNESTING
           * intros R HR. apply Hdom. intros z Hz. right. now apply HR.
     Qed.
 
+    (** The whole input map.  [rest] is what the clock and reset steps will
+        still consume, so the invariant comes out of the fold still carrying
+        them. *)
+
+    Lemma subst_constraints_inp_map_chain :
+      forall dlt xs rest vs1 vs2 cs1 cs2 d1 d2 sa sa' sb sb',
+        NoDup (xs ++ rest) ->
+        cs_chain dlt (xs ++ rest) cs1 cs2 ->
+        Forall (fun v => forall y, In y (xs ++ rest) -> ~ In y v) vs1 ->
+        Forall (fun v => forall y, In y (xs ++ rest) -> ~ In y v) vs2 ->
+        Forall2 (fun t1 t2 => satisfiable dlt t2 t1) vs1 vs2 ->
+        SIG.subst_constraints_inp_map cs1 xs vs1 sa = OK (d1, sa') ->
+        SIG.subst_constraints_inp_map cs2 xs vs2 sb = OK (d2, sb') ->
+        cs_chain dlt rest d1 d2.
+    Proof.
+      intros dlt xs. revert dlt.
+      induction xs as [|x xs IH];
+        intros dlt rest vs1 vs2 cs1 cs2 d1 d2 sa sa' sb sb'
+          Hnd Hch Hf1 Hf2 Hv H1 H2.
+      - destruct vs1 as [|p ps]; simpl in H1; [|discriminate].
+        inv Hv. simpl in H2.
+        unfold ret in H1, H2. inv H1. inv H2. exact Hch.
+      - destruct vs1 as [|p ps]; simpl in H1; [discriminate|].
+        inversion Hv as [|p0 q ps0 qs Hpq Hvr]; subst.
+        inversion Hf1 as [|z zs Hz Hzr]; subst.
+        inversion Hf2 as [|w ws Hw Hwr]; subst.
+        simpl in H1, H2.
+        eapply sec_bind_inv in H1 as (e1 & t1 & He1 & H1).
+        eapply sec_bind_inv in H2 as (e2 & t2 & He2 & H2).
+        eapply IH; [| | | |exact Hvr|exact H1|exact H2].
+        + rewrite <- app_comm_cons in Hnd. now inv Hnd.
+        + eapply subst_ident_in_constraints_chain;
+            [exact Hch| |exact Hz|exact Hw|exact Hpq|exact He1|exact He2].
+          rewrite <- app_comm_cons in Hnd. now inv Hnd.
+        + eapply Forall_impl; [|exact Hzr].
+          intros v Hv0 y Hy. apply Hv0. now right.
+        + eapply Forall_impl; [|exact Hwr].
+          intros v Hv0 y Hy. apply Hv0. now right.
+    Qed.
+
+    (** The clock and the reset are one formal each, and the same actual goes
+        in on both sides, so those two steps only have to preserve what the
+        input map left. *)
+
+    Corollary subst_ident_in_constraints_chain_same :
+      forall dlt rest x cs1 cs2 v d1 d2 sa sa' sb sb',
+        cs_chain dlt (x :: rest) cs1 cs2 ->
+        ~ In x rest ->
+        (forall y, In y (x :: rest) -> ~ In y v) ->
+        SIG.subst_ident_in_constraints cs1 x v sa = OK (d1, sa') ->
+        SIG.subst_ident_in_constraints cs2 x v sb = OK (d2, sb') ->
+        cs_chain dlt rest d1 d2.
+    Proof.
+      intros dlt rest x cs1 cs2 v d1 d2 sa sa' sb sb' Hch Hxr Hv H1 H2.
+      eapply subst_ident_in_constraints_chain;
+        [exact Hch|exact Hxr|exact Hv|exact Hv|apply satisfiable_refl
+        |exact H1|exact H2].
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
