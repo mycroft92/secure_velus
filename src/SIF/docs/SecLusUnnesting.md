@@ -452,6 +452,36 @@ the same actual on both sides, which makes them preservation rather than
 progress.  Threading `rest` is what lets one lemma cover all six
 substitutions instead of needing a separate argument for the last two.
 
+### The ambient reaches the call case too
+
+`generate_constraints_mono_sem` consumes `inp2 ⊑ inp1`.  What the induction
+supplies for a call's arguments is `inp2 ⊑ amb ⊔ inp1` — the ambient-inflated
+relation, because a *lifted* argument's target type is a minted variable
+whose defining equation carries the ambient.  So the two do not meet as they
+stand.
+
+The fix is not to strip the ambient but to let it through the chain, and it
+is mechanical rather than structural:
+
+- clause three becomes `fst c2 ⊑ amb ⊔ fst c1` after dropping the remaining
+  formals.  It still threads: the substituted body's members come from the
+  old body and the actual, and `amb ⊔ (A ⊔ B) = (amb ⊔ A) ⊔ (amb ⊔ B)` by
+  idempotence, so the step goes through with the same membership argument.
+- clause one weakens from `dlt t1 = dlt t2` to `dlt t1 ⊑ dlt t2`.  That is
+  all `cs_le` ever needed, and it is what makes the witness choice below
+  consistent.
+
+The witness on a call's results is then
+`dlt' b_j := hm_ext dlt (amb ⊔ [o_j])` rather than `dlt (o_j)`: the minted
+program variable gets the ambient-inflated value of the security name the
+monad minted for the same result.  With the two-sided clause one that choice
+would have been contradictory — it would have forced `amb ⊑ o_j` — which is
+what makes the weakening necessary rather than merely convenient.
+
+The lookup pass stays as it is.  Satisfaction of the whole list is still what
+transfers, so the positional alignment between the two sides' `findST`
+selections is still not needed.
+
 ### What is left of the call chain
 
 The output substitution is **not** another step of the same chain.  The two
