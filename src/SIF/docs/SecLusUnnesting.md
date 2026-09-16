@@ -422,18 +422,51 @@ drops `x`'s contribution and replaces it by `v1`, while the left keeps `ty2`
 whole; `hm_ext ty2 ⊑ hm_ext ty1` says nothing about `hm_ext ty2` against
 `hm_ext (st_remove x ty1)`.
 
-The real invariant is structural rather than relational: both sides start
-from the *same* signature, so after `k` substitutions each source has the
-shape `F ⊔ V` with a **common** residual `F` (what is left of the
-signature's own constraint) and a side-specific accumulated part `V` (the
-actuals substituted so far), with `V2` dominated by `V1`.  Freshness of the
-remaining formals from the actuals is what keeps `F` common: it makes
-`my_set_mem x (F ⊔ V)` depend only on `F`, so the two sides branch the same
-way, and makes `st_remove x (F ⊔ V) = st_remove x F ⊔ V`.
+The real invariant is structural rather than relational, and it does not
+have to be *syntactic*.  Writing it as an equation `fst c = F ⊔ V` — a common
+residual joined with a side-specific accumulation of the actuals — would need
+`st_remove` to distribute over `merge` on the nose, which holds only up to
+sortedness, since `st_remove` is a plain list filter and `merge` a sorted
+union.  Sortedness would then have to be threaded through every step.
 
-That decomposition is what the chain should carry.  `cs_dom`,
-`cs_dom_refl` and `cs_dom_satisfaction` are in place and are what the
-decomposition will be cashed out into at the end.
+`hm_ext` depends on a type only through its members, so the chain runs at the
+level of **membership** instead and domination is recovered at each use.
+Each substitution step then only has to say which names survive it, which is
+what the freshness premise decides directly.  `remove_all` with its
+membership characterisation, `satisfiable_of_members`, `hm_ext_union_le` and
+`hm_ext_union_ge` are the foundation.
+
+`cs_chain dlt rest cs1 cs2` is the invariant.  `rest` is the formals still to
+be substituted, and it carries three clauses: the targets never move; the
+remaining formals occur on one side exactly when they occur on the other, so
+the two sides **branch alike** at every remaining step; and domination holds
+not as it stands but *after dropping any of the remaining formals*.  That
+third clause is what the naive pointwise invariant lacked and what survives
+the next substitution.  `cs_chain_refl` starts it (both sides are the same
+signature) and `cs_chain_nil_dom` collapses it to `cs_dom` at the end.
+
+`subst_ident_in_constraints_chain` is one formal;
+`subst_constraints_inp_map_chain` folds it over the input map, leaving the
+clock and reset still in `rest` — so those two are the same lemma again with
+the same actual on both sides, which makes them preservation rather than
+progress.  Threading `rest` is what lets one lemma cover all six
+substitutions instead of needing a separate argument for the last two.
+
+### What is left of the call chain
+
+The output substitution is **not** another step of the same chain.  The two
+sides rename the formal outputs to *different* actuals — the source to the
+names the security monad minted, the target to the security names of the
+variables the pass minted — so the invariant's first clause, that the targets
+never move, is exactly what it breaks.
+
+That is the renaming `subst_constraints_out_map_correct` and
+`subst_constraints_out_map_complete` already exist for: they relate the two
+sides under a valuation that identifies each formal with its actual, which is
+how the witness is chosen on the target names anyway.  So the output half
+should be discharged through those rather than by extending `cs_chain`, and
+then the final lookup pass (`findST` over the substituted constraints, one
+per output) reads the two sides' sources off in the same order.
 
 ## Standing hypotheses
 
