@@ -6584,6 +6584,77 @@ Module Type SECLUSUNNESTING
           intros y Hy. apply Hteq. now right.
     Qed.
 
+    Lemma subst_out_map_cons_eq :
+      forall cs x xs v vs,
+        SIG.subst_constraints_out_map cs (x :: xs) (v :: vs)
+        = match findST cs v with
+          | Some _ =>
+              SC.error (MSG "Output substitution captures an existing RHS identifier: "
+                        :: [CTX v])
+          | None => (do cs' <- SIG.subst_ident_constraints cs x v;
+                     SIG.subst_constraints_out_map cs' xs vs)
+          end.
+    Proof. reflexivity. Qed.
+
+    Lemma subst_out_map_nil_eq :
+      forall cs, SIG.subst_constraints_out_map cs [] [] = SC.ret cs.
+    Proof. reflexivity. Qed.
+
+    Lemma subst_out_map_nil_cons_eq :
+      forall cs v vs,
+        SIG.subst_constraints_out_map cs [] (v :: vs)
+        = SC.error (msg "Malformed replace map").
+    Proof. reflexivity. Qed.
+
+    Lemma subst_out_map_cons_nil_eq :
+      forall cs x xs,
+        SIG.subst_constraints_out_map cs (x :: xs) []
+        = SC.error (msg "Malformed replace map").
+    Proof. reflexivity. Qed.
+
+    Lemma subst_constraints_out_map_out :
+      forall dlt xs os bs cs1 cs2 d1 d2 sa sa' sb sb',
+        NoDup xs ->
+        cs_out dlt xs cs1 cs2 ->
+        (forall y, In y xs -> ~ In y os) ->
+        (forall y, In y xs -> ~ In y bs) ->
+        Forall2 (fun o b => dlt b = dlt o) os bs ->
+        SIG.subst_constraints_out_map cs1 xs os sa = OK (d1, sa') ->
+        SIG.subst_constraints_out_map cs2 xs bs sb = OK (d2, sb') ->
+        cs_out dlt [] d1 d2.
+    Proof.
+      intros dlt xs. revert dlt.
+      induction xs as [|x xs IH];
+        intros dlt os bs cs1 cs2 d1 d2 sa sa' sb sb'
+          Hnd Hout Hfo Hfb Hob H1 H2.
+      - destruct os as [|o os].
+        + inv Hob. rewrite subst_out_map_nil_eq in H1, H2.
+          unfold SC.ret in H1, H2. inv H1. inv H2. exact Hout.
+        + rewrite subst_out_map_nil_cons_eq in H1.
+          unfold SC.error in H1. discriminate H1.
+      - destruct os as [|o os].
+        + rewrite subst_out_map_cons_nil_eq in H1.
+          unfold SC.error in H1. discriminate H1.
+        + inversion Hob as [|o0 b0 os0 bs0 Hob0 Hobr]; subst.
+          rewrite subst_out_map_cons_eq in H1, H2.
+          destruct (findST cs1 o) as [sx|] eqn:Hf1;
+            try rewrite Hf1 in H1; simpl in H1.
+          { inv H1. }
+          destruct (findST cs2 b0) as [sy|] eqn:Hf2;
+            try rewrite Hf2 in H2; simpl in H2.
+          { inv H2. }
+          eapply sec_bind_inv in H1 as (e1 & u1 & He1 & H1).
+          eapply sec_bind_inv in H2 as (e2 & u2 & He2 & H2).
+          inv Hnd.
+          eapply IH; [assumption| | | |exact Hobr|exact H1|exact H2].
+          * eapply subst_ident_constraints_out;
+              [exact Hout|assumption|exact Hob0| | |exact He1|exact He2].
+            -- intro Hc. eapply (Hfo o); [exact Hc|now left].
+            -- intro Hc. eapply (Hfb b0); [exact Hc|now left].
+          * intros y Hy Hc. eapply (Hfo y); [now right|now right].
+          * intros y Hy Hc. eapply (Hfb y); [now right|now right].
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
