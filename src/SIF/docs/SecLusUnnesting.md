@@ -355,7 +355,7 @@ calls, so the equation generator takes its ordinary-definition branch),
 the minted variables' names), and the two form lemmas that put `Efby`'s and
 `Earrow`'s differently-spelled emitted lists into one shape.
 
-### What is already in place for the call case
+### What the call case needs
 
 The call is the case the refinement machinery exists for, and its
 scaffolding predates the induction: `assign_lexp_Eapp_inv`,
@@ -363,7 +363,7 @@ scaffolding predates the induction: `assign_lexp_Eapp_inv`,
 `assign_lexp_Eapp_result_types`, `unnest_exp_Eapp_result_vars`,
 `Eapp_renaming_lists`, `unnest_reset_shape`,
 `unnest_exp_Eapp_reset_is_var`, and the renaming algebra
-`subst_idents_in_type` / `subst_constraints_out_map_*`.
+`subst_idents_in_type` / `subst_constraints_out_map_{correct,complete}`.
 
 Note `idents_for_anns'` **reuses** a name when the annotation already carries
 one, so the correspondence with `fresh_idents (length anns)` is not
@@ -372,21 +372,28 @@ mint-for-mint.  It does not need to be: both lists have length
 and whether a result's variable is new or reused only changes which side of
 it was already named.
 
-## One environment, not two
+The call also breaks the shape the other four lifting constructors share.
+They emit **one equation per result**, which is what `lifted_defs` walks; the
+call emits a **single** equation binding all of them at once, and its
+constraint comes from `generate_lcall_constraint` rather than from
+`generate_ldef_constraint`.  So `lifted_defs` does not apply and the call
+gets its own block argument.
 
-The section takes a single `env : Env.t ident` and a single
-`cenv : Env.t (type * clock)`, both read as the *target* node's.  The source
-generator is run against the same two.
+The one genuinely missing ingredient is a **semantic** monotonicity of
+`generate_constraints` in its actual argument types:
 
-That is sound for the same reason in both cases and it is worth stating,
-because it is the kind of simplification that looks like a gap.  Unnesting
-only adds variables, so the target's environments *extend* the source's; and
-the source expressions only ever look up source variables, on which the two
-agree.  For clocks that agreement is the theorem `lnode_clock_env_extended`
-above.  For security names it is the inclusion-and-freshness relation
-`SecLNameInterface.v` establishes for exactly these passes — transcription
-gives equality of the two environments, unnesting and fby-initialisation give
-inclusion.
+    Forall2 (fun t1 t2 => satisfiable dlt t2 t1) inp1 inp2 ->
+    generate_constraints sig inp1 clk rst out _ = OK (cns1, _) ->
+    generate_constraints sig inp2 clk rst out _ = OK (cns2, _) ->
+    listSatisfiable dlt cns1 -> listSatisfiable dlt cns2
+
+`SIFSignature.v` already has `generate_constraints_mono_inp`, but that is
+*syntactic* — it asks that every name of one actual occur in the other, and
+concludes `constraints_src_le`.  The unnesting leg does not give syntactic
+inclusion between the two sides' argument types; it gives domination under a
+valuation, modulo the ambient.  So the call case needs the semantic form,
+which should follow from monotonicity of `hm_ext` through the input
+substitution.
 
 ## Standing hypotheses
 
@@ -418,24 +425,25 @@ the mechanisation going through:
 
 ## Status
 
-Proved, no admits: `Econst`, `Evar`, `Eunop`, `Ebinop`, the list level,
-`Ewhen`, `Emerge` and `Eite` under `is_control`, **`Efby` and `Earrow`**,
-all the infrastructure above, `lifted_defs` — the block the four non-call
-lifting cases share — and the support each lifting constructor needs
-(`unnest_fby_types`, `unnest_arrow_types`, `unnest_merge_types`, the
+Proved, no admits: **every constructor except the call**, at both
+`is_control` flags — `Econst`, `Evar`, `Eunop`, `Ebinop`, the list level,
+`Ewhen`, `Emerge` and `Eite` in both their control and lifting branches,
+`Efby` and `Earrow` — together with all the infrastructure above,
+`lifted_defs`, and the per-constructor support (`unnest_fby_types`,
+`unnest_arrow_types`, `unnest_merge_types`, `unnest_ite_types`, the
 `defs_operand_types_*` family, and the state-independence and
 elementwise-typing results they rest on).
 
 `Earrow` was obtained from `Efby` by substituting the constructor and the
 emitted list's spelling, and went through unchanged — which is the intended
 reading of "the two differ only in what the initialisation pass will later
-act on".
+act on".  `Eite`'s lifting branch is the merge's with the scrutinee composed
+in front: four witnesses in sequence, each surviving the ones after it
+because they move over disjoint stretches of the fresh state.
 
-Remaining: `Emerge` and `Eite` without `is_control` (all their support is in
-place; they are `Efby` with a head on the join and the empty-`tys` case
-handled by a disjunction, as in their control branches); `Eapp`; then the
-equation, node and program levels (reusing `Signature_entails` for the
-two-globals lockstep), then Leg I (`normfby_global`).
+Remaining: `Eapp`; then the equation, node and program levels (reusing
+`Signature_entails` for the two-globals lockstep), then Leg I
+(`normfby_global`).
 
 ## Downstream use
 
