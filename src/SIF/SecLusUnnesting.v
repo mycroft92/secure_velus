@@ -831,6 +831,15 @@ Module Type SECLUSUNNESTING
     rewrite hm_ext_merge_eq. now apply Lat.join_least_upper_bound.
   Qed.
 
+  Lemma satisfiable_merge_mono :
+    forall dlt c a b,
+      satisfiable dlt a b -> satisfiable dlt (merge c a) (merge c b).
+  Proof.
+    intros dlt c a b H. apply satisfiable_merge_intro.
+    - apply satisfiable_merge_l.
+    - eapply satisfiable_trans; [exact H|apply satisfiable_merge_r].
+  Qed.
+
   (** So a name constrained above a merge dominates each side of it -- the step
       that carries a source operand's type up to the variable unnesting
       created for the whole expression. *)
@@ -6069,32 +6078,6 @@ Module Type SECLUSUNNESTING
         chain, which has to work with an unordered set inclusion because its
         final lookup pass reorders. *)
 
-    Definition cs_dom (dlt : ident -> Lat.t) (cs1 cs2 : list constraint)
-      : Prop :=
-      Forall2 (fun c1 c2 => snd c1 = snd c2
-                            /\ satisfiable dlt (fst c2) (fst c1)) cs1 cs2.
-
-    Lemma cs_dom_refl : forall dlt cs, cs_dom dlt cs cs.
-    Proof.
-      intros dlt cs. induction cs as [|c cs IH]; [constructor|].
-      constructor; [|exact IH].
-      split; [reflexivity|apply satisfiable_refl].
-    Qed.
-
-    Lemma cs_dom_satisfaction :
-      forall dlt cs1 cs2,
-        cs_dom dlt cs1 cs2 -> listSatisfiable dlt cs1 -> listSatisfiable dlt cs2.
-    Proof.
-      intros dlt cs1 cs2 Hd Hs.
-      induction Hd as [|c1 c2 l1 l2 (Ht & Hdom) Hr IH]; [constructor|].
-      inversion Hs as [|z zs Hz Hzr]; subst.
-      constructor; [|now apply IH].
-      destruct c1 as (s1 & t1). destruct c2 as (s2 & t2).
-      simpl in Ht, Hdom. subst t2.
-      unfold constraintSatisfiable in *.
-      eapply satisfiable_trans; [exact Hdom|exact Hz].
-    Qed.
-
     (** * The call chain, at the level of membership
 
         The decomposition the chain has to carry is structural, but it does
@@ -6205,7 +6188,7 @@ Module Type SECLUSUNNESTING
                  /\ (forall x, In x rest -> (In x (fst c1) <-> In x (fst c2)))
                  /\ (forall R, (forall y, In y R -> In y rest) ->
                        satisfiable dlt (remove_all R (fst c2))
-                         (remove_all R (fst c1))))
+                         (merge amb (remove_all R (fst c1)))))
         cs1 cs2.
 
     Lemma cs_chain_refl :
@@ -6215,19 +6198,21 @@ Module Type SECLUSUNNESTING
       constructor; [|exact IH].
       split; [reflexivity|split].
       - intros x Hx. reflexivity.
-      - intros R HR. apply satisfiable_refl.
+      - intros R HR. apply satisfiable_merge_r.
     Qed.
 
-    (** At the end of the chain there are no formals left, and the invariant
-        collapses to the pointwise relation satisfaction is read off. *)
-
-    Lemma cs_chain_nil_dom :
-      forall dlt cs1 cs2, cs_chain dlt [] cs1 cs2 -> cs_dom dlt cs1 cs2.
+    Lemma join_amb_distr :
+      forall a x y,
+        Lat.order (Lat.join (Lat.join a x) (Lat.join a y))
+          (Lat.join a (Lat.join x y)).
     Proof.
-      intros dlt cs1 cs2 H.
-      induction H as [|c1 c2 l1 l2 (Ht & _ & Hd) Hr IH]; constructor; auto.
-      split; [exact Ht|].
-      specialize (Hd [] (fun y Hy => Hy)). exact Hd.
+      intros a x y. apply Lat.join_least_upper_bound.
+      - apply Lat.join_least_upper_bound;
+          [apply Lat.join_bound1|].
+        eapply Lat.order_trans; [apply Lat.join_bound1|apply Lat.join_bound2].
+      - apply Lat.join_least_upper_bound;
+          [apply Lat.join_bound1|].
+        eapply Lat.order_trans; [apply Lat.join_bound2|apply Lat.join_bound2].
     Qed.
 
     Lemma join_mono :
@@ -6256,17 +6241,18 @@ Module Type SECLUSUNNESTING
       forall dlt rest x s1 s2 v1 v2,
         (forall y, In y (x :: rest) -> (In y s1 <-> In y s2)) ->
         (forall R, (forall y, In y R -> In y (x :: rest)) ->
-           satisfiable dlt (remove_all R s2) (remove_all R s1)) ->
+           satisfiable dlt (remove_all R s2) (merge amb (remove_all R s1))) ->
         ~ In x rest ->
         (forall y, In y (x :: rest) -> ~ In y v1) ->
         (forall y, In y (x :: rest) -> ~ In y v2) ->
-        satisfiable dlt v2 v1 ->
+        satisfiable dlt v2 (merge amb v1) ->
         (forall y, In y rest ->
            (In y (SIG.subst_ident_in_type s1 x v1)
             <-> In y (SIG.subst_ident_in_type s2 x v2)))
         /\ (forall R, (forall y, In y R -> In y rest) ->
               satisfiable dlt (remove_all R (SIG.subst_ident_in_type s2 x v2))
-                (remove_all R (SIG.subst_ident_in_type s1 x v1))).
+                (merge amb
+                   (remove_all R (SIG.subst_ident_in_type s1 x v1)))).
     Proof.
       intros dlt rest x s1 s2 v1 v2 Hiff Hdom Hxr Hv1 Hv2 Hdv.
       destruct (in_dec ident_eq_dec x s1) as [Hin1|Hnin1].
@@ -6317,18 +6303,23 @@ Module Type SECLUSUNNESTING
             - apply remove_all_In. split.
               + apply Hm. now right.
               + intro HzR. eapply (Hvi z); [|exact Hz]. right. now apply HR. }
-          unfold satisfiable.
+          assert (satisfiable dlt (remove_all (x :: R) s2)
+                    (merge amb (remove_all (x :: R) s1))) as Hd1.
+          { apply (Hdom (x :: R)). intros z [Hz|Hz]; subst; [now left|].
+            right. now apply HR. }
+          unfold satisfiable in Hd1, Hdv |- *.
+          rewrite hm_ext_merge_eq in Hd1, Hdv |- *.
           eapply Lat.order_trans;
             [apply hm_ext_union_le with
                (a := remove_all (x :: R) s2) (b := v2);
              intros z Hz; now apply (Hsub s2 v2 Hm2)|].
           eapply Lat.order_trans;
-            [|apply hm_ext_union_ge with
-                (a := remove_all (x :: R) s1) (b := v1);
-              intros z Hz; apply (Hsup s1 v1 Hm1 Hv1); auto].
-          apply join_mono; [|exact Hdv].
-          apply (Hdom (x :: R)). intros z [Hz|Hz]; subst; [now left|].
-          right. now apply HR.
+            [apply join_mono; [exact Hd1|exact Hdv]|].
+          eapply Lat.order_trans; [apply join_amb_distr|].
+          apply join_mono; [apply Lat.order_refl, Lat.eq_refl|].
+          apply hm_ext_union_ge with
+            (a := remove_all (x :: R) s1) (b := v1);
+            intros z Hz; apply (Hsup s1 v1 Hm1 Hv1); auto.
       - assert (~ In x s2) as Hnin2
           by (intro Hc; apply Hnin1, Hiff; [now left|exact Hc]).
         rewrite !subst_ident_in_type_notin by assumption.
@@ -6343,7 +6334,7 @@ Module Type SECLUSUNNESTING
         ~ In x rest ->
         (forall y, In y (x :: rest) -> ~ In y v1) ->
         (forall y, In y (x :: rest) -> ~ In y v2) ->
-        satisfiable dlt v2 v1 ->
+        satisfiable dlt v2 (merge amb v1) ->
         SIG.subst_ident_in_constraints cs1 x v1 sa = OK (d1, sa') ->
         SIG.subst_ident_in_constraints cs2 x v2 sb = OK (d2, sb') ->
         cs_chain dlt rest d1 d2.
@@ -6382,7 +6373,7 @@ Module Type SECLUSUNNESTING
         cs_chain dlt (xs ++ rest) cs1 cs2 ->
         Forall (fun v => forall y, In y (xs ++ rest) -> ~ In y v) vs1 ->
         Forall (fun v => forall y, In y (xs ++ rest) -> ~ In y v) vs2 ->
-        Forall2 (fun t1 t2 => satisfiable dlt t2 t1) vs1 vs2 ->
+        Forall2 (fun t1 t2 => satisfiable dlt t2 (merge amb t1)) vs1 vs2 ->
         SIG.subst_constraints_inp_map cs1 xs vs1 sa = OK (d1, sa') ->
         SIG.subst_constraints_inp_map cs2 xs vs2 sb = OK (d2, sb') ->
         cs_chain dlt rest d1 d2.
@@ -6427,7 +6418,7 @@ Module Type SECLUSUNNESTING
     Proof.
       intros dlt rest x cs1 cs2 v d1 d2 sa sa' sb sb' Hch Hxr Hv H1 H2.
       eapply subst_ident_in_constraints_chain;
-        [exact Hch|exact Hxr|exact Hv|exact Hv|apply satisfiable_refl
+        [exact Hch|exact Hxr|exact Hv|exact Hv|apply satisfiable_merge_r
         |exact H1|exact H2].
     Qed.
 
@@ -6443,8 +6434,9 @@ Module Type SECLUSUNNESTING
 
     Definition cs_le (dlt : ident -> Lat.t) (cs1 cs2 : list constraint)
       : Prop :=
-      Forall2 (fun c1 c2 => satisfiable dlt (fst c2) (fst c1)
-                            /\ satisfiable dlt (snd c1) (snd c2)) cs1 cs2.
+      Forall2 (fun c1 c2 => satisfiable dlt (fst c2) (merge amb (fst c1))
+                            /\ satisfiable dlt (merge amb (snd c1)) (snd c2))
+        cs1 cs2.
 
     Lemma cs_le_satisfaction :
       forall dlt cs1 cs2,
@@ -6457,7 +6449,7 @@ Module Type SECLUSUNNESTING
       destruct c1 as (s1 & t1). destruct c2 as (s2 & t2).
       simpl in Hsrc, Htgt. unfold constraintSatisfiable in *.
       eapply satisfiable_trans; [exact Hsrc|].
-      eapply satisfiable_trans; [exact Hz|exact Htgt].
+      eapply satisfiable_trans; [apply satisfiable_merge_mono; exact Hz|exact Htgt].
     Qed.
 
     Lemma satisfiable_singleton_eq :
@@ -6467,33 +6459,52 @@ Module Type SECLUSUNNESTING
       apply Lat.order_refl, Lat.eq_refl.
     Qed.
 
+    Definition amb_pair (dlt : ident -> Lat.t) (o b : ident) : Prop :=
+      satisfiable dlt [b] (merge amb [o]) /\ satisfiable dlt (merge amb [o]) [b].
+
     Definition cs_out (dlt : ident -> Lat.t) (rest : list ident)
       (cs1 cs2 : list constraint) : Prop :=
       Forall2 (fun c1 c2 =>
         (exists t1 t2, snd c1 = [t1] /\ snd c2 = [t2]
-                       /\ dlt t1 = dlt t2
+                       /\ (In t1 rest \/ satisfiable dlt (merge amb [t1]) [t2])
                        /\ (forall x, In x rest -> (x = t1 <-> x = t2)))
         /\ (forall x, In x rest -> (In x (fst c1) <-> In x (fst c2)))
         /\ (forall R, (forall y, In y R -> In y rest) ->
               satisfiable dlt (remove_all R (fst c2))
-                (remove_all R (fst c1))))
+                (merge amb (remove_all R (fst c1)))))
         cs1 cs2.
 
     Lemma cs_chain_out :
       forall dlt rest cs1 cs2,
         cs_chain dlt rest cs1 cs2 ->
-        Forall (fun c => exists t, snd c = [t]) cs1 ->
+        Forall (fun c => exists t, snd c = [t] /\ In t rest) cs1 ->
         cs_out dlt rest cs1 cs2.
     Proof.
       intros dlt rest cs1 cs2 Hch Hsing.
       induction Hch as [|c1 c2 l1 l2 (Ht & Hiff & Hdom) Hr IH]; [constructor|].
-      inversion Hsing as [|z zs (t & Hz) Hzr]; subst.
+      inversion Hsing as [|z zs (t & Hz & Htr) Hzr]; subst.
       constructor; [|now apply IH].
       split; [|split; assumption].
       assert (snd c2 = [t]) as Hz2 by (rewrite <- Ht; exact Hz).
       exists t, t.
-      split; [exact Hz|split; [exact Hz2|split; [reflexivity|]]].
+      split; [exact Hz|split; [exact Hz2|split; [now left|]]].
       intros x Hx. tauto.
+    Qed.
+
+    (** The targets of a well-formed constraint list are exactly its node's
+        outputs, one each -- which is what puts every target in [rest] when
+        the output phase starts. *)
+
+    Lemma singleton_targets_of_perm :
+      forall (cs : list constraint) (out : list ident),
+        Permutation (map snd cs) (map (fun y => [y]) out) ->
+        Forall (fun c => exists t, snd c = [t] /\ In t out) cs.
+    Proof.
+      intros cs out Hp. apply Forall_forall. intros c Hc.
+      assert (In (snd c) (map (fun y => [y]) out)) as Hin
+        by (eapply Permutation_in; [exact Hp|now apply in_map]).
+      apply in_map_iff in Hin as (t & Ht & Hto).
+      exists t. split; [now symmetry|exact Hto].
     Qed.
 
     Lemma cs_out_nil_le :
@@ -6508,8 +6519,7 @@ Module Type SECLUSUNNESTING
       simpl in Ht1, Ht2, Hdom. subst tg1 tg2.
       split.
       - specialize (Hdom [] (fun y Hy => Hy)). exact Hdom.
-      - unfold satisfiable. simpl. rewrite Hdt.
-        apply Lat.order_refl, Lat.eq_refl.
+      - destruct Hdt as [[]|Hdt]. exact Hdt.
     Qed.
 
     (** One output, renamed differently on the two sides. *)
@@ -6518,7 +6528,7 @@ Module Type SECLUSUNNESTING
       forall dlt rest x o b cs1 cs2 d1 d2 sa sa' sb sb',
         cs_out dlt (x :: rest) cs1 cs2 ->
         ~ In x rest ->
-        dlt b = dlt o ->
+        amb_pair dlt o b ->
         ~ In o (x :: rest) -> ~ In b (x :: rest) ->
         SIG.subst_ident_constraints cs1 x o sa = OK (d1, sa') ->
         SIG.subst_ident_constraints cs2 x b sb = OK (d2, sb') ->
@@ -6551,15 +6561,15 @@ Module Type SECLUSUNNESTING
           by (intros y Hy Hc; destruct Hc as [Hc|[]]; subst; now apply Hno).
         assert (forall y, In y (x :: rest) -> ~ In y [b]) as Hfb
           by (intros y Hy Hc; destruct Hc as [Hc|[]]; subst; now apply Hnb).
-        assert (satisfiable dlt [b] [o]) as Hsob
-          by (apply satisfiable_singleton_eq; exact Hdob).
+        destruct Hdob as (Hsob & Hsbo).
         assert ((forall y, In y rest ->
                    (In y (SIG.subst_ident_in_type s1 x [o])
                     <-> In y (SIG.subst_ident_in_type s2 x [b])))
                 /\ (forall R, (forall y, In y R -> In y rest) ->
                       satisfiable dlt
                         (remove_all R (SIG.subst_ident_in_type s2 x [b]))
-                        (remove_all R (SIG.subst_ident_in_type s1 x [o]))))
+                        (merge amb
+                           (remove_all R (SIG.subst_ident_in_type s1 x [o])))))
           as Hsrc
           by (eapply subst_type_step with (rest := rest);
               [exact Hiff|exact Hdom|exact Hxr|exact Hfo|exact Hfb|exact Hsob]).
@@ -6568,7 +6578,7 @@ Module Type SECLUSUNNESTING
           unfold ret in He1, He2. inv He1. inv He2.
           split; [|exact Hsrc].
           exists o, b. simpl.
-          split; [reflexivity|split; [reflexivity|split; [now symmetry|]]].
+          split; [reflexivity|split; [reflexivity|split; [now right|]]].
           intros y Hy. split.
           * intros ?; subst. exfalso. apply Hno. now right.
           * intros ?; subst. exfalso. apply Hnb. now right.
@@ -6580,7 +6590,9 @@ Module Type SECLUSUNNESTING
           unfold ret in He1, He2. inv He1. inv He2.
           split; [|exact Hsrc].
           exists t1, t2. simpl.
-          split; [reflexivity|split; [reflexivity|split; [exact Hdt|]]].
+          split; [reflexivity|split; [reflexivity|split; [|]]].
+          { destruct Hdt as [[Hc|Hc]|Hc]; [|now left|now right].
+            exfalso. apply ident_eqb_neq in Hx1. now apply Hx1. }
           intros y Hy. apply Hteq. now right.
     Qed.
 
@@ -6618,7 +6630,7 @@ Module Type SECLUSUNNESTING
         cs_out dlt xs cs1 cs2 ->
         (forall y, In y xs -> ~ In y os) ->
         (forall y, In y xs -> ~ In y bs) ->
-        Forall2 (fun o b => dlt b = dlt o) os bs ->
+        Forall2 (amb_pair dlt) os bs ->
         SIG.subst_constraints_out_map cs1 xs os sa = OK (d1, sa') ->
         SIG.subst_constraints_out_map cs2 xs bs sb = OK (d2, sb') ->
         cs_out dlt [] d1 d2.
@@ -6686,8 +6698,8 @@ Module Type SECLUSUNNESTING
                          :: sig.(s_out)) ->
            Forall (fun v => ~ In y v) inp1 /\ Forall (fun v => ~ In y v) inp2
            /\ ~ In y clk /\ ~ In y rst /\ ~ In y os /\ ~ In y bs) ->
-        Forall2 (fun t1 t2 => satisfiable dlt t2 t1) inp1 inp2 ->
-        Forall2 (fun o b => dlt b = dlt o) os bs ->
+        Forall2 (fun t1 t2 => satisfiable dlt t2 (merge amb t1)) inp1 inp2 ->
+        Forall2 (amb_pair dlt) os bs ->
         generate_constraints sig inp1 clk rst os sa = OK (cns1, sa') ->
         generate_constraints sig inp2 clk rst bs sb = OK (cns2, sb') ->
         listSatisfiable dlt cns1 -> listSatisfiable dlt cns2.
@@ -6746,7 +6758,7 @@ Module Type SECLUSUNNESTING
       { eapply subst_constraints_out_map_out;
           [exact Hnd4| | | |exact Hob|exact He1|exact He2].
         - apply cs_chain_out; [exact Hchc|].
-          apply wf_constraints_singleton_targets; exact Hwfc1.
+          apply singleton_targets_of_perm; exact Hpc1.
         - intros y Hy. apply Hfresh. apply in_or_app. right.
           right. now right.
         - intros y Hy. apply Hfresh. apply in_or_app. right.
