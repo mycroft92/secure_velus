@@ -389,11 +389,51 @@ The one genuinely missing ingredient is a **semantic** monotonicity of
 
 `SIFSignature.v` already has `generate_constraints_mono_inp`, but that is
 *syntactic* — it asks that every name of one actual occur in the other, and
-concludes `constraints_src_le`.  The unnesting leg does not give syntactic
-inclusion between the two sides' argument types; it gives domination under a
-valuation, modulo the ambient.  So the call case needs the semantic form,
-which should follow from monotonicity of `hm_ext` through the input
-substitution.
+concludes `constraints_src_le`.  It was written for the Stc-to-Obc bridge,
+where the compiled arguments literally drop the `when` guards the source
+arguments carry, so inclusion holds on the nose.  The unnesting leg gives no
+such inclusion: the two sides' argument types are related by domination under
+a valuation and by nothing syntactic at all.
+
+Two things are known about the semantic form, and the second is the reason
+it is not simply the syntactic proof with `⊑` in place of `⊆`.
+
+**It needs a freshness side condition the syntactic one did not.**
+Substitution replaces a formal by `st_remove x ty ⊔ st_remove x v` — it
+removes the formal from the *actual* as well as from the body.  `st_remove`
+preserves set inclusion, which is what carries the syntactic chain; it does
+**not** preserve domination, since dropping a name can shrink the larger side
+below the smaller.  What rescues it is that the formal is a callee name while
+the actual is built from caller names, so the removal is vacuous on the
+actual.  `subst_ident_in_type_mono_sem` proves the one-step case with that
+premise, and the premise is exactly what the call-site freshness lemmas
+establish elsewhere in the development.
+
+**The obvious invariant for the chain does not hold.**  The natural move is
+to carry "same targets, dominated sources, pointwise" (`cs_dom`) through the
+four substitution steps.  That fails at the second step, because its
+two-sided form —
+
+    satisfiable dlt ty2 ty1 -> satisfiable dlt v2 v1 ->
+    satisfiable dlt (subst ty2 x v2) (subst ty1 x v1)
+
+— is **false**.  If `x` occurs in `ty1` but not in `ty2`, the right-hand side
+drops `x`'s contribution and replaces it by `v1`, while the left keeps `ty2`
+whole; `hm_ext ty2 ⊑ hm_ext ty1` says nothing about `hm_ext ty2` against
+`hm_ext (st_remove x ty1)`.
+
+The real invariant is structural rather than relational: both sides start
+from the *same* signature, so after `k` substitutions each source has the
+shape `F ⊔ V` with a **common** residual `F` (what is left of the
+signature's own constraint) and a side-specific accumulated part `V` (the
+actuals substituted so far), with `V2` dominated by `V1`.  Freshness of the
+remaining formals from the actuals is what keeps `F` common: it makes
+`my_set_mem x (F ⊔ V)` depend only on `F`, so the two sides branch the same
+way, and makes `st_remove x (F ⊔ V) = st_remove x F ⊔ V`.
+
+That decomposition is what the chain should carry.  `cs_dom`,
+`cs_dom_refl` and `cs_dom_satisfaction` are in place and are what the
+decomposition will be cashed out into at the end.
 
 ## Standing hypotheses
 

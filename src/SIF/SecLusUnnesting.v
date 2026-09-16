@@ -6063,6 +6063,38 @@ Module Type SECLUSUNNESTING
       - eapply Lat.order_trans; [exact Hdom|apply Lat.join_bound2].
     Qed.
 
+    (** The relation the chain carries: same targets, dominated sources,
+        pointwise.  The substitutions are all [mmap]s, so they preserve order
+        and length and a pointwise relation is enough -- unlike the syntactic
+        chain, which has to work with an unordered set inclusion because its
+        final lookup pass reorders. *)
+
+    Definition cs_dom (dlt : ident -> Lat.t) (cs1 cs2 : list constraint)
+      : Prop :=
+      Forall2 (fun c1 c2 => snd c1 = snd c2
+                            /\ satisfiable dlt (fst c2) (fst c1)) cs1 cs2.
+
+    Lemma cs_dom_refl : forall dlt cs, cs_dom dlt cs cs.
+    Proof.
+      intros dlt cs. induction cs as [|c cs IH]; [constructor|].
+      constructor; [|exact IH].
+      split; [reflexivity|apply satisfiable_refl].
+    Qed.
+
+    Lemma cs_dom_satisfaction :
+      forall dlt cs1 cs2,
+        cs_dom dlt cs1 cs2 -> listSatisfiable dlt cs1 -> listSatisfiable dlt cs2.
+    Proof.
+      intros dlt cs1 cs2 Hd Hs.
+      induction Hd as [|c1 c2 l1 l2 (Ht & Hdom) Hr IH]; [constructor|].
+      inversion Hs as [|z zs Hz Hzr]; subst.
+      constructor; [|now apply IH].
+      destruct c1 as (s1 & t1). destruct c2 as (s2 & t2).
+      simpl in Ht, Hdom. subst t2.
+      unfold constraintSatisfiable in *.
+      eapply satisfiable_trans; [exact Hdom|exact Hz].
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
