@@ -97,16 +97,16 @@ Module Type SECLUSUNNESTING
       assign_lexp_type G env base_ty rst_ty (Eapp f es er anns) st = OK (ts, st') ->
       exists sg argts rstty ckty outs cs sta stb stc,
         assign_lexps G env base_ty rst_ty es st = OK (argts, sta)
+        /\ assign_clk_type env base_ty (find_base_clock (LSyn.clocksof es))
+           = Some ckty
         /\ (match er with
             | None => rstty = lvar rst_ty /\ stb = sta
             | Some e1 =>
                 exists t1 a1 stm,
                   assign_lexp_type G env base_ty rst_ty e1 sta = OK (t1, stm)
                   /\ single t1 stm = OK (a1, stb)
-                  /\ rstty = ljoin (lvar rst_ty) a1
+                  /\ rstty = ljoin (lvar rst_ty) (ljoin a1 (ckty, []))
             end)
-        /\ assign_clk_type env base_ty (find_base_clock (LSyn.clocksof es))
-           = Some ckty
         /\ find_signature f G = Some sg
         /\ fresh_idents (List.length anns) stb = OK (outs, stc)
         /\ generate_constraints sg (List.map fst argts) ckty (fst rstty) outs stc
@@ -119,13 +119,13 @@ Module Type SECLUSUNNESTING
     intros G env base_ty rst_ty f es er anns ts st st' H.
     simpl in H.
     eapply sec_bind_inv in H as (argts & sta & Hargs & H).
-    eapply sec_bind_inv in H as (rstty & stb & Hrst & H).
     eapply sec_bind_inv in H as (ckty & stk & Hck & H).
+    apply option_to_sec_inv in Hck as [Hck ?]; subst stk.
+    eapply sec_bind_inv in H as (rstty & stb & Hrst & H).
     destruct (find_signature f G) as [sg|] eqn:Esg; [|discriminate].
     eapply sec_bind_inv in H as (outs & stc & Houts & H).
     eapply sec_bind_inv in H as (cs & std & Hcs & Hret).
     unfold ret in Hret. inv Hret.
-    apply option_to_sec_inv in Hck as [Hck ?]; subst stk.
     exists sg, argts, rstty, ckty, outs, cs, sta, stb, stc.
     repeat split; auto.
     destruct er as [e1|].
@@ -194,7 +194,7 @@ Module Type SECLUSUNNESTING
     intros G env base_ty rst_ty f es er anns ts st st' H.
     eapply assign_lexp_Eapp_inv in H
       as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
-          & Hargs & Hrst & Hck & Esg & Houts & Hcs & Hts).
+          & Hargs & Hck & Hrst & Esg & Houts & Hcs & Hts).
     subst ts. rewrite map_length.
     eapply fresh_idents_length; eauto.
   Qed.
@@ -296,7 +296,7 @@ Module Type SECLUSUNNESTING
     intros G env base_ty rst_ty f es er anns ts st st' H Hne.
     eapply assign_lexp_Eapp_inv in H
       as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
-          & Hargs & Hrst & Hck & Esg & Houts & Hcs & Hts).
+          & Hargs & Hck & Hrst & Esg & Houts & Hcs & Hts).
     exists sg, argts, rstty, ckty, cs.
     split; [exact Esg|]. split; [exact Hck|].
     subst ts. rewrite carried_uniform.

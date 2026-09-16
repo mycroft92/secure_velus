@@ -164,19 +164,26 @@ Module Type SECLTYPING
           instantiated constraints together with everything the arguments and
           the reset expression were themselves carrying.  That is
           [beta{|rho'|}] of rule (LTncall), composed with the join rule of
-          Figure 5. *)
+          Figure 5.
+
+          The reset level stacks the call's base clock onto the reset
+          expression's own level, exactly as the equation rule below and as
+          (NTrc) do: resetting is observable wherever the reset is sampled,
+          not only at the level of the value that triggers it.  Which is why
+          the clock is computed before the reset here -- the two rules have
+          to agree on the nose, since unnesting turns one into the other. *)
       | Eapp f es er anns =>
           do argts <- assign_lexps es;
+          do ckty <- option_to_sec
+                       (assign_clk_type env base_ty
+                          (find_base_clock (LSyn.clocksof es)));
           do rstty <- (match er with
                        | None => ret (lvar rst_ty)
                        | Some e1 =>
                            do t1 <- assign_lexp_type e1;
                            do a1 <- single t1;
-                           ret (ljoin (lvar rst_ty) a1)
+                           ret (ljoin (lvar rst_ty) (ljoin a1 (ckty, [])))
                        end);
-          do ckty <- option_to_sec
-                       (assign_clk_type env base_ty
-                          (find_base_clock (LSyn.clocksof es)));
           match find_signature f G with
           | None => error (MSG "Signature not found for: " :: [CTX f])
           | Some sg =>
