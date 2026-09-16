@@ -6655,6 +6655,114 @@ Module Type SECLUSUNNESTING
           * intros y Hy Hc. eapply (Hfb y); [now right|now right].
     Qed.
 
+    Lemma wf_constraints_singleton_targets :
+      forall cs, wf_constraints cs -> Forall (fun c => exists t, snd c = [t]) cs.
+    Proof.
+      intros cs (_ & Hall). eapply Forall_impl; [|exact Hall].
+      intros (s & r) Hr. simpl in *.
+      destruct r as [|t [|]]; simpl in Hr; try discriminate. now exists t.
+    Qed.
+
+    (** * Instantiation is monotone in the actuals
+
+        The lemma the call case needs, and the one [SIFSignature.v]'s
+        [generate_constraints_mono_inp] does not supply.  Weaken the actual
+        arguments -- not by dropping names, which is what the syntactic
+        version asks, but by dominating them under a valuation -- and the
+        generated obligations weaken with them.
+
+        The pipeline is walked once through [cs_chain], which carries the two
+        sides' sources through the input map, the clock, the reset and the
+        outputs.  The final lookup pass is not walked at all: what transfers
+        is satisfaction of a whole constraint list, and [SIFSignature.v]
+        already relates the list before the lookup to the list after it in
+        both directions. *)
+
+    Lemma generate_constraints_mono_sem :
+      forall dlt sig inp1 inp2 clk rst os bs cns1 cns2 sa sa' sb sb',
+        signature_good sig ->
+        NoDup (sig.(s_in) ++ sig.(s_clk) :: sig.(s_reset) :: sig.(s_out)) ->
+        (forall y, In y (sig.(s_in) ++ sig.(s_clk) :: sig.(s_reset)
+                         :: sig.(s_out)) ->
+           Forall (fun v => ~ In y v) inp1 /\ Forall (fun v => ~ In y v) inp2
+           /\ ~ In y clk /\ ~ In y rst /\ ~ In y os /\ ~ In y bs) ->
+        Forall2 (fun t1 t2 => satisfiable dlt t2 t1) inp1 inp2 ->
+        Forall2 (fun o b => dlt b = dlt o) os bs ->
+        generate_constraints sig inp1 clk rst os sa = OK (cns1, sa') ->
+        generate_constraints sig inp2 clk rst bs sb = OK (cns2, sb') ->
+        listSatisfiable dlt cns1 -> listSatisfiable dlt cns2.
+    Proof.
+      intros dlt sig inp1 inp2 clk rst os bs cns1 cns2 sa sa' sb sb'
+        Hgood Hnd Hfresh Hinp Hob H1 H2 Hsat1.
+      destruct Hgood as (Hwf0 & Hperm0).
+      unfold generate_constraints in H1, H2.
+      eapply sec_bind_inv in H1 as (a1 & t1 & Ha1 & H1).
+      eapply sec_bind_inv in H1 as (b1 & u1 & Hb1 & H1).
+      eapply sec_bind_inv in H1 as (c1 & v1 & Hc1 & H1).
+      eapply sec_bind_inv in H1 as (e1 & w1 & He1 & Hr1).
+      eapply sec_bind_inv in H2 as (a2 & t2 & Ha2 & H2).
+      eapply sec_bind_inv in H2 as (b2 & u2 & Hb2 & H2).
+      eapply sec_bind_inv in H2 as (c2 & v2 & Hc2 & H2).
+      eapply sec_bind_inv in H2 as (e2 & w2 & He2 & Hr2).
+
+      (** the formals are distinct, phase by phase *)
+      assert (NoDup (sig.(s_clk) :: sig.(s_reset) :: sig.(s_out))) as Hnd2
+        by (eapply NoDup_app_r; exact Hnd).
+      inversion Hnd2 as [|z1 zs1 Hnclk Hnd3]; subst.
+      inversion Hnd3 as [|z2 zs2 Hnrst Hnd4]; subst.
+
+      (** the targets are untouched until the output map *)
+      assert (map snd c1 = map snd sig.(s_constraints)) as Hrhs1.
+      { erewrite (subst_ident_in_constraints_rhs _ _ _ _ _ _ Hc1),
+          (subst_ident_in_constraints_rhs _ _ _ _ _ _ Hb1),
+          (SIGPROOFS.subst_constraints_inp_map_rhs _ _ _ _ _ _ Ha1). reflexivity. }
+      assert (Permutation (map snd c1) (map (fun y => [y]) sig.(s_out)))
+        as Hpc1 by (rewrite Hrhs1; exact Hperm0).
+      assert (wf_constraints c1) as Hwfc1
+        by (eapply SIGPROOFS.wf_constraints_of_singleton_perm; eauto).
+
+      (** the substitution chain, run as far as the outputs *)
+      assert (cs_chain dlt (sig.(s_clk) :: sig.(s_reset) :: sig.(s_out)) a1 a2)
+        as Hcha.
+      { eapply subst_constraints_inp_map_chain;
+          [exact Hnd|apply cs_chain_refl| | |exact Hinp|exact Ha1|exact Ha2].
+        - apply Forall_forall. intros v Hv y Hy.
+          apply Hfresh in Hy as (Hy1 & _).
+          rewrite Forall_forall in Hy1. now apply Hy1.
+        - apply Forall_forall. intros v Hv y Hy.
+          apply Hfresh in Hy as (_ & Hy2 & _).
+          rewrite Forall_forall in Hy2. now apply Hy2. }
+      assert (cs_chain dlt (sig.(s_reset) :: sig.(s_out)) b1 b2) as Hchb.
+      { eapply subst_ident_in_constraints_chain_same;
+          [exact Hcha|exact Hnclk| |exact Hb1|exact Hb2].
+        intros y Hy. apply Hfresh. apply in_or_app. now right. }
+      assert (cs_chain dlt sig.(s_out) c1 c2) as Hchc.
+      { eapply subst_ident_in_constraints_chain_same;
+          [exact Hchb|exact Hnrst| |exact Hc1|exact Hc2].
+        intros y Hy. apply Hfresh. apply in_or_app. right. now right. }
+
+      (** the output map *)
+      assert (cs_out dlt [] e1 e2) as Hout.
+      { eapply subst_constraints_out_map_out;
+          [exact Hnd4| | | |exact Hob|exact He1|exact He2].
+        - apply cs_chain_out; [exact Hchc|].
+          apply wf_constraints_singleton_targets; exact Hwfc1.
+        - intros y Hy. apply Hfresh. apply in_or_app. right.
+          right. now right.
+        - intros y Hy. apply Hfresh. apply in_or_app. right.
+          right. now right. }
+
+      (** and the lookup pass, which is not walked but transferred *)
+      destruct (SIGPROOFS.subst_constraints_out_map_shape _ _ _ _ _ _ Hwfc1 Hpc1 He1)
+        as (Hwfe1 & Hperme1).
+      assert (listSatisfiable dlt e1) as Hse1
+        by (eapply SIGPROOFS.reorder_constraints_complete;
+            [exact Hwfe1|exact Hperme1|exact Hr1|exact Hsat1]).
+      assert (listSatisfiable dlt e2) as Hse2
+        by (eapply cs_le_satisfaction; [apply cs_out_nil_le; exact Hout|exact Hse1]).
+      eapply SIGPROOFS.reorder_constraints_correct; [exact Hr2|exact Hse2].
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
