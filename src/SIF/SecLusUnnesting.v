@@ -6019,6 +6019,50 @@ Module Type SECLUSUNNESTING
         split; [now apply in_map|]. rewrite Hb. now left.
     Qed.
 
+    (** * Instantiation is monotone in the actual arguments -- semantically
+
+        The call case needs this and [SIFSignature.v]'s
+        [generate_constraints_mono_inp] does not supply it: that one is
+        *syntactic*, asking that every name of one actual occur in the other
+        and concluding [constraints_src_le].  It was written for the
+        Stc-to-Obc bridge, where the compiled arguments literally drop the
+        [when] guards the source arguments carry, so inclusion holds on the
+        nose.  Unnesting gives no such inclusion -- the two sides' argument
+        types are related by domination under a valuation, and by nothing
+        syntactic at all.
+
+        The semantic form needs a side condition the syntactic one did not.
+        Substitution removes the formal from both the body and the actual
+        ([st_remove x ty ⊔ st_remove x v]), and while [st_remove] preserves
+        set inclusion, it does *not* preserve domination: dropping a name can
+        shrink the larger side below the smaller.  What rescues it is that the
+        formal is a callee name and the actual is built from caller names, so
+        the removal is vacuous on the actual.  That disjointness is the extra
+        premise, and it is exactly what the call-site freshness lemmas
+        already establish elsewhere in the development. *)
+
+    Lemma subst_ident_in_type_mono_sem :
+      forall dlt ty x v1 v2,
+        ~ In x v1 -> ~ In x v2 ->
+        satisfiable dlt v2 v1 ->
+        satisfiable dlt (SIG.subst_ident_in_type ty x v2)
+          (SIG.subst_ident_in_type ty x v1).
+    Proof.
+      intros dlt ty x v1 v2 Hn1 Hn2 Hdom.
+      unfold SIG.subst_ident_in_type.
+      destruct (SymTypes.my_set_mem x ty) eqn:Hmem; [|apply satisfiable_refl].
+      rewrite (SymTypes.st_remove_notin x v1),
+        (SymTypes.st_remove_notin x v2).
+      2:{ destruct (SymTypes.my_set_mem x v2) eqn:E; [|reflexivity].
+          exfalso. apply Hn2. now apply SymTypes.my_set_mem_correct. }
+      2:{ destruct (SymTypes.my_set_mem x v1) eqn:E; [|reflexivity].
+          exfalso. apply Hn1. now apply SymTypes.my_set_mem_correct. }
+      unfold satisfiable. rewrite !hm_ext_merge_eq.
+      apply Lat.join_least_upper_bound.
+      - apply Lat.join_bound1.
+      - eapply Lat.order_trans; [exact Hdom|apply Lat.join_bound2].
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
