@@ -6095,6 +6095,72 @@ Module Type SECLUSUNNESTING
       eapply satisfiable_trans; [exact Hdom|exact Hz].
     Qed.
 
+    (** * The call chain, at the level of membership
+
+        The decomposition the chain has to carry is structural, but it does
+        not have to be *syntactic*.  Writing it as an equation
+        [fst c = F ⊔ V] would need [st_remove] to distribute over [merge] on
+        the nose, which is awkward: [st_remove] is a plain list filter and
+        [merge] a sorted union, so such an equation holds only up to
+        sortedness, and sortedness would then have to be threaded everywhere.
+
+        [hm_ext] depends on a type only through its members, so the chain can
+        be run at the level of membership instead and domination recovered at
+        each use.  Nothing below needs a syntactic equality between the two
+        sides, which is what makes the substitution steps tractable: each one
+        only has to say which names survive it. *)
+
+    Definition remove_all (R : list ident) (s : ST) : ST :=
+      fold_right (fun x t => SymTypes.st_remove x t) s R.
+
+    Lemma remove_all_In :
+      forall R s z, In z (remove_all R s) <-> In z s /\ ~ In z R.
+    Proof.
+      induction R as [|x R IH]; intros s z; simpl.
+      - split; [intros Hz; split; auto|intros (Hz & _); auto].
+      - split.
+        + intros Hin. apply SymTypes.st_remove_in_inv in Hin as (Hin & Hne).
+          apply IH in Hin as (Hin & HnR). split; auto.
+          intros [Heq|HR]; [now apply Hne|now apply HnR].
+        + intros (Hs & Hn).
+          apply SymTypes.st_remove_preserves_other_in.
+          * intro; subst; apply Hn; now left.
+          * apply IH. split; [exact Hs|intro; apply Hn; now right].
+    Qed.
+
+    Lemma satisfiable_of_members :
+      forall dlt a b,
+        (forall z, In z a -> In z b) -> satisfiable dlt a b.
+    Proof. intros. unfold satisfiable. now apply hm_ext_incl. Qed.
+
+    (** A type whose names all come from one of two others is bounded by
+        their join, and conversely.  These are the two directions the
+        substitution steps need: one to push a substituted body into the
+        shape the hypothesis is stated in, one to pull the result back out. *)
+
+    Lemma hm_ext_union_le :
+      forall dlt s a b,
+        (forall z, In z s -> In z a \/ In z b) ->
+        Lat.order (hm_ext dlt s) (Lat.join (hm_ext dlt a) (hm_ext dlt b)).
+    Proof.
+      intros dlt s a b Hs. apply hm_ext_bound_from_members.
+      intros z Hz. apply Hs in Hz as [Hz|Hz].
+      - eapply Lat.order_trans; [apply hm_ext_list_in1; exact Hz|].
+        apply Lat.join_bound1.
+      - eapply Lat.order_trans; [apply hm_ext_list_in1; exact Hz|].
+        apply Lat.join_bound2.
+    Qed.
+
+    Lemma hm_ext_union_ge :
+      forall dlt s a b,
+        (forall z, In z a -> In z s) ->
+        (forall z, In z b -> In z s) ->
+        Lat.order (Lat.join (hm_ext dlt a) (hm_ext dlt b)) (hm_ext dlt s).
+    Proof.
+      intros dlt s a b Ha Hb.
+      apply Lat.join_least_upper_bound; apply hm_ext_incl; auto.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
