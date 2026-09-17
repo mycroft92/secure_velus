@@ -8371,6 +8371,40 @@ Module Type SECLUSUNNESTING
 
 
 
+    (** * The expression level, closed
+
+        Every Lustre expression carries no more than what the equations its
+        unnesting emits generate.  The merge and the conditional are the only
+        constructors whose two [is_control] flags behave differently -- under
+        [true] they are pushed inward and nothing is lifted, under [false]
+        every resulting stream is bound -- so they are the only cases that
+        split on the flag. *)
+
+    Theorem carries_exp : forall P e, carries P e.
+    Proof.
+      intros P e. induction e using exp_ind2; intros ic.
+      - apply carries_Econst.
+      - apply carries_Evar.
+      - apply carries_Eunop; assumption.
+      - apply carries_Ebinop; assumption.
+      - apply carries_Efby; assumption.
+      - apply carries_Earrow; assumption.
+      - apply carries_Ewhen; assumption.
+      - destruct a as (tys & cl). destruct ic;
+          [apply carries_Emerge_control|apply carries_Emerge_lift];
+          assumption.
+      - destruct a as (tys & cl). destruct ic;
+          [apply carries_Eite_control|apply carries_Eite_lift]; assumption.
+      - apply carries_Eapp; [assumption|].
+        intros e1 Her. subst ro. assumption.
+    Qed.
+
+    Corollary carries_exps : forall P es, carries_list P es.
+    Proof.
+      intros P es. apply carries_list_intro.
+      apply Forall_forall. intros e _. apply carries_exp.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
