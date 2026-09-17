@@ -9024,6 +9024,89 @@ Module Type SECLUSUNNESTING
       - contradiction.
     Qed.
 
+    (** * The general rule, monotone in the right-hand side's types
+
+        The rule for an equation that is not a call constrains each defined
+        variable above the ambient of its own clock joined with the type of
+        the stream that defines it, and releases whatever that type carried.
+        Weakening the stream types -- modulo the ambient, which is what
+        unnesting does to them -- weakens the obligations with them, provided
+        the ambient lies below each defined variable.
+
+        For this rule that proviso is free: the *source* equation's own
+        constraint already puts [ambient (clock x)] below [x], and at the top
+        of an equation the ambient is exactly that.  It is the call rule,
+        whose constraint is an instantiated block rather than an ordering,
+        that has to be given it. *)
+
+    Lemma order_iff_satisfiable :
+      forall dlt s b, Lat.order (hm_ext dlt s) (dlt b) <-> satisfiable dlt s [b].
+    Proof.
+      intros dlt s b. unfold satisfiable.
+      rewrite hm_ext_single, <- join_bottom_eq1. reflexivity.
+    Qed.
+
+    Lemma eqn_clock_type_pure :
+      forall x, state_pure (eqn_clock_type env base_ty cenv x).
+    Proof.
+      intros x. unfold eqn_clock_type.
+      apply state_pure_bind.
+      - unfold res_to_sec. destruct (find_clock cenv x);
+          [apply state_pure_ret|apply state_pure_error].
+      - intro ck. apply state_pure_option_to_sec.
+    Qed.
+
+    Lemma generate_lvars_constraints_mono :
+      forall dlt xs bs ts ts'' c c' s s' q q',
+        Forall2 (fun t t'' => satisfiable dlt (fst t'') (merge amb (fst t)))
+          ts ts'' ->
+        Forall (fun b => satisfiable dlt amb [b]) bs ->
+        listSatisfiable dlt (carried ts'') ->
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
+          = OK (c, s') ->
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts'' q
+          = OK (c', q') ->
+        listSatisfiable dlt c ->
+        listSatisfiable dlt c'.
+    Proof.
+      intros dlt xs. induction xs as [|x xs IH];
+        intros bs ts ts'' c c' s s' q q' Hrel Hbs Hct H1 H2 Hsat.
+      - simpl in H2. destruct bs; [|discriminate H2].
+        destruct ts''; [|discriminate H2].
+        unfold SC.ret in H2. inv H2. constructor.
+      - destruct bs as [|b bs]; [simpl in H2; discriminate H2|].
+        destruct ts as [|t ts];
+          [inversion Hrel; subst; simpl in H2; discriminate H2|].
+        inversion Hrel as [|t0 t0'' ts0 ts0'' Hr Hrelr]; subst.
+        inversion Hbs as [|b0 bs0 Hb Hbsr]; subst.
+        simpl in Hct. apply listSatisfiable_cmerge in Hct as (Hcth & Hctr).
+        simpl in H1, H2.
+        eapply sec_bind_inv in H1 as (ckty1 & s1 & Hck1 & H1).
+        eapply sec_bind_inv in H1 as (rest1 & s2 & Hr1 & Hret1).
+        unfold SC.ret in Hret1. inv Hret1.
+        eapply sec_bind_inv in H2 as (ckty2 & q1 & Hck2 & H2).
+        eapply sec_bind_inv in H2 as (rest2 & q2 & Hr2 & Hret2).
+        unfold SC.ret in Hret2. inv Hret2.
+        destruct (eqn_clock_type_pure x _ q _ _ Hck1) as (? & Hck1'); subst s1.
+        rewrite Hck1' in Hck2. inv Hck2.
+        apply listSatisfiable_app in Hsat as (Hsath & Hsatr).
+        apply listSatisfiable_app. split; [|eapply IH; eauto].
+        apply lconstrain_sound in Hsath as (_ & Hle).
+        apply lconstrain_sound. split.
+        + unfold lst_defined. rewrite snd_ljoin.
+          unfold ambient. rewrite snd_ljoin, snd_lvar. cbn [snd].
+          rewrite cmerge_nil, cmerge_nil2. exact Hcth.
+        + apply order_iff_satisfiable.
+          apply order_iff_satisfiable in Hle.
+          unfold lst_interp in *. rewrite fst_ljoin in *.
+          assert (satisfiable dlt (fst t) [b]) as Htb
+              by (eapply satisfiable_through_merge_r; exact Hle).
+          apply satisfiable_merge_intro;
+            [eapply satisfiable_through_merge_l; exact Hle|].
+          eapply satisfiable_trans; [exact Hr|].
+          apply satisfiable_merge_intro; [exact Hb|exact Htb].
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
