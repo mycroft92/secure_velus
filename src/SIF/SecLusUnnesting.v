@@ -2185,6 +2185,14 @@ Module Type SECLUSUNNESTING
       forall ck ckty,
         assign_clk_type env base_ty ck = Some ckty -> st_scoped scope ckty.
 
+    Hypothesis env_range_scoped :
+      forall x b, Env.find x env = Some b -> In b scope.
+
+    Hypothesis source_lexps_carried_scoped :
+      forall es ts s s',
+        assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
+        constraints_scoped scope (carried ts).
+
     Hypothesis sig_scoped :
       forall f sg, find_signature f GL = Some sg -> signature_scoped sg.
 
@@ -9805,6 +9813,146 @@ Module Type SECLUSUNNESTING
         exists ([t] ++ ts0), q0. rewrite assign_lexps_cons.
         eapply sec_bind_ok; [exact Hte|].
         eapply sec_bind_ok; [exact Hts0|]. reflexivity.
+    Qed.
+
+    (** The shape facts, which need no types and so can be established before
+        them -- otherwise the split's operand types and the pinning would
+        each be waiting on the other. *)
+
+    Lemma normalized_cexp_not_app :
+      forall e, normalized_cexp e ->
+        match e with Eapp _ _ _ _ => False | _ => True end.
+    Proof. intros e H. destruct e; try exact I; inv H; inv H0. Qed.
+
+    Lemma unnest_fby_not_app :
+      forall e0s es anns,
+        Forall (fun e => match e with
+                         | Eapp _ _ _ _ => False | _ => True end)
+          (unnest_fby e0s es anns).
+    Proof.
+      intros e0s es anns. unfold unnest_fby.
+      rewrite Forall_map. apply Forall_forall.
+      intros ((e0 & e) & a) _. exact I.
+    Qed.
+
+    Lemma unnest_arrow_not_app :
+      forall e0s es anns,
+        Forall (fun e => match e with
+                         | Eapp _ _ _ _ => False | _ => True end)
+          (unnest_arrow e0s es anns).
+    Proof.
+      intros e0s es anns. unfold unnest_arrow.
+      rewrite Forall_map. apply Forall_forall.
+      intros ((e0 & e) & a) _. exact I.
+    Qed.
+
+    Lemma unnest_rhs_shape :
+      forall P e es' eqs st st',
+        wl_exp P e ->
+        (match e with Eapp _ _ _ _ => False | _ => True end) ->
+        unnest_rhs P e st = ((es', eqs), st') ->
+        Forall (fun e' => numstreams e' = 1) es'
+        /\ Forall (fun e' => match e' with
+                             | Eapp _ _ _ _ => False | _ => True end) es'.
+    Proof.
+      intros P e es' eqs st st' Hwl He Hun.
+      destruct e; try
+        (rewrite unnest_rhs_other in Hun by exact I;
+         assert (Forall normalized_cexp es') as Hnc
+             by (eapply unnest_exp_normalized_cexp; eauto);
+         split;
+         [eapply unnest_exp_numstreams; eauto
+         |eapply Forall_impl; [|exact Hnc]; apply normalized_cexp_not_app]).
+      - apply unnest_rhs_Efby_inv in Hun
+          as (f0 & eqsa & st1 & f1 & eqsb & _ & _ & ? & _); subst.
+        split; [apply unnest_fby_numstreams|apply unnest_fby_not_app].
+      - apply unnest_rhs_Earrow_inv in Hun
+          as (f0 & eqsa & st1 & f1 & eqsb & _ & _ & ? & _); subst.
+        split; [apply unnest_arrow_numstreams|apply unnest_arrow_not_app].
+      - contradiction.
+    Qed.
+
+    Lemma unnest_rhss_shape :
+      forall P es ess eqss st st',
+        Forall (wl_exp P) es ->
+        Forall (fun e => match e with
+                         | Eapp _ _ _ _ => False | _ => True end) es ->
+        map_bind2 (unnest_rhs P) es st = ((ess, eqss), st') ->
+        Forall (fun e' => numstreams e' = 1) (List.concat ess)
+        /\ Forall (fun e' => match e' with
+                             | Eapp _ _ _ _ => False | _ => True end)
+             (List.concat ess).
+    Proof.
+      induction es as [|e es IH]; intros ess eqss st st' Hwl Hne Hun.
+      - apply map_bind2_unnest_rhs_nil in Hun as (? & ? & ?); subst.
+        split; constructor.
+      - inv Hwl. inv Hne.
+        apply map_bind2_unnest_rhs_cons in Hun
+          as (f1 & eq1 & st1 & fr & eqsr & Hun1 & Hunr & ? & ?); subst.
+        edestruct (unnest_rhs_shape P e f1 eq1 st st1) as (Hn1 & Ha1); auto.
+        edestruct (IH fr eqsr st1 st') as (Hn2 & Ha2); auto.
+        simpl. split; apply Forall_app; auto.
+    Qed.
+
+    Lemma length_annots_single :
+      forall es,
+        Forall (fun e => numstreams e = 1) es ->
+        List.length (annots es) = List.length es.
+    Proof.
+      induction es as [|e es IH]; intros H; [reflexivity|].
+      inversion H as [|e0 es0 Hn Hr]; subst.
+      unfold annots. simpl. rewrite app_length.
+      rewrite length_annot_numstreams, Hn. simpl. f_equal.
+      apply IH; auto.
+    Qed.
+
+    Lemma unnest_equation_inv :
+      forall P xs es eqs' st st',
+        unnest_equation P (xs, es) st = (eqs', st') ->
+        exists es1 eqs1 ess eqss,
+          map_bind2 (unnest_rhs P) es st = ((ess, eqss), st')
+          /\ es1 = List.concat ess
+          /\ eqs1 = List.concat eqss
+          /\ eqs' = split_equation (xs, es1) ++ eqs1.
+    Proof.
+      intros P xs es eqs' st st' H.
+      unfold unnest_equation, unnest_rhss in H. repeat inv_bind.
+      repeat esplit; eauto.
+    Qed.
+
+    Lemma map_bind2_unnest_rhs_annots :
+      forall P es ess eqss st st',
+        Forall (wl_exp P) es ->
+        map_bind2 (unnest_rhs P) es st = ((ess, eqss), st') ->
+        annots (List.concat ess) = annots es.
+    Proof.
+      induction es as [|e es IH]; intros ess eqss st st' Hwl Hun.
+      - apply map_bind2_unnest_rhs_nil in Hun as (? & ? & ?); subst.
+        reflexivity.
+      - inv Hwl.
+        apply map_bind2_unnest_rhs_cons in Hun
+          as (f1 & eq1 & st1 & fr & eqsr & Hun1 & Hunr & ? & ?); subst.
+        assert (annots f1 = annot e) as Ha1
+            by (eapply unnest_rhs_annot; eauto).
+        assert (annots (List.concat fr) = annots es) as Ha2
+            by (eapply IH; eauto).
+        simpl List.concat.
+        replace (annots (f1 ++ List.concat fr))
+          with (annots f1 ++ annots (List.concat fr))
+          by (unfold annots; now rewrite <- flat_map_app).
+        rewrite Ha1, Ha2. reflexivity.
+    Qed.
+
+    Lemma get_mappings_Forall2 :
+      forall (xs : list ident) bs,
+        get_mappings xs env = Some bs ->
+        Forall2 (fun x b => Env.find x env = Some b) xs bs.
+    Proof.
+      induction xs as [|x xs IH]; intros bs H; simpl in H.
+      - inv H. constructor.
+      - destruct (Env.find x env) as [b|] eqn:Hb; [|discriminate H].
+        destruct (get_mappings xs env) as [bs0|] eqn:Hbs; [|discriminate H].
+        simpl in H. inv H. constructor; [exact Hb|now apply IH].
     Qed.
 
   End Preservation.
