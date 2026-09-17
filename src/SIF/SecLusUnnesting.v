@@ -7424,6 +7424,64 @@ Module Type SECLUSUNNESTING
         eapply sec_bind_ok; [apply Hts1|]. reflexivity.
     Qed.
 
+    (** * What the two sides agree on without argument
+
+        Two syntactic facts the call case turns on.  The first: the clock the
+        emitted call is instantiated at is the clock the source call was
+        instantiated at, because unnesting and the no-op pass both preserve
+        annotations and a base clock is read off those.  The second: the
+        clock the emitted call's reset variable carries is the clock of the
+        source reset expression, for the same reason -- [unnest_reset] takes
+        the annotation it mints from, or keeps, from the unnested reset. *)
+
+    Lemma unnest_call_clocksof :
+      forall (P : global) es es1 eqs1 st st1 ckis es2 eqs2 st2,
+        Forall (wl_exp P) es ->
+        unnest_exps P es st = ((es1, eqs1), st1) ->
+        List.length ckis = List.length es1 ->
+        Forall (fun e => numstreams e = 1) es1 ->
+        unnest_noops_exps ckis es1 st1 = ((es2, eqs2), st2) ->
+        LSyn.clocksof es2 = LSyn.clocksof es.
+    Proof.
+      intros P es es1 eqs1 st st1 ckis es2 eqs2 st2 Hwl Hune Hlen Hns Hunn.
+      assert (annots es1 = annots es) as Ha1
+          by (eapply unnest_exps_annots; eauto).
+      assert (annots es2 = annots es1) as Ha2
+          by (eapply unnest_noops_exps_annots; eauto).
+      rewrite !clocksof_annots, Ha2, Ha1. reflexivity.
+    Qed.
+
+    Lemma unnest_reset_ann_clock :
+      forall (P : global) e1 r ty ckr nm eqs3 st st',
+        wl_exp P e1 -> numstreams e1 = 1 ->
+        unnest_reset (unnest_exp P true) (Some e1) st
+          = ((Some (Evar r (ty, (ckr, nm))), eqs3), st') ->
+        LSyn.clockof e1 = [ckr].
+    Proof.
+      intros P e1 r ty ckr nm eqs3 st st' Hwl Hns Hun.
+      destruct (unnest_exp P true e1 st) as [[es' eqs1] st1] eqn:Hk.
+      assert (annots es' = annot e1) as Hann
+          by (eapply unnest_exp_annot; eauto).
+      assert (List.length es' = 1) as Hlen
+          by (erewrite unnest_exp_length; eauto).
+      destruct es' as [|e0 [|]]; simpl in Hlen; try discriminate.
+      assert (annot e0 = annot e1) as Hann0.
+      { unfold annots in Hann. simpl in Hann. now rewrite app_nil_r in Hann. }
+      assert (List.length (annot e1) = 1) as Hla
+          by (rewrite length_annot_numstreams; exact Hns).
+      destruct (annot e1) as [|a [|]] eqn:Ea; simpl in Hla; try discriminate.
+      destruct a as (tya & cka & na).
+      assert (LSyn.clockof e1 = [cka]) as Hcl
+          by (rewrite clockof_annot, Ea; reflexivity).
+      eapply unnest_reset_spec in Hk
+        as [(v & an & Ehd & Hnorm)
+           |(ty0 & ck0 & o0 & x & st2 & Hhd & Hfresh & Hnorm)];
+        rewrite Hnorm in Hun; inv Hun.
+      - simpl in Ehd. subst e0. simpl in Hann0. inv Hann0. exact Hcl.
+      - change (hd_default [e0]) with e0 in Hhd.
+        rewrite Hann0 in Hhd. simpl in Hhd. inv Hhd. exact Hcl.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
