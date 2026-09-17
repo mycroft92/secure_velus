@@ -9107,6 +9107,84 @@ Module Type SECLUSUNNESTING
           apply satisfiable_merge_intro; [exact Hb|exact Htb].
     Qed.
 
+    (** * The split, on the security side
+
+        [split_equation] cuts an unnested right-hand side into one equation
+        per group of streams.  Away from calls every returned expression is
+        single-stream, so every group is one variable and every piece is a
+        definition -- and the constraint the definition rule emits for it is,
+        term for term, the one the general rule would have put at that
+        position.  So the whole split generates exactly what
+        [generate_lvars_constraints] does, and the previous lemma applies to
+        it unchanged. *)
+
+    Lemma split_equation_nil : split_equation ([], []) = [].
+    Proof. reflexivity. Qed.
+
+    Lemma split_equation_cons :
+      forall x xs e es,
+        numstreams e = 1 ->
+        split_equation (x :: xs, e :: es)
+        = ([x], [e]) :: split_equation (xs, es).
+    Proof.
+      intros x xs e es Hn. unfold split_equation.
+      cbn [combine_for_numstreams]. rewrite Hn.
+      cbn [firstn skipn List.map]. reflexivity.
+    Qed.
+
+    Lemma split_equation_is_lvars :
+      forall (xs : list ident) (es' : list exp) bs ts'' c s s' q,
+        Forall (fun e => numstreams e = 1) es' ->
+        Forall (fun e => match e with
+                         | Eapp _ _ _ _ => False
+                         | _ => True
+                         end) es' ->
+        Forall2 (fun x b => Env.find x env = Some b) xs bs ->
+        Forall2 (fun e t => forall r,
+                    assign_lexp_type GL env base_ty rst_ty e r = OK ([t], r))
+          es' ts'' ->
+        List.length xs = List.length es' ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv
+          (split_equation (xs, es')) s = OK (c, s') ->
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts'' q
+          = OK (c, q).
+    Proof.
+      induction xs as [|x xs IH];
+        intros es' bs ts'' c s s' q Hns Hne Hbs Hts Hlen Hgen.
+      - destruct es'; simpl in Hlen; [|discriminate Hlen].
+        inv Hbs. inv Hts.
+        rewrite split_equation_nil in Hgen.
+        apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
+        reflexivity.
+      - destruct es' as [|e es']; simpl in Hlen; [discriminate Hlen|].
+        inversion Hns as [|e0 es0 Hn1 Hnsr]; subst.
+        inversion Hne as [|e1 es1 He1 Hner]; subst.
+        inversion Hbs as [|x0 b xs0 bs0 Hxb Hbsr]; subst.
+        inversion Hts as [|e2 t es2 ts2 Ht Htsr]; subst.
+        rewrite split_equation_cons in Hgen by exact Hn1.
+        rewrite generate_leqns_constraints_cons in Hgen.
+        eapply sec_bind_inv in Hgen as (ch & sh & Hch & Hgen).
+        eapply sec_bind_inv in Hgen as (ct & stt & Hct & Hret).
+        unfold SC.ret in Hret. inv Hret.
+        rewrite generate_leqn_constraint_def in Hch by exact He1.
+        unfold generate_ldef_constraint in Hch.
+        eapply sec_bind_inv in Hch as (ckty & s1 & Hck & Hch).
+        eapply sec_bind_inv in Hch as (tss & s2 & Htss & Hch).
+        eapply sec_bind_inv in Hch as (tt & s3 & Htt & Hch).
+        eapply sec_bind_inv in Hch as (b' & s4 & Hb' & Hretc).
+        unfold SC.ret in Hretc. inv Hretc.
+        rewrite (Ht s1) in Htss. inv Htss.
+        apply single_inv in Htt as (Htt & ?); subst.
+        inv Htt.
+        apply find_env_inv in Hb' as (Hb'' & ?); subst.
+        rewrite Hxb in Hb''. inv Hb''.
+        simpl.
+        eapply sec_bind_ok;
+          [apply (proj2 (eqn_clock_type_pure x _ q _ _ Hck))|].
+        eapply sec_bind_ok; [eapply IH; eauto|].
+        reflexivity.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
