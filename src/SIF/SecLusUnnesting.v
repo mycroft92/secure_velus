@@ -102,10 +102,12 @@ Module Type SECLUSUNNESTING
         /\ (match er with
             | None => rstty = lvar rst_ty /\ stb = sta
             | Some e1 =>
-                exists t1 a1 stm,
+                exists t1 a1 rck stm,
                   assign_lexp_type G env base_ty rst_ty e1 sta = OK (t1, stm)
                   /\ single t1 stm = OK (a1, stb)
-                  /\ rstty = ljoin (lvar rst_ty) (ljoin a1 (ckty, []))
+                  /\ assign_clk_type env base_ty (hd Cbase (LSyn.clockof e1))
+                     = Some rck
+                  /\ rstty = ljoin (lvar rst_ty) (ljoin a1 (rck, []))
             end)
         /\ find_signature f G = Some sg
         /\ fresh_idents (List.length anns) stb = OK (outs, stc)
@@ -119,9 +121,9 @@ Module Type SECLUSUNNESTING
     intros G env base_ty rst_ty f es er anns ts st st' H.
     simpl in H.
     eapply sec_bind_inv in H as (argts & sta & Hargs & H).
+    eapply sec_bind_inv in H as (rstty & stb & Hrst & H).
     eapply sec_bind_inv in H as (ckty & stk & Hck & H).
     apply option_to_sec_inv in Hck as [Hck ?]; subst stk.
-    eapply sec_bind_inv in H as (rstty & stb & Hrst & H).
     destruct (find_signature f G) as [sg|] eqn:Esg; [|discriminate].
     eapply sec_bind_inv in H as (outs & stc & Houts & H).
     eapply sec_bind_inv in H as (cs & std & Hcs & Hret).
@@ -130,9 +132,11 @@ Module Type SECLUSUNNESTING
     repeat split; auto.
     destruct er as [e1|].
     - eapply sec_bind_inv in Hrst as (t1 & stm & Ht1 & Hrst).
-      eapply sec_bind_inv in Hrst as (a1 & stn & Ha1 & Hret').
+      eapply sec_bind_inv in Hrst as (a1 & stn & Ha1 & Hrst).
+      eapply sec_bind_inv in Hrst as (rck & stp & Hrck & Hret').
+      apply option_to_sec_inv in Hrck as [Hrck ?]; subst stp.
       unfold ret in Hret'. inv Hret'.
-      exists t1, a1, stm. auto.
+      exists t1, a1, rck, stm. auto.
     - unfold ret in Hrst. inv Hrst. auto.
   Qed.
 

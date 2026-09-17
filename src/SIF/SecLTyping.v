@@ -166,24 +166,31 @@ Module Type SECLTYPING
           [beta{|rho'|}] of rule (LTncall), composed with the join rule of
           Figure 5.
 
-          The reset level stacks the call's base clock onto the reset
-          expression's own level, exactly as the equation rule below and as
-          (NTrc) do: resetting is observable wherever the reset is sampled,
-          not only at the level of the value that triggers it.  Which is why
-          the clock is computed before the reset here -- the two rules have
-          to agree on the nose, since unnesting turns one into the other. *)
+          The reset level stacks the clock the reset is *sampled on* onto
+          the reset expression's own level, exactly as the equation rule
+          below and as (NTrc) do: resetting is observable wherever it is
+          sampled, not only at the level of the value that triggers it.
+          Clocking does not tie a reset's clock to the call's base clock, so
+          it is the reset's own [clockof] that is read here -- and that is
+          what unnesting leaves in the annotation of the variable it binds
+          the reset to, which is what the equation rule then reads.  The two
+          rules have to agree on the nose, since unnesting turns one into
+          the other. *)
       | Eapp f es er anns =>
           do argts <- assign_lexps es;
-          do ckty <- option_to_sec
-                       (assign_clk_type env base_ty
-                          (find_base_clock (LSyn.clocksof es)));
           do rstty <- (match er with
                        | None => ret (lvar rst_ty)
                        | Some e1 =>
-                           do t1 <- assign_lexp_type e1;
-                           do a1 <- single t1;
-                           ret (ljoin (lvar rst_ty) (ljoin a1 (ckty, [])))
+                           do t1  <- assign_lexp_type e1;
+                           do a1  <- single t1;
+                           do rck <- option_to_sec
+                                       (assign_clk_type env base_ty
+                                          (hd Cbase (LSyn.clockof e1)));
+                           ret (ljoin (lvar rst_ty) (ljoin a1 (rck, [])))
                        end);
+          do ckty <- option_to_sec
+                       (assign_clk_type env base_ty
+                          (find_base_clock (LSyn.clocksof es)));
           match find_signature f G with
           | None => error (MSG "Signature not found for: " :: [CTX f])
           | Some sg =>
