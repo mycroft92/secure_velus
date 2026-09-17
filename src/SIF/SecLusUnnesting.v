@@ -9955,6 +9955,144 @@ Module Type SECLUSUNNESTING
         simpl in H. inv H. constructor; [exact Hb|now apply IH].
     Qed.
 
+    (** * The equation level, away from calls
+
+        Everything above meets here.  The source equation's rule and the
+        split of its unnesting are the same [generate_lvars_constraints], run
+        on the source's types and on the unnested ones; the induction
+        hypothesis on the right-hand sides relates those two type lists
+        modulo the ambient, and the general rule is monotone in exactly that.
+        What the right-hand sides emitted is satisfied by the same witness.
+
+        The one thing this level is *given* rather than proving is that the
+        ambient lies below every variable the equation defines.  For this
+        rule it is in fact free -- the source constraint says as much -- but
+        stating it as a premise is what lets the call rule, where it is not
+        free, be discharged separately at the node level. *)
+
+    Lemma eqn_carries_plain :
+      forall (P : global) (xs : list ident) (es : list exp)
+             eqs' st st' ce xst xst' cet yst yst' dlt,
+        Forall (fun e => match e with
+                         | Eapp _ _ _ _ => False
+                         | _ => True
+                         end) es ->
+        Forall (wl_exp P) es -> Forall (wc_exp P vars) es ->
+        List.length xs = List.length (annots es) ->
+        NoDup (vars_defined eqs' ++ st_ids st) ->
+        (forall x, In x (moved_by st st') -> ~ In x scope) ->
+        (forall x ck ckty,
+            In x (vars_defined eqs') -> find_clock cenv x = OK ck ->
+            assign_clk_type env base_ty ck = Some ckty ->
+            incl (merge [rst_ty] ckty) amb) ->
+        (forall b, In b (sec_of xs) -> satisfiable dlt amb [b]) ->
+        constraints_scoped scope ce ->
+        unnest_equation P (xs, es) st = (eqs', st') ->
+        generate_leqn_constraint GL env base_ty rst_ty cenv (xs, es) xst
+          = OK (ce, xst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
+          = OK (cet, yst') ->
+        listSatisfiable dlt ce ->
+        exists dlt',
+          agree_off (moved_by st st') dlt dlt'
+          /\ listSatisfiable dlt' cet
+          /\ constraints_scoped (scope ++ moved_by st st') cet.
+    Proof.
+      intros P xs es eqs' st st' ce xst xst' cet yst yst' dlt
+        Hne Hwl Hwc Hlen Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+
+      apply unnest_equation_inv in Hun
+        as (es1 & eqs1 & ess & eqss & Hmap & ? & ? & ?); subst.
+      apply generate_leqn_constraint_lvars in Hgen
+        as (ts & bs & si & Hts & Hbs & Hlv); [|exact Hne].
+      apply generate_leqns_constraints_app in Hgent
+        as (cs & ce2 & ystm & Hgens & Hgen2 & ?); subst.
+
+      edestruct (unnest_rhss_shape P es ess eqss st st') as (Hns & Hnea);
+        [exact Hwl|exact Hne|exact Hmap|].
+      assert (annots (List.concat ess) = annots es) as Hann
+          by (eapply map_bind2_unnest_rhs_annots; eauto).
+      assert (List.length xs = List.length (List.concat ess)) as Hlx.
+      { rewrite Hlen, <- Hann. now apply length_annots_single. }
+
+      edestruct (split_equation_operand_types xs (List.concat ess) cs yst ystm)
+        as (ts'' & q' & Hts'');
+        [exact Hns|exact Hnea|exact Hlx|exact Hgens|].
+      edestruct (unnest_rhss_pinned P es ess eqss st st' ts'' yst q')
+        as (_ & Hpin); [exact Hwl|exact Hne|exact Hmap|exact Hts''|].
+
+      assert (Forall2 (fun x b => Env.find x env = Some b) xs bs) as Hbsf
+          by (apply get_mappings_Forall2; exact Hbs).
+      assert (vars_defined (split_equation (xs, List.concat ess)) = xs) as Hvd
+          by (apply vars_defined_split_equation; auto).
+      rewrite vars_defined_app, Hvd in Hnd, Hamb.
+      rewrite <- app_assoc in Hnd.
+
+      assert (Forall (rhs_carries P) es) as Hrall.
+      { eapply Forall_impl; [|exact Hne].
+        intros e He. now apply rhs_carries_exp. }
+
+      assert (listSatisfiable dlt (carried ts)) as Hcarts
+          by (eapply generate_lvars_constraints_carried; [exact Hlv|exact Hsat]).
+
+      edestruct (rhs_carries_list_intro P es Hrall
+                   ess eqss st st' ts xst si ce2 ystm yst' ts'' yst q' dlt)
+        as (dlt' & Hoff & Hce2 & Hcy & Hrel & Hscope2 & Hcs2 & Hts2).
+      { exact Hwl. }
+      { exact Hwc. }
+      { eapply NoDup_app_r; exact Hnd. }
+      { exact Hmv. }
+      { eapply source_lexps_carried_scoped; exact Hts. }
+      { eapply source_lexps_scoped; exact Hts. }
+      { intros y cky ckty Hy. apply Hamb. apply in_or_app. now right. }
+      { exact Hmap. }
+      { exact Hts. }
+      { exact Hgen2. }
+      { exact Hts''. }
+      { exact Hcarts. }
+
+      (** the split's constraints, as the general rule would have put them *)
+      assert (generate_lvars_constraints env base_ty rst_ty cenv xs bs ts'' si
+              = OK (cs, si)) as Hlv'
+          by (eapply split_equation_is_lvars;
+              [exact Hns|exact Hbsf|exact Hpin|exact Hlx|exact Hgens]).
+
+      assert (Forall (fun b => In b scope) bs) as Hbssc.
+      { eapply Forall2_right_In; [exact Hbsf|].
+        intros x b Hx Hf. eapply env_range_scoped; exact Hf. }
+      assert (Forall (fun b => satisfiable dlt' amb [b]) bs) as Hbs'.
+      { eapply Forall2_right_In; [exact Hbsf|].
+        intros x b Hx Hf.
+        assert (In b (sec_of xs)) as Hbsec.
+        { unfold sec_of. apply in_flat_map.
+          exists x. split; [exact Hx|]. rewrite Hf. now left. }
+        assert (In b scope) as Hbsc by (eapply env_range_scoped; exact Hf).
+        eapply satisfiable_off with (xs := moved_by st st');
+          [exact Hoff| | |now apply Hbs0].
+        - intros y Hy Hin. eapply (Hmv y); [exact Hin|now apply amb_scoped].
+        - intros y Hy Hin. destruct Hy as [Hy|[]].
+          eapply (Hmv y); [exact Hin|rewrite <- Hy; exact Hbsc]. }
+
+      assert (listSatisfiable dlt' ce) as Hsat'
+          by (eapply listSatisfiable_off with (xs := moved_by st st');
+              [exact Hcesc|exact Hmv|exact Hoff|exact Hsat]).
+
+      exists dlt'. split; [exact Hoff|split].
+      - apply listSatisfiable_app. split; [|exact Hce2].
+        eapply generate_lvars_constraints_mono;
+          [exact Hrel|exact Hbs'|exact Hcy|exact Hlv|exact Hlv'|exact Hsat'].
+      - apply Forall_app. split; [|exact Hscope2].
+        eapply generate_lvars_constraints_scoped
+          with (sc := scope ++ moved_by st st');
+          [ |  | | |exact Hcs2|exact Hlv'].
+        + apply in_or_app. now left.
+        + intros ck ckty Hck y Hy. apply in_or_app. left.
+          eapply clk_types_scoped; [exact Hck|exact Hy].
+        + eapply Forall_impl; [|exact Hbssc].
+          intros b Hb. apply in_or_app. now left.
+        + exact Hts2.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
