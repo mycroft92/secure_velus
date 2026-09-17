@@ -9395,6 +9395,119 @@ Module Type SECLUSUNNESTING
             apply incl_appr, moved_by_suffix; auto.
     Qed.
 
+    (** * Both source rules, in one shape
+
+        Away from calls the equation generator has two rules -- the
+        definition rule for a single variable defined by a single expression,
+        and the general rule for everything else -- and they differ only in
+        that the first is the second's one-element case with the empty tail
+        already appended.  Reducing both to [generate_lvars_constraints] is
+        what lets the split and the source be compared by one lemma. *)
+
+    Lemma generate_leqn_constraint_gen :
+      forall xs es,
+        Forall (fun e => match e with
+                         | Eapp _ _ _ _ => False
+                         | _ => True
+                         end) es ->
+        (match es with
+         | [_] => match xs with [_] => False | _ => True end
+         | _ => True
+         end) ->
+        generate_leqn_constraint GL env base_ty rst_ty cenv (xs, es)
+        = generate_lgen_constraint GL env base_ty rst_ty cenv xs es.
+    Proof.
+      intros xs es Hne Hsh.
+      destruct es as [|e [|e2 es2]].
+      - reflexivity.
+      - inv Hne. destruct e; try contradiction;
+          (destruct xs as [|x [|x2 xs2]];
+           [reflexivity|contradiction|reflexivity]).
+      - destruct e as [| | | | | | | | |f' args' ro' a']; try reflexivity.
+        destruct ro' as [er|]; [|reflexivity].
+        destruct er as [|v va| | | | | | | |]; try reflexivity.
+        destruct va as (ty0 & ckr0 & nm0). reflexivity.
+    Qed.
+
+    Lemma generate_lgen_constraint_inv :
+      forall xs es c s s',
+        generate_lgen_constraint GL env base_ty rst_ty cenv xs es s
+          = OK (c, s') ->
+        exists ts bs si,
+          assign_lexps GL env base_ty rst_ty es s = OK (ts, si)
+          /\ get_mappings xs env = Some bs
+          /\ generate_lvars_constraints env base_ty rst_ty cenv xs bs ts si
+             = OK (c, s').
+    Proof.
+      intros xs es c s s' H. unfold generate_lgen_constraint in H.
+      eapply sec_bind_inv in H as (ts & si & Hts & H).
+      eapply sec_bind_inv in H as (bs & sj & Hbs & H).
+      apply option_to_sec_inv in Hbs as (Hbs & ?); subst sj.
+      exists ts, bs, si. auto.
+    Qed.
+
+    Lemma generate_ldef_is_lvars :
+      forall x e b t c s s' si,
+        Env.find x env = Some b ->
+        assign_lexp_type GL env base_ty rst_ty e s = OK ([t], si) ->
+        generate_ldef_constraint GL env base_ty rst_ty cenv x e s
+          = OK (c, s') ->
+        generate_lvars_constraints env base_ty rst_ty cenv [x] [b] [t] si
+          = OK (c, s').
+    Proof.
+      intros x e b t c s s' si Hb Hte H.
+      unfold generate_ldef_constraint in H.
+      eapply sec_bind_inv in H as (ckty & s1 & Hck & H).
+      eapply sec_bind_inv in H as (tss & s2 & Htss & H).
+      eapply sec_bind_inv in H as (tt & s3 & Htt & H).
+      eapply sec_bind_inv in H as (b' & s4 & Hb' & Hret).
+      unfold SC.ret in Hret. inv Hret.
+      destruct (eqn_clock_type_pure x _ si _ _ Hck) as (? & Hck'); subst s1.
+      rewrite Hte in Htss. inv Htss.
+      apply single_inv in Htt as (Htt & ?); subst. inv Htt.
+      apply find_env_inv in Hb' as (Hb'' & ?); subst.
+      rewrite Hb in Hb''. inv Hb''.
+      simpl. eapply sec_bind_ok; [exact Hck'|].
+      eapply sec_bind_ok; [reflexivity|].
+      unfold SC.ret. now rewrite app_nil_r.
+    Qed.
+
+    Lemma generate_leqn_constraint_lvars :
+      forall xs es c s s',
+        Forall (fun e => match e with
+                         | Eapp _ _ _ _ => False
+                         | _ => True
+                         end) es ->
+        generate_leqn_constraint GL env base_ty rst_ty cenv (xs, es) s
+          = OK (c, s') ->
+        exists ts bs si,
+          assign_lexps GL env base_ty rst_ty es s = OK (ts, si)
+          /\ get_mappings xs env = Some bs
+          /\ generate_lvars_constraints env base_ty rst_ty cenv xs bs ts si
+             = OK (c, s').
+    Proof.
+      intros xs es c s s' Hne H.
+      destruct es as [|e [|e2 es2]].
+      - rewrite generate_leqn_constraint_gen in H by (assumption || exact I).
+        now apply generate_lgen_constraint_inv.
+      - destruct xs as [|x [|x2 xs2]].
+        + rewrite generate_leqn_constraint_gen in H by (assumption || exact I).
+          now apply generate_lgen_constraint_inv.
+        + inversion Hne as [|e0 es0 He1 _]; subst.
+          rewrite generate_leqn_constraint_def in H by exact He1.
+          pose proof H as H0.
+          apply generate_ldef_constraint_inv in H0
+            as (ck & ckty & t & bb & si & Hck & Hcl & Hte & Hb & Hc).
+          exists [t], [bb], si. split; [|split].
+          * apply assign_lexps_single_intro. exact Hte.
+          * simpl. now rewrite Hb.
+          * eapply generate_ldef_is_lvars; eauto.
+        + rewrite generate_leqn_constraint_gen in H by (assumption || exact I).
+          now apply generate_lgen_constraint_inv.
+      - rewrite generate_leqn_constraint_gen in H by (assumption || exact I).
+        now apply generate_lgen_constraint_inv.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
