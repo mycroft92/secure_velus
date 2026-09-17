@@ -526,9 +526,119 @@ the mechanisation going through:
    (which was the expected reason) but to rule out a zero-stream conditional
    whose scrutinee is dropped while its equations are kept.
 
+## The call case
+
+The call is the only constructor that exercises the refinement machinery, and
+it is the only one where the two sides *instantiate* rather than *rebuild*.
+Everything else in this file exists to make this case's five differences
+close.
+
+### What the two sides look like
+
+The source typer's `Eapp` rule looks `f` up, instantiates the stored
+signature with the argument types, the call's base clock and the reset level
+reaching it, mints one fresh security name per result, and gives every result
+flow that name refined by the instantiated block joined with whatever the
+arguments and the reset were carrying.
+
+The pass unnests the arguments, walks them once more with
+`unnest_noops_exps`, unnests the reset, takes one program variable per result
+with `idents_for_anns'`, returns an `Evar` for each and emits the call as a
+single equation binding all of them.  The Lustre equation generator's rule for
+that equation looks `f` up and instantiates the *same* signature -- with the
+unnested argument types, the base clock read off the unnested arguments, the
+reset level of the variable the reset came back as, and the security names of
+the minted program variables as outputs.
+
+So the two constraint sets differ in exactly four places, and each is closed
+by a step of its own.
+
+### The arguments
+
+`carries_list` relates the source argument types to the types of the
+arguments as `unnest_exp` left them.  `noops_step` relates those to the types
+of the arguments as the no-op pass left them.  The two compose with
+`amb_trans`: a step of domination modulo the ambient followed by another is
+one such step, because the ambient is idempotent.
+
+Neither step has anything to compute the intermediate types with -- the
+source side types the *source* arguments and the emitted call types the
+*no-opped* ones, and nothing types what is in between.  `noops_operand_types`
+reads them back off what came after: an argument the no-op pass kept has the
+type the emitted call gave it, and one it bound has the type the equation it
+emitted computed.
+
+### The reset
+
+`unnest_reset` keeps a reset that already unnests to a variable and otherwise
+binds one.  Either way the emitted call's reset is a variable, and what is
+owed is that variable's level.  The kept branch is the induction hypothesis
+read off a one-element list; the bound branch is the same with `lifted_defs`
+on the one variable in between, which costs one more join of the ambient.
+
+The clock the reset is sampled on had to be put into the *expression* rule to
+make this close.  Velus's `wc_EappReset` does not tie a reset's clock to the
+call's base clock, so the clock in question is the reset expression's own
+`clockof` -- and that is exactly what `unnest_reset` leaves in the annotation
+of the variable it keeps or mints, because `unnest_exp` preserves `annots`.
+No clocking argument is needed: `unnest_reset_ann_clock` is annotation
+bookkeeping.
+
+### The clock
+
+`unnest_call_clocksof`: the base clock the emitted call is instantiated at is
+the base clock the source call was instantiated at, because `unnest_exps` and
+`unnest_noops_exps` both preserve `annots` and a base clock is read off
+those.  This one is an equality, not a domination.
+
+### The results
+
+A call's results are named twice.  The security monad minted one name per
+result when it typed the source expression; unnesting minted one program
+variable per result, and the naming pass gave each of those a security name.
+Nothing relates the two lists but position, and nothing has to:
+`call_outputs_witness` *chooses* the witness so that the second is the
+ambient-inflated value of the first.
+
+That choice is forced, and it is what made `cs_out`'s first clause one-sided.
+The emitted call equation constrains its results above the instantiated
+block, which on the source side is constrained above the minted names, and
+the equation is emitted under an ambient; under a two-sided reading of the
+result correspondence the same choice would force the ambient below each
+result.
+
+The one thing that has to be known about the two lists is that they are
+disjoint, and that is free: the source's minted names are in `scope` by the
+statement's own premise, and no name the run moves is in `scope`.
+
+### What is left over
+
+What the emitted call generates is *just* the instantiated block.  Its
+arguments are normalized, so they carry nothing; its reset is a variable, so
+that carries nothing either.  So the whole transfer is
+`generate_constraints_mono_sem`, whose ambient-aware chain is exactly what the
+inflated results need.
+
+### What the call case had to assume
+
+Four facts about the security global, none of them about the node being
+typed and none readable off a run: the callees' signatures are well formed
+(`signature_good`), scoped (`signature_scoped`), have distinct formals
+(`NoDup (signature_scope sg)`), and a *successful* instantiation's actuals
+avoid the callee's formals (`call_subst_fresh`).  The last is stated as a
+property of a successful instantiation rather than of arbitrary actuals,
+which is what makes it true rather than vacuous.
+
+And three facts that pin down what `scope` is, which the call case needs and
+cannot derive: the source typer's outputs and the clock typer's outputs name
+only `scope`, and the node's reset name is in it.  The argument list is why:
+a call's *own* result types say nothing about its arguments' types, so unlike
+every other constructor the call cannot read its operands' scoping off its
+own.
+
 ## Status
 
-Proved, no admits: **every constructor except the call**, at both
+Proved, no admits: **every constructor**, at both
 `is_control` flags — `Econst`, `Evar`, `Eunop`, `Ebinop`, the list level,
 `Ewhen`, `Emerge` and `Eite` in both their control and lifting branches,
 `Efby` and `Earrow` — together with all the infrastructure above,
@@ -544,9 +654,70 @@ act on".  `Eite`'s lifting branch is the merge's with the scrutinee composed
 in front: four witnesses in sequence, each surviving the ones after it
 because they move over disjoint stretches of the fresh state.
 
-Remaining: `Eapp`; then the equation, node and program levels (reusing
-`Signature_entails` for the two-globals lockstep), then Leg I
-(`normfby_global`).
+`Eapp` closed the induction: `carries_exp` is `exp_ind2` with one line per
+constructor, the merge and the conditional splitting on `is_control` because
+they are the only constructors whose two flags behave differently.
+
+## What the equation level runs into
+
+The next level up is `unnest_equation`, which is `unnest_rhss` followed by
+`split_equation`.  `unnest_rhs` differs from `unnest_exp true` only at
+`Eapp`, `Efby` and `Earrow`: at the top of an equation's right-hand side
+those are *not* lifted into fresh variables, because the equation's own
+variables already bind them.  So the outputs are the same on both sides,
+which removes the need for `call_outputs_witness` -- and introduces a
+different obligation.
+
+With the outputs equal, `generate_constraints_mono_sem`'s output step
+substitutes the same actual on both sides, and `cs_out`'s first clause at the
+end of the chain reads `amb ⊔ [b] ⊑ [b]`, that is, **the ambient must lie
+below every variable the equation defines**.
+
+For the general and definition rules that is free: the source equation's own
+constraint is `ambient(clock x) ⊔ t ⊑ [sec x]`, and the ambient of the
+equation is exactly `ambient(clock x)`.  The ambient inflation the lifted
+sub-expressions introduce is absorbed by the constraint the source already
+had.
+
+For a top-level *call* equation it is not.  The source constraint is the
+instantiated block, not a `lconstrain`, so nothing syntactic puts the ambient
+below the results.  It is still *true*: every constraint a generated
+signature holds mentions the callee's clock and reset formals -- they are
+joined into the ambient of every equation the callee's body generates -- so
+the substituted clock and reset actuals lie below every output.  That is
+`generate_constraints_mentions_clock` and `generate_constraints_mentions_reset`
+in `SecNLusTypingCorrectness.v`.
+
+Two further wrinkles make this more than plumbing:
+
+  * the ambient at the equation level has to cover every lifted
+    sub-expression's own ambient, and for a call with clock-dependent inputs
+    an argument sits on `bck on a` for another actual `a`, whose clock type
+    is *not* contained in the equation's;
+  * so what is actually needed is per-argument: if the callee's constraint
+    for output `i` mentions input `j`, then argument `j`'s ambient lies below
+    output `i`.  That is true -- an input sampled on another input drags the
+    sampling input into every constraint that mentions it -- but it is a
+    theorem about the signature generator relating *clock* dependencies to
+    *security* dependencies, and it belongs with the signature machinery
+    rather than here.
+
+So the equation level is reachable by one of two routes, both of which are
+structural decisions rather than more of the same:
+
+  1. take `SECNLUSTYPING` and `SecNLusTypingCorrectness` as parameters of
+     this functor -- `SecLusNLusTranslation.v` already does exactly that, so
+     `SecLusConstraintExport.v` has every piece to hand -- and prove the
+     per-argument statement above from the mentions-lemmas plus the callee's
+     clocking;
+  2. state "the ambient lies below every variable this equation defines" as a
+     premise of the equation-level lemma, discharge it where it is derivable
+     (the general and definition rules), and carry it to the node level as a
+     single clearly-marked obligation.
+
+Then the node and program levels (reusing `Signature_entails` for the
+two-globals lockstep), then Leg I (`normfby_global`), then prepending
+`normalize_global_sem` so the entry point is source Lustre.
 
 ## Downstream use
 
