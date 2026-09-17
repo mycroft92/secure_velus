@@ -9677,6 +9677,136 @@ Module Type SECLUSUNNESTING
         split; [apply Forall_app; auto|apply Forall2_app; auto].
     Qed.
 
+    (** * Reading the general rule apart
+
+        Three facts about [generate_lvars_constraints], all by the same
+        induction: what it releases of the right-hand side's own obligations,
+        what its constraints can name, and -- for the split -- that the types
+        it was given exist in the first place. *)
+
+    Lemma generate_lvars_constraints_carried :
+      forall dlt xs bs ts c s s',
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
+          = OK (c, s') ->
+        listSatisfiable dlt c ->
+        listSatisfiable dlt (carried ts).
+    Proof.
+      intros dlt xs. induction xs as [|x xs IH];
+        intros bs ts c s s' H Hsat.
+      - simpl in H. destruct bs; [|discriminate H].
+        destruct ts; [|discriminate H]. constructor.
+      - destruct bs as [|b bs]; [simpl in H; discriminate H|].
+        destruct ts as [|t ts]; [simpl in H; discriminate H|].
+        simpl in H.
+        eapply sec_bind_inv in H as (ckty & s1 & Hck & H).
+        eapply sec_bind_inv in H as (rest & s2 & Hr & Hret).
+        unfold SC.ret in Hret. inv Hret.
+        apply listSatisfiable_app in Hsat as (Hsath & Hsatr).
+        apply lconstrain_sound in Hsath as (Hdef & _).
+        simpl. apply listSatisfiable_cmerge. split; [|eapply IH; eauto].
+        unfold lst_defined in Hdef. rewrite snd_ljoin in Hdef.
+        unfold ambient in Hdef. rewrite snd_ljoin, snd_lvar in Hdef.
+        cbn [snd] in Hdef. rewrite cmerge_nil, cmerge_nil2 in Hdef.
+        exact Hdef.
+    Qed.
+
+    Lemma generate_lvars_constraints_scoped :
+      forall sc xs bs ts c s s',
+        In rst_ty sc ->
+        (forall ck ckty,
+            assign_clk_type env base_ty ck = Some ckty -> st_scoped sc ckty) ->
+        Forall (fun b => In b sc) bs ->
+        Forall (fun t => st_scoped sc (fst t)) ts ->
+        constraints_scoped sc (carried ts) ->
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
+          = OK (c, s') ->
+        constraints_scoped sc c.
+    Proof.
+      intros sc xs. induction xs as [|x xs IH];
+        intros bs ts c s s' Hrst Hclk Hbs Hts Hct H.
+      - simpl in H. destruct bs; [|discriminate H].
+        destruct ts; [|discriminate H].
+        unfold SC.ret in H. inv H. constructor.
+      - destruct bs as [|b bs]; [simpl in H; discriminate H|].
+        destruct ts as [|t ts]; [simpl in H; discriminate H|].
+        inversion Hbs as [|b0 bs0 Hb Hbsr]; subst.
+        inversion Hts as [|t0 ts0 Ht Htsr]; subst.
+        simpl in Hct. apply constraints_scoped_cmerge in Hct as (Hcth & Hctr).
+        simpl in H.
+        eapply sec_bind_inv in H as (ckty & s1 & Hck & H).
+        eapply sec_bind_inv in H as (rest & s2 & Hr & Hret).
+        unfold SC.ret in Hret. inv Hret.
+        assert (st_scoped sc ckty) as Hcksc.
+        { unfold eqn_clock_type in Hck.
+          eapply sec_bind_inv in Hck as (ck0 & sa & Hck0 & Hck).
+          apply option_to_sec_inv in Hck as (Hck & ?); subst.
+          eapply Hclk; exact Hck. }
+        apply Forall_app. split; [|eapply IH; eauto].
+        unfold lconstrain. apply constraints_scoped_cmerge. split.
+        + constructor; [|constructor].
+          intros y Hy. apply in_app_or in Hy as [Hy|Hy].
+          * rewrite fst_ljoin in Hy. apply in_merge_inv in Hy as [Hy|Hy].
+            -- unfold ambient in Hy. rewrite fst_ljoin, fst_lvar in Hy.
+               apply in_merge_inv in Hy as [Hy|Hy].
+               ++ destruct Hy as [Hy|[]]; subst y. exact Hrst.
+               ++ now apply Hcksc.
+            -- now apply Ht.
+          * destruct Hy as [Hy|[]]; subst y. exact Hb.
+        + rewrite snd_ljoin. unfold ambient.
+          rewrite snd_ljoin, snd_lvar. cbn [snd].
+          rewrite cmerge_nil, cmerge_nil2. exact Hcth.
+    Qed.
+
+    Lemma vars_defined_split_equation :
+      forall (xs : list ident) (es' : list exp),
+        Forall (fun e => numstreams e = 1) es' ->
+        List.length xs = List.length es' ->
+        vars_defined (split_equation (xs, es')) = xs.
+    Proof.
+      induction xs as [|x xs IH]; intros es' Hns Hlen.
+      - destruct es'; simpl in Hlen; [|discriminate Hlen].
+        reflexivity.
+      - destruct es' as [|e es']; simpl in Hlen; [discriminate Hlen|].
+        inversion Hns as [|e0 es0 Hn1 Hnsr]; subst.
+        rewrite split_equation_cons by exact Hn1.
+        replace (vars_defined (([x], [e]) :: split_equation (xs, es')))
+          with (x :: vars_defined (split_equation (xs, es'))) by reflexivity.
+        f_equal. apply IH; auto.
+    Qed.
+
+    Lemma split_equation_operand_types :
+      forall (xs : list ident) (es' : list exp) c s s',
+        Forall (fun e => numstreams e = 1) es' ->
+        Forall (fun e => match e with
+                         | Eapp _ _ _ _ => False
+                         | _ => True
+                         end) es' ->
+        List.length xs = List.length es' ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv
+          (split_equation (xs, es')) s = OK (c, s') ->
+        exists ts'' q', assign_lexps GL env base_ty rst_ty es' s = OK (ts'', q').
+    Proof.
+      induction xs as [|x xs IH]; intros es' c s s' Hns Hne Hlen Hgen.
+      - destruct es'; simpl in Hlen; [|discriminate Hlen].
+        exists [], s. now rewrite assign_lexps_nil.
+      - destruct es' as [|e es']; simpl in Hlen; [discriminate Hlen|].
+        inversion Hns as [|e0 es0 Hn1 Hnsr]; subst.
+        inversion Hne as [|e1 es1 He1 Hner]; subst.
+        rewrite split_equation_cons in Hgen by exact Hn1.
+        rewrite generate_leqns_constraints_cons in Hgen.
+        eapply sec_bind_inv in Hgen as (ch & sh & Hch & Hgen).
+        eapply sec_bind_inv in Hgen as (ct & stt & Hct & _).
+        rewrite generate_leqn_constraint_def in Hch by exact He1.
+        pose proof Hch as Hch0.
+        apply generate_ldef_constraint_inv in Hch0
+          as (ck & ckty & t & bb & si & _ & _ & Hte & _ & Hc).
+        destruct Hc as (? & _); subst sh.
+        edestruct (IH es' ct si stt) as (ts0 & q0 & Hts0); auto.
+        exists ([t] ++ ts0), q0. rewrite assign_lexps_cons.
+        eapply sec_bind_ok; [exact Hte|].
+        eapply sec_bind_ok; [exact Hts0|]. reflexivity.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
