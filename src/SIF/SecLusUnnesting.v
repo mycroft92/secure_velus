@@ -9107,6 +9107,21 @@ Module Type SECLUSUNNESTING
           apply satisfiable_merge_intro; [exact Hb|exact Htb].
     Qed.
 
+    (** The property the split needs of what a right-hand side comes back
+        as: single-stream, not a call, and one type whatever state it is
+        typed from.  The split cuts the right-hand side into one equation per
+        stream, and each of those equations types its own expression at its
+        own state. *)
+
+    Definition rhs_pinned (e' : exp) (t : LST) : Prop :=
+      (match e' with Eapp _ _ _ _ => False | _ => True end)
+      /\ (forall tss s0 s0',
+             assign_lexp_type GL env base_ty rst_ty e' s0 = OK (tss, s0') ->
+             s0' = s0 /\ List.length tss = 1 /\ carried tss = [])
+      /\ (forall tf s0 s0',
+             assign_lexp_type GL env base_ty rst_ty e' s0 = OK ([tf], s0') ->
+             tf = t).
+
     (** * The split, on the security side
 
         [split_equation] cuts an unnested right-hand side into one equation
@@ -9135,14 +9150,8 @@ Module Type SECLUSUNNESTING
     Lemma split_equation_is_lvars :
       forall (xs : list ident) (es' : list exp) bs ts'' c s s' q,
         Forall (fun e => numstreams e = 1) es' ->
-        Forall (fun e => match e with
-                         | Eapp _ _ _ _ => False
-                         | _ => True
-                         end) es' ->
         Forall2 (fun x b => Env.find x env = Some b) xs bs ->
-        Forall2 (fun e t => forall r,
-                    assign_lexp_type GL env base_ty rst_ty e r = OK ([t], r))
-          es' ts'' ->
+        Forall2 rhs_pinned es' ts'' ->
         List.length xs = List.length es' ->
         generate_leqns_constraints GL env base_ty rst_ty cenv
           (split_equation (xs, es')) s = OK (c, s') ->
@@ -9150,7 +9159,7 @@ Module Type SECLUSUNNESTING
           = OK (c, q).
     Proof.
       induction xs as [|x xs IH];
-        intros es' bs ts'' c s s' q Hns Hne Hbs Hts Hlen Hgen.
+        intros es' bs ts'' c s s' q Hns Hbs Hts Hlen Hgen.
       - destruct es'; simpl in Hlen; [|discriminate Hlen].
         inv Hbs. inv Hts.
         rewrite split_equation_nil in Hgen.
@@ -9158,9 +9167,8 @@ Module Type SECLUSUNNESTING
         reflexivity.
       - destruct es' as [|e es']; simpl in Hlen; [discriminate Hlen|].
         inversion Hns as [|e0 es0 Hn1 Hnsr]; subst.
-        inversion Hne as [|e1 es1 He1 Hner]; subst.
         inversion Hbs as [|x0 b xs0 bs0 Hxb Hbsr]; subst.
-        inversion Hts as [|e2 t es2 ts2 Ht Htsr]; subst.
+        inversion Hts as [|e2 t es2 ts2 (He1 & Hpur & Hpin) Htsr]; subst.
         rewrite split_equation_cons in Hgen by exact Hn1.
         rewrite generate_leqns_constraints_cons in Hgen.
         eapply sec_bind_inv in Hgen as (ch & sh & Hch & Hgen).
@@ -9173,7 +9181,9 @@ Module Type SECLUSUNNESTING
         eapply sec_bind_inv in Hch as (tt & s3 & Htt & Hch).
         eapply sec_bind_inv in Hch as (b' & s4 & Hb' & Hretc).
         unfold SC.ret in Hretc. inv Hretc.
-        rewrite (Ht s1) in Htss. inv Htss.
+        destruct (Hpur _ _ _ Htss) as (? & Hlt & _); subst s2.
+        destruct tss as [|t0 [|]]; simpl in Hlt; try discriminate.
+        assert (t0 = t) as ? by (eapply Hpin; exact Htss); subst t0.
         apply single_inv in Htt as (Htt & ?); subst.
         inv Htt.
         apply find_env_inv in Hb' as (Hb'' & ?); subst.
@@ -9506,6 +9516,165 @@ Module Type SECLUSUNNESTING
           now apply generate_lgen_constraint_inv.
       - rewrite generate_leqn_constraint_gen in H by (assumption || exact I).
         now apply generate_lgen_constraint_inv.
+    Qed.
+
+    (** * What a right-hand side comes back as
+
+        Away from calls, every expression [unnest_rhs] returns is
+        single-stream and has one type, whatever state it is typed from.
+        That is what the split needs: it cuts the right-hand side into one
+        equation per stream, and each of those equations types its own
+        expression at its own state. *)
+
+    Lemma unnest_fby_numstreams :
+      forall e0s es anns,
+        Forall (fun e => numstreams e = 1) (unnest_fby e0s es anns).
+    Proof.
+      intros e0s es anns. unfold unnest_fby.
+      rewrite Forall_map. apply Forall_forall.
+      intros ((e0 & e) & a) _. reflexivity.
+    Qed.
+
+    Lemma unnest_arrow_numstreams :
+      forall e0s es anns,
+        Forall (fun e => numstreams e = 1) (unnest_arrow e0s es anns).
+    Proof.
+      intros e0s es anns. unfold unnest_arrow.
+      rewrite Forall_map. apply Forall_forall.
+      intros ((e0 & e) & a) _. reflexivity.
+    Qed.
+
+    Lemma normalized_cexp_pinned :
+      forall (es' : list exp) ts'' q q',
+        Forall normalized_cexp es' ->
+        assign_lexps GL env base_ty rst_ty es' q = OK (ts'', q') ->
+        Forall2 rhs_pinned es' ts''.
+    Proof.
+      intros es' ts'' q q' Hn H.
+      assert (Forall2 (fun e t =>
+                (forall s, assign_lexp_type GL env base_ty rst_ty e s
+                            = OK ([t], s)) /\ snd t = []) es' ts'') as Hew
+          by (eapply assign_lexps_elementwise; eauto).
+      eapply Forall2_impl_In; [|exact Hew].
+      intros e t He Ht (Hs & Hsnd).
+      assert (normalized_cexp e) as Hne
+          by (eapply Forall_forall; [exact Hn|exact He]).
+      split; [destruct e; try exact I; inv Hne; inv H0|split].
+      - intros tss s0 s0' Hty. rewrite (Hs s0) in Hty. inv Hty.
+        split; [reflexivity|split; [reflexivity|]].
+        rewrite carried_single. exact Hsnd.
+      - intros tf s0 s0' Hty. rewrite (Hs s0) in Hty. now inv Hty.
+    Qed.
+
+    Lemma unnest_rhs_pinned :
+      forall P e es' eqs st st' ts'' q q',
+        wl_exp P e ->
+        (match e with Eapp _ _ _ _ => False | _ => True end) ->
+        unnest_rhs P e st = ((es', eqs), st') ->
+        assign_lexps GL env base_ty rst_ty es' q = OK (ts'', q') ->
+        Forall (fun e' => numstreams e' = 1) es'
+        /\ Forall2 rhs_pinned es' ts''.
+    Proof.
+      intros P e es' eqs st st' ts'' q q' Hwl He Hun Has.
+      destruct e; try
+        (rewrite unnest_rhs_other in Hun by exact I;
+         assert (Forall normalized_cexp es') as Hnc
+             by (eapply unnest_exp_normalized_cexp; eauto);
+         split;
+         [eapply unnest_exp_numstreams; eauto
+         |eapply normalized_cexp_pinned; eauto]).
+      - (** the delay *)
+        inv Hwl.
+        apply unnest_rhs_Efby_inv in Hun
+          as (f0 & eqsa & st1 & f1 & eqsb & Hun0 & Hun1 & ? & ?); subst.
+        apply unnest_exps_inv in Hun0 as (ess0 & eqss0 & Hmap0 & ? & ?); subst.
+        apply unnest_exps_inv in Hun1 as (ess1 & eqss1 & Hmap1 & ? & ?); subst.
+        assert (Forall normalized_lexp (List.concat ess0)) as Hn0
+            by (eapply map_bind2_unnest_normalized_lexp; eauto).
+        assert (Forall normalized_lexp (List.concat ess1)) as Hn1
+            by (eapply map_bind2_unnest_normalized_lexp; eauto).
+        assert (Forall normalized_cexp (List.concat ess0)) as Hc0
+            by (eapply Forall_impl; [|exact Hn0]; intros; now constructor).
+        assert (Forall normalized_cexp (List.concat ess1)) as Hc1
+            by (eapply Forall_impl; [|exact Hn1]; intros; now constructor).
+        assert (List.length (List.concat ess0) = List.length l1) as Hle0
+            by (erewrite map_bind2_unnest_exp_length with (es := l); eauto).
+        assert (List.length (List.concat ess1) = List.length l1) as Hle1
+            by (erewrite map_bind2_unnest_exp_length with (es := l0); eauto).
+        edestruct (unnest_fby_operands_typed (List.concat ess0)
+                     (List.concat ess1) l1 ts'' q q')
+          as (ts0x & usx & Ht0x & Hux);
+          [exact Hc0|exact Hc1|exact Hle0|exact Hle1|exact Has|].
+        edestruct (unnest_fby_types (List.concat ess0) (List.concat ess1) l1
+                     ts0x usx q) as (rs & Hjr & Hallr);
+          [eapply assign_lexps_elementwise; [exact Hc0|apply (Ht0x q)]
+          |eapply assign_lexps_elementwise; [exact Hc1|apply (Hux q)]
+          |exact Hle0|exact Hle1|].
+        assert (ts'' = rs /\ q' = q) as (? & ?)
+            by (eapply assign_lexps_determined; [exact Hallr|exact Has]); subst.
+        split; [apply unnest_fby_numstreams|exact Hallr].
+      - (** the initialised delay *)
+        inv Hwl.
+        apply unnest_rhs_Earrow_inv in Hun
+          as (f0 & eqsa & st1 & f1 & eqsb & Hun0 & Hun1 & ? & ?); subst.
+        apply unnest_exps_inv in Hun0 as (ess0 & eqss0 & Hmap0 & ? & ?); subst.
+        apply unnest_exps_inv in Hun1 as (ess1 & eqss1 & Hmap1 & ? & ?); subst.
+        assert (Forall normalized_lexp (List.concat ess0)) as Hn0
+            by (eapply map_bind2_unnest_normalized_lexp; eauto).
+        assert (Forall normalized_lexp (List.concat ess1)) as Hn1
+            by (eapply map_bind2_unnest_normalized_lexp; eauto).
+        assert (Forall normalized_cexp (List.concat ess0)) as Hc0
+            by (eapply Forall_impl; [|exact Hn0]; intros; now constructor).
+        assert (Forall normalized_cexp (List.concat ess1)) as Hc1
+            by (eapply Forall_impl; [|exact Hn1]; intros; now constructor).
+        assert (List.length (List.concat ess0) = List.length l1) as Hle0
+            by (erewrite map_bind2_unnest_exp_length with (es := l); eauto).
+        assert (List.length (List.concat ess1) = List.length l1) as Hle1
+            by (erewrite map_bind2_unnest_exp_length with (es := l0); eauto).
+        edestruct (unnest_arrow_operands_typed (List.concat ess0)
+                     (List.concat ess1) l1 ts'' q q')
+          as (ts0x & usx & Ht0x & Hux);
+          [exact Hc0|exact Hc1|exact Hle0|exact Hle1|exact Has|].
+        edestruct (unnest_arrow_types (List.concat ess0) (List.concat ess1) l1
+                     ts0x usx q) as (rs & Hjr & Hallr);
+          [eapply assign_lexps_elementwise; [exact Hc0|apply (Ht0x q)]
+          |eapply assign_lexps_elementwise; [exact Hc1|apply (Hux q)]
+          |exact Hle0|exact Hle1|].
+        assert (ts'' = rs /\ q' = q) as (? & ?)
+            by (eapply assign_lexps_determined; [exact Hallr|exact Has]); subst.
+        split; [apply unnest_arrow_numstreams|exact Hallr].
+      - contradiction.
+    Qed.
+
+    Lemma unnest_rhss_pinned :
+      forall P es ess eqss st st' ts'' q q',
+        Forall (wl_exp P) es ->
+        Forall (fun e => match e with
+                         | Eapp _ _ _ _ => False
+                         | _ => True
+                         end) es ->
+        map_bind2 (unnest_rhs P) es st = ((ess, eqss), st') ->
+        assign_lexps GL env base_ty rst_ty (List.concat ess) q
+          = OK (ts'', q') ->
+        Forall (fun e' => numstreams e' = 1) (List.concat ess)
+        /\ Forall2 rhs_pinned (List.concat ess) ts''.
+    Proof.
+      induction es as [|e es IH];
+        intros ess eqss st st' ts'' q q' Hwl Hne Hun Has.
+      - apply map_bind2_unnest_rhs_nil in Hun as (? & ? & ?); subst.
+        simpl in Has.
+        apply (assign_lexps_carried_nil GL env base_ty rst_ty) in Has
+          as (? & _ & ?); subst.
+        split; constructor.
+      - inv Hwl. inv Hne.
+        apply map_bind2_unnest_rhs_cons in Hun
+          as (f1 & eq1 & st1 & fr & eqsr & Hun1 & Hunr & ? & ?); subst.
+        simpl in Has.
+        apply assign_lexps_app_inv in Has as (u & v & ya & Hu & Hv & ?); subst.
+        edestruct (unnest_rhs_pinned P e f1 eq1 st st1 u q ya)
+          as (Hns1 & Hp1); try assumption.
+        edestruct (IH fr eqsr st1 st' v ya q') as (Hns2 & Hp2); try assumption.
+        split; [apply Forall_app; auto|apply Forall2_app; auto].
     Qed.
 
   End Preservation.
