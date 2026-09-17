@@ -8998,6 +8998,32 @@ Module Type SECLUSUNNESTING
           apply incl_appr, (moved_by_suffix st st1 st' Hf0).
     Qed.
 
+    (** * The right-hand side level, closed away from calls
+
+        Every right-hand side but a call.  The call is left out deliberately,
+        and not because it is hard: at the top of an equation a call is never
+        *typed* as an expression at all.  The equation generator's call rule
+        instantiates the callee directly, with the equation's own variables
+        as the outputs, so the type [assign_lexp_type] would give the
+        returned [Eapp] -- with its own freshly minted result names -- is
+        never looked at.  Which is just as well, because those names are the
+        security monad's and not the run's, so no witness this statement is
+        allowed to build could say anything about them.
+
+        The equation level therefore branches on whether its right-hand side
+        is a call, and this covers the branch that is not. *)
+
+    Theorem rhs_carries_exp :
+      forall P e,
+        (match e with Eapp _ _ _ _ => False | _ => True end) ->
+        rhs_carries P e.
+    Proof.
+      intros P e He. destruct e; try (apply rhs_carries_other; exact I).
+      - apply rhs_carries_Efby.
+      - apply rhs_carries_Earrow.
+      - contradiction.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
