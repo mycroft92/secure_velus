@@ -7482,6 +7482,71 @@ Module Type SECLUSUNNESTING
         rewrite Hann0 in Hhd. simpl in Hhd. inv Hhd. exact Hcl.
     Qed.
 
+    (** * The witness on a call's results
+
+        A call's results are named twice over.  The security monad minted one
+        name per result when it typed the source expression; unnesting minted
+        one program variable per result, and the naming pass gave each of
+        those a security name of its own.  Nothing relates the two lists but
+        position, and nothing has to: the witness is *chosen* so that the
+        second is the ambient-inflated value of the first.
+
+        That choice is forced.  The emitted call equation constrains its
+        results above the instantiated block, which on the source side is
+        constrained above the minted names; the ambient comes in because the
+        equation is emitted under one.  Under a two-sided reading of the
+        result correspondence the same choice would force the ambient below
+        each result, which is why [cs_out]'s first clause is one-sided. *)
+
+    Lemma call_outputs_witness :
+      forall dlt (outs bs : list ident),
+        NoDup bs ->
+        List.length outs = List.length bs ->
+        (forall b, In b bs -> ~ In b scope) ->
+        Forall (fun o => In o scope) outs ->
+        exists dlt',
+          agree_off bs dlt dlt'
+          /\ Forall2 (amb_pair dlt') outs bs.
+    Proof.
+      intros dlt outs bs Hnd Hlen Hbs Hos.
+      remember (fun o => hm_ext dlt (merge amb [o])) as fv eqn:Efv.
+      exists (upds bs (List.map fv outs) dlt).
+      split; [apply upds_agree_off|].
+      assert (List.length bs = List.length (List.map fv outs)) as Hlen'
+          by (rewrite map_length; now symmetry).
+
+      assert (forall (os bs0 : list ident) C,
+                 List.length os = List.length bs0 ->
+                 incl (combine bs0 (List.map fv os)) C ->
+                 Forall2 (fun o b => In (b, fv o) C) os bs0) as Hgen.
+      { induction os as [|o os IH]; intros bs0 C Hl Hincl;
+          destruct bs0 as [|b bs0]; simpl in Hl; try discriminate;
+          [constructor|].
+        constructor.
+        - apply Hincl. simpl. now left.
+        - eapply IH; [congruence|].
+          intros p Hp. apply Hincl. simpl. now right. }
+
+      assert (Forall2 (fun o b => In (b, fv o) (combine bs (List.map fv outs)))
+                outs bs) as Hin
+          by (apply Hgen; [exact Hlen|apply incl_refl]).
+
+      eapply Forall2_impl_In; [|exact Hin].
+      intros o b Ho Hb Hinob.
+      assert (upds bs (List.map fv outs) dlt b = fv o) as Hbv
+          by (eapply upds_nth; eauto).
+      assert (hm_ext (upds bs (List.map fv outs) dlt) (merge amb [o])
+                = hm_ext dlt (merge amb [o])) as Hstable.
+      { apply hm_ext_upds. intros x Hx Hxb. apply (Hbs x Hxb).
+        apply in_merge_inv in Hx as [Hx|Hx].
+        - now apply amb_scoped.
+        - destruct Hx as [Hx|[]]; subst.
+          rewrite Forall_forall in Hos. now apply Hos. }
+      unfold amb_pair, satisfiable.
+      rewrite Hstable, hm_ext_single, Hbv, Efv, <- join_bottom_eq1.
+      split; apply Lat.order_refl, Lat.eq_refl.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
