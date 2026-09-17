@@ -7361,6 +7361,69 @@ Module Type SECLUSUNNESTING
             apply incl_appr, (moved_by_prefix st st1 st' Hf1).
     Qed.
 
+    (** The unnested arguments' types, read back off what came after them.
+        [carries_list] needs the types of the arguments as [unnest_exp] left
+        them, but nothing computes those: the source side types the *source*
+        arguments and the emitted call types the *no-opped* ones.  Both ends
+        are available, and between them every argument is accounted for --
+        one that the no-op pass kept has the type the emitted call gave it,
+        and one that it bound has the type the equation it emitted
+        computed. *)
+
+    Lemma noops_operand_types :
+      forall ckis es1 es2 eqs2 st st' ce xst xst' ts2 (yst yst' : sec_state),
+        List.length ckis = List.length es1 ->
+        Forall normalized_lexp es1 ->
+        unnest_noops_exps ckis es1 st = ((es2, eqs2), st') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs2 xst
+          = OK (ce, xst') ->
+        assign_lexps GL env base_ty rst_ty es2 yst = OK (ts2, yst') ->
+        exists ts1,
+          forall s, assign_lexps GL env base_ty rst_ty es1 s = OK (ts1, s).
+    Proof.
+      intros ckis es1. revert ckis.
+      induction es1 as [|e es1 IH];
+        intros ckis es2 eqs2 st st' ce xst xst' ts2 yst yst'
+          Hlen Hnorm Hun Hgen Has2.
+      - exists []. intros s. now rewrite assign_lexps_nil.
+      - destruct ckis as [|ck ckis]; simpl in Hlen; [discriminate|].
+        inversion Hlen as [Hlen'].
+        inversion Hnorm as [|e0 es0 Hne Hnes]; subst.
+        apply unnest_noops_exps_cons in Hun
+          as (e2 & eqh & st1 & es2t & eqt & Hh & Ht & ? & ?); subst.
+        apply assign_lexps_carried_cons in Has2
+          as (u & r2 & sb & Hu0 & Hr2 & ? & _); subst.
+        apply generate_leqns_constraints_app in Hgen
+          as (ceh & cet & xstm & Hgenh & Hgent & ?); subst.
+
+        assert (exists t0, forall s,
+                   assign_lexp_type GL env base_ty rst_ty e s = OK ([t0], s))
+          as (t0 & Ht0).
+        { apply unnest_noops_exp_inv in Hh
+            as [(? & ? & ?)|(x & an & ? & ? & _)]; subst.
+          - assert (List.length u = 1) as Hlu
+                by (eapply assign_lexp_normalized_lexp_pure with (e := e);
+                    eauto).
+            destruct u as [|t0 [|]]; simpl in Hlu; try discriminate.
+            exists t0.
+            eapply assign_lexp_normalized_lexp_pure with (e := e); eauto.
+          - rewrite generate_leqns_constraints_cons in Hgenh.
+            eapply sec_bind_inv in Hgenh as (c & xst1 & Hc & _).
+            rewrite generate_leqn_constraint_def in Hc
+              by (destruct e; try exact I; inv Hne).
+            apply generate_ldef_constraint_inv in Hc
+              as (ck1 & ckty1 & t0 & rb & stm2 & _ & _ & Hte & _ & _).
+            exists t0.
+            eapply assign_lexp_normalized_lexp_pure with (e := e); eauto. }
+
+        edestruct IH as (ts1 & Hts1);
+          [exact Hlen'|exact Hnes|exact Ht|exact Hgent|exact Hr2|].
+        exists (t0 :: ts1). intros s.
+        rewrite assign_lexps_cons.
+        eapply sec_bind_ok; [apply Ht0|].
+        eapply sec_bind_ok; [apply Hts1|]. reflexivity.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
