@@ -8405,6 +8405,86 @@ Module Type SECLUSUNNESTING
       apply Forall_forall. intros e _. apply carries_exp.
     Qed.
 
+    (** * The right-hand side of an equation
+
+        [unnest_rhs] is [unnest_exp true] everywhere except at the three
+        constructors an equation's variables can bind directly: a call, a
+        delay and an initialised delay are left where they are, because the
+        equation already has variables for their results.  So unlike
+        [unnest_exp], what comes back is not always a variable, and what it
+        carries is not always nothing -- a call left in place is typed again,
+        with its own fresh result names and its own instantiated block.
+
+        That is the one conclusion this level adds: what the returned
+        expressions carry has to be satisfied too, because the equation's own
+        rule joins it in. *)
+
+    Definition rhs_carries (P : global) (e : exp) : Prop :=
+      forall es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt,
+        wl_exp P e -> wc_exp P vars e ->
+        NoDup (vars_defined eqs ++ st_ids st) ->
+        (forall x, In x (moved_by st st') -> ~ In x scope) ->
+        constraints_scoped scope (carried ts) ->
+        Forall (fun t => st_scoped scope (fst t)) ts ->
+        (forall x ck ckty,
+            In x (vars_defined eqs) -> find_clock cenv x = OK ck ->
+            assign_clk_type env base_ty ck = Some ckty ->
+            incl (merge [rst_ty] ckty) amb) ->
+        unnest_rhs P e st = ((es', eqs), st') ->
+        assign_lexp_type GL env base_ty rst_ty e sst = OK (ts, sst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs xst
+          = OK (ce, xst') ->
+        assign_lexps GL env base_ty rst_ty es' yst = OK (ts'', yst') ->
+        listSatisfiable dlt (carried ts) ->
+        exists dlt',
+          agree_off (moved_by st st') dlt dlt'
+          /\ listSatisfiable dlt' ce
+          /\ listSatisfiable dlt' (carried ts'')
+          /\ Forall2 (fun t t'' => satisfiable dlt' (fst t'') (merge amb (fst t)))
+               ts ts''
+          /\ constraints_scoped (scope ++ moved_by st st') ce
+          /\ constraints_scoped (scope ++ moved_by st st') (carried ts'')
+          /\ Forall (fun t'' => st_scoped (scope ++ moved_by st st') (fst t''))
+               ts''.
+
+    Lemma unnest_rhs_other :
+      forall P e,
+        (match e with
+         | Eapp _ _ _ _ | Efby _ _ _ | Earrow _ _ _ => False
+         | _ => True
+         end) ->
+        unnest_rhs P e = unnest_exp P true e.
+    Proof. intros P e H. destruct e; try reflexivity; contradiction. Qed.
+
+    (** The constructors an equation cannot bind directly are unnested exactly
+        as they are inside an expression, and what comes back is normalized,
+        so it carries nothing and the extra conclusions are vacuous. *)
+
+    Lemma rhs_carries_other :
+      forall P e,
+        (match e with
+         | Eapp _ _ _ _ | Efby _ _ _ | Earrow _ _ _ => False
+         | _ => True
+         end) ->
+        rhs_carries P e.
+    Proof.
+      intros P e He
+        es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+      rewrite unnest_rhs_other in Hun by exact He.
+      assert (Forall normalized_cexp es') as Hne
+          by (eapply unnest_exp_normalized_cexp; eauto).
+      assert (carried ts'' = []) as Hct
+          by (eapply assign_lexps_normalized_pure; eauto).
+      edestruct (carries_exp P e true es' eqs st st' ts sst sst'
+                   ce xst xst' ts'' yst yst' dlt)
+        as (dlt' & Hoff & Hce & Hrel & Hscope & Hscts);
+        try assumption.
+      exists dlt'. split; [exact Hoff|]. split; [exact Hce|].
+      rewrite Hct. split; [constructor|]. split; [exact Hrel|].
+      split; [exact Hscope|]. split; [constructor|exact Hscts].
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
