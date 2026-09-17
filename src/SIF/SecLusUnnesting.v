@@ -2124,6 +2124,84 @@ Module Type SECLUSUNNESTING
     (** The ambient names program variables only. *)
     Hypothesis amb_scoped : st_scoped scope amb.
 
+    (** * What the call case assumes of the callees
+
+        Three facts about the security global this node is typed against.
+        None of them is about *this* node, and none can be read off the run:
+        they are well-formedness of the signatures [GL] already holds, and
+        they are discharged where [GL] is built.
+
+        [sig_good] and [sig_nodup] are the shape [SIFSignature.v]'s
+        reordering lemmas ask for -- one constraint per output, targets
+        exactly the outputs, and formals all distinct.
+
+        [sig_actuals_fresh] is the separation between a callee's formals and
+        a caller's actuals.  It is stated as a property of a *successful*
+        instantiation rather than of arbitrary actuals, which is what makes
+        it true: the generator is only ever run on actuals the naming pass
+        kept clear of the callee's private names. *)
+
+    Hypothesis sig_good :
+      forall f sg, find_signature f GL = Some sg -> signature_good sg.
+
+    Hypothesis sig_nodup :
+      forall f sg, find_signature f GL = Some sg -> NoDup (signature_scope sg).
+
+    Hypothesis sig_actuals_fresh :
+      forall f sg inp ck rst os cns sa sb,
+        find_signature f GL = Some sg ->
+        generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
+        call_subst_fresh sg inp ck rst os.
+
+    (** [signature_scope] lists the formals clock and reset last; the
+        substitution chain consumes them in pipeline order, inputs first.
+        Same names, different order. *)
+
+    Lemma signature_scope_perm :
+      forall sg,
+        Permutation (signature_scope sg)
+          (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)).
+    Proof.
+      intros sg. unfold signature_scope.
+      apply Permutation_app_head. apply Permutation_app_comm.
+    Qed.
+
+    Lemma sig_nodup_pipeline :
+      forall f sg,
+        find_signature f GL = Some sg ->
+        NoDup (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)).
+    Proof.
+      intros f sg Hf. eapply Permutation_NoDup;
+        [apply signature_scope_perm|eapply sig_nodup; exact Hf].
+    Qed.
+
+    Lemma call_subst_fresh_pipeline :
+      forall sg inp1 inp2 ck1 ck2 rst1 rst2 os bs,
+        call_subst_fresh sg inp1 ck1 rst1 os ->
+        call_subst_fresh sg inp2 ck2 rst2 bs ->
+        forall y, In y (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)) ->
+          Forall (fun v => ~ In y v) inp1 /\ Forall (fun v => ~ In y v) inp2
+          /\ ~ In y ck1 /\ ~ In y ck2 /\ ~ In y rst1 /\ ~ In y rst2
+          /\ ~ In y os /\ ~ In y bs.
+    Proof.
+      intros sg inp1 inp2 ck1 ck2 rst1 rst2 os bs
+        (Hi1 & Hc1 & Hr1 & Ho1) (Hi2 & Hc2 & Hr2 & Ho2) y Hy.
+      assert (In y (signature_scope sg)) as Hy'
+        by (eapply Permutation_in; [symmetry; apply signature_scope_perm|exact Hy]).
+      unfold types_fresh, type_fresh, outputs_fresh in *.
+      repeat split.
+      - eapply Forall_impl; [|exact Hi1]. intros v Hv Hc.
+        rewrite Forall_forall in Hv. now apply (Hv y).
+      - eapply Forall_impl; [|exact Hi2]. intros v Hv Hc.
+        rewrite Forall_forall in Hv. now apply (Hv y).
+      - rewrite Forall_forall in Hc1. intro Hc. now apply (Hc1 y).
+      - rewrite Forall_forall in Hc2. intro Hc. now apply (Hc2 y).
+      - rewrite Forall_forall in Hr1. intro Hc. now apply (Hr1 y).
+      - rewrite Forall_forall in Hr2. intro Hc. now apply (Hr2 y).
+      - rewrite Forall_forall in Ho1. intro Hc. now apply (Ho1 y).
+      - rewrite Forall_forall in Ho2. intro Hc. now apply (Ho2 y).
+    Qed.
+
     Lemma moved_by_disjoint :
       forall sta stb stc x,
         In x (moved_by sta stb) -> ~ In x (moved_by stb stc).
