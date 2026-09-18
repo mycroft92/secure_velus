@@ -10828,6 +10828,218 @@ Module Type SECLUSUNNESTING
 
   End Preservation.
 
+  (** * Equation lists at their own ambients
+
+      [eqns_carries] runs at one fixed ambient, because the section fixes
+      one.  A node cannot: the ambient of an equation is the ambient of
+      *its* clock, and a node-wide ambient would have to lie below every
+      variable in the node, which is false as soon as two equations are on
+      unrelated clocks.
+
+      So the composition is redone here, outside the section, where the
+      section's lemmas are universally quantified over the ambient and each
+      equation can be given its own. *)
+
+  Section NodeEquations.
+
+    Variable GL      : secglobal.
+    Variable env     : Env.t ident.
+    Variable base_ty : ident.
+    Variable rst_ty  : ident.
+    Variable vars    : list (ident * clock).
+    Variable cenv    : Env.t (type * clock).
+    Variable scope   : list ident.
+
+    Hypothesis env_inj : env_injective env.
+    Hypothesis sig_good :
+      forall f sg, find_signature f GL = Some sg -> signature_good sg.
+    Hypothesis sig_nodup :
+      forall f sg, find_signature f GL = Some sg -> NoDup (signature_scope sg).
+    Hypothesis source_types_scoped :
+      forall e ts s s',
+        assign_lexp_type GL env base_ty rst_ty e s = OK (ts, s') ->
+        Forall (fun t => st_scoped scope (fst t)) ts.
+    Hypothesis source_lexps_scoped :
+      forall es ts s s',
+        assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
+        Forall (fun t => st_scoped scope (fst t)) ts.
+    Hypothesis rst_ty_scoped : In rst_ty scope.
+    Hypothesis clk_types_scoped :
+      forall ck ckty,
+        assign_clk_type env base_ty ck = Some ckty -> st_scoped scope ckty.
+    Hypothesis env_range_scoped :
+      forall x b, Env.find x env = Some b -> In b scope.
+    Hypothesis source_lexps_carried_scoped :
+      forall es ts s s',
+        assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
+        constraints_scoped scope (carried ts).
+    Hypothesis sig_scoped :
+      forall f sg, find_signature f GL = Some sg -> signature_scoped sg.
+    Hypothesis sig_actuals_fresh :
+      forall f sg inp ck rst os cns sa sb,
+        find_signature f GL = Some sg ->
+        generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
+        call_subst_fresh sg inp ck rst os.
+
+    (** The ambient of an equation, as a function of the equation.  Its two
+        properties are the ones a single ambient had: it names only program
+        variables, and it covers the ambient of every variable the
+        equation's unnesting defines. *)
+
+    Variable A : equation -> ST.
+    Hypothesis A_scoped : forall eq, st_scoped scope (A eq).
+
+    Lemma eqns_carries_amb :
+      forall P eqs eqss st st' ce xst xst' cet yst yst' dlt,
+        Forall (wl_equation P) eqs ->
+        Forall (wc_equation P vars) eqs ->
+        Forall (eqn_covered) eqs ->
+        NoDup (vars_defined (List.concat eqss) ++ st_ids st) ->
+        (forall x, In x (moved_by env st st') -> ~ In x scope) ->
+        (forall eq eqs1 s s',
+            In eq eqs -> unnest_equation P eq s = (eqs1, s') ->
+            forall x ck ckty,
+              In x (vars_defined eqs1) -> find_clock cenv x = OK ck ->
+              assign_clk_type env base_ty ck = Some ckty ->
+              incl (merge [rst_ty] ckty) (A eq)) ->
+        (forall eq b, In eq eqs -> In b (sec_of env (fst eq)) ->
+                      satisfiable dlt (A eq) [b]) ->
+        constraints_scoped scope ce ->
+        map_bind (unnest_equation P) eqs st = (eqss, st') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs xst
+          = OK (ce, xst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv
+          (List.concat eqss) yst = OK (cet, yst') ->
+        listSatisfiable dlt ce ->
+        exists dlt',
+          agree_off (moved_by env st st') dlt dlt'
+          /\ listSatisfiable dlt' cet
+          /\ constraints_scoped (scope ++ moved_by env st st') cet.
+    Proof.
+      induction eqs as [|eq eqs IH];
+        intros eqss st st' ce xst xst' cet yst yst' dlt
+          Hwl Hwc Hcov Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+      - apply map_bind_unnest_equation_nil in Hun as (Hq1 & Hq2); subst.
+        simpl List.concat in Hgent.
+        apply generate_leqns_constraints_nil in Hgent as (Hq3 & Hq4); subst.
+        exists dlt. split; [apply agree_off_refl|].
+        split; constructor.
+      - inversion Hwl as [|eqa eqsa Hwl1 Hwlr]; subst.
+        inversion Hwc as [|eqb eqsb Hwc1 Hwcr]; subst.
+        inversion Hcov as [|eqc eqsc Hcov1 Hcovr]; subst.
+        apply map_bind_unnest_equation_cons in Hun
+          as (eq1 & st1 & eqsr & Hun1 & Hunr & ?); subst.
+        assert (st_follows st st1) as Hf1
+            by (eapply unnest_equation_st_follows; eauto).
+        assert (st_follows st1 st') as Hf2
+            by (eapply map_bind_st_follows; eauto;
+                rewrite Forall_forall; intros; eauto).
+        rewrite generate_leqns_constraints_cons in Hgen.
+        eapply sec_bind_inv in Hgen as (c1 & xst1 & Hgen1 & Hgen).
+        eapply sec_bind_inv in Hgen as (c2 & xst2 & Hgen2 & Hret).
+        unfold SC.ret in Hret. inv Hret.
+        simpl List.concat in Hgent, Hnd.
+        apply generate_leqns_constraints_app in Hgent
+          as (ct1 & ct2 & ystm & Hgt1 & Hgt2 & ?); subst.
+        rewrite vars_defined_app in Hnd.
+        apply listSatisfiable_app in Hsat as (Hsat1 & Hsat2).
+        apply Forall_app in Hcesc as (Hcesc1 & Hcesc2).
+        assert (Permutation (vars_defined eq1 ++ st_ids st)
+                  (fst eq ++ st_ids st1)) as Hp1'.
+        { eapply Permutation_trans;
+            [eapply unnest_equation_vars_perm; eauto|].
+          rewrite vars_defined_cons_eq. simpl. rewrite app_nil_r.
+          reflexivity. }
+        rewrite <- app_assoc in Hnd.
+        assert (NoDup (vars_defined eq1 ++ st_ids st)) as Hndh
+            by (eapply NoDup_drop_middle; exact Hnd).
+        assert (NoDup (vars_defined (List.concat eqsr) ++ st_ids st1))
+          as Hndt.
+        { eapply NoDup_drop_middle with (B := fst eq).
+          eapply Permutation_NoDup;
+            [apply Permutation_app_head; exact Hp1'|].
+          eapply Permutation_NoDup; [apply Permutation_swap3|exact Hnd]. }
+
+        edestruct (eqn_carries_covered GL env base_ty rst_ty vars cenv scope
+                     (A eq)) as (dlt1 & Hoff1 & Hce1 & Hscope1);
+          [exact env_inj| |exact sig_good|exact sig_nodup
+          |exact source_types_scoped|exact source_lexps_scoped
+          |exact rst_ty_scoped|exact clk_types_scoped|exact env_range_scoped
+          |exact source_lexps_carried_scoped|exact sig_scoped
+          |exact sig_actuals_fresh|exact Hcov1| | | | | | | | | | | |].
+        { apply A_scoped. }
+        { exact Hwl1. }
+        { exact Hwc1. }
+        { exact Hndh. }
+        { intros y Hy. apply Hmv. eapply moved_by_prefix; eauto. }
+        { intros x ck ckty Hx. eapply Hamb; [now left|exact Hun1|exact Hx]. }
+        { intros b Hb. eapply Hbs0; [now left|exact Hb]. }
+        { exact Hcesc1. }
+        { exact Hun1. }
+        { exact Hgen1. }
+        { exact Hgt1. }
+        { exact Hsat1. }
+
+        edestruct (IH eqsr st1 st' c2 xst1 xst' ct2 ystm yst' dlt1)
+          as (dlt2 & Hoff2 & Hce2 & Hscope2).
+        { exact Hwlr. }
+        { exact Hwcr. }
+        { exact Hcovr. }
+        { exact Hndt. }
+        { intros y Hy. apply Hmv. eapply moved_by_suffix; eauto. }
+        { intros eq' eqs1 s s' Hin. eapply Hamb. now right. }
+        { intros eq' b Hin Hb.
+          assert (In b (sec_of env (fst eq'))) as Hb0 by exact Hb.
+          assert (In b scope) as Hbsc.
+          { unfold sec_of in Hb. apply in_flat_map in Hb as (x & _ & Hbx).
+            destruct (Env.find x env) as [b0|] eqn:Hf; [|contradiction].
+            destruct Hbx as [Hbx|[]]; subst b0.
+            eapply env_range_scoped; exact Hf. }
+          eapply satisfiable_off with (xs := moved_by env st st1);
+            [exact Hoff1| | |eapply Hbs0; [now right|exact Hb0]].
+          - intros y Hy Hin'. eapply (Hmv y);
+              [eapply moved_by_prefix; eauto|eapply A_scoped; exact Hy].
+          - intros y Hy Hin'. destruct Hy as [Hy|[]].
+            eapply (Hmv y); [eapply moved_by_prefix; eauto|].
+            rewrite <- Hy. exact Hbsc. }
+        { exact Hcesc2. }
+        { exact Hunr. }
+        { exact Hgen2. }
+        { exact Hgt2. }
+        { eapply listSatisfiable_off with (xs := moved_by env st st1);
+            [exact Hcesc2| |exact Hoff1|exact Hsat2].
+          intros y Hy. apply Hmv. eapply moved_by_prefix; eauto. }
+
+        assert (forall y, In y (moved_by env st1 st') ->
+                          ~ In y (scope ++ moved_by env st st1)) as Hsep.
+        { intros y Hin Hy. apply in_app_or in Hy as [Hy|Hy].
+          - eapply (Hmv y); [|exact Hy].
+            apply (moved_by_suffix env st st1 st' Hf1). exact Hin.
+          - exact (moved_by_disjoint env env_inj st st1 st' y Hy Hin). }
+
+        exists dlt2. split; [|split].
+        + eapply agree_off_trans.
+          * eapply agree_off_incl; [|exact Hoff1]. apply moved_by_prefix; auto.
+          * eapply agree_off_incl; [|exact Hoff2]. apply moved_by_suffix; auto.
+        + apply listSatisfiable_app. split; [|exact Hce2].
+          eapply listSatisfiable_off_scope
+            with (sc := scope ++ moved_by env st st1)
+                 (xs := moved_by env st1 st');
+            [exact Hscope1|exact Hsep|exact Hoff2|exact Hce1].
+        + apply Forall_app. split.
+          * eapply Forall_impl; [|exact Hscope1].
+            intros c Hc. eapply constraint_scoped_incl; [|exact Hc].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr, moved_by_prefix; auto.
+          * eapply Forall_impl; [|exact Hscope2].
+            intros c Hc. eapply constraint_scoped_incl; [|exact Hc].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr, moved_by_suffix; auto.
+    Qed.
+
+
+  End NodeEquations.
+
 End SECLUSUNNESTING.
 
 Module SecLusUnnesting
