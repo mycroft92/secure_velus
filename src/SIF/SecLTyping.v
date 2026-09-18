@@ -989,16 +989,28 @@ Module Type SECLTYPING
           | _  => generate_lcall_constraint xs f args (lvar rst_ty)
           end
 
-      (** a reset call; the reset variable's level and the level of the clock
-          it is sampled on stack onto the ambient reset, exactly as (NTrc) *)
-      | [Eapp f args (Some (Evar r (_, (ckr, _)))) _] =>
+      (** a reset call; the reset's own level and the level of the clock it
+          is sampled on stack onto the ambient reset, exactly as (NTrc).
+
+          The reset is typed as an expression rather than matched against a
+          variable, so that *every* call in an equation is treated by this
+          rule.  Matching only a variable left a call reset by anything else
+          to fall through to the general rule below, which types the call as
+          an expression with fresh names for its results -- a strictly weaker
+          treatment, and one NLustre and Stc do not have.  The formula is the
+          one [assign_lexp_type]'s call case already uses, so the expression
+          and equation rules now agree for every reset shape. *)
+      | [Eapp f args (Some e1) _] =>
           match xs with
           | [] => ret []
           | _  =>
-              do rty   <- find_env r env;
-              do rstck <- option_to_sec (assign_clk_type env base_ty ckr);
+              do t1  <- assign_lexp_type e1;
+              do a1  <- single t1;
+              do rck <- option_to_sec
+                          (assign_clk_type env base_ty
+                             (hd Cbase (LSyn.clockof e1)));
               generate_lcall_constraint xs f args
-                (ljoin (lvar rst_ty) (merge [rty] rstck, []))
+                (ljoin (lvar rst_ty) (ljoin a1 (rck, [])))
           end
 
       (** A delayed definition gets no case of its own.  It falls through to
@@ -1105,6 +1117,20 @@ Module Type SECLTYPING
         = generate_lcall_constraint (x :: xs) f args (lvar rst_ty).
     Proof. reflexivity. Qed.
 
+    Lemma gen_leqn_Eapp_someresetel : forall x xs f args e1 a,
+        generate_leqn_constraint (x :: xs, [Eapp f args (Some e1) a])
+        = (do t1  <- assign_lexp_type e1;
+           do a1  <- single t1;
+           do rck <- option_to_sec
+                       (assign_clk_type env base_ty
+                          (hd Cbase (LSyn.clockof e1)));
+           generate_lcall_constraint (x :: xs) f args
+             (ljoin (lvar rst_ty) (ljoin a1 (rck, [])))).
+    Proof. reflexivity. Qed.
+
+    (** The variable case still computes what it did: a variable's type is
+        its security name and its [clockof] is its annotation's clock. *)
+
     Lemma gen_leqn_Eapp_reset : forall x xs f args r ty ckr nm a,
         generate_leqn_constraint
           (x :: xs, [Eapp f args (Some (Evar r (ty, (ckr, nm)))) a])
@@ -1112,7 +1138,18 @@ Module Type SECLTYPING
            do rstck <- option_to_sec (assign_clk_type env base_ty ckr);
            generate_lcall_constraint (x :: xs) f args
              (ljoin (lvar rst_ty) (merge [rty] rstck, []))).
-    Proof. reflexivity. Qed.
+    Proof.
+      intros x xs f args r ty ckr nm a.
+      rewrite gen_leqn_Eapp_someresetel.
+      replace (hd Cbase (LSyn.clockof (Evar r (ty, (ckr, nm))))) with ckr
+        by reflexivity.
+      replace (assign_lexp_type (Evar r (ty, (ckr, nm))))
+        with (do a0 <- find_env r env; ret [lvar a0]) by reflexivity.
+      unfold find_env, option_to_sec.
+      destruct (Env.find r env) as [rty|];
+        [destruct (assign_clk_type env base_ty ckr) as [rstck|]|];
+        reflexivity.
+    Qed.
 
 
 

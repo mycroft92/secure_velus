@@ -9442,9 +9442,7 @@ Module Type SECLUSUNNESTING
           (destruct xs as [|x [|x2 xs2]];
            [reflexivity|contradiction|reflexivity]).
       - destruct e as [| | | | | | | | |f' args' ro' a']; try reflexivity.
-        destruct ro' as [er|]; [|reflexivity].
-        destruct er as [|v va| | | | | | | |]; try reflexivity.
-        destruct va as (ty0 & ckr0 & nm0). reflexivity.
+        destruct ro'; reflexivity.
     Qed.
 
     Lemma generate_lgen_constraint_inv :
