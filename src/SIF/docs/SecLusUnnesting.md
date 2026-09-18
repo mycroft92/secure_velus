@@ -638,8 +638,8 @@ own.
 
 ## Status
 
-Proved, no admits: **every constructor**, at both
-`is_control` flags — `Econst`, `Evar`, `Eunop`, `Ebinop`, the list level,
+Proved, no admits: the whole **expression** level (`carries_exp`: every
+constructor, at both `is_control` flags — `Econst`, `Evar`, `Eunop`, `Ebinop`, the list level,
 `Ewhen`, `Emerge` and `Eite` in both their control and lifting branches,
 `Efby` and `Earrow` — together with all the infrastructure above,
 `lifted_defs`, and the per-constructor support (`unnest_fby_types`,
@@ -657,6 +657,86 @@ because they move over disjoint stretches of the fresh state.
 `Eapp` closed the induction: `carries_exp` is `exp_ind2` with one line per
 constructor, the merge and the conditional splitting on `is_control` because
 they are the only constructors whose two flags behave differently.
+
+## The equation level
+
+Everything above meets at `eqn_carries`, which comes in two halves because
+the generator's equation rule does.
+
+### The general and definition rules
+
+`unnest_equation` is `unnest_rhss` followed by `split_equation`.  Away from
+calls every returned expression is single-stream, so every split piece is a
+definition, and the constraint the definition rule emits for it is -- term
+for term -- the one the general rule would have put at that position.  So
+both sides reduce to the same `generate_lvars_constraints`, run on the
+source's stream types and on the unnested ones, and what is needed is that
+that rule is monotone in those types modulo the ambient.  It is, provided
+the ambient lies below each defined variable, and for this rule that proviso
+is free: the source equation's own constraint is `ambient (clock x) ⊔ t ⊑
+[x]`.
+
+Three things had to be read off the generator rather than computed.  The
+right-hand sides' types, because at the top of an equation nothing else
+computes them -- `unnest_fby_operands_typed` reads a delay's operands back
+off the delay, `split_equation_operand_types` reads the split's types back
+off the definition constraints it emitted.  And the *shape* facts --
+single-stream, not a call -- had to be established before the types, since
+otherwise the split's operand types and the type pinning would each be
+waiting on the other.
+
+### The call rule
+
+Here `unnest_rhs` leaves the call where it is, so the two sides instantiate
+the callee with the **same** outputs.  That deletes the result witness of the
+expression-level call case entirely, and replaces it with the one thing the
+equation level is given: the ambient lies below each output, which is exactly
+what `cs_out`'s first clause asks for when the two actuals coincide.
+
+The reset collapses as well.  The equation rule accepts a reset that is
+absent or already a variable, and unnesting leaves such a reset exactly where
+it is, emitting nothing; so the two reset levels are *equal* rather than
+related, and the reset step is not used at all.
+
+### What it does not cover
+
+Two shapes put a source *general* rule against a target *call* rule: a call
+whose reset is not already a variable, and a multi-expression right-hand side
+one of whose expressions is a call.  In both the source types the call as an
+expression, with results of its own, and closing the gap needs
+`[b_i] ⊑ amb ⊔ [o_i]` -- the route-1 argument below, not more of the same.
+
+### The list
+
+`eqns_carries` composes the equations the way the expression and right-hand
+side lists compose.  The one new thing is the `NoDup` bookkeeping: an
+unnested equation defines the *source* equation's own variables as well as
+the fresh ones, so `unnest_equation_vars_perm` puts the source's variables on
+the right of the permutation, and the head's and tail's premises come out by
+dropping a **middle** segment rather than a prefix.
+
+## The ambient is per equation, not per node
+
+A fact worth recording before the node level, because it shapes it.  The
+ambient has to satisfy two things at once:
+
+  * it covers the ambient of every variable the run's emitted equations
+    define, and
+  * it lies below every variable the source equation defines.
+
+Both hold when the ambient is *that equation's* -- the emitted variables are
+sub-expressions of that equation, so their clocks are prefixes of its clock,
+and the equation's own constraint puts its ambient below its variables.
+Neither survives being made uniform across a node: a fresh variable minted
+while unnesting one equation has nothing to do with another equation's
+variables, so a node-wide ambient would have to lie below every variable in
+the node.
+
+So `eqns_carries`, which runs inside the section and therefore at one fixed
+`amb`, is the right shape for a *single* ambient but not for a node.  The
+node level has to do the equation-by-equation composition **outside** the
+section, where the section's lemmas are universally quantified over `amb` and
+each equation can be given its own.
 
 ## What the equation level runs into
 
