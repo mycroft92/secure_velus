@@ -11038,6 +11038,56 @@ Module Type SECLUSUNNESTING
     Qed.
 
 
+    (** * The node level
+
+        A node's equations are unnested from the empty fresh state, so the
+        [NoDup] premise collapses to the node's own well-formedness -- the
+        unnested equations define each variable once -- and everything else
+        is [eqns_carries_amb] at [init_st].
+
+        What is left for the caller is the interface to the two passes this
+        file does not perform: the naming pass, which fixes [env] and hence
+        [scope] and the separation between a node's own names and the ones a
+        run moves; and the ambient, which is a fact about the clocks the
+        unnesting emits. *)
+
+    Theorem node_carries :
+      forall P (eqs : list equation) eqs' st' ce xst xst' cet yst yst' dlt,
+        Forall (wl_equation P) eqs ->
+        Forall (wc_equation P vars) eqs ->
+        Forall eqn_covered eqs ->
+        NoDup (vars_defined eqs') ->
+        (forall x, In x (moved_by env init_st st') -> ~ In x scope) ->
+        (forall eq eqs1 s s',
+            In eq eqs -> unnest_equation P eq s = (eqs1, s') ->
+            forall x ck ckty,
+              In x (vars_defined eqs1) -> find_clock cenv x = OK ck ->
+              assign_clk_type env base_ty ck = Some ckty ->
+              incl (merge [rst_ty] ckty) (A eq)) ->
+        (forall eq b, In eq eqs -> In b (sec_of env (fst eq)) ->
+                      satisfiable dlt (A eq) [b]) ->
+        constraints_scoped scope ce ->
+        unnest_equations P eqs init_st = (eqs', st') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs xst
+          = OK (ce, xst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
+          = OK (cet, yst') ->
+        listSatisfiable dlt ce ->
+        exists dlt',
+          agree_off (moved_by env init_st st') dlt dlt'
+          /\ listSatisfiable dlt' cet
+          /\ constraints_scoped (scope ++ moved_by env init_st st') cet.
+    Proof.
+      intros P eqs eqs' st' ce xst xst' cet yst yst' dlt
+        Hwl Hwc Hcov Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+      apply unnest_equations_inv in Hun as (eqss & Hmap & ?); subst.
+      eapply eqns_carries_amb;
+        [exact Hwl|exact Hwc|exact Hcov| |exact Hmv|exact Hamb|exact Hbs0
+        |exact Hcesc|exact Hmap|exact Hgen|exact Hgent|exact Hsat].
+      unfold st_ids. rewrite init_st_anns. simpl. rewrite app_nil_r.
+      exact Hnd.
+    Qed.
+
   End NodeEquations.
 
 End SECLUSUNNESTING.
