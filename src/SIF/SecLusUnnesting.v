@@ -10552,6 +10552,280 @@ Module Type SECLUSUNNESTING
 
 
 
+    (** * One equation, either way
+
+        The two equation rules, packaged.  [eqn_covered] names the shapes the
+        generator's own rules cover: a right-hand side with no call in it, or
+        a single call whose reset the call rule accepts. *)
+
+    Lemma sec_of_scoped :
+      forall ys b, In b (sec_of ys) -> In b scope.
+    Proof.
+      intros ys b Hb. unfold sec_of in Hb.
+      apply in_flat_map in Hb as (x & _ & Hbx).
+      destruct (Env.find x env) as [b0|] eqn:Hf; [|contradiction].
+      destruct Hbx as [Hbx|[]]; subst b0.
+      eapply env_range_scoped; exact Hf.
+    Qed.
+
+    Lemma Permutation_swap3 :
+      forall (A B C : list ident), Permutation (A ++ B ++ C) (B ++ A ++ C).
+    Proof.
+      intros A B C. rewrite !app_assoc.
+      apply Permutation_app_tail, Permutation_app_comm.
+    Qed.
+
+    Lemma NoDup_drop_middle :
+      forall (A B C : list ident), NoDup (A ++ B ++ C) -> NoDup (A ++ C).
+    Proof.
+      intros A B C H.
+      eapply NoDup_app_r with (xs := B).
+      eapply Permutation_NoDup; [apply Permutation_swap3|exact H].
+    Qed.
+
+    Lemma vars_defined_cons_eq :
+      forall (eq : equation) eqs,
+        vars_defined (eq :: eqs) = fst eq ++ vars_defined eqs.
+    Proof. intros (xs, es) eqs. reflexivity. Qed.
+
+    Definition eqn_covered (eq : equation) : Prop :=
+      Forall (fun e => match e with
+                       | Eapp _ _ _ _ => False
+                       | _ => True
+                       end) (snd eq)
+      \/ (exists f args er anns,
+            snd eq = [Eapp f args er anns]
+            /\ (er = None \/ exists r an, er = Some (Evar r an))).
+
+    Definition eqn_carries (P : global) (eq : equation) : Prop :=
+      forall eqs' st st' ce xst xst' cet yst yst' dlt,
+        wl_equation P eq -> wc_equation P vars eq ->
+        NoDup (vars_defined eqs' ++ st_ids st) ->
+        (forall x, In x (moved_by st st') -> ~ In x scope) ->
+        (forall x ck ckty,
+            In x (vars_defined eqs') -> find_clock cenv x = OK ck ->
+            assign_clk_type env base_ty ck = Some ckty ->
+            incl (merge [rst_ty] ckty) amb) ->
+        (forall b, In b (sec_of (fst eq)) -> satisfiable dlt amb [b]) ->
+        constraints_scoped scope ce ->
+        unnest_equation P eq st = (eqs', st') ->
+        generate_leqn_constraint GL env base_ty rst_ty cenv eq xst
+          = OK (ce, xst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
+          = OK (cet, yst') ->
+        listSatisfiable dlt ce ->
+        exists dlt',
+          agree_off (moved_by st st') dlt dlt'
+          /\ listSatisfiable dlt' cet
+          /\ constraints_scoped (scope ++ moved_by st st') cet.
+
+    Lemma eqn_carries_covered :
+      forall P eq, eqn_covered eq -> eqn_carries P eq.
+    Proof.
+      intros P (xs, es) Hcov
+        eqs' st st' ce xst xst' cet yst yst' dlt
+        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+      unfold eqn_covered in Hcov. simpl in Hcov, Hbs0.
+      destruct Hwl as (Hwles & Hlen).
+      destruct Hwc as (Hwces & _ & _).
+      destruct Hcov as [Hne|(f & args & er & anns & Hes & Hersh)].
+      - eapply eqn_carries_plain;
+          [exact Hne|exact Hwles|exact Hwces|exact Hlen|exact Hnd|exact Hmv
+          |exact Hamb|exact Hbs0|exact Hcesc|exact Hun|exact Hgen|exact Hgent
+          |exact Hsat].
+      - subst es.
+        assert (List.length xs = List.length anns) as Hlen'.
+        { rewrite Hlen. unfold annots. simpl.
+          now rewrite app_nil_r. }
+        eapply eqn_carries_call;
+          [exact Hersh| | |exact Hlen'|exact Hnd|exact Hmv
+          |exact Hamb|exact Hbs0|exact Hcesc|exact Hun|exact Hgen|exact Hgent
+          |exact Hsat].
+        + now inv Hwles.
+        + now inv Hwces.
+    Qed.
+
+    (** * The equations of a node
+
+        [unnest_equations] is a [map_bind], and the composition is the one
+        the expression and right-hand side lists already used: the head's
+        witness is extended by the tail's, and each side's obligations
+        survive the other's because they move over disjoint stretches of the
+        fresh state. *)
+
+    Lemma unnest_equations_inv :
+      forall P eqs eqs' st st',
+        unnest_equations P eqs st = (eqs', st') ->
+        exists eqss,
+          map_bind (unnest_equation P) eqs st = (eqss, st')
+          /\ eqs' = List.concat eqss.
+    Proof.
+      intros P eqs eqs' st st' H.
+      unfold unnest_equations in H. repeat inv_bind. repeat esplit; eauto.
+    Qed.
+
+    Lemma map_bind_unnest_equation_cons :
+      forall P eq eqs eqss st st',
+        map_bind (unnest_equation P) (eq :: eqs) st = (eqss, st') ->
+        exists eq1 st1 eqsr,
+          unnest_equation P eq st = (eq1, st1)
+          /\ map_bind (unnest_equation P) eqs st1 = (eqsr, st')
+          /\ eqss = eq1 :: eqsr.
+    Proof.
+      intros P eq eqs eqss st st' H.
+      simpl in H. repeat inv_bind. repeat esplit; eauto.
+    Qed.
+
+    Lemma map_bind_unnest_equation_nil :
+      forall P eqss st st',
+        map_bind (unnest_equation P) [] st = (eqss, st') ->
+        eqss = [] /\ st' = st.
+    Proof.
+      intros P eqss st st' H. simpl in H.
+      rewrite ret_spec in H. inv H. auto.
+    Qed.
+
+    Lemma eqns_carries :
+      forall P eqs eqss st st' ce xst xst' cet yst yst' dlt,
+        Forall (wl_equation P) eqs ->
+        Forall (wc_equation P vars) eqs ->
+        Forall eqn_covered eqs ->
+        NoDup (vars_defined (List.concat eqss) ++ st_ids st) ->
+        (forall x, In x (moved_by st st') -> ~ In x scope) ->
+        (forall x ck ckty,
+            In x (vars_defined (List.concat eqss)) ->
+            find_clock cenv x = OK ck ->
+            assign_clk_type env base_ty ck = Some ckty ->
+            incl (merge [rst_ty] ckty) amb) ->
+        (forall b, In b (sec_of (vars_defined eqs)) ->
+                   satisfiable dlt amb [b]) ->
+        constraints_scoped scope ce ->
+        map_bind (unnest_equation P) eqs st = (eqss, st') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs xst
+          = OK (ce, xst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv
+          (List.concat eqss) yst = OK (cet, yst') ->
+        listSatisfiable dlt ce ->
+        exists dlt',
+          agree_off (moved_by st st') dlt dlt'
+          /\ listSatisfiable dlt' cet
+          /\ constraints_scoped (scope ++ moved_by st st') cet.
+    Proof.
+      induction eqs as [|eq eqs IH];
+        intros eqss st st' ce xst xst' cet yst yst' dlt
+          Hwl Hwc Hcov Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+      - apply map_bind_unnest_equation_nil in Hun as (? & ?); subst.
+        simpl in Hgent.
+        apply generate_leqns_constraints_nil in Hgent as (? & ?); subst.
+        exists dlt. split; [apply agree_off_refl|split; constructor].
+      - inversion Hwl as [|eqa eqsa Hwl1 Hwlr]; subst.
+        inversion Hwc as [|eqb eqsb Hwc1 Hwcr]; subst.
+        inversion Hcov as [|eqc eqsc Hcov1 Hcovr]; subst.
+        apply map_bind_unnest_equation_cons in Hun
+          as (eq1 & st1 & eqsr & Hun1 & Hunr & ?); subst.
+        assert (st_follows st st1) as Hf1
+            by (eapply unnest_equation_st_follows; eauto).
+        assert (st_follows st1 st') as Hf2
+            by (eapply map_bind_st_follows; eauto;
+                rewrite Forall_forall; intros; eauto).
+        rewrite generate_leqns_constraints_cons in Hgen.
+        eapply sec_bind_inv in Hgen as (c1 & xst1 & Hgen1 & Hgen).
+        eapply sec_bind_inv in Hgen as (c2 & xst2 & Hgen2 & Hret).
+        unfold SC.ret in Hret. inv Hret.
+        simpl List.concat in Hgent, Hnd, Hamb.
+        apply generate_leqns_constraints_app in Hgent
+          as (ct1 & ct2 & ystm & Hgt1 & Hgt2 & ?); subst.
+        rewrite vars_defined_app in Hnd, Hamb.
+        apply listSatisfiable_app in Hsat as (Hsat1 & Hsat2).
+        apply Forall_app in Hcesc as (Hcesc1 & Hcesc2).
+        assert (Permutation (vars_defined eq1 ++ st_ids st)
+                  (fst eq ++ st_ids st1)) as Hp1'.
+        { eapply Permutation_trans;
+            [eapply unnest_equation_vars_perm; eauto|].
+          rewrite vars_defined_cons_eq. simpl. rewrite app_nil_r.
+          reflexivity. }
+        rewrite <- app_assoc in Hnd.
+        assert (NoDup (vars_defined eq1 ++ st_ids st)) as Hndh
+            by (eapply NoDup_drop_middle; exact Hnd).
+        assert (NoDup (vars_defined (List.concat eqsr) ++ st_ids st1))
+          as Hndt.
+        { eapply NoDup_drop_middle with (B := fst eq).
+          eapply Permutation_NoDup;
+            [apply Permutation_app_head; exact Hp1'|].
+          eapply Permutation_NoDup; [apply Permutation_swap3|exact Hnd]. }
+
+        edestruct (eqn_carries_covered P eq Hcov1 eq1 st st1 c1 xst xst1
+                     ct1 yst ystm dlt)
+          as (dlt1 & Hoff1 & Hce1 & Hscope1).
+        { exact Hwl1. }
+        { exact Hwc1. }
+        { exact Hndh. }
+        { intros y Hy. apply Hmv. eapply moved_by_prefix; eauto. }
+        { intros y cky ckty Hy. apply Hamb. apply in_or_app. now left. }
+        { intros b Hb. apply Hbs0.
+          unfold sec_of in *. apply in_flat_map in Hb as (x & Hx & Hb).
+          apply in_flat_map. exists x. split; [|exact Hb].
+          rewrite vars_defined_cons_eq. apply in_or_app. now left. }
+        { exact Hcesc1. }
+        { exact Hun1. }
+        { exact Hgen1. }
+        { exact Hgt1. }
+        { exact Hsat1. }
+
+        edestruct (IH eqsr st1 st' c2 xst1 xst' ct2 ystm yst' dlt1)
+          as (dlt2 & Hoff2 & Hce2 & Hscope2).
+        { exact Hwlr. }
+        { exact Hwcr. }
+        { exact Hcovr. }
+        { exact Hndt. }
+        { intros y Hy. apply Hmv. eapply moved_by_suffix; eauto. }
+        { intros y cky ckty Hy. apply Hamb. apply in_or_app. now right. }
+        { intros b Hb.
+          assert (In b (sec_of (vars_defined (eq :: eqs)))) as Hb0.
+          { unfold sec_of in *. apply in_flat_map in Hb as (x & Hx & Hbx).
+            apply in_flat_map. exists x. split; [|exact Hbx].
+            rewrite vars_defined_cons_eq. apply in_or_app. now right. }
+          eapply satisfiable_off with (xs := moved_by st st1);
+            [exact Hoff1| | |now apply Hbs0].
+          - intros y Hy Hin. eapply (Hmv y);
+              [eapply moved_by_prefix; eauto|now apply amb_scoped].
+          - intros y Hy Hin. destruct Hy as [Hy|[]].
+            eapply (Hmv y); [eapply moved_by_prefix; eauto|].
+            rewrite <- Hy. eapply sec_of_scoped; exact Hb0. }
+        { exact Hcesc2. }
+        { exact Hunr. }
+        { exact Hgen2. }
+        { exact Hgt2. }
+        { eapply listSatisfiable_off with (xs := moved_by st st1);
+            [exact Hcesc2| |exact Hoff1|exact Hsat2].
+          intros y Hy. apply Hmv. eapply moved_by_prefix; eauto. }
+
+        assert (forall y, In y (moved_by st1 st') ->
+                          ~ In y (scope ++ moved_by st st1)) as Hsep.
+        { intros y Hin Hy. apply in_app_or in Hy as [Hy|Hy].
+          - eapply (Hmv y); [|exact Hy].
+            apply (moved_by_suffix st st1 st' Hf1). exact Hin.
+          - exact (moved_by_disjoint st st1 st' y Hy Hin). }
+
+        exists dlt2. split; [|split].
+        + eapply agree_off_trans.
+          * eapply agree_off_incl; [|exact Hoff1]. apply moved_by_prefix; auto.
+          * eapply agree_off_incl; [|exact Hoff2]. apply moved_by_suffix; auto.
+        + apply listSatisfiable_app. split; [|exact Hce2].
+          eapply listSatisfiable_off_scope
+            with (sc := scope ++ moved_by st st1) (xs := moved_by st1 st');
+            [exact Hscope1|exact Hsep|exact Hoff2|exact Hce1].
+        + apply Forall_app. split.
+          * eapply Forall_impl; [|exact Hscope1].
+            intros c Hc. eapply constraint_scoped_incl; [|exact Hc].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr, moved_by_prefix; auto.
+          * eapply Forall_impl; [|exact Hscope2].
+            intros c Hc. eapply constraint_scoped_incl; [|exact Hc].
+            apply incl_app; [apply incl_appl, incl_refl|].
+            apply incl_appr, moved_by_suffix; auto.
+    Qed.
+
   End Preservation.
 
 End SECLUSUNNESTING.
