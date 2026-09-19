@@ -84,15 +84,16 @@ others do not, which is what makes the surviving constraints comparable.
 `SecStcConstraintExport.v` dump these records in the same shape so that a
 transcribed program can be diffed node by node.
 
-## The one hole
+## The hole, and how it was closed
 
-**A Lustre equation has two ways to type a call; NLustre and Stc have one.**
+**A Lustre equation used to have two ways to type a call; NLustre and Stc
+have one.**
 
 `generate_leqn_constraint` dispatches on the syntax of the right-hand side.
-A call reaches the call rule only when the equation is literally
+A call reached the call rule only when the equation was literally
 `(x :: xs, [Eapp f args er anns])` with `er` absent or an `Evar`.  Anything
 else -- a call reset by a compound expression, or a call sitting among other
-expressions in a multi-expression right-hand side -- falls through to the
+expressions in a multi-expression right-hand side -- fell through to the
 general or definition rule, which types the call *as an expression*: fresh
 names for its results, and the instantiated block carried as a refinement.
 
@@ -109,28 +110,51 @@ with `ambient ⊔ [o1] ⊑ [x1]` and `ambient ⊔ [o2] ⊑ [x2]`; the call treat
 gives the block over `x1, x2`, which contains `… ⊔ [x1] ⊑ [x2]`.  Take
 `[x1]` high and `[x2]` low: the first is satisfiable, the second is not.
 
-This matters beyond tidiness, because unnesting *moves an equation from one
+This mattered beyond tidiness, because unnesting *moves an equation from one
 treatment to the other*: it lifts the call's arguments, leaves the call in
-place, and the result then matches the call rule's pattern.  So security is
-not preserved for those two shapes -- not because the proof is missing, but
-because the source program was typed by the weaker of two rules that the
-generator should not have had in the first place.
+place, and the result then matches the call rule's pattern.  So security was
+not preserved for those two shapes -- not because the proof was missing, but
+because the source program was typed by the weaker of two rules the
+generator should not have had.
 
 ### The fix
 
-Make every call go through the call rule, so that the Lustre generator has
-the same single treatment NLustre and Stc do.
+Every call now goes through the call rule, so the Lustre generator has the
+same single treatment NLustre and Stc do.
 
-  * **(A)** Accept `[Eapp f args (Some e) _]` for *any* reset expression
-    `e`, folding in `e`'s own level and the level of the clock it is sampled
-    on.  That formula is already what `assign_lexp_type`'s call case uses,
-    so the expression and equation rules then agree for every reset shape.
-  * **(B)** Make the general rule split its right-hand side by
-    `numstreams` -- as `split_equation` does -- and send a call chunk to the
-    call rule.
+  * **(A)** The reset pattern is `[Eapp f args (Some e) _]` for *any* reset
+    expression `e`.  Its level and the level of the clock it is sampled on
+    stack onto the ambient reset by the formula `assign_lexp_type`'s call
+    case already used, so the expression and equation rules now agree for
+    every reset shape.  `gen_leqn_Eapp_reset` -- the variable case -- still
+    computes what it did, and is now a lemma rather than a `reflexivity`.
+
+  * **(B)** A right-hand side that holds a call is typed chunk by chunk, by
+    `generate_lsplit_constraints`, each chunk going to the rule its own
+    expression asks for (`generate_lone_constraint`, which is the
+    one-expression dispatch written out once so that the chunk case and the
+    singleton case cannot drift).  A right-hand side with no call keeps the
+    flat rule `generate_lgen_constraint`, which agrees with the split on
+    those lists; the `has_lcall` test only decides which of two equal
+    computations to run, and keeps every existing reduction lemma reducing.
 
 Both *strengthen* the source type system: programs typed by the weaker
 treatment may stop typing.  That is sound, and it is the direction that
 agrees with NLustre, Stc and Obc.  The alternative -- weakening the equation
 call rule to mint fresh outputs like the expression rule -- would
-desynchronise Lustre from everything downstream, and is not recommended.
+desynchronise Lustre from everything downstream.
+
+### What the preservation proof covers
+
+`eqn_covered` in `SecLusUnnesting.v` names the shapes the unnesting proof
+handles.  After (A) it is
+
+    no call anywhere on the right-hand side, or a single call, any reset.
+
+The reset side condition is gone.  What is not yet proved is the chunked
+shape (B) introduces: a right-hand side with several expressions, one of
+them a call.  The rule is right -- the source now generates exactly the
+constraints the split produces -- but `eqn_carries` has still to be
+generalised to take the two target lists (`split_equation (xs, concat ess)`
+and `concat eqss`) at independent security states, which is what lets the
+chunk-wise induction interleave them the way `unnest_equation` does.
