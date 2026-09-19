@@ -973,6 +973,59 @@ Module Type SECLTYPING
       do bs <- option_to_sec (get_mappings xs env);
       generate_lvars_constraints xs bs ts.
 
+    (** A right-hand side with more than one expression on it means the
+        conjunction of the equations its split produces -- that is what
+        [split_equation] makes explicit, and what NLustre and Stc have
+        instead of the tuple form.  Typing the whole list through
+        [generate_lgen_constraint] would type a call among those expressions
+        *as an expression*, over fresh names for its results, which is
+        strictly weaker than the call rule and is a treatment neither of the
+        later languages has.  So a list that holds a call is typed chunk by
+        chunk, each chunk by the rule its own expression asks for.
+
+        [generate_lone_constraint] is the one-expression dispatch, written
+        out once so that the chunk case and the singleton case of
+        [generate_leqn_constraint] below cannot drift apart. *)
+    Definition generate_lone_constraint (ys : list ident) (e : exp)
+      : Sec (list constraint) :=
+      match e with
+      | Eapp f args None _ =>
+          match ys with
+          | [] => ret []
+          | _  => generate_lcall_constraint ys f args (lvar rst_ty)
+          end
+      | Eapp f args (Some e1) _ =>
+          match ys with
+          | [] => ret []
+          | _  =>
+              do t1  <- assign_lexp_type e1;
+              do a1  <- single t1;
+              do rck <- option_to_sec
+                          (assign_clk_type env base_ty
+                             (hd Cbase (LSyn.clockof e1)));
+              generate_lcall_constraint ys f args
+                (ljoin (lvar rst_ty) (ljoin a1 (rck, [])))
+          end
+      | _ =>
+          match ys with
+          | [x] => generate_ldef_constraint x e
+          | _   => generate_lgen_constraint ys [e]
+          end
+      end.
+
+    Fixpoint generate_lsplit_constraints (xs : list ident) (es : list exp)
+      : Sec (list constraint) :=
+      match es with
+      | [] => ret []
+      | e :: es' =>
+          do c  <- generate_lone_constraint (firstn (numstreams e) xs) e;
+          do cs <- generate_lsplit_constraints (skipn (numstreams e) xs) es';
+          ret (c ++ cs)
+      end.
+
+    Definition has_lcall (es : list exp) : bool :=
+      existsb (fun e => match e with Eapp _ _ _ _ => true | _ => false end) es.
+
     (** Nested the way [to_equation] nests -- on the expression list first,
         then on the defined variables.  Written as one flat [match] instead,
         the [[x]] patterns force Coq to split the tail of [xs], and the term
@@ -1029,7 +1082,10 @@ Module Type SECLTYPING
           | _   => generate_lgen_constraint xs es
           end
 
-      | _ => generate_lgen_constraint xs es
+      | _ =>
+          if has_lcall es
+          then generate_lsplit_constraints xs es
+          else generate_lgen_constraint xs es
       end.
 
     (** What a successful run of the shared definition body computed.  The
@@ -1111,6 +1167,35 @@ Module Type SECLTYPING
         generate_leqn_constraint ([x], [Efby e0s es ans])
         = generate_ldef_constraint x (Efby e0s es ans).
     Proof. reflexivity. Qed.
+
+    Lemma has_lcall_false : forall es,
+        Forall (fun e => match e with
+                         | Eapp _ _ _ _ => False
+                         | _ => True
+                         end) es ->
+        has_lcall es = false.
+    Proof.
+      induction es as [|e es IH]; intro H; [reflexivity|].
+      inversion H as [|? ? He Hes]; subst.
+      destruct e; try contradiction; simpl; now apply IH.
+    Qed.
+
+    Lemma gen_leqn_cons2 : forall xs e e2 es,
+        generate_leqn_constraint (xs, e :: e2 :: es)
+        = if has_lcall (e :: e2 :: es)
+          then generate_lsplit_constraints xs (e :: e2 :: es)
+          else generate_lgen_constraint xs (e :: e2 :: es).
+    Proof.
+      intros xs e e2 es.
+      destruct e as [| | | | | | | | |f' args' ro' a']; try reflexivity.
+      destruct ro'; reflexivity.
+    Qed.
+
+    Lemma gen_leqn_split : forall xs e e2 es,
+        has_lcall (e :: e2 :: es) = true ->
+        generate_leqn_constraint (xs, e :: e2 :: es)
+        = generate_lsplit_constraints xs (e :: e2 :: es).
+    Proof. intros xs e e2 es H. rewrite gen_leqn_cons2, H. reflexivity. Qed.
 
     Lemma gen_leqn_Eapp : forall x xs f args a,
         generate_leqn_constraint (x :: xs, [Eapp f args None a])

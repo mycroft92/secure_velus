@@ -9441,8 +9441,7 @@ Module Type SECLUSUNNESTING
       - inv Hne. destruct e; try contradiction;
           (destruct xs as [|x [|x2 xs2]];
            [reflexivity|contradiction|reflexivity]).
-      - destruct e as [| | | | | | | | |f' args' ro' a']; try reflexivity.
-        destruct ro'; reflexivity.
+      - rewrite gen_leqn_cons2, (has_lcall_false _ Hne). reflexivity.
     Qed.
 
     Lemma generate_lgen_constraint_inv :
