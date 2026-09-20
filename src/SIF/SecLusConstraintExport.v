@@ -164,11 +164,11 @@ Definition generate_lustre_constraint_dump
   (nodes : list L.Syn.node)
   : res sif_lconstraint_dump :=
   let ordered_nodes := rev nodes in
-  match ConcreteSecLNameGen.generate_lnode_scoped_env ordered_nodes with
+  match ConcreteSecLNameGen.generate_lnode_scoped_env_st ordered_nodes with
   | Error e => Error e
-  | OK (envs, aux_names) =>
+  | OK (envs, aux_names, st) =>
       match ConcreteSecLTyping.generate_all_lsignatures_scoped_env
-              ordered_nodes envs aux_names SC.init_state with
+              ordered_nodes envs aux_names st with
       | Error e => Error e
       | OK G => build_lconstraint_dump ordered_nodes envs aux_names G
       end

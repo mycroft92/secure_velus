@@ -149,6 +149,11 @@ src/SIF/SecNLusTyping.v
 src/SIF/SecNLusConstraintExport.v
 src/SIF/SecNLusTypingCorrectness.v
 src/SIF/SecNLusTypingTotality.v
+src/SIF/SecLusUnnestingBase.v
+src/SIF/SecLusUnnestingExpr.v
+src/SIF/SecLusUnnestingCalls.v
+src/SIF/SecLusUnnestingEquations.v
+src/SIF/SecLusUnnestingNodes.v
 src/SIF/SecLusUnnesting.v
 src/SIF/SecLusNLusTranslation.v
 src/SIF/SecLusConstraintExport.v

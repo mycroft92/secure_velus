@@ -658,6 +658,26 @@ because they move over disjoint stretches of the fresh state.
 constructor, the merge and the conditional splitting on `is_control` because
 they are the only constructors whose two flags behave differently.
 
+As of 2026-09-20 the equation induction and its list composition are also
+proved.  The implementation was split so that Coq does not have to elaborate
+the whole leg as one large unit:
+
+- `SecLusUnnestingBase.v` contains the common definitions and structural
+  facts;
+- `SecLusUnnestingExpr.v` contains the expression induction;
+- `SecLusUnnestingCalls.v` contains call instantiation and reset support;
+- `SecLusUnnestingEquations.v` contains the equation proof, ending in
+  `eqn_carries_all`;
+- `SecLusUnnestingNodes.v` composes equation witnesses and exposes the
+  conditional raw theorem `node_carries`;
+- `SecLusUnnesting.v` is the compatibility facade that includes the node
+  module.
+
+Both `SecLusUnnestingEquations.v` and `SecLusUnnestingNodes.v` compile without
+`eapply`/`eexists`, and the complete serial Docker build succeeds.  This is a
+raw-constraint result, not yet the final `unnest_node` or `unnest_global`
+signature-preservation theorem.
+
 ## The equation level
 
 Everything above meets at `eqn_carries`, which comes in two halves because
@@ -698,13 +718,19 @@ absent or already a variable, and unnesting leaves such a reset exactly where
 it is, emitting nothing; so the two reset levels are *equal* rather than
 related, and the reset step is not used at all.
 
-### What it does not cover
+### The mixed general/call shapes
 
 Two shapes put a source *general* rule against a target *call* rule: a call
 whose reset is not already a variable, and a multi-expression right-hand side
-one of whose expressions is a call.  In both the source types the call as an
-expression, with results of its own, and closing the gap needs
-`[b_i] ⊑ amb ⊔ [o_i]` -- the route-1 argument below, not more of the same.
+one of whose expressions is a call.  These were formerly the equation-level
+gap.  They are now covered by `eqn_carries_one` and `eqn_carries_split`: the
+source expression proof supplies the result witness, the emitted call proof
+handles the instantiated block, and the split proof composes the chunks while
+permuting their generated constraints back into execution order.
+
+Consequently `eqn_carries_all : forall P eq, eqn_carries P eq` has no shape
+restriction.  Any remaining `Forall eqn_covered` premise is therefore a
+packaging artefact in the node file, not a limitation of the equation proof.
 
 ### The list
 
@@ -738,71 +764,50 @@ node level has to do the equation-by-equation composition **outside** the
 section, where the section's lemmas are universally quantified over `amb` and
 each equation can be given its own.
 
-## What the equation level runs into
+## The node frontier
 
-The next level up is `unnest_equation`, which is `unnest_rhss` followed by
-`split_equation`.  `unnest_rhs` differs from `unnest_exp true` only at
-`Eapp`, `Efby` and `Earrow`: at the top of an equation's right-hand side
-those are *not* lifted into fresh variables, because the equation's own
-variables already bind them.  So the outputs are the same on both sides,
-which removes the need for `call_outputs_witness` -- and introduces a
-different obligation.
+`SecLusUnnestingNodes.v` now proves two composition lemmas.  `eqns_carries`
+threads a single ambient through a list, while `eqns_carries_amb` moves the
+induction outside the fixed-ambient section and gives each source equation its
+own ambient.  `node_carries` instantiates that composition at `init_st` and
+discharges the fresh-state `NoDup` bookkeeping.
 
-With the outputs equal, `generate_constraints_mono_sem`'s output step
-substitutes the same actual on both sides, and `cs_out`'s first clause at the
-end of the chain reads `amb ⊔ [b] ⊑ [b]`, that is, **the ambient must lie
-below every variable the equation defines**.
+The theorem is deliberately still conditional.  Its remaining premises are
+the interface to facts about an actual node and an actual naming run:
 
-For the general and definition rules that is free: the source equation's own
-constraint is `ambient(clock x) ⊔ t ⊑ [sec x]`, and the ambient of the
-equation is exactly `ambient(clock x)`.  The ambient inflation the lifted
-sub-expressions introduce is absorbed by the constraint the source already
-had.
+1. names moved by unnesting are outside the source scope;
+2. the ambient chosen for a source equation covers the clocks of all equations
+   it emits;
+3. that ambient is below the source equation's defined variables;
+4. the unnested equation list has no duplicate definitions.
 
-For a top-level *call* equation it is not.  The source constraint is the
-instantiated block, not a `lconstrain`, so nothing syntactic puts the ambient
-below the results.  It is still *true*: every constraint a generated
-signature holds mentions the callee's clock and reset formals -- they are
-joined into the ambient of every equation the callee's body generates -- so
-the substituted clock and reset actuals lie below every output.  That is
-`generate_constraints_mentions_clock` and `generate_constraints_mentions_reset`
-in `SecNLusTypingCorrectness.v`.
+The immediate cleanup is to replace the node file's use of
+`eqn_carries_covered` by `eqn_carries_all` and remove its obsolete
+`Forall eqn_covered` premises.  After that, the four premises above must be
+discharged from `unnest_node`, node well-formedness/clocking, the naming
+environment, and satisfaction of the source generator.  The call case of the
+third premise is the substantive part: it must recover the clock/reset lower
+bound from the instantiated, good callee signature.
 
-Two further wrinkles make this more than plumbing:
+Once those facts are available, the remaining Leg U steps are:
 
-  * the ambient at the equation level has to cover every lifted
-    sub-expression's own ambient, and for a call with clock-dependent inputs
-    an argument sits on `bck on a` for another actual `a`, whose clock type
-    is *not* contained in the equation's;
-  * so what is actually needed is per-argument: if the callee's constraint
-    for output `i` mentions input `j`, then argument `j`'s ambient lies below
-    output `i`.  That is true -- an input sampled on another input drags the
-    sampling input into every constraint that mentions it -- but it is a
-    theorem about the signature generator relating *clock* dependencies to
-    *security* dependencies, and it belongs with the signature machinery
-    rather than here.
+1. package `node_carries` as
+   `preserves_on scope source_raw_constraints target_raw_constraints`;
+2. transport that relation through `simplify`, eliminating source minted names
+   and target unnesting locals, and conclude `signatures_preserved` for an
+   `unnest_node` run;
+3. lift the node theorem through `unnest_global` with the same signature-global
+   lockstep used by the transcription leg.
 
-So the equation level is reachable by one of two routes, both of which are
-structural decisions rather than more of the same:
-
-  1. take `SECNLUSTYPING` and `SecNLusTypingCorrectness` as parameters of
-     this functor -- `SecLusNLusTranslation.v` already does exactly that, so
-     `SecLusConstraintExport.v` has every piece to hand -- and prove the
-     per-argument statement above from the mentions-lemmas plus the callee's
-     clocking;
-  2. state "the ambient lies below every variable this equation defines" as a
-     premise of the equation-level lemma, discharge it where it is derivable
-     (the general and definition rules), and carry it to the node level as a
-     single clearly-marked obligation.
-
-Then the node and program levels (reusing `Signature_entails` for the
-two-globals lockstep), then Leg I (`normfby_global`), then prepending
-`normalize_global_sem` so the entry point is source Lustre.
+Only then is Leg U complete.  Leg I (`normfby_global`) follows, after which the
+normalisation and transcription results can be composed from source Lustre to
+NLustre.
 
 ## Downstream use
 
 `SecLusConstraintExport.v` applies this functor to `Instantiator`'s real
 modules, so a change to the parameter list is caught immediately rather than
-at the end of the chain.  Nothing at or below `SecNLusTyping.v` is touched by
-this leg; the NLustre, Stc and Obc layers are used only through module
-parameters.
+at the end of the chain.  At present that `LegU` module is an instantiation
+check, not an exported end-to-end preservation theorem.  Nothing at or below
+`SecNLusTyping.v` is touched by this leg; the NLustre, Stc and Obc layers are
+used only through module parameters.

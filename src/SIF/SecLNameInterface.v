@@ -119,7 +119,7 @@ Module Type SECLNAMEGEN
     end.
 
   Lemma generate_lnode_scoped_env_st_spec :
-    forall ns envs names st,
+      forall ns envs names st,
       generate_lnode_scoped_env_st ns = OK (envs, names, st) ->
       generate_lnode_scoped_env ns = OK (envs, names).
   Proof.
@@ -128,6 +128,127 @@ Module Type SECLNAMEGEN
     destruct (generate_lnode_scoped_env' ns (Env.empty _) [] init_state)
       as [[[envs' names'] st']|e] eqn:E; try discriminate.
     now inversion H.
+  Qed.
+
+  (** The Lustre allocator has the same range invariant as the NLustre
+      allocator.  It is reproved here because its node records are different,
+      although both allocators use the same [NAMEGEN] primitives. *)
+  Lemma generate_local_env_for_lnode_bounded :
+      forall n st env aux st',
+        generate_local_env_for_lnode n st = OK ((env, aux), st') ->
+        NAMEGEN.env_sec_bounded st' env.
+  Proof.
+    intros n st env aux st' Hgen x ty Hfind.
+    unfold generate_local_env_for_lnode in Hgen.
+    eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+    eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
+    unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
+    unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
+    unfold NMret in Hret. inversion Hret; subst env aux st'.
+    pose proof
+      (fresh_map_list_find_ge_start_from_empty
+         ([gensym Ids.sec st; gensym Ids.sec (Pos.succ st)]
+            ++ map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))
+         (Pos.succ (Pos.succ st)) env0 st3 x ty Hmap Hfind)
+      as (nsec & Hsec & [_ Hhi]).
+    exists nsec. split; [exact Hsec|].
+    eapply Pos.lt_le_trans; [exact Hhi|].
+    eapply fresh_inst_map_list_state_monotone; eauto.
+  Qed.
+
+  Lemma generate_local_env_for_lnode_state_monotone :
+      forall n st env aux st',
+        generate_local_env_for_lnode n st = OK ((env, aux), st') ->
+        (st <= st')%positive.
+  Proof.
+    intros n st env aux st' Hgen.
+    unfold generate_local_env_for_lnode in Hgen.
+    eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+    eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
+    unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
+    unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
+    unfold NMret in Hret. inversion Hret; subst env aux st'.
+    eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+    eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
+    eapply Pos.le_trans;
+      [eapply fresh_map_list_state_monotone; eauto
+      |eapply fresh_inst_map_list_state_monotone; eauto].
+  Qed.
+
+  Lemma generate_lnode_scoped_env'_bounded :
+      forall ns envs acc st envs' aux st',
+        NAMEGEN.node_scoped_env_sec_bounded st envs ->
+        generate_lnode_scoped_env' ns envs acc st = OK ((envs', aux), st') ->
+        NAMEGEN.node_scoped_env_sec_bounded st' envs'.
+  Proof.
+    induction ns as [|n ns IH]; intros envs acc st envs' aux st' Hbound Hgen.
+    - simpl in Hgen. inversion Hgen; subst.
+      intros name local_env x ty Hfindenv Hfind.
+      specialize (Hbound _ _ _ _ Hfindenv Hfind) as (k & Hk & Hlt).
+      exists k. split; auto.
+    - simpl in Hgen.
+      eapply name_bind2_inv in Hgen as (local_env & rec & st_local & Hlocal & Hgen).
+      eapply name_bind_inv in Hgen as (envs1 & stins & Hins & Hgen).
+      unfold fresh_insert_node_env in Hins.
+      destruct (Env.mem n.(n_name) envs) eqn:Hmem; try discriminate.
+      unfold insert_node_env, NMret in Hins. inversion Hins; subst envs1 stins.
+      eapply name_bind2_inv in Hgen as (envs2 & aux2 & st2 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst envs' aux st'.
+      assert (Hmono : (st <= st_local)%positive).
+      { eapply generate_local_env_for_lnode_state_monotone; eauto. }
+      assert (Hstepbound :
+                NAMEGEN.node_scoped_env_sec_bounded
+                  st_local (Env.add n.(n_name) local_env envs)).
+      { intros name local_env' x ty Hfindenv Hfind.
+        unfold find_node_env in Hfindenv. rewrite Env.gsspec in Hfindenv.
+        destruct (ident_eq_dec name n.(n_name)) as [Heq|Hneq].
+        - subst name.
+          destruct (Env.Props.P.F.eq_dec n.(n_name) n.(n_name)) as [_|Hself];
+            [|contradiction].
+          simpl in Hfindenv. inversion Hfindenv; subst local_env'.
+          eapply generate_local_env_for_lnode_bounded in Hlocal as Hlocalbound.
+          specialize (Hlocalbound _ _ Hfind) as (k & Hk & Hlt).
+          exists k. split; auto.
+        - destruct (Env.Props.P.F.eq_dec name n.(n_name)) as [Heq'|Hneq'].
+          + contradiction.
+          + simpl in Hfindenv.
+            specialize (Hbound _ _ _ _ Hfindenv Hfind) as (k & Hk & Hlt).
+            exists k. split; auto.
+            eapply Pos.lt_le_trans; eauto.
+      }
+      eapply IH; eauto.
+  Qed.
+
+  (** The final state returned by the naming pass is a genuine freshness
+      boundary for ordinary security names.  Both the naming monad and the
+      Lustre security monad use [Ids.sec]; hence a nested-call generator must
+      start at this boundary rather than at [SC.init_state]. *)
+  Lemma generate_lnode_scoped_env_st_fresh_sec :
+      forall ns envs names st name local_env x ty i,
+        generate_lnode_scoped_env_st ns = OK (envs, names, st) ->
+        find_node_env name envs = Some local_env ->
+        Env.find x local_env = Some ty ->
+        (st <= i)%positive ->
+        ty <> Ids.gensym Ids.sec i.
+  Proof.
+    intros ns envs names st name local_env x ty i Hgen Henv Hfind Hle Heq.
+    unfold generate_lnode_scoped_env_st in Hgen.
+    destruct (generate_lnode_scoped_env' ns (Env.empty _) [] init_state)
+      as [[[envs' names'] st']|e] eqn:Hrun; try discriminate.
+    inversion Hgen; subst envs names st. clear Hgen.
+    assert (NAMEGEN.node_scoped_env_sec_bounded st' envs') as Hbound.
+    { eapply generate_lnode_scoped_env'_bounded; [|exact Hrun].
+      intros n le y u Hnone _.
+      unfold find_node_env in Hnone. rewrite Env.gempty in Hnone.
+      discriminate. }
+    specialize (Hbound _ _ _ _ Henv Hfind) as (j & Hj & Hjlt).
+    rewrite Heq in Hj.
+    apply gensym_injective in Hj as [_ Hij]. subst j.
+    eapply Pos.lt_irrefl. eapply Pos.lt_le_trans; eauto.
   Qed.
 
   (** * Agreement with the NLustre allocator *)

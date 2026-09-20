@@ -1168,6 +1168,39 @@ Module Type SECLTYPING
         = generate_ldef_constraint x (Efby e0s es ans).
     Proof. reflexivity. Qed.
 
+    Lemma gen_lsplit_nil : forall xs,
+        generate_lsplit_constraints xs [] = ret [].
+    Proof. reflexivity. Qed.
+
+    Lemma gen_lsplit_cons : forall xs e es,
+        generate_lsplit_constraints xs (e :: es)
+        = (do c  <- generate_lone_constraint (firstn (numstreams e) xs) e;
+           do cs <- generate_lsplit_constraints (skipn (numstreams e) xs) es;
+           ret (c ++ cs)).
+    Proof. reflexivity. Qed.
+
+    (** The chunk dispatch and the singleton case of the equation rule are
+        the same computation; they are written twice only because the
+        equation rule has to match on the list first. *)
+    Lemma generate_lone_is_leqn : forall ys e,
+        generate_lone_constraint ys e = generate_leqn_constraint (ys, [e]).
+    Proof.
+      intros ys e.
+      destruct e; reflexivity.
+    Qed.
+
+    Lemma has_lcall_false_inv : forall es,
+        has_lcall es = false ->
+        Forall (fun e => match e with
+                         | Eapp _ _ _ _ => False
+                         | _ => True
+                         end) es.
+    Proof.
+      induction es as [|e es IH]; intro H; [constructor|].
+      simpl in H. apply Bool.orb_false_iff in H as (He & Hes).
+      constructor; [destruct e; (exact I || discriminate He)|now apply IH].
+    Qed.
+
     Lemma has_lcall_false : forall es,
         Forall (fun e => match e with
                          | Eapp _ _ _ _ => False

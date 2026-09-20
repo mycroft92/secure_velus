@@ -1,6 +1,8 @@
 # SIF for Lustre: refinement security types and Lustre→NLustre preservation
 
-Target branch: `constraint_gen` (or a new `Lus2NLusSIF`). **Status: not started.**
+Target branch: `sif-reset-normalization`. **Status:** Leg A is complete; Leg U
+has complete expression and equation proofs plus a conditional raw node
+theorem; Leg I and the end-to-end pull-back remain.
 
 Sources of truth:
 
@@ -449,6 +451,44 @@ leg after Leg I is in place.
 5. Re-examine Leg A's two-globals generalisation in light of 4.
 6. Noninterference: the pull-back must now relate two valuations across U and
    I, the way the NLustre-to-Stc leg does.
+
+#### Leg U checkpoint, 2026-09-20
+
+The naming-correspondence decision and the expression/equation work above are
+now implemented.  Leg U is split into five compilation units plus a facade:
+
+1. `SecLusUnnestingBase.v` -- common definitions and structural facts;
+2. `SecLusUnnestingExpr.v` -- the complete expression induction;
+3. `SecLusUnnestingCalls.v` -- semantic call monotonicity, output witnesses,
+   and reset handling;
+4. `SecLusUnnestingEquations.v` -- general, call, mixed/split, and arbitrary
+   equation preservation, ending in `eqn_carries_all`;
+5. `SecLusUnnestingNodes.v` -- equation-list composition with per-equation
+   ambients and the conditional raw theorem `node_carries`;
+6. `SecLusUnnesting.v` -- the compatibility facade.
+
+There are no admits.  The equation and node files contain no `eapply` or
+`eexists`, compile separately, and the complete serial Docker build passes.
+
+The current theorem frontier is narrower than `unnest_node`: `node_carries`
+still assumes freshness of moved names, the emitted-clock ambient bound, the
+source-output ambient bound, and target `NoDup`.  It also retains an obsolete
+`Forall eqn_covered` premise even though `eqn_carries_all` now covers every
+equation shape.  Therefore the next tasks are, in order:
+
+1. use `eqn_carries_all` in both node-list inductions and remove
+   `Forall eqn_covered`;
+2. discharge the four remaining node premises from an actual `unnest_node`
+   run, node well-formedness/clocking, naming freshness, and source constraint
+   satisfaction;
+3. package the raw result as `preserves_on`, transport it through `simplify`,
+   and prove `signatures_preserved` for `unnest_node`;
+4. lift it through `unnest_global` by a signature-global lockstep;
+5. proceed to Leg I (`normfby_global`).
+
+`SecLusConstraintExport.v` currently instantiates the Leg U functor against
+the concrete Velus modules.  That catches module-interface drift but is not
+yet the end-to-end preservation theorem.
 
 ### Source Lustre is the only entry, 2026-09-14
 
@@ -1373,8 +1413,11 @@ Docs, one per Coq file (house rule), plus:
    new generator agrees with the already-verified NLustre one. If exact
    equality does not close here, fall back to §5-(B) and re-plan.
 5. Back-fill `SecLTyping.v` / `SecLTypingCorrectness.v` from the equalities.
-6. **Leg B.** First genuine `preserves_on` with fresh extras, call-free.
-7. **Leg C.** Write `lexp_preserv`'s statement before any tactic.
+6. **Leg B / Leg I: pending.** First genuine `normfby_global` preservation,
+   call-free.
+7. **Leg C / Leg U: in progress.** Expression and arbitrary-equation
+   preservation are complete; conditional raw node composition is complete;
+   concrete `unnest_node` and `unnest_global` signature preservation remain.
 8. `SecLusNonInterference.v` — the exported Lustre theorem.
 9. `SecLusNLusCausality.v`; drop the extra hypothesis.
 10. `SecLusConstraintExport.v`; run it on `tests/`.
