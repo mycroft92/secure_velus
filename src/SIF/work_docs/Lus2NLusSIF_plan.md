@@ -518,6 +518,13 @@ child's generated constraints and target type survive the second child's
 fresh-name updates.  `state_clocks_found_prefix` supplies the invariant for
 the intermediate fresh state.
 
+The expression-list fold and `Ewhen` now compile as well.  The list fold
+splits the flat ambient list at the head expression's stream count, composes
+the two witnesses, and appends their pointwise relations.  `Ewhen` preserves
+that alignment through the componentwise sampling map.  Its clock proof uses
+`clock_covered_on_inv`: coverage of `ck on x` entails coverage of `ck`, once
+the typing run has supplied the environment lookup for `x`.
+
 `state_clocks_found` and `declared_ambients_of_state` connect the abstract
 clock alignment to the concrete annotated identifiers accumulated by the
 unnesting fresh state.  The expression contract now carries this state lookup
@@ -526,8 +533,9 @@ result-clock order.
 
 The next tasks are, in order:
 
-1. complete the pointwise expression induction, next with the expression-list
-   fold and then `Ewhen`; after that migrate the lifting and call cases;
+1. complete the pointwise expression induction, next with the control branch
+   of `Emerge`/`Eite`; after that migrate their lifting branches,
+   `Efby`/`Earrow`, and the call case;
 2. re-establish the arbitrary-equation and equation-list theorems with that
    relation, then connect the proved moved-name freshness lemma to the naming
    run's clock/reset witnesses;

@@ -802,7 +802,16 @@ child.  `Ebinop` composes two child witnesses over consecutive fresh-state
 segments and proves the target join from the two singleton pointwise bounds;
 in particular it does not union the two clock ambients.  The latter is the
 first recursive composition test of the repaired statement.  The next proof
-step is the corresponding expression-list fold, followed by `Ewhen`.
+step was the corresponding expression-list fold.
+
+`carries_list_streams_intro` now performs that fold.  It splits a flat ambient
+list at the head expression's stream count, applies the head and tail
+contracts to their aligned pieces, and joins the results with
+`stream_rel_app`.  `carries_Ewhen_streams` preserves the relation through the
+componentwise sampling map.  The auxiliary `clock_covered_on_inv` proves that
+an ambient covering `ck on x` also covers the parent `ck`, using the
+successful security-environment lookup of `x`.  The next cases are the
+non-lifting control branches of `Emerge` and `Eite`.
 
 ## The node frontier
 
