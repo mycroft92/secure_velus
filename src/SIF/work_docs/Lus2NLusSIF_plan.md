@@ -510,6 +510,11 @@ sibling's fresh-name witness are proved.  The next expression theorem can
 therefore use these names directly instead of expanding raw `Forall3`
 predicates in every constructor.
 
+`state_clocks_found` and `declared_ambients_of_state` now connect the abstract
+clock alignment to the concrete annotated identifiers accumulated by the
+unnesting fresh state.  The future expression theorem should carry this state
+lookup invariant and obtain result-clock order from `unnest_exp_clockof`.
+
 The next tasks are, in order:
 
 1. replace scalar `A eq` in the multi-stream expression/equation composition

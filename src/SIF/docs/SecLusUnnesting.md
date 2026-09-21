@@ -790,6 +790,12 @@ is to thread these two aligned relations through expression and call
 composition, using `unnest_exp_clockof` and target well-clocking to obtain the
 identifier/clock correspondence.
 
+For the actual unnesting run, `state_clocks_found` records that the target
+clock environment contains every annotated identifier in the fresh state.
+`declared_ambients_of_state` combines that invariant with an ordered
+identifier/clock correspondence and `clocks_covered`; this is the direct
+replacement for the former node-wide emitted-clock premise.
+
 ## The node frontier
 
 `SecLusUnnestingNodes.v` now proves two composition lemmas.  `eqns_carries`

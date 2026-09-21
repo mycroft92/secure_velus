@@ -274,6 +274,11 @@ Section StreamAmbients.
            find_clock cenv x = OK ck -> clock_covered ck a)
       xs ambs.
 
+  Definition state_clocks_found (st : fresh_st (type * clock)) : Prop :=
+    forall x an,
+      In (x, an) (st_anns st) ->
+      find_clock cenv x = OK (snd an).
+
   Lemma declared_ambients_of_clocks :
     forall xs cks ambs,
       Forall2 (fun x ck => find_clock cenv x = OK ck) xs cks ->
@@ -291,6 +296,30 @@ Section StreamAmbients.
       + intros ck' Hfind'. rewrite Hfind in Hfind'.
         inversion Hfind'; subst. exact Hcover.
       + exact (IH ambs0 Hcovers).
+  Qed.
+
+  Lemma declared_ambients_of_state :
+    forall (ids : list (ident * (type * clock))) st cks ambs,
+      incl ids (st_anns st) ->
+      Forall2 (fun xa ck => snd (snd xa) = ck) ids cks ->
+      state_clocks_found st ->
+      clocks_covered cks ambs ->
+      declared_ambients (List.map fst ids) ambs.
+  Proof.
+    intros ids st cks ambs Hin Hclock Hfound.
+    assert
+      (Forall2
+         (fun x ck => find_clock cenv x = OK ck)
+         (List.map fst ids) cks) as Hfind.
+    { induction Hclock as [|xa ck ids cks Hxa Hrest IH].
+      - constructor.
+      - destruct xa as (x & an). simpl in Hxa |- *.
+        constructor.
+        + rewrite <- Hxa. apply Hfound.
+          apply Hin. now left.
+        + apply IH. intros z Hz. apply Hin. now right. }
+    intros Hcovered.
+    exact (declared_ambients_of_clocks _ _ _ Hfind Hcovered).
   Qed.
 
   (** [lifted_defs] with one ambient per emitted result.  The three aligned
