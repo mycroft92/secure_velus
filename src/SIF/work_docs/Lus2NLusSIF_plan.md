@@ -502,6 +502,14 @@ Both use `Forall3`, so no sibling stream's clock is added to another stream's
 obligation.  The expression/call composition still needs to expose and
 preserve that relation before the scalar node premise can be removed.
 
+The shared pointwise vocabulary now also compiles: `stream_rel`,
+`stream_bounds`, `carries_result_streams`, and the aligned clock relations
+`clocks_covered`/`declared_ambients`.  Compatibility with the old scalar
+result, unchanged expressions, append composition, and preservation across a
+sibling's fresh-name witness are proved.  The next expression theorem can
+therefore use these names directly instead of expanding raw `Forall3`
+predicates in every constructor.
+
 The next tasks are, in order:
 
 1. replace scalar `A eq` in the multi-stream expression/equation composition

@@ -47,6 +47,205 @@ Include CALLS.
 
 Import SECMONADNotations.
 
+(** The pointwise replacement for the scalar relation used by the original
+    expression proof.  All three lists have the same length by construction:
+    the ambient at a position belongs only to that source/target stream. *)
+Definition stream_rel
+    (dlt : ident -> Lat.t) (ambs : list ST) (srcs tgts : list LST) : Prop :=
+  Forall3
+    (fun a src tgt => satisfiable dlt (fst tgt) (merge a (fst src)))
+    ambs srcs tgts.
+
+Definition stream_bounds
+    (dlt : ident -> Lat.t) (ambs : list ST) (bs : list ident) : Prop :=
+  Forall2 (fun a b => satisfiable dlt a [b]) ambs bs.
+
+Definition stream_ambients_scoped (scope : list ident) (ambs : list ST) : Prop :=
+  Forall (st_scoped scope) ambs.
+
+Definition carries_result_streams
+    (scope moved : list ident) (ambs : list ST) (srcs tgts : list LST)
+    (ce : list constraint) (dlt dlt' : ident -> Lat.t) : Prop :=
+  CALLS.agree_off moved dlt dlt'
+  /\ listSatisfiable dlt' ce
+  /\ stream_rel dlt' ambs srcs tgts
+  /\ constraints_scoped (scope ++ moved) ce
+  /\ Forall (fun tgt => st_scoped (scope ++ moved) (fst tgt)) tgts.
+
+Lemma stream_rel_lengths :
+  forall dlt ambs srcs tgts,
+    stream_rel dlt ambs srcs tgts ->
+    List.length ambs = List.length srcs
+    /\ List.length srcs = List.length tgts.
+Proof.
+  intros dlt ambs srcs tgts Hrel.
+  exact (Forall3_length _ ambs srcs tgts Hrel).
+Qed.
+
+Lemma stream_rel_refl :
+  forall dlt ambs ts,
+    List.length ambs = List.length ts ->
+    stream_rel dlt ambs ts ts.
+Proof.
+  intros dlt ambs. induction ambs as [|a ambs IH]; intros ts Hlen.
+  - destruct ts; [constructor|discriminate].
+  - destruct ts as [|t ts]; [discriminate|].
+    simpl in Hlen. injection Hlen as Hlenr.
+    constructor.
+    + apply satisfiable_merge_r.
+    + exact (IH ts Hlenr).
+Qed.
+
+Lemma stream_rel_constant :
+  forall dlt amb srcs tgts,
+    Forall2
+      (fun src tgt => satisfiable dlt (fst tgt) (merge amb (fst src)))
+      srcs tgts ->
+    stream_rel dlt (repeat amb (List.length srcs)) srcs tgts.
+Proof.
+  intros dlt amb srcs tgts Hrel.
+  induction Hrel as [|src tgt srcs tgts Hhead Htail IH].
+  - constructor.
+  - simpl. constructor; assumption.
+Qed.
+
+Lemma stream_bounds_constant :
+  forall dlt amb bs,
+    Forall (fun b => satisfiable dlt amb [b]) bs ->
+    stream_bounds dlt (repeat amb (List.length bs)) bs.
+Proof.
+  intros dlt amb bs Hbounds.
+  induction Hbounds as [|b bs Hhead Htail IH].
+  - constructor.
+  - simpl. constructor; assumption.
+Qed.
+
+Lemma stream_ambients_scoped_constant :
+  forall scope amb n,
+    st_scoped scope amb ->
+    stream_ambients_scoped scope (repeat amb n).
+Proof.
+  intros scope amb n Hsc. induction n as [|n IH].
+  - constructor.
+  - simpl. constructor; assumption.
+Qed.
+
+Lemma stream_rel_app :
+  forall dlt ambs1 ambs2 srcs1 srcs2 tgts1 tgts2,
+    stream_rel dlt ambs1 srcs1 tgts1 ->
+    stream_rel dlt ambs2 srcs2 tgts2 ->
+    stream_rel dlt (ambs1 ++ ambs2) (srcs1 ++ srcs2) (tgts1 ++ tgts2).
+Proof.
+  intros dlt ambs1 ambs2 srcs1 srcs2 tgts1 tgts2 Hrel1 Hrel2.
+  induction Hrel1 as [|a src tgt ambs srcs tgts Hhead Htail IH].
+  - exact Hrel2.
+  - simpl. constructor; assumption.
+Qed.
+
+Lemma stream_bounds_app :
+  forall dlt ambs1 ambs2 bs1 bs2,
+    stream_bounds dlt ambs1 bs1 ->
+    stream_bounds dlt ambs2 bs2 ->
+    stream_bounds dlt (ambs1 ++ ambs2) (bs1 ++ bs2).
+Proof.
+  intros dlt ambs1 ambs2 bs1 bs2 Hbounds1 Hbounds2.
+  apply Forall2_app; assumption.
+Qed.
+
+Lemma stream_rel_off_scope :
+  forall scope moved dlt dlt' ambs srcs tgts,
+    stream_ambients_scoped scope ambs ->
+    Forall (fun src => st_scoped scope (fst src)) srcs ->
+    Forall (fun tgt => st_scoped scope (fst tgt)) tgts ->
+    (forall x, In x moved -> ~ In x scope) ->
+    CALLS.agree_off moved dlt dlt' ->
+    stream_rel dlt ambs srcs tgts ->
+    stream_rel dlt' ambs srcs tgts.
+Proof.
+  intros scope moved dlt dlt' ambs srcs tgts
+    Hambs Hsrcs Htgts Hfresh Hoff Hrel.
+  apply
+    (@Forall3_impl_In ST LST LST
+       (fun a src tgt =>
+          satisfiable dlt (fst tgt) (merge a (fst src)))
+       (fun a src tgt =>
+          satisfiable dlt' (fst tgt) (merge a (fst src)))
+       ambs srcs tgts).
+  - intros a src tgt Ha Hsrc Htgt Hsat.
+    pose proof Hambs as Hambs_all.
+    pose proof Hsrcs as Hsrcs_all.
+    pose proof Htgts as Htgts_all.
+    unfold stream_ambients_scoped in Hambs_all.
+    rewrite Forall_forall in Hambs_all.
+    rewrite Forall_forall in Hsrcs_all.
+    rewrite Forall_forall in Htgts_all.
+    assert (forall x, In x (fst tgt) -> ~ In x moved) as Hleft.
+    { intros x Hx Hmoved.
+      exact (Hfresh x Hmoved (Htgts_all tgt Htgt x Hx)). }
+    assert
+      (forall x, In x (merge a (fst src)) -> ~ In x moved) as Hright.
+    { intros x Hx Hmoved. apply in_merge_inv in Hx as [Hx|Hx].
+      - exact (Hfresh x Hmoved (Hambs_all a Ha x Hx)).
+      - exact (Hfresh x Hmoved (Hsrcs_all src Hsrc x Hx)). }
+    exact
+      (CALLS.satisfiable_off
+         (fst tgt) (merge a (fst src)) moved dlt dlt'
+         Hoff Hleft Hright Hsat).
+  - exact Hrel.
+Qed.
+
+Lemma carries_result_streams_constant :
+  forall scope moved amb srcs tgts ce dlt dlt',
+    CALLS.agree_off moved dlt dlt' ->
+    listSatisfiable dlt' ce ->
+    Forall2
+      (fun src tgt =>
+         satisfiable dlt' (fst tgt) (merge amb (fst src)))
+      srcs tgts ->
+    constraints_scoped (scope ++ moved) ce ->
+    Forall (fun tgt => st_scoped (scope ++ moved) (fst tgt)) tgts ->
+    carries_result_streams scope moved
+      (repeat amb (List.length srcs)) srcs tgts ce dlt dlt'.
+Proof.
+  intros scope moved amb srcs tgts ce dlt dlt'
+    Hoff Hsat Hrel Hscoped Htgts.
+  unfold carries_result_streams. repeat split; try assumption.
+  exact (stream_rel_constant dlt' amb srcs tgts Hrel).
+Qed.
+
+Lemma carries_unchanged_streams :
+  forall scope moved ambs (ts ts' : list LST) ce dlt,
+    ts' = ts ->
+    ce = [] ->
+    List.length ambs = List.length ts ->
+    Forall (fun t => st_scoped scope (fst t)) ts ->
+    exists dlt',
+      carries_result_streams scope moved ambs ts ts' ce dlt dlt'.
+Proof.
+  intros scope moved ambs ts ts' ce dlt Hts Hce Hlen Hsc.
+  subst ts' ce. exists dlt.
+  unfold carries_result_streams. split.
+  - intros x Hx. reflexivity.
+  - split.
+    + constructor.
+    + split.
+      * exact (stream_rel_refl dlt ambs ts Hlen).
+      * split.
+        -- constructor.
+        -- assert
+             (forall (t : LST),
+                st_scoped scope (fst t) ->
+                st_scoped (scope ++ moved) (fst t)) as Hweaken.
+           { intros t Ht.
+             apply st_scoped_weaken with (scope1 := scope); [|exact Ht].
+             apply incl_appl, incl_refl. }
+           exact
+             (@Forall_impl LST
+                (fun t => st_scoped scope (fst t))
+                (fun t => st_scoped (scope ++ moved) (fst t))
+                Hweaken ts Hsc).
+Qed.
+
 Section StreamAmbients.
 
   Variable GL      : secglobal.
@@ -60,6 +259,40 @@ Section StreamAmbients.
   Local Notation sec_of := (CALLS.sec_of env).
   Local Notation agree_off := CALLS.agree_off.
 
+  Definition clock_covered (ck : clock) (a : ST) : Prop :=
+    forall ckty,
+      assign_clk_type env base_ty ck = Some ckty ->
+      incl (merge [rst_ty] ckty) a.
+
+  Definition clocks_covered (cks : list clock) (ambs : list ST) : Prop :=
+    Forall2 clock_covered cks ambs.
+
+  Definition declared_ambients (xs : list ident) (ambs : list ST) : Prop :=
+    Forall2
+      (fun x a =>
+         forall ck,
+           find_clock cenv x = OK ck -> clock_covered ck a)
+      xs ambs.
+
+  Lemma declared_ambients_of_clocks :
+    forall xs cks ambs,
+      Forall2 (fun x ck => find_clock cenv x = OK ck) xs cks ->
+      clocks_covered cks ambs ->
+      declared_ambients xs ambs.
+  Proof.
+    intros xs cks ambs Hfind Hcovered.
+    revert ambs Hcovered.
+    induction Hfind as [|x ck xs cks Hfind Hfinds IH];
+      intros ambs Hcovered.
+    - inversion Hcovered. constructor.
+    - inversion Hcovered as
+        [|ck0 a cks0 ambs0 Hcover Hcovers]; subst.
+      constructor.
+      + intros ck' Hfind'. rewrite Hfind in Hfind'.
+        inversion Hfind'; subst. exact Hcover.
+      + exact (IH ambs0 Hcovers).
+  Qed.
+
   (** [lifted_defs] with one ambient per emitted result.  The three aligned
       lists make explicit the correspondence that the scalar theorem loses:
       an emitted identifier, its source type, and its clock ambient occupy the
@@ -70,13 +303,7 @@ Section StreamAmbients.
       NoDup xs ->
       List.length xs = List.length rhss ->
       (forall b, In b (sec_of xs) -> ~ In b bound) ->
-      Forall2
-        (fun x a =>
-           forall ck ckty,
-             find_clock cenv x = OK ck ->
-             assign_clk_type env base_ty ck = Some ckty ->
-             incl (merge [rst_ty] ckty) a)
-        xs ambs ->
+      declared_ambients xs ambs ->
       Forall (st_scoped bound) ambs ->
       Forall
         (fun e =>
@@ -106,10 +333,11 @@ Section StreamAmbients.
                   satisfiable dlt' [b] (merge a (fst src)))
              ambs xs srcs.
   Proof.
-    intros bound xs. revert bound.
+      intros bound xs. revert bound.
     induction xs as [|x xs IH];
       intros bound rhss srcs ambs ce xst xst' dlt
         Hnd Hlen Hsep Hclks Hambsc Hpure Hsrcsc Hrel Hgen.
+    all: unfold declared_ambients in Hclks.
     - destruct rhss; simpl in Hlen; [|discriminate].
       destruct ambs as [|a ambs]; [|inversion Hclks].
       destruct srcs as [|src srcs]; [|inversion Hrel].
@@ -178,7 +406,7 @@ Section StreamAmbients.
         (st_scoped bound (merge (merge [rst_ty] ckty) (fst tf))) as Hlsc.
       { apply st_scoped_merge; [|exact Hsc].
         intros y Hy. apply Hasc.
-        apply (Hclk ck ckty Hck Hcl). exact Hy. }
+        apply (Hclk ck Hck ckty Hcl). exact Hy. }
       assert (st_scoped bound (merge a (fst src0))) as Hmsc.
       { apply st_scoped_merge; assumption. }
       assert
@@ -204,7 +432,7 @@ Section StreamAmbients.
       { apply satisfiable_merge_intro; [|exact Hdom].
         apply Lat.order_trans
           with (y := hm_ext dlt a).
-        - apply hm_ext_incl. exact (Hclk ck ckty Hck Hcl).
+        - apply hm_ext_incl. exact (Hclk ck Hck ckty Hcl).
         - apply satisfiable_merge_l. }
 
       exists

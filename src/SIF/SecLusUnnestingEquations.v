@@ -1198,11 +1198,8 @@ Import UNN.Fresh.Tactics.
         above is the special case where [ambs] is a constant list. *)
     Lemma generate_lvars_constraints_mono_streams :
       forall dlt xs bs ambs ts ts'' c c' s s' q q',
-        Forall3
-          (fun a t t'' =>
-             satisfiable dlt (fst t'') (merge a (fst t)))
-          ambs ts ts'' ->
-        Forall2 (fun a b => satisfiable dlt a [b]) ambs bs ->
+        stream_rel dlt ambs ts ts'' ->
+        stream_bounds dlt ambs bs ->
         listSatisfiable dlt (carried ts'') ->
         generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
           = OK (c, s') ->
@@ -1214,6 +1211,7 @@ Import UNN.Fresh.Tactics.
       intros dlt xs. induction xs as [|x xs IH];
         intros bs ambs ts ts'' c c' s s' q q'
           Hrel Hbs Hct H1 H2 Hsat.
+      all: unfold stream_rel in Hrel; unfold stream_bounds in Hbs.
       - simpl in H2. destruct bs; [|discriminate H2].
         destruct ts''; [|discriminate H2].
         unfold SC.ret in H2. inversion H2. constructor.

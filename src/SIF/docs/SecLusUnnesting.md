@@ -778,8 +778,17 @@ types and clock ambients.  At the equation boundary,
 `generate_lvars_constraints_mono_streams` proves the corresponding
 pointwise monotonicity rule.  These lemmas remove the need to union sibling
 clocks in precisely the two places where the scalar interface was too strong;
-the remaining work is to thread their `Forall3` relation through the
-expression and call composition.
+the relation is now named `stream_rel` and packaged in
+`carries_result_streams`.  It has compiled unchanged-expression,
+concatenation, scalar-compatibility, and fresh-witness transport lemmas.
+
+The clock side is likewise positional.  `clocks_covered` aligns source result
+clocks with their ambients, while `declared_ambients` aligns target identifiers
+with the same ambients through `find_clock`.
+`declared_ambients_of_clocks` is the bridge between them.  The remaining work
+is to thread these two aligned relations through expression and call
+composition, using `unnest_exp_clockof` and target well-clocking to obtain the
+identifier/clock correspondence.
 
 ## The node frontier
 
