@@ -785,16 +785,24 @@ concatenation, scalar-compatibility, and fresh-witness transport lemmas.
 The clock side is likewise positional.  `clocks_covered` aligns source result
 clocks with their ambients, while `declared_ambients` aligns target identifiers
 with the same ambients through `find_clock`.
-`declared_ambients_of_clocks` is the bridge between them.  The remaining work
-is to thread these two aligned relations through expression and call
-composition, using `unnest_exp_clockof` and target well-clocking to obtain the
-identifier/clock correspondence.
+`declared_ambients_of_clocks` is the bridge between them.
 
 For the actual unnesting run, `state_clocks_found` records that the target
 clock environment contains every annotated identifier in the fresh state.
 `declared_ambients_of_state` combines that invariant with an ordered
 identifier/clock correspondence and `clocks_covered`; this is the direct
 replacement for the former node-wide emitted-clock premise.
+
+The first expression layer of that repair now compiles as
+`carries_at_streams` / `carries_streams`.  Its hypotheses align `clockof e`,
+the ambient list, and the source result types, and its conclusion is the
+packaged `carries_result_streams`.  The `Econst` and `Evar` proofs use the
+pointwise reflexive relation.  `Eunop` passes the same aligned singleton to its
+child.  `Ebinop` composes two child witnesses over consecutive fresh-state
+segments and proves the target join from the two singleton pointwise bounds;
+in particular it does not union the two clock ambients.  The latter is the
+first recursive composition test of the repaired statement.  The next proof
+step is the corresponding expression-list fold, followed by `Ewhen`.
 
 ## The node frontier
 

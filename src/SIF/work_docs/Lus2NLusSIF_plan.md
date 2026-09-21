@@ -506,20 +506,28 @@ The shared pointwise vocabulary now also compiles: `stream_rel`,
 `stream_bounds`, `carries_result_streams`, and the aligned clock relations
 `clocks_covered`/`declared_ambients`.  Compatibility with the old scalar
 result, unchanged expressions, append composition, and preservation across a
-sibling's fresh-name witness are proved.  The next expression theorem can
-therefore use these names directly instead of expanding raw `Forall3`
-predicates in every constructor.
+sibling's fresh-name witness are proved.
 
-`state_clocks_found` and `declared_ambients_of_state` now connect the abstract
+The replacement expression contract, `carries_at_streams`, is now concrete.
+It aligns `clockof e`, the ambient list, the source types, and the target
+types; carries `state_clocks_found` through the run; and returns a
+`carries_result_streams`.  Its `Econst`, `Evar`, `Eunop`, and `Ebinop` cases
+compile.  `Ebinop` is the first real test of the contract: two child witnesses
+compose without adding one child's ambient to the other, and the first
+child's generated constraints and target type survive the second child's
+fresh-name updates.  `state_clocks_found_prefix` supplies the invariant for
+the intermediate fresh state.
+
+`state_clocks_found` and `declared_ambients_of_state` connect the abstract
 clock alignment to the concrete annotated identifiers accumulated by the
-unnesting fresh state.  The future expression theorem should carry this state
-lookup invariant and obtain result-clock order from `unnest_exp_clockof`.
+unnesting fresh state.  The expression contract now carries this state lookup
+invariant; the lifting cases will use it with `unnest_exp_clockof` to obtain
+result-clock order.
 
 The next tasks are, in order:
 
-1. replace scalar `A eq` in the multi-stream expression/equation composition
-   by a positional per-stream relation tying each emitted result and clock to
-   its matching source output and constraint;
+1. complete the pointwise expression induction, next with the expression-list
+   fold and then `Ewhen`; after that migrate the lifting and call cases;
 2. re-establish the arbitrary-equation and equation-list theorems with that
    relation, then connect the proved moved-name freshness lemma to the naming
    run's clock/reset witnesses;
