@@ -470,19 +470,36 @@ now implemented.  Leg U is split into five compilation units plus a facade:
 There are no admits.  The equation and node files contain no `eapply` or
 `eexists`, compile separately, and the complete serial Docker build passes.
 
-The current theorem frontier is narrower than `unnest_node`: `node_carries`
-still assumes freshness of moved names, the emitted-clock ambient bound, the
-source-output ambient bound, and target `NoDup`.  It also retains an obsolete
-`Forall eqn_covered` premise even though `eqn_carries_all` now covers every
-equation shape.  Therefore the next tasks are, in order:
+The obsolete `Forall eqn_covered` premise has now been removed from both list
+inductions and from `node_carries`.  `node_carries_preserves` packages the raw
+valuation result as `preserves_on`; `unnest_node_fields` exposes the dependent
+run inside `unnest_node`; and `unnest_node_equations_nodup` discharges the
+target `NoDup` premise from the constructed node's invariant.  The target
+node's declaration invariant also establishes freshness of every identifier
+added by the unnesting state.  Environment injectivity transports that result
+to the moved security names, and `unnest_node_moved_fresh_generated_aux`
+extends it to the clock/reset auxiliaries when the naming run supplies their
+`sec`-generated identifiers and environment lookups.
 
-1. use `eqn_carries_all` in both node-list inductions and remove
-   `Forall eqn_covered`;
-2. discharge the four remaining node premises from an actual `unnest_node`
-   run, node well-formedness/clocking, naming freshness, and source constraint
-   satisfaction;
-3. package the raw result as `preserves_on`, transport it through `simplify`,
-   and prove `signatures_preserved` for `unnest_node`;
+Trying to discharge the two ambient premises exposed a statement-level gap.
+One `A eq` is shared by all streams of an equation, but a multi-stream equation
+may place those streams on different clocks.  Covering every emitted clock
+requires the union of their ambients, while the source constraints put each
+output above only its own ambient, not its siblings'.  Therefore the two
+premises cannot in general be derived from well-clocking and source
+satisfaction as currently stated.
+
+The next tasks are, in order:
+
+1. replace scalar `A eq` in the multi-stream expression/equation composition
+   by a positional per-stream relation tying each emitted result and clock to
+   its matching source output and constraint;
+2. re-establish the arbitrary-equation and equation-list theorems with that
+   relation, then connect the proved moved-name freshness lemma to the naming
+   run's clock/reset witnesses;
+3. use the already-proved raw `preserves_on` packaging and target `NoDup`
+   lemma, transport the result through `simplify`, and prove
+   `signatures_preserved` for `unnest_node`;
 4. lift it through `unnest_global` by a signature-global lockstep;
 5. proceed to Leg I (`normfby_global`).
 

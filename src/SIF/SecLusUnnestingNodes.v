@@ -175,7 +175,6 @@ Import UNN.Fresh.Tactics.
       forall P eqs eqss st st' ce xst xst' cet yst yst' dlt,
         Forall (wl_equation P) eqs ->
         Forall (wc_equation P vars) eqs ->
-        Forall eqn_covered eqs ->
         NoDup (vars_defined (List.concat eqss) ++ st_ids st) ->
         (forall x, In x (moved_by st st') -> ~ In x scope) ->
         (forall x ck ckty,
@@ -199,7 +198,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       induction eqs as [|eq eqs IH];
         intros eqss st st' ce xst xst' cet yst yst' dlt
-        Hwl Hwc Hcov Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
       - apply map_bind_unnest_equation_nil in Hun as (? & ?); subst.
         simpl in Hgent.
         destruct
@@ -210,7 +209,6 @@ Import UNN.Fresh.Tactics.
         + split; constructor.
       - inversion Hwl as [|eqa eqsa Hwl1 Hwlr]; subst.
         inversion Hwc as [|eqb eqsb Hwc1 Hwcr]; subst.
-        inversion Hcov as [|eqc eqsc Hcov1 Hcovr]; subst.
         apply map_bind_unnest_equation_cons in Hun
           as (eq1 & st1 & eqsr & Hun1 & Hunr & ?); subst.
         assert (st_follows st st1) as Hf1
@@ -273,11 +271,11 @@ Import UNN.Fresh.Tactics.
                (fst eq) (st_ids st1) Hndmapped). }
 
         edestruct
-          (eqn_carries_covered GL env base_ty rst_ty vars cenv scope amb
+          (eqn_carries_all GL env base_ty rst_ty vars cenv scope amb
              env_inj amb_scoped sig_good sig_nodup source_types_scoped
              source_lexps_scoped rst_ty_scoped clk_types_scoped
              env_range_scoped source_lexps_carried_scoped sig_scoped
-             sig_actuals_fresh P eq Hcov1 eq1 st st1 c1 xst xst1
+             sig_actuals_fresh P eq eq1 st st1 c1 xst xst1
              ct1 yst ystm dlt)
           as (dlt1 & Hoff1 & Hce1 & Hscope1).
         { exact Hwl1. }
@@ -300,7 +298,6 @@ Import UNN.Fresh.Tactics.
           as (dlt2 & Hoff2 & Hce2 & Hscope2).
         { exact Hwlr. }
         { exact Hwcr. }
-        { exact Hcovr. }
         { exact Hndt. }
         { intros y Hy.
           exact (Hmv y (eq_moved_by_suffix env st st1 st' Hf1 y Hy)). }
@@ -444,7 +441,6 @@ Import UNN.Fresh.Tactics.
       forall P eqs eqss st st' ce xst xst' cet yst yst' dlt,
         Forall (wl_equation P) eqs ->
         Forall (wc_equation P vars) eqs ->
-        Forall (eqn_covered) eqs ->
         NoDup (vars_defined (List.concat eqss) ++ st_ids st) ->
         (forall x, In x (moved_by env st st') -> ~ In x scope) ->
         (forall eq eqs1 s s',
@@ -469,7 +465,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       induction eqs as [|eq eqs IH];
         intros eqss st st' ce xst xst' cet yst yst' dlt
-          Hwl Hwc Hcov Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+          Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
       - apply map_bind_unnest_equation_nil in Hun as (Hq1 & Hq2); subst.
         simpl List.concat in Hgent.
         apply generate_leqns_constraints_nil in Hgent as (Hq3 & Hq4); subst.
@@ -477,7 +473,6 @@ Import UNN.Fresh.Tactics.
         split; constructor.
       - inversion Hwl as [|eqa eqsa Hwl1 Hwlr]; subst.
         inversion Hwc as [|eqb eqsb Hwc1 Hwcr]; subst.
-        inversion Hcov as [|eqc eqsc Hcov1 Hcovr]; subst.
         apply map_bind_unnest_equation_cons in Hun
           as (eq1 & st1 & eqsr & Hun1 & Hunr & ?); subst.
         assert (st_follows st st1) as Hf1
@@ -539,14 +534,14 @@ Import UNN.Fresh.Tactics.
             (NoDup_drop_middle (vars_defined (List.concat eqsr))
                (fst eq) (st_ids st1) Hndmapped). }
 
-        edestruct (eqn_carries_covered GL env base_ty rst_ty vars cenv scope
-                     (A eq)) as (dlt1 & Hoff1 & Hce1 & Hscope1);
-          [exact env_inj| |exact sig_good|exact sig_nodup
-          |exact source_types_scoped|exact source_lexps_scoped
-          |exact rst_ty_scoped|exact clk_types_scoped|exact env_range_scoped
-          |exact source_lexps_carried_scoped|exact sig_scoped
-          |exact sig_actuals_fresh|exact Hcov1| | | | | | | | | | | |].
-        { apply A_scoped. }
+        edestruct
+          (eqn_carries_all GL env base_ty rst_ty vars cenv scope (A eq)
+             env_inj (A_scoped eq) sig_good sig_nodup source_types_scoped
+             source_lexps_scoped rst_ty_scoped clk_types_scoped
+             env_range_scoped source_lexps_carried_scoped sig_scoped
+             sig_actuals_fresh P eq eq1 st st1 c1 xst xst1
+             ct1 yst ystm dlt)
+          as (dlt1 & Hoff1 & Hce1 & Hscope1).
         { exact Hwl1. }
         { exact Hwc1. }
         { exact Hndh. }
@@ -567,7 +562,6 @@ Import UNN.Fresh.Tactics.
           as (dlt2 & Hoff2 & Hce2 & Hscope2).
         { exact Hwlr. }
         { exact Hwcr. }
-        { exact Hcovr. }
         { exact Hndt. }
         { intros y Hy.
           exact (Hmv y (moved_by_suffix env st st1 st' Hf1 y Hy)). }
@@ -668,7 +662,6 @@ Import UNN.Fresh.Tactics.
       forall P (eqs : list equation) eqs' st' ce xst xst' cet yst yst' dlt,
         Forall (wl_equation P) eqs ->
         Forall (wc_equation P vars) eqs ->
-        Forall eqn_covered eqs ->
         NoDup (vars_defined eqs') ->
         (forall x, In x (moved_by env init_st st') -> ~ In x scope) ->
         (forall eq eqs1 s s',
@@ -692,7 +685,7 @@ Import UNN.Fresh.Tactics.
           /\ constraints_scoped (scope ++ moved_by env init_st st') cet.
     Proof.
       intros P eqs eqs' st' ce xst xst' cet yst yst' dlt
-        Hwl Hwc Hcov Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
       apply unnest_equations_inv in Hun as (eqss & Hmap & ?); subst.
       assert (NoDup
                 (vars_defined (List.concat eqss) ++
@@ -703,7 +696,275 @@ Import UNN.Fresh.Tactics.
       exact
         (eqns_carries_amb P eqs eqss (init_st : fresh_st (type * clock))
            st' ce xst xst' cet yst yst'
-           dlt Hwl Hwc Hcov Hnd0 Hmv Hamb Hbs0 Hcesc Hmap Hgen Hgent Hsat).
+           dlt Hwl Hwc Hnd0 Hmv Hamb Hbs0 Hcesc Hmap Hgen Hgent Hsat).
+    Qed.
+
+    (** The valuation produced by [node_carries] changes only the security
+        names paired with variables introduced by unnesting.  Freshness of
+        those names therefore turns the stronger [agree_off] conclusion into
+        the visible-interface agreement required by [preserves_on]. *)
+    Theorem node_carries_preserves :
+      forall P (eqs : list equation) eqs' st' ce xst xst' cet yst yst',
+        Forall (wl_equation P) eqs ->
+        Forall (wc_equation P vars) eqs ->
+        NoDup (vars_defined eqs') ->
+        (forall x, In x (moved_by env init_st st') -> ~ In x scope) ->
+        (forall eq eqs1 s s',
+            In eq eqs -> unnest_equation P eq s = (eqs1, s') ->
+            forall x ck ckty,
+              In x (vars_defined eqs1) -> find_clock cenv x = OK ck ->
+              assign_clk_type env base_ty ck = Some ckty ->
+              incl (merge [rst_ty] ckty) (A eq)) ->
+        (forall dlt,
+            listSatisfiable dlt ce ->
+            forall eq b,
+              In eq eqs -> In b (sec_of env (fst eq)) ->
+              satisfiable dlt (A eq) [b]) ->
+        constraints_scoped scope ce ->
+        unnest_equations P eqs init_st = (eqs', st') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs xst
+          = OK (ce, xst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
+          = OK (cet, yst') ->
+        preserves_on scope ce cet.
+    Proof.
+      intros P eqs eqs' st' ce xst xst' cet yst yst'
+        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent dlt Hsat.
+      destruct
+        (node_carries P eqs eqs' st' ce xst xst' cet yst yst' dlt
+           Hwl Hwc Hnd Hmv Hamb (Hbs0 dlt Hsat) Hcesc Hun Hgen Hgent Hsat)
+        as (dlt' & Hoff & Hsat' & Hscoped).
+      exists dlt'. split.
+      - exact
+          (agree_off_agree_on scope (moved_by env init_st st') dlt dlt'
+             Hmv Hoff).
+      - exact Hsat'.
+    Qed.
+
+    (** [unnest_node] hides the equation run in a dependent pair.  This
+        projection lemma exposes the concrete result used in its equation and
+        local-variable fields, so subsequent preservation statements do not
+        have to unfold the program definition. *)
+    Lemma unnest_node_fields :
+      forall P (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs),
+        (unnest_node P n Hwl Hpref).(n_eqs)
+          = fst (unnest_equations P n.(n_eqs) init_st)
+        /\ (unnest_node P n Hwl Hpref).(n_vars)
+             = n.(n_vars) ++
+                 st_anns (snd (unnest_equations P n.(n_eqs) init_st)).
+    Proof.
+      intros P n Hwl Hpref.
+      unfold unnest_node, unnest_equations'.
+      split; reflexivity.
+    Qed.
+
+    Corollary unnest_node_equations_nodup :
+      forall P (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs) eqs' st',
+        unnest_equations P n.(n_eqs) init_st = (eqs', st') ->
+        NoDup (vars_defined eqs').
+    Proof.
+      intros P n Hwl Hpref eqs' st' Hrun.
+      destruct (unnest_node_fields P n Hwl Hpref) as (Heqs & Hvars).
+      rewrite Hrun in Heqs. simpl in Heqs.
+      rewrite <- Heqs.
+      exact (NoDup_vars_defined_n_eqs (unnest_node P n Hwl Hpref)).
+    Qed.
+
+    Lemma new_ids_from_init :
+      forall st, new_ids init_st st = st_ids st.
+    Proof.
+      intros st. unfold new_ids.
+      assert (st_ids (init_st : fresh_st (type * clock)) = []) as Hinit.
+      { unfold st_ids. rewrite init_st_anns. reflexivity. }
+      rewrite Hinit.
+      induction (st_ids st) as [|x xs IH].
+      - reflexivity.
+      - change
+          (x :: filter
+                  (fun y => if in_dec ident_eq_dec y [] then false else true)
+                  xs = x :: xs).
+        f_equal. exact IH.
+    Qed.
+
+    (** The fresh-state identifiers appended to the target node are disjoint
+        from every identifier declared by the source node.  This is obtained
+        from the target node's own [n_nodup] invariant, rather than assumed
+        separately by the security proof. *)
+    Lemma unnest_node_new_ids_fresh :
+      forall P (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs) eqs' st' x,
+        unnest_equations P n.(n_eqs) init_st = (eqs', st') ->
+        In x (new_ids init_st st') ->
+        ~ InMembers x (n.(n_in) ++ n.(n_vars) ++ n.(n_out)).
+    Proof.
+      intros P n Hwl Hpref eqs' st' x Hrun Hnew Hold.
+      destruct (unnest_node_fields P n Hwl Hpref) as (Heqs & Hvars).
+      rewrite Hrun in Hvars. simpl in Hvars.
+      assert (InMembers x (st_anns st')) as Hnewmem.
+      { rewrite new_ids_from_init in Hnew.
+        unfold st_ids in Hnew.
+        apply in_map_iff in Hnew as (xa & Hxa & Hin).
+        destruct xa as [y a]. simpl in Hxa. subst y.
+        exact (In_InMembers x a (st_anns st') Hin). }
+      exact
+        (unnested_locals_fresh n (unnest_node P n Hwl Hpref) (st_anns st')
+           Logic.eq_refl Logic.eq_refl Hvars x Hold Hnewmem).
+    Qed.
+
+    (** Injectivity transports the preceding program-name disjointness to
+        security names.  This is the non-auxiliary part of the moved-name
+        freshness premise of [node_carries]. *)
+    Lemma unnest_node_moved_fresh_from_vars :
+      forall P (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs) eqs' st',
+        unnest_equations P n.(n_eqs) init_st = (eqs', st') ->
+        forall b,
+          In b (moved_by env init_st st') ->
+          ~ In b
+              (sec_of env
+                 (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
+    Proof.
+      intros P n Hwl Hpref eqs' st' Hrun b Hmoved Hold.
+      unfold moved_by, sec_of in Hmoved, Hold.
+      apply in_flat_map in Hmoved as (x & Hxnew & Hxb).
+      apply in_flat_map in Hold as (y & Hyold & Hyb).
+      destruct (Env.find x env) as [bx|] eqn:Hfx; [|contradiction].
+      destruct Hxb as [Hxb|[]]. subst bx.
+      destruct (Env.find y env) as [by0|] eqn:Hfy; [|contradiction].
+      destruct Hyb as [Hyb|[]]. subst by0.
+      assert (x = y) as Hxy
+          by exact (env_inj x y b b Hfx Hfy Logic.eq_refl).
+      subst y.
+      apply
+        (unnest_node_new_ids_fresh P n Hwl Hpref eqs' st' x Hrun Hxnew).
+      apply in_map_iff in Hyold as (xa & Hxa & Hin).
+      destruct xa as [z a]. simpl in Hxa. subst z.
+      exact (In_InMembers x a _ Hin).
+    Qed.
+
+    Lemma unnest_node_new_id_not_sec_gensym :
+      forall P (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs) eqs' st' x,
+        unnest_equations P n.(n_eqs) init_st = (eqs', st') ->
+        In x (new_ids init_st st') ->
+        forall i, x <> Ids.gensym Ids.sec i.
+    Proof.
+      intros P n Hwl Hpref eqs' st' x Hrun Hnew i Heq.
+      destruct (unnest_node_fields P n Hwl Hpref) as (Heqs & Hvars).
+      rewrite Hrun in Hvars. simpl in Hvars.
+      assert
+        (In x
+           (List.map fst
+              ((unnest_node P n Hwl Hpref).(n_in)
+                 ++ (unnest_node P n Hwl Hpref).(n_vars)
+                 ++ (unnest_node P n Hwl Hpref).(n_out)))) as Hindecls.
+      { simpl. rewrite Hvars, map_app, map_app.
+        apply in_or_app. right. apply in_or_app. left.
+        rewrite map_app. apply in_or_app. right.
+        rewrite new_ids_from_init in Hnew.
+        exact Hnew. }
+      destruct (n_good (unnest_node P n Hwl Hpref)) as (Hgood & Hname).
+      rewrite Forall_forall in Hgood.
+      specialize (Hgood x).
+      assert
+        (In x
+           (List.map fst
+              ((unnest_node P n Hwl Hpref).(n_in)
+                 ++ (unnest_node P n Hwl Hpref).(n_vars)
+                 ++ (unnest_node P n Hwl Hpref).(n_out)
+                 ++ anon_in_eqs
+                      (unnest_node P n Hwl Hpref).(n_eqs)))) as Hinall.
+      { apply in_map_iff in Hindecls as (xa & Hxa & Hindecls).
+        apply in_map_iff. exists xa. split; [exact Hxa|].
+        apply in_app_or in Hindecls as [Hin|Hindecls].
+        - apply in_or_app. now left.
+        - apply in_app_or in Hindecls as [Hin|Hin].
+          + apply in_or_app. right. apply in_or_app. now left.
+          + apply in_or_app. right. apply in_or_app. right.
+            apply in_or_app. now left. }
+      specialize (Hgood Hinall).
+      rewrite Heq in Hgood.
+      assert
+        (PS.In Ids.sec
+           (n_prefixes (unnest_node P n Hwl Hpref))) as Hsecpref.
+      { destruct Hgood as [Hat|Hex].
+        - exfalso. exact (gensym_not_atom Ids.sec i Hat).
+        - unfold PS.Exists in Hex.
+          destruct Hex as (pref & Hinpref & k & Hgen).
+          apply gensym_injective in Hgen as (Hprefs & Hindices).
+          subst pref. exact Hinpref. }
+      simpl in Hsecpref. rewrite Hpref in Hsecpref.
+      apply Ids.sec_not_in_gensym_prefs.
+      unfold gensym_prefs.
+      unfold elab_prefs in Hsecpref.
+      rewrite PSF.add_iff, PSF.singleton_iff in Hsecpref.
+      destruct Hsecpref as [Hsec|Hsec]; subst; simpl; auto.
+    Qed.
+
+    Corollary unnest_node_moved_fresh_from_scope :
+      forall P (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs) eqs' st'
+             clk_id rst_id,
+        unnest_equations P n.(n_eqs) init_st = (eqs', st') ->
+        Env.find clk_id env = Some base_ty ->
+        Env.find rst_id env = Some rst_ty ->
+        (forall x, In x (new_ids init_st st') -> x <> clk_id) ->
+        (forall x, In x (new_ids init_st st') -> x <> rst_id) ->
+        forall b,
+          In b (moved_by env init_st st') ->
+          ~ In b
+              (sec_of env
+                 (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+               ++ [base_ty; rst_ty]).
+    Proof.
+      intros P n Hwl Hpref eqs' st' clk_id rst_id
+        Hrun Hclk Hrst Hclkfresh Hrstfresh b Hmoved Hscope.
+      apply in_app_or in Hscope as [Hvars|Haux].
+      - exact
+          (unnest_node_moved_fresh_from_vars P n Hwl Hpref eqs' st'
+             Hrun b Hmoved Hvars).
+      - unfold moved_by, sec_of in Hmoved.
+        apply in_flat_map in Hmoved as (x & Hxnew & Hxb).
+        destruct (Env.find x env) as [bx|] eqn:Hfx; [|contradiction].
+        destruct Hxb as [Hxb|[]]. subst bx.
+        destruct Haux as [Hbase|[Hreset|[]]].
+        + subst b. apply (Hclkfresh x Hxnew).
+          exact (env_inj x clk_id base_ty base_ty Hfx Hclk Logic.eq_refl).
+        + subst b. apply (Hrstfresh x Hxnew).
+          exact (env_inj x rst_id rst_ty rst_ty Hfx Hrst Logic.eq_refl).
+    Qed.
+
+    Corollary unnest_node_moved_fresh_generated_aux :
+      forall P (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs) eqs' st'
+             clk_id rst_id i j,
+        unnest_equations P n.(n_eqs) init_st = (eqs', st') ->
+        Env.find clk_id env = Some base_ty ->
+        Env.find rst_id env = Some rst_ty ->
+        clk_id = Ids.gensym Ids.sec i ->
+        rst_id = Ids.gensym Ids.sec j ->
+        forall b,
+          In b (moved_by env init_st st') ->
+          ~ In b
+              (sec_of env
+                 (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+               ++ [base_ty; rst_ty]).
+    Proof.
+      intros P n Hwl Hpref eqs' st' clk_id rst_id i j
+        Hrun Hclk Hrst Hclkid Hrstid.
+      exact
+        (unnest_node_moved_fresh_from_scope P n Hwl Hpref eqs' st'
+           clk_id rst_id Hrun Hclk Hrst
+           (fun x Hx =>
+              eq_ind_r (fun id => x <> id)
+                (unnest_node_new_id_not_sec_gensym
+                   P n Hwl Hpref eqs' st' x Hrun Hx i) Hclkid)
+           (fun x Hx =>
+              eq_ind_r (fun id => x <> id)
+                (unnest_node_new_id_not_sec_gensym
+                   P n Hwl Hpref eqs' st' x Hrun Hx j) Hrstid)).
     Qed.
 
   End NodeEquations.

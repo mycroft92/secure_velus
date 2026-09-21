@@ -729,8 +729,8 @@ handles the instantiated block, and the split proof composes the chunks while
 permuting their generated constraints back into execution order.
 
 Consequently `eqn_carries_all : forall P eq, eqn_carries P eq` has no shape
-restriction.  Any remaining `Forall eqn_covered` premise is therefore a
-packaging artefact in the node file, not a limitation of the equation proof.
+restriction.  The node-list inductions now use it directly; the former
+`Forall eqn_covered` premises have been removed.
 
 ### The list
 
@@ -741,7 +741,7 @@ the fresh ones, so `unnest_equation_vars_perm` puts the source's variables on
 the right of the permutation, and the head's and tail's premises come out by
 dropping a **middle** segment rather than a prefix.
 
-## The ambient is per equation, not per node
+## The ambient must ultimately be per stream, not merely per equation
 
 A fact worth recording before the node level, because it shapes it.  The
 ambient has to satisfy two things at once:
@@ -750,19 +750,26 @@ ambient has to satisfy two things at once:
     define, and
   * it lies below every variable the source equation defines.
 
-Both hold when the ambient is *that equation's* -- the emitted variables are
-sub-expressions of that equation, so their clocks are prefixes of its clock,
-and the equation's own constraint puts its ambient below its variables.
-Neither survives being made uniform across a node: a fresh variable minted
-while unnesting one equation has nothing to do with another equation's
-variables, so a node-wide ambient would have to lie below every variable in
-the node.
+Moving from one node-wide ambient to one ambient per source equation fixed the
+cross-equation problem, but it is still too coarse for a multi-stream
+equation.  Such an equation may define streams on different clocks.  To cover
+every emitted variable, one `A eq` must contain the union of all those clock
+ambients; the source generator, however, constrains each output above only its
+own clock ambient and its own expression type.  It does not in general put an
+output above its siblings' clocks.
 
-So `eqns_carries`, which runs inside the section and therefore at one fixed
-`amb`, is the right shape for a *single* ambient but not for a node.  The
-node level has to do the equation-by-equation composition **outside** the
-section, where the section's lemmas are universally quantified over `amb` and
-each equation can be given its own.
+Thus the two conditional premises of `node_carries` cannot both be derived
+for arbitrary well-clocked Lustre by choosing a single `A eq`.  The repair is
+to carry a positional, per-stream relation: each emitted result and its clock
+ambient must be tied to the corresponding source output and the source
+constraint for that output.  This affects the statement of the multi-stream
+expression/equation composition, not the already-proved single-stream and
+call monotonicity lemmas.
+
+Accordingly, `eqns_carries` remains a valid conditional lemma when one
+ambient really does cover the list, and `eqns_carries_amb` improves that to
+one ambient per equation.  Neither is yet the unconditional node theorem:
+the multi-stream cases need the finer positional interface above.
 
 ## The node frontier
 
@@ -770,29 +777,41 @@ each equation can be given its own.
 threads a single ambient through a list, while `eqns_carries_amb` moves the
 induction outside the fixed-ambient section and gives each source equation its
 own ambient.  `node_carries` instantiates that composition at `init_st` and
-discharges the fresh-state `NoDup` bookkeeping.
+discharges the fresh-state bookkeeping.  `node_carries_preserves` packages its
+valuation conclusion as `preserves_on`.  `unnest_node_fields` exposes the
+dependent equation run hidden by `unnest_node`, and
+`unnest_node_equations_nodup` discharges target `NoDup` from the constructed
+node's record invariant.  The same target invariant now also proves that the
+fresh-state identifiers appended to `n_vars` are disjoint from every source
+declaration.  Injectivity of the naming environment transports this fact to
+security names.  With clock and reset identifiers generated under the `sec`
+prefix, `unnest_node_moved_fresh_generated_aux` discharges freshness against
+the complete visible scope (source variables plus the two auxiliary types).
 
-The theorem is deliberately still conditional.  Its remaining premises are
-the interface to facts about an actual node and an actual naming run:
+The theorem is deliberately still conditional.  Its interface currently
+contains:
 
-1. names moved by unnesting are outside the source scope;
+1. names moved by unnesting are outside the source scope (discharged once the
+   naming run supplies the clock/reset lookups and their generated forms);
 2. the ambient chosen for a source equation covers the clocks of all equations
    it emits;
 3. that ambient is below the source equation's defined variables;
-4. the unnested equation list has no duplicate definitions.
+4. the unnested equation list has no duplicate definitions (now discharged by
+   `unnest_node_equations_nodup`).
 
-The immediate cleanup is to replace the node file's use of
-`eqn_carries_covered` by `eqn_carries_all` and remove its obsolete
-`Forall eqn_covered` premises.  After that, the four premises above must be
-discharged from `unnest_node`, node well-formedness/clocking, the naming
-environment, and satisfaction of the source generator.  The call case of the
-third premise is the substantive part: it must recover the clock/reset lower
-bound from the instantiated, good callee signature.
+The obsolete coverage premise has also been removed, and the program-name
+part of moved-name freshness no longer needs to be assumed.  The next proof
+change is therefore not another node wrapper: replace the scalar `A eq`
+interface by the positional per-stream relation described above, then
+re-establish the equation-list composition.  Each source-output bound can
+then come directly from the matching generated source constraint (including
+the instantiated-signature argument in the call case).
 
 Once those facts are available, the remaining Leg U steps are:
 
-1. package `node_carries` as
-   `preserves_on scope source_raw_constraints target_raw_constraints`;
+1. complete the per-stream repair and obtain the unconditional raw
+   `preserves_on` result (`node_carries_preserves` is already the conditional
+   packaging step);
 2. transport that relation through `simplify`, eliminating source minted names
    and target unnesting locals, and conclude `signatures_preserved` for an
    `unnest_node` run;
