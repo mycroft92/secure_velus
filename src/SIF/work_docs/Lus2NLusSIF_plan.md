@@ -530,6 +530,10 @@ The pointwise join helper used by the control operators also compiles.  For
 child contracts must use `merge [sec(x)] ambient` positionally.  The new
 `clock_covered_on` and `stream_rel_ambient_on_normalize` lemmas justify adding
 that name for each branch and absorbing it into the final joined source type.
+`carries_Emerge_control_streams` now completes that composition: both branch
+list witnesses are chained, the first is transported across the second, and
+`ljoin_list_rel_streams_on` establishes the final pointwise result.  The next
+case is the non-lifting (`is_control = true`) `Eite` proof.
 
 `state_clocks_found` and `declared_ambients_of_state` connect the abstract
 clock alignment to the concrete annotated identifiers accumulated by the

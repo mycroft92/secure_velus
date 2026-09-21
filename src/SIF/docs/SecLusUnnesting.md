@@ -823,6 +823,14 @@ name back into the source type.  `clock_covered_on`,
 `stream_rel_ambient_on_normalize` establish the two sides of this
 transformation without mixing sibling stream clocks.
 
+`carries_Emerge_control_streams` now assembles those pieces.  The true and
+false branch lists run consecutively under the enriched ambient list, their
+valuation witnesses compose using the same disjoint-state argument as the
+ordinary list fold, and `ljoin_list_rel_streams_on` absorbs the added
+`sec(x)` into the final merge result.  The complete serial Docker build passes
+with this pointwise control case.  The next control case is `Eite` under
+`is_control = true`.
+
 ## The node frontier
 
 `SecLusUnnestingNodes.v` now proves two composition lemmas.  `eqns_carries`

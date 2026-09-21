@@ -1441,6 +1441,50 @@ Section StreamAmbients.
         + exact (IH tys ambs' Hlen Htail).
     Qed.
 
+    Lemma clocks_covered_on_map :
+      forall ck x b g (tys : list type) cks ambs,
+        Env.find x env = Some g ->
+        Forall (Logic.eq (Con ck x b)) cks ->
+        List.length tys = List.length cks ->
+        clocks_covered (List.map (fun _ => ck) tys) ambs ->
+        clocks_covered cks
+          (List.map (fun amb => merge [g] amb) ambs).
+    Proof.
+      intros ck x b g tys cks ambs Hfind Hclocks.
+      revert tys ambs.
+      induction Hclocks as [|ck' cks Hck' Hclocks IH];
+        intros tys ambs Hlen Hcovered.
+      - destruct tys; [|discriminate].
+        inversion Hcovered. constructor.
+      - destruct tys as [|ty tys]; [discriminate|].
+        simpl in Hlen. injection Hlen as Hlen.
+        inversion Hcovered as
+          [|base amb bases ambs' Hhead Htail]; subst.
+        simpl. constructor.
+        + exact (clock_covered_on ck x b g amb Hfind Hhead).
+        + exact (IH tys ambs' Hlen Htail).
+    Qed.
+
+    Lemma stream_ambients_scoped_on :
+      forall sc g ambs,
+        In g sc ->
+        stream_ambients_scoped sc ambs ->
+        stream_ambients_scoped sc
+          (List.map (fun amb => merge [g] amb) ambs).
+    Proof.
+      intros sc g ambs Hg Hsc.
+      induction Hsc as [|amb ambs Hamb Hambs IH].
+      - constructor.
+      - change
+          (stream_ambients_scoped sc
+             (merge [g] amb ::
+                List.map (fun a => merge [g] a) ambs)).
+        constructor; [|exact IH].
+        apply st_scoped_merge.
+        + intros x Hx. destruct Hx as [Hx|[]]. subst x. exact Hg.
+        + exact Hamb.
+    Qed.
+
     Lemma carries_Ewhen_streams :
       forall P es x b a,
         Forall (carries_streams P) es ->
@@ -1573,6 +1617,396 @@ Section StreamAmbients.
             exact Hu.
         + exact
             (IH us0 r us0' r' s1 s1' s2 s2' Hr Hr' Hus0).
+    Qed.
+
+    Lemma ljoin_list_rel_streams_on :
+      forall dlt g ambs ts us rs ts' us' rs' s1 s1' s2 s2',
+        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts) us s1
+          = OK (rs, s1') ->
+        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts') us' s2
+          = OK (rs', s2') ->
+        stream_rel dlt (List.map (fun amb => merge [g] amb) ambs) ts ts' ->
+        stream_rel dlt (List.map (fun amb => merge [g] amb) ambs) us us' ->
+        stream_rel dlt ambs rs rs'.
+    Proof.
+      intros dlt g ambs ts us rs ts' us' rs' s1 s1' s2 s2'
+        Hjoin Hjoin' Hts Hus.
+      pose proof
+        (stream_rel_ambient_on_normalize dlt g ambs ts ts' Hts) as Htsn.
+      pose proof
+        (stream_rel_ambient_on_normalize dlt g ambs us us' Hus) as Husn.
+      clear Hts Hus.
+      revert us rs us' rs' s1 s1' s2 s2' Hjoin Hjoin' Husn.
+      induction Htsn as
+        [|amb t t' ambs ts ts' Ht Hts IH];
+        intros us rs us' rs' s1 s1' s2 s2' Hjoin Hjoin' Hus.
+      - inversion Hus. destruct us; simpl in Hjoin; [|discriminate].
+        unfold ret in Hjoin. inversion Hjoin; subst.
+        simpl in Hjoin'. unfold ret in Hjoin'. inversion Hjoin'; subst.
+        constructor.
+      - inversion Hus as
+          [|amb0 u u' ambs0 us0 us0' Hu Hus0]; subst.
+        simpl in Hjoin.
+        apply sec_bind_inv in Hjoin as (r & sa & Hr & Hret).
+        unfold ret in Hret. inversion Hret; subst; clear Hret.
+        simpl in Hjoin'.
+        apply sec_bind_inv in Hjoin' as (r' & sb & Hr' & Hret').
+        unfold ret in Hret'. inversion Hret'; subst; clear Hret'.
+        constructor.
+        + rewrite !fst_ljoin.
+          apply satisfiable_merge_intro.
+          * apply satisfiable_merge_intro.
+            -- apply satisfiable_trans with
+                 (b := merge [g] (fst t)).
+               ++ apply satisfiable_merge_l.
+               ++ apply satisfiable_trans with
+                    (b := merge (merge [g] (fst t)) (fst u)).
+                  ** apply satisfiable_merge_l.
+                  ** apply satisfiable_merge_r.
+            -- exact
+                 (CALLS.satisfiable_merge_grow_l
+                    dlt (fst t') amb (merge [g] (fst t)) Ht (fst u)).
+          * apply satisfiable_trans with
+              (b := merge amb (merge [g] (fst u))); [exact Hu|].
+            apply satisfiable_merge_intro.
+            -- apply satisfiable_merge_l.
+            -- apply satisfiable_merge_intro.
+               ++ apply satisfiable_trans with
+                    (b := merge [g] (fst t)).
+                  ** apply satisfiable_merge_l.
+                  ** apply satisfiable_trans with
+                       (b := merge (merge [g] (fst t)) (fst u)).
+                     --- apply satisfiable_merge_l.
+                     --- apply satisfiable_merge_r.
+               ++ apply satisfiable_trans with
+                    (b := merge (merge [g] (fst t)) (fst u)).
+                  ** apply satisfiable_merge_r.
+                  ** apply satisfiable_merge_r.
+        + exact
+            (IH us0 r us0' r' s1 s1' s2 s2' Hr Hr' Hus0).
+    Qed.
+
+    Lemma carries_Emerge_control_streams :
+      forall P ckid es1 es2 tys cl,
+        Forall (carries_streams P) es1 ->
+        Forall (carries_streams P) es2 ->
+        carries_at_streams P true (Emerge ckid es1 es2 (tys, cl)).
+    Proof.
+      intros P ckid es1 es2 tys cl Hall1 Hall2
+        ambs es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
+        Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
+        Hun Has Hgen Has' Hsat.
+      inversion Hwl; subst.
+      inversion Hwc; subst.
+      apply unnest_exp_Emerge_control_inv in Hun
+        as (f1 & eqs1 & st1 & f2 & eqs2 & Hun1 & Hun2 & Hes' & Heqs).
+      subst es' eqs.
+      assert (st_follows st st1) as Hf1.
+      { exact
+          (CALLS.map_bind2_unnest_st_follows
+             P true es1 f1 eqs1 st st1 Hun1). }
+      assert (st_follows st1 st') as Hf2.
+      { exact
+          (CALLS.map_bind2_unnest_st_follows
+             P true es2 f2 eqs2 st1 st' Hun2). }
+
+      rewrite assign_lexp_Emerge in Has.
+      apply sec_bind_inv in Has as (g & sa & Hg & Has).
+      apply sec_bind_inv in Has as (tes1 & sb & Htes1 & Has).
+      apply sec_bind_inv in Has as (tes2 & sc & Htes2 & Hj).
+      apply find_env_inv in Hg as (Hg & Hsa). subst sa.
+
+      assert (Forall normalized_cexp (List.concat f1)) as Hnorm1.
+      { exact
+          (CALLS.map_bind2_unnest_normalized
+             P es1 f1 eqs1 st st1 Hun1). }
+      assert (Forall normalized_cexp (List.concat f2)) as Hnorm2.
+      { exact
+          (CALLS.map_bind2_unnest_normalized
+             P es2 f2 eqs2 st1 st' Hun2). }
+      assert (List.length (List.concat f1) = List.length tys) as Hflen1.
+      { pose proof
+          (map_bind2_unnest_exp_length
+             P true es1 f1 eqs1 st st1 H4 Hun1) as Hlength.
+        rewrite H7 in Hlength. exact Hlength. }
+      assert (List.length (List.concat f2) = List.length tys) as Hflen2.
+      { pose proof
+          (map_bind2_unnest_exp_length
+             P true es2 f2 eqs2 st1 st' H6 Hun2) as Hlength.
+        rewrite H8 in Hlength. exact Hlength. }
+      destruct
+        (CALLS.assign_lexps_unnest_merge_inv
+           GL env base_ty rst_ty ckid (ck, None) g
+           (List.concat f1) (List.concat f2) tys ts'' yst yst'
+           Hg Hnorm1 Hnorm2 Hflen1 Hflen2 Has')
+        as (tes1'' & tes2'' & Htes1'' & Htes2'' & Hyst & Hj'').
+      subst yst'.
+
+      destruct
+        (CALLS.generate_leqns_constraints_app
+           GL env base_ty rst_ty cenv
+           (List.concat eqs1) (List.concat eqs2) ce xst xst' Hgen)
+        as (ce1 & ce2 & xst1 & Hgen1 & Hgen2 & Hce).
+      subst ce.
+
+      assert
+        (carried ts = cmerge (carried tes1) (carried tes2)) as Hcarried.
+      { rewrite (ljoin_list_carried
+                   (List.map (fun t => ljoin (lvar g) t) tes1)
+                   tes2 ts sc sst' Hj).
+        rewrite CALLS.carried_map_merge_l. reflexivity. }
+      rewrite Hcarried in Hcsc, Hsat.
+      apply constraints_scoped_cmerge in Hcsc as (Hcsc1 & Hcsc2).
+      apply listSatisfiable_cmerge in Hsat as (Hsat1 & Hsat2).
+      destruct
+        (CALLS.ljoin_list_scoped_inv
+           scope g tes1 tes2 ts sc sst' Hj Htsc)
+        as (Htsc1 & Htsc2 & Hgs).
+
+      set (on_ambs := List.map (fun amb => merge [g] amb) ambs).
+      assert (stream_ambients_scoped scope on_ambs) as Hon_scoped.
+      { destruct Hgs as [Hempty|Hgscope].
+        - subst tes1.
+          pose proof
+            (ljoin_list_length
+               (List.map (fun t => ljoin (lvar g) t) []) tes2
+               ts sc sst' Hj) as Htslen.
+          simpl in Htslen. apply length_zero_iff_nil in Htslen. subst ts.
+          simpl in Hlen. apply length_zero_iff_nil in Hlen. subst ambs.
+          constructor.
+        - exact
+            (stream_ambients_scoped_on scope g ambs Hgscope Hambsc). }
+      assert
+        (clocks_covered (clocksof es1) on_ambs) as Hcovered1.
+      { exact
+          (clocks_covered_on_map
+             ck ckid true g tys (clocksof es1) ambs
+             Hg H11 H13 Hcovered). }
+      assert
+        (clocks_covered (clocksof es2) on_ambs) as Hcovered2.
+      { exact
+          (clocks_covered_on_map
+             ck ckid false g tys (clocksof es2) ambs
+             Hg H12 H14 Hcovered). }
+      pose proof
+        (ljoin_list_length
+           (List.map (fun t => ljoin (lvar g) t) tes1) tes2
+           ts sc sst' Hj) as Hjoinlen.
+      rewrite map_length in Hjoinlen.
+      assert (List.length on_ambs = List.length tes1) as Hon_len1.
+      { unfold on_ambs. rewrite map_length, Hlen, Hjoinlen. reflexivity. }
+      assert (List.length on_ambs = List.length tes2) as Hon_len2.
+      { unfold on_ambs. rewrite map_length, Hlen, Hjoinlen.
+        assert (List.length tes1 = List.length tes2) as Hbranches.
+        { clear - Hj.
+          revert tes2 ts sc sst' Hj.
+          induction tes1 as [|t tes1 IH];
+            intros tes2 ts sc sst' Hj.
+          - destruct tes2; simpl in Hj; [reflexivity|discriminate].
+          - destruct tes2 as [|u tes2]; simpl in Hj; [discriminate|].
+            apply sec_bind_inv in Hj as (r & sm & Hr & Hret).
+            unfold ret in Hret. inversion Hret; subst; clear Hret.
+            simpl. f_equal. exact (IH tes2 r sc sst' Hr). }
+        exact Hbranches. }
+      assert (state_clocks_found st1) as Hfound1.
+      { exact (state_clocks_found_prefix st1 st' Hf2 Hfound). }
+
+      assert
+        (Permutation
+           (vars_defined (List.concat eqs1) ++ st_ids st) (st_ids st1))
+        as Hperm1.
+      { exact
+          (CALLS.map_bind2_unnest_vars_perm
+             P true es1 f1 eqs1 st st1 H4 Hun1). }
+      assert
+        (NoDup (vars_defined (List.concat eqs1) ++ st_ids st)) as Hnd1.
+      { apply CALLS.NoDup_vd_app_l with
+          (eqs2 := List.concat eqs2). exact Hnd. }
+      assert
+        (NoDup (vars_defined (List.concat eqs2) ++ st_ids st1)) as Hnd2.
+      { apply CALLS.NoDup_vd_app_r with
+          (eqs1 := List.concat eqs1) (s := st_ids st).
+        - exact Hperm1.
+        - exact Hnd. }
+      assert
+        (forall x,
+            In x (CALLS.moved_by env st st1) -> ~ In x scope) as Hmv1.
+      { intros x Hx. apply Hmv.
+        exact
+          (CALLS.moved_by_prefix_local env st st1 st' Hf2 x Hx). }
+      assert
+        (forall x,
+            In x (CALLS.moved_by env st1 st') -> ~ In x scope) as Hmv2.
+      { intros x Hx. apply Hmv.
+        exact
+          (CALLS.moved_by_suffix_local env st st1 st' Hf1 x Hx). }
+
+      destruct
+        (carries_list_streams_intro P es1 Hall1 true on_ambs
+           f1 eqs1 st st1 tes1 sst sb ce1 xst xst1 tes1'' yst yst dlt
+           H4 H5 Hnd1 Hmv1 Hcsc1 Htsc1 Hon_scoped Hcovered1 Hon_len1
+           Hfound1 Hun1 Htes1 Hgen1 Htes1'' Hsat1)
+        as (dlt1 & Hres1).
+      unfold carries_result_streams in Hres1.
+      destruct Hres1 as (Hoff1 & Hce1 & Hrel1 & Hscope1 & Htgt1).
+
+      assert (listSatisfiable dlt1 (carried tes2)) as Hsat2'.
+      { apply
+          (CALLS.listSatisfiable_off
+             scope (carried tes2) (CALLS.moved_by env st st1)
+             dlt dlt1).
+        - exact Hcsc2.
+        - exact Hmv1.
+        - exact Hoff1.
+        - exact Hsat2. }
+      destruct
+        (carries_list_streams_intro P es2 Hall2 true on_ambs
+           f2 eqs2 st1 st' tes2 sb sc ce2 xst1 xst' tes2'' yst yst dlt1
+           H6 H9 Hnd2 Hmv2 Hcsc2 Htsc2 Hon_scoped Hcovered2 Hon_len2
+           Hfound Hun2 Htes2 Hgen2 Htes2'' Hsat2')
+        as (dlt2 & Hres2).
+      unfold carries_result_streams in Hres2.
+      destruct Hres2 as (Hoff2 & Hce2 & Hrel2 & Hscope2 & Htgt2).
+
+      assert (stream_rel dlt2 on_ambs tes1 tes1'') as Hrel1'.
+      { apply
+          (stream_rel_off_scope
+             (scope ++ CALLS.moved_by env st st1)
+             (CALLS.moved_by env st1 st') dlt1 dlt2
+             on_ambs tes1 tes1'').
+        - apply
+            (@Forall_impl ST
+               (st_scoped scope)
+               (st_scoped (scope ++ CALLS.moved_by env st st1))).
+          + intros a0 Ha0. apply st_scoped_weaken with (scope1 := scope).
+            * apply incl_appl, incl_refl.
+            * exact Ha0.
+          + exact Hon_scoped.
+        - apply
+            (@Forall_impl LST
+               (fun src => st_scoped scope (fst src))
+               (fun src =>
+                  st_scoped
+                    (scope ++ CALLS.moved_by env st st1) (fst src))).
+          + intros src Hsrc. apply st_scoped_weaken with (scope1 := scope).
+            * apply incl_appl, incl_refl.
+            * exact Hsrc.
+          + exact Htsc1.
+        - exact Htgt1.
+        - intros x Hin Hxin. apply in_app_or in Hxin as [Hxin|Hxin].
+          + exact (Hmv2 x Hin Hxin).
+          + exact
+              (CALLS.moved_by_disjoint_local
+                 env env_inj st st1 st' x Hxin Hin).
+        - exact Hoff2.
+        - exact Hrel1. }
+
+      exists dlt2.
+      unfold carries_result_streams. split.
+      - intros x Hx.
+        rewrite Hoff1.
+        2: { intro Hin. apply Hx.
+             exact
+               (CALLS.moved_by_prefix_local env st st1 st' Hf2 x Hin). }
+        apply Hoff2. intro Hin. apply Hx.
+        exact
+          (CALLS.moved_by_suffix_local env st st1 st' Hf1 x Hin).
+      - split.
+        + apply listSatisfiable_app. split; [|exact Hce2].
+          exact
+            (CALLS.listSatisfiable_off_scope
+               ce1 (scope ++ CALLS.moved_by env st st1)
+               (CALLS.moved_by env st1 st') dlt1 dlt2
+               Hscope1
+               (fun x Hin Hxin =>
+                  match in_app_or _ _ _ Hxin with
+                  | or_introl Hscope => Hmv2 x Hin Hscope
+                  | or_intror Hfirst =>
+                      CALLS.moved_by_disjoint_local
+                        env env_inj st st1 st' x Hfirst Hin
+                  end)
+               Hoff2 Hce1).
+        + split.
+          * exact
+              (ljoin_list_rel_streams_on
+                 dlt2 g ambs tes1 tes2 ts tes1'' tes2'' ts''
+                 sc sst' yst yst Hj Hj'' Hrel1' Hrel2).
+          * split.
+            -- apply Forall_app. split.
+               ++ apply
+                    (@Forall_impl constraint
+                       (constraint_scoped
+                          (scope ++ CALLS.moved_by env st st1))
+                       (constraint_scoped
+                          (scope ++ CALLS.moved_by env st st'))).
+                  ** intros c Hc. apply constraint_scoped_incl with
+                       (scope1 := scope ++ CALLS.moved_by env st st1).
+                     2: exact Hc.
+                     apply incl_app; [apply incl_appl, incl_refl|].
+                     apply incl_appr.
+                     exact (CALLS.moved_by_prefix_local env st st1 st' Hf2).
+                  ** exact Hscope1.
+               ++ apply
+                    (@Forall_impl constraint
+                       (constraint_scoped
+                          (scope ++ CALLS.moved_by env st1 st'))
+                       (constraint_scoped
+                          (scope ++ CALLS.moved_by env st st'))).
+                  ** intros c Hc. apply constraint_scoped_incl with
+                       (scope1 := scope ++ CALLS.moved_by env st1 st').
+                     2: exact Hc.
+                     apply incl_app; [apply incl_appl, incl_refl|].
+                     apply incl_appr.
+                     exact (CALLS.moved_by_suffix_local env st st1 st' Hf1).
+                  ** exact Hscope2.
+            -- destruct Hgs as [Hempty|Hgscope].
+               ++ subst tes1. inversion Hrel1'; subst.
+                  simpl in Hj''. destruct tes2''; [|discriminate].
+                  unfold ret in Hj''. inversion Hj''; subst. constructor.
+               ++ apply
+                    (CALLS.ljoin_list_scoped
+                       (scope ++ CALLS.moved_by env st st') g
+                       tes1'' tes2'' ts'' yst yst).
+                  ** apply in_or_app. left. exact Hgscope.
+                  ** exact Hj''.
+                  ** apply
+                       (@Forall_impl LST
+                          (fun tgt =>
+                             st_scoped
+                               (scope ++ CALLS.moved_by env st st1)
+                               (fst tgt))
+                          (fun tgt =>
+                             st_scoped
+                               (scope ++ CALLS.moved_by env st st')
+                               (fst tgt))).
+                     --- intros tgt Htgt. apply st_scoped_weaken with
+                           (scope1 := scope ++ CALLS.moved_by env st st1).
+                         2: exact Htgt.
+                         apply incl_app; [apply incl_appl, incl_refl|].
+                         apply incl_appr.
+                         exact
+                           (CALLS.moved_by_prefix_local
+                              env st st1 st' Hf2).
+                     --- exact Htgt1.
+                  ** apply
+                       (@Forall_impl LST
+                          (fun tgt =>
+                             st_scoped
+                               (scope ++ CALLS.moved_by env st1 st')
+                               (fst tgt))
+                          (fun tgt =>
+                             st_scoped
+                               (scope ++ CALLS.moved_by env st st')
+                               (fst tgt))).
+                     --- intros tgt Htgt. apply st_scoped_weaken with
+                           (scope1 := scope ++ CALLS.moved_by env st1 st').
+                         2: exact Htgt.
+                         apply incl_app; [apply incl_appl, incl_refl|].
+                         apply incl_appr.
+                         exact
+                           (CALLS.moved_by_suffix_local
+                              env st st1 st' Hf1).
+                     --- exact Htgt2.
     Qed.
 
   End ExpressionContract.
