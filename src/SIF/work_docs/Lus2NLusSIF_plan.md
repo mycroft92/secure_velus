@@ -455,17 +455,19 @@ leg after Leg I is in place.
 #### Leg U checkpoint, 2026-09-20
 
 The naming-correspondence decision and the expression/equation work above are
-now implemented.  Leg U is split into five compilation units plus a facade:
+now implemented.  Leg U is split into six compilation units plus a facade:
 
 1. `SecLusUnnestingBase.v` -- common definitions and structural facts;
 2. `SecLusUnnestingExpr.v` -- the complete expression induction;
 3. `SecLusUnnestingCalls.v` -- semantic call monotonicity, output witnesses,
    and reset handling;
-4. `SecLusUnnestingEquations.v` -- general, call, mixed/split, and arbitrary
+4. `SecLusUnnestingStreams.v` -- pointwise ambient relations, separated from
+   the already-large expression unit;
+5. `SecLusUnnestingEquations.v` -- general, call, mixed/split, and arbitrary
    equation preservation, ending in `eqn_carries_all`;
-5. `SecLusUnnestingNodes.v` -- equation-list composition with per-equation
+6. `SecLusUnnestingNodes.v` -- equation-list composition with per-equation
    ambients and the conditional raw theorem `node_carries`;
-6. `SecLusUnnesting.v` -- the compatibility facade.
+7. `SecLusUnnesting.v` -- the compatibility facade.
 
 There are no admits.  The equation and node files contain no `eapply` or
 `eexists`, compile separately, and the complete serial Docker build passes.
@@ -488,6 +490,17 @@ requires the union of their ambients, while the source constraints put each
 output above only its own ambient, not its siblings'.  Therefore the two
 premises cannot in general be derived from well-clocking and source
 satisfaction as currently stated.
+
+Two pointwise foundations now compile:
+
+- `lifted_defs_streams` constructs the witness for emitted definitions with
+  aligned ambient, identifier, and source-type lists;
+- `generate_lvars_constraints_mono_streams` consumes the same alignment at
+  the equation-output generator.
+
+Both use `Forall3`, so no sibling stream's clock is added to another stream's
+obligation.  The expression/call composition still needs to expose and
+preserve that relation before the scalar node premise can be removed.
 
 The next tasks are, in order:
 

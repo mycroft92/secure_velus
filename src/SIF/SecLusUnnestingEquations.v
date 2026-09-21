@@ -53,7 +53,7 @@ From Velus Require Import SIF.SecLTyping.
 From compcert Require Import common.Errors.
 
 Import List.ListNotations.
-From Velus Require Import SIF.SecLusUnnestingCalls.
+From Velus Require Import SIF.SecLusUnnestingStreams.
 
 Module SecLusUnnestingEquations
   (Import Ids     : IDS)
@@ -80,8 +80,8 @@ Module SecLusUnnestingEquations
   (Import UNN     : UNNESTING Ids Op OpAux LSyn)
 .
 
-Module CALLS := SecLusUnnestingCalls Ids Op OpAux Lat SecT SLT SC LSyn LClo CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
-Include CALLS.
+Module STREAMS := SecLusUnnestingStreams Ids Op OpAux Lat SecT SLT SC LSyn LClo CESyn NLSyn STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN.
+Include STREAMS.
 
 Import SECMONADNotations.
 Import UNN.Fresh.Tactics.
@@ -1190,6 +1190,77 @@ Import UNN.Fresh.Tactics.
                    (satisfiable_trans dlt (fst t0'')
                       (merge amb (fst t)) [b] Hr
                       (satisfiable_merge_intro dlt amb (fst t) [b] Hb Htb))).
+    Qed.
+
+    (** The output-wise form needed by multi-stream expressions.  Each source
+        and target type pair has its own ambient, and that same ambient is
+        bounded by the corresponding equation output.  The scalar lemma
+        above is the special case where [ambs] is a constant list. *)
+    Lemma generate_lvars_constraints_mono_streams :
+      forall dlt xs bs ambs ts ts'' c c' s s' q q',
+        Forall3
+          (fun a t t'' =>
+             satisfiable dlt (fst t'') (merge a (fst t)))
+          ambs ts ts'' ->
+        Forall2 (fun a b => satisfiable dlt a [b]) ambs bs ->
+        listSatisfiable dlt (carried ts'') ->
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
+          = OK (c, s') ->
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts'' q
+          = OK (c', q') ->
+        listSatisfiable dlt c ->
+        listSatisfiable dlt c'.
+    Proof.
+      intros dlt xs. induction xs as [|x xs IH];
+        intros bs ambs ts ts'' c c' s s' q q'
+          Hrel Hbs Hct H1 H2 Hsat.
+      - simpl in H2. destruct bs; [|discriminate H2].
+        destruct ts''; [|discriminate H2].
+        unfold SC.ret in H2. inversion H2. constructor.
+      - destruct bs as [|b bs]; [simpl in H2; discriminate H2|].
+        destruct ambs as [|a ambs]; [inversion Hbs|].
+        destruct ts as [|t ts]; [inversion Hrel|].
+        inversion Hrel as
+          [|a0 t0 t0'' ambs0 ts0 ts0'' Hr Hrelr]; subst.
+        inversion Hbs as [|a0 b0 ambs0 bs0 Hb Hbsr]; subst.
+        simpl in Hct.
+        apply listSatisfiable_cmerge in Hct as (Hcth & Hctr).
+        simpl in H1, H2.
+        apply sec_bind_inv in H1 as (ckty1 & s1 & Hck1 & H1).
+        apply sec_bind_inv in H1 as (rest1 & s2 & Hr1 & Hret1).
+        unfold SC.ret in Hret1. inversion Hret1; subst.
+        apply sec_bind_inv in H2 as (ckty2 & q1 & Hck2 & H2).
+        apply sec_bind_inv in H2 as (rest2 & q2 & Hr2 & Hret2).
+        unfold SC.ret in Hret2. inversion Hret2; subst.
+        destruct (eqn_clock_type_pure x _ q _ _ Hck1)
+          as (Hs1 & Hck1').
+        subst s1. rewrite Hck1' in Hck2. inversion Hck2; subst.
+        apply listSatisfiable_app in Hsat as (Hsath & Hsatr).
+        apply listSatisfiable_app. split.
+        + apply lconstrain_sound in Hsath as (Hdefined & Hle).
+          apply lconstrain_sound. split.
+          * unfold lst_defined. rewrite snd_ljoin.
+            unfold ambient. rewrite snd_ljoin, snd_lvar. cbn [snd].
+            rewrite cmerge_nil, cmerge_nil2. exact Hcth.
+          * apply order_iff_satisfiable.
+            apply order_iff_satisfiable in Hle.
+            unfold lst_interp in *. rewrite fst_ljoin in *.
+            assert (satisfiable dlt (fst t) [b]) as Htb.
+            { exact
+                (satisfiable_through_merge_r dlt
+                   (fst (ambient rst_ty ckty2)) (fst t) [b] Hle). }
+            exact
+              (satisfiable_merge_intro dlt
+                 (fst (ambient rst_ty ckty2)) (fst t0'') [b]
+                 (satisfiable_through_merge_l dlt
+                    (fst (ambient rst_ty ckty2)) (fst t) [b] Hle)
+                 (satisfiable_trans dlt (fst t0'')
+                    (merge a (fst t)) [b] Hr
+                    (satisfiable_merge_intro dlt a (fst t) [b]
+                       Hb Htb))).
+        + exact
+            (IH bs ambs ts ts0'' rest1 rest2 s s' q1 q'
+               Hrelr Hbsr Hctr Hr1 Hr2 Hsatr).
     Qed.
 
     (** The property the split needs of what a right-hand side comes back

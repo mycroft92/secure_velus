@@ -771,6 +771,16 @@ ambient really does cover the list, and `eqns_carries_amb` improves that to
 one ambient per equation.  Neither is yet the unconditional node theorem:
 the multi-stream cases need the finer positional interface above.
 
+The repair now has its first compiled layer.  `SecLusUnnestingStreams.v`
+proves `lifted_defs_streams`: the identifiers emitted by `fby`, `arrow`, and
+the lifted control operators are related positionally to their own source
+types and clock ambients.  At the equation boundary,
+`generate_lvars_constraints_mono_streams` proves the corresponding
+pointwise monotonicity rule.  These lemmas remove the need to union sibling
+clocks in precisely the two places where the scalar interface was too strong;
+the remaining work is to thread their `Forall3` relation through the
+expression and call composition.
+
 ## The node frontier
 
 `SecLusUnnestingNodes.v` now proves two composition lemmas.  `eqns_carries`
