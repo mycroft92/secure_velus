@@ -828,8 +828,19 @@ false branch lists run consecutively under the enriched ambient list, their
 valuation witnesses compose using the same disjoint-state argument as the
 ordinary list fold, and `ljoin_list_rel_streams_on` absorbs the added
 `sec(x)` into the final merge result.  The complete serial Docker build passes
-with this pointwise control case.  The next control case is `Eite` under
-`is_control = true`.
+with this pointwise control case.
+
+`carries_Eite_control_streams` now completes the other non-lifting control
+case.  Its scrutinee is proved once under the declared clock ambient and that
+single bound is expanded positionally to all result ambients by
+`stream_head_rel_of_clock`; `ljoin_list_rel_head_streams` then combines it
+with the two aligned branch relations.  This required making
+`clock_covered` non-vacuous: it now contains both an actual successful
+`assign_clk_type` result and inclusion of that clock type in the ambient,
+rather than quantifying conditionally over a lookup that might fail.  The
+complete serial Docker build passes with both pointwise control cases.  The
+next expression cases are the lifting (`is_control = false`) branches of
+`Emerge` and `Eite`, followed by `Efby`, `Earrow`, and `Eapp`.
 
 ## The node frontier
 
@@ -860,12 +871,13 @@ contains:
    `unnest_node_equations_nodup`).
 
 The obsolete coverage premise has also been removed, and the program-name
-part of moved-name freshness no longer needs to be assumed.  The next proof
-change is therefore not another node wrapper: replace the scalar `A eq`
-interface by the positional per-stream relation described above, then
-re-establish the equation-list composition.  Each source-output bound can
-then come directly from the matching generated source constraint (including
-the instantiated-signature argument in the call case).
+part of moved-name freshness no longer needs to be assumed.  The current
+proof change is therefore not another node wrapper: finish the pointwise
+expression induction described above, then replace the scalar `A eq`
+interface by that positional relation and re-establish the equation-list
+composition.  Each source-output bound can then come directly from the
+matching generated source constraint (including the instantiated-signature
+argument in the call case).
 
 Once those facts are available, the remaining Leg U steps are:
 

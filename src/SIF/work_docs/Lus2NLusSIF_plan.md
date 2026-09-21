@@ -532,8 +532,17 @@ child contracts must use `merge [sec(x)] ambient` positionally.  The new
 that name for each branch and absorbing it into the final joined source type.
 `carries_Emerge_control_streams` now completes that composition: both branch
 list witnesses are chained, the first is transported across the second, and
-`ljoin_list_rel_streams_on` establishes the final pointwise result.  The next
-case is the non-lifting (`is_control = true`) `Eite` proof.
+`ljoin_list_rel_streams_on` establishes the final pointwise result.
+
+The non-lifting `Eite` case now compiles as
+`carries_Eite_control_streams`.  The scrutinee's singleton relation is carried
+across both later branch witnesses, and `stream_head_rel_of_clock` expands its
+declared-clock bound to one bound per aligned result ambient before
+`ljoin_list_rel_head_streams` performs the componentwise join.  In support of
+that argument, `clock_covered` is now deliberately non-vacuous: it packages a
+successful `assign_clk_type` result together with ambient inclusion.  Thus a
+failed clock assignment can no longer satisfy coverage accidentally.  A full
+serial Docker build passes with both pointwise control cases.
 
 `state_clocks_found` and `declared_ambients_of_state` connect the abstract
 clock alignment to the concrete annotated identifiers accumulated by the
@@ -543,8 +552,8 @@ result-clock order.
 
 The next tasks are, in order:
 
-1. complete the pointwise expression induction, next with the control branch
-   of `Emerge`/`Eite`; after that migrate their lifting branches,
+1. complete the pointwise expression induction, next by migrating the lifting
+   (`is_control = false`) branches of `Emerge` and `Eite`, then
    `Efby`/`Earrow`, and the call case;
 2. re-establish the arbitrary-equation and equation-list theorems with that
    relation, then connect the proved moved-name freshness lemma to the naming
