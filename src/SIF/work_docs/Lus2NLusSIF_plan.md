@@ -525,6 +525,12 @@ that alignment through the componentwise sampling map.  Its clock proof uses
 `clock_covered_on_inv`: coverage of `ck on x` entails coverage of `ck`, once
 the typing run has supplied the environment lookup for `x`.
 
+The pointwise join helper used by the control operators also compiles.  For
+`Emerge`, branch clocks are `ck on x` while result clocks are `ck`, so the
+child contracts must use `merge [sec(x)] ambient` positionally.  The new
+`clock_covered_on` and `stream_rel_ambient_on_normalize` lemmas justify adding
+that name for each branch and absorbing it into the final joined source type.
+
 `state_clocks_found` and `declared_ambients_of_state` connect the abstract
 clock alignment to the concrete annotated identifiers accumulated by the
 unnesting fresh state.  The expression contract now carries this state lookup

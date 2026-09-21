@@ -813,6 +813,16 @@ an ambient covering `ck on x` also covers the parent `ck`, using the
 successful security-environment lookup of `x`.  The next cases are the
 non-lifting control branches of `Emerge` and `Eite`.
 
+The shared pointwise join algebra for those cases is now in place as
+`ljoin_list_rel_streams`.  `Emerge` exposes one further, necessary ambient
+transformation: its result clock is `ck`, while each branch is clocked on
+`ck on x`.  A branch therefore runs with the per-stream ambient
+`[sec(x)]` joined to the result ambient, and the final join absorbs that extra
+name back into the source type.  `clock_covered_on`,
+`satisfiable_ambient_on_normalize`, and
+`stream_rel_ambient_on_normalize` establish the two sides of this
+transformation without mixing sibling stream clocks.
+
 ## The node frontier
 
 `SecLusUnnestingNodes.v` now proves two composition lemmas.  `eqns_carries`

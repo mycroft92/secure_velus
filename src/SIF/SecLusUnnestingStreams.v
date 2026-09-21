@@ -1353,6 +1353,70 @@ Section StreamAmbients.
       - apply in_merge_right. apply in_merge_left. exact Hz.
     Qed.
 
+    Lemma clock_covered_on :
+      forall ck x b g amb,
+        Env.find x env = Some g ->
+        clock_covered ck amb ->
+        clock_covered (Con ck x b) (merge [g] amb).
+    Proof.
+      intros ck x b g amb Hfind Hcovered parent_ty Hparent.
+      apply assign_clk_inv in Hparent
+        as (ckty & g' & Hparent_ty & Hckty & Hfind').
+      rewrite Hfind in Hfind'. inversion Hfind'; subst g'; clear Hfind'.
+      subst parent_ty.
+      intros z Hz. apply in_merge_inv in Hz as [Hz|Hz].
+      - apply in_merge_right. apply Hcovered with (ckty := ckty).
+        + exact Hckty.
+        + apply in_merge_left. exact Hz.
+      - apply in_merge_inv in Hz as [Hz|Hz].
+        + apply in_merge_right. apply Hcovered with (ckty := ckty).
+          * exact Hckty.
+          * apply in_merge_right. exact Hz.
+        + apply in_merge_left. exact Hz.
+    Qed.
+
+    Lemma satisfiable_ambient_on_normalize :
+      forall dlt g amb src tgt,
+        satisfiable dlt tgt (merge (merge [g] amb) src) ->
+        satisfiable dlt tgt (merge amb (merge [g] src)).
+    Proof.
+      intros dlt g amb src tgt Hsat.
+      apply satisfiable_trans with
+        (b := merge (merge [g] amb) src); [exact Hsat|].
+      apply satisfiable_merge_intro.
+      - apply satisfiable_merge_intro.
+        + apply satisfiable_trans with (b := merge [g] src).
+          * apply satisfiable_merge_l.
+          * apply satisfiable_merge_r.
+        + apply satisfiable_merge_l.
+      - apply satisfiable_trans with (b := merge [g] src).
+        + apply satisfiable_merge_r.
+        + apply satisfiable_merge_r.
+    Qed.
+
+    Lemma stream_rel_ambient_on_normalize :
+      forall dlt g ambs srcs tgts,
+        stream_rel dlt (List.map (fun amb => merge [g] amb) ambs)
+          srcs tgts ->
+        Forall3
+          (fun amb src tgt =>
+             satisfiable dlt (fst tgt)
+               (merge amb (merge [g] (fst src))))
+          ambs srcs tgts.
+    Proof.
+      intros dlt g ambs. induction ambs as [|amb ambs IH];
+        intros srcs tgts Hrel.
+      - inversion Hrel. constructor.
+      - simpl in Hrel.
+        inversion Hrel as
+          [|amb' src tgt ambs' srcs' tgts' Hhead Htail]; subst.
+        constructor.
+        + exact
+            (satisfiable_ambient_on_normalize
+               dlt g amb (fst src) (fst tgt) Hhead).
+        + exact (IH srcs' tgts' Htail).
+    Qed.
+
     Lemma clocks_covered_when_inv :
       forall ck x b g (tys : list type) cks ambs,
         Env.find x env = Some g ->
@@ -1455,6 +1519,60 @@ Section StreamAmbients.
         + apply scoped_map_when.
           * apply in_or_app. left. exact Hgscope.
           * exact Htgt.
+    Qed.
+
+    (** Pointwise counterpart of the scalar [ljoin_list_rel] helper.  The
+        same ambient list indexes both branches because the joins are made
+        stream by stream. *)
+    Lemma ljoin_list_rel_streams :
+      forall dlt g ambs ts us rs ts' us' rs' s1 s1' s2 s2',
+        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts) us s1
+          = OK (rs, s1') ->
+        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts') us' s2
+          = OK (rs', s2') ->
+        stream_rel dlt ambs ts ts' ->
+        stream_rel dlt ambs us us' ->
+        stream_rel dlt ambs rs rs'.
+    Proof.
+      intros dlt g ambs ts us rs ts' us' rs' s1 s1' s2 s2'
+        Hjoin Hjoin' Hts Hus.
+      revert us rs us' rs' s1 s1' s2 s2' Hjoin Hjoin' Hus.
+      induction Hts as
+        [|amb t t' ambs ts ts' Ht Hts IH];
+        intros us rs us' rs' s1 s1' s2 s2' Hjoin Hjoin' Hus.
+      - inversion Hus. destruct us; simpl in Hjoin; [|discriminate].
+        unfold ret in Hjoin. inversion Hjoin; subst.
+        simpl in Hjoin'. unfold ret in Hjoin'. inversion Hjoin'; subst.
+        constructor.
+      - inversion Hus as
+          [|amb0 u u' ambs0 us0 us0' Hu Hus0]; subst.
+        simpl in Hjoin.
+        apply sec_bind_inv in Hjoin as (r & sa & Hr & Hret).
+        unfold ret in Hret. inversion Hret; subst; clear Hret.
+        simpl in Hjoin'.
+        apply sec_bind_inv in Hjoin' as (r' & sb & Hr' & Hret').
+        unfold ret in Hret'. inversion Hret'; subst; clear Hret'.
+        constructor.
+        + rewrite !fst_ljoin.
+          apply satisfiable_merge_intro.
+          * apply satisfiable_merge_intro.
+            -- apply CALLS.satisfiable_merge_grow_l.
+               apply CALLS.satisfiable_merge_grow_l.
+               apply satisfiable_merge_r.
+            -- apply CALLS.satisfiable_merge_grow_l.
+               apply satisfiable_trans with
+                 (b := merge amb (fst t)).
+               ++ exact Ht.
+               ++ apply satisfiable_merge_intro.
+                  ** apply satisfiable_merge_l.
+                  ** apply satisfiable_trans with
+                       (b := merge (fst (lvar g)) (fst t)).
+                     --- apply satisfiable_merge_r.
+                     --- apply satisfiable_merge_r.
+          * apply CALLS.satisfiable_merge_grow_r.
+            exact Hu.
+        + exact
+            (IH us0 r us0' r' s1 s1' s2 s2' Hr Hr' Hus0).
     Qed.
 
   End ExpressionContract.
