@@ -1,8 +1,125 @@
 # SIF for Lustre: refinement security types and Lustre→NLustre preservation
 
-Target branch: `sif-reset-normalization`. **Status:** Leg A is complete; Leg U
-has complete expression and equation proofs plus a conditional raw node
-theorem; Leg I and the end-to-end pull-back remain.
+Target branch: `Lus2NLusSIF`.
+
+> **Where things stand is in one place: [Leg U — current state](#leg-u--current-state).**
+> That section is rewritten in place and is the only Leg U status to trust.
+> Everything below it dated `2026-09-xx` is history, kept for the reasoning,
+> and may describe designs that were later found wrong.  Each such section
+> says so at its head.
+
+## Leg U — current state
+
+*Rewritten in place. Last checked against a clean `make -j1` on 2026-09-22.*
+
+A design recorded here is marked either **[verified]** -- it has been checked
+against the actual definitions, or better, compiled -- or **[untested]** --
+it is a plan that has not yet met the definitions.  Two designs for the call
+case have already died on contact with `subst_constraints_inp_map`, so the
+distinction is the point, not decoration.
+
+### Proved
+
+*Scalar contract* (`carries_at`, one ambient per equation) -- complete:
+
+  * `carries_exp`, `rhs_carries_exp` (`SecLusUnnestingEquations.v`)
+  * `eqn_carries_all : forall P eq, eqn_carries P eq` -- **unconditional**;
+    the old `Forall eqn_covered` premise is gone from both list inductions
+    and from the node theorem
+  * `eqns_carries`, `eqns_carries_amb`, `node_carries`,
+    `node_carries_preserves` (`SecLusUnnestingNodes.v`)
+  * `unnest_node_fields`, `unnest_node_equations_nodup`, and the moved-name
+    freshness corollaries
+
+*Pointwise contract* (`carries_at_streams`, one ambient per stream) -- every
+form but the call: `Econst`, `Evar`, `Eunop`, `Ebinop`, the list fold,
+`Ewhen`, `Emerge` and `Eite` in both their control and lifting forms,
+`Efby`, `Earrow`.
+
+*Groundwork for the call* (`SecLusUnnestingBase.v`):
+
+  * `clock_prefix`, `assign_clk_type_prefix_incl`,
+    `assign_clk_type_clock_closed` -- language-independent
+  * `assign_exp_type_clock_closed`, `assign_cexp_type_clock_closed` -- these
+    are the **CoreExpr** forms, so they serve the NLustre generator, *not*
+    Leg U's critical path; their structure transfers to the Lustre forms
+    case for case
+  * `satisfiable_of_incl`, `satisfiable_same_names`,
+    `listSatisfiable_same_sources`
+
+### Assumed, not yet discharged
+
+Section hypotheses on `GL` in `SecLusUnnestingEquations.v`: `env_inj`,
+`sig_good`, `sig_nodup`, `sig_scoped`, `sig_actuals_fresh`.  A sixth, the
+dependency property below, will join them.  All are discharged together at
+the program level, which is not written.
+
+`node_carries` also still carries the two ambient premises that the
+per-equation statement cannot discharge; removing them is what the pointwise
+contract is for.
+
+### The open step: the call case
+
+**The gap** *[verified]*.  `generate_constraints_mono_sem` transports
+satisfaction under one ambient `amb`, which must be above every argument's
+ambient (clause 3) and below every result's (the conclusion).  Both cannot
+hold: clocking instantiates all formals from one base `bck`, but an input may
+be declared on a strictly deeper clock than an output -- `f(x when c)` with
+the input on a subclock and the output on `Cbase`.
+
+**Two designs that failed** *[verified wrong]*:
+
+  1. per-input ambients threaded through `cs_chain`/`cs_out`/`cs_le` -- a
+     vector through the whole chain;
+  2. weakening clause 3 in place, on the grounds that `cs_chain`'s third
+     clause already absorbs extra slack.  True at the end of the fold, false
+     during it: the fold substitutes formals one at a time, and `a_j` is
+     built from the actuals of *other* positions -- `j`'s clock variables --
+     which are not yet substituted when position `j` is.
+
+**The design in force** *[partly verified]*.  Leave
+`generate_constraints_mono_sem` untouched -- two other proofs use it -- and
+instantiate the signature on the source side with augmented argument types
+
+    inp1''_j  :=  inp1_j  joined with the actuals of j's clock variables
+
+keeping the uniform ambient `amb := call_amb = [rst_ty] ⊔ assign_clk_type bck`.
+Three obligations:
+
+  * clause 3 holds uniformly, since `a_j = [rst_ty] ⊔ assign_clk_type(clock
+    of arg j)` and that clock is `bck` extended by exactly `j`'s clock
+    variables, so `merge a_j inp1_j ⊆ call_amb ∪ inp1''_j`  *[untested]*;
+  * `amb_pair` holds, since `bck` is a prefix of every output clock --
+    `assign_clk_type_prefix_incl`  *[verified: the lemma is proved; its
+    application to the call is untested]*;
+  * the augmentation changes nothing, since by the dependency property any
+    constraint mentioning input `j` already mentions `j`'s clock variables,
+    so the larger actuals add no member to any source, and
+    `listSatisfiable_same_sources` carries satisfaction across
+    *[the bridge is proved; the "adds no member" step is the next task]*.
+
+**The dependency property.**  For a signature generated by
+`generate_lnode_sig` (the *Lustre* generator -- Leg U is Lustre-to-Lustre, so
+this is `SecLTyping.v`, which is editable, not `SecNLusTyping.v`): a
+constraint whose source mentions input `j` also mentions the variables of
+`j`'s declared clock.
+
+### Next steps, in order
+
+1. `subst_constraints_inp_map` with augmented actuals leaves every
+   constraint source unchanged as a set, given the dependency property.
+2. The dependency property for `generate_leqns_constraints`, mirroring the
+   CoreExpr closure lemmas.
+3. Thread `wc_global P` through `carries_at_streams` -- needed for
+   `find_base_clock (clocksof es) = bck` via `find_base_clock_bck`.
+4. The call case; then `carries_exp_streams`.
+5. Re-establish the equation and equation-list theorems on the pointwise
+   relation, which removes the two ambient premises from `node_carries`.
+6. Concrete `unnest_node`: freshness to the naming run, `simplify`,
+   `signatures_preserved`.
+7. `unnest_global` by signature-global lockstep.  Leg U done.
+8. Leg I (`normfby_global`); then prepend `normalize_global_sem` so source
+   Lustre is the entry to `lnode_noninterference_streams`.
 
 Sources of truth:
 
@@ -454,6 +571,8 @@ leg after Leg I is in place.
 
 #### Leg U checkpoint, 2026-09-20
 
+*History. Superseded by [Leg U — current state](#leg-u--current-state).*
+
 The naming-correspondence decision and the expression/equation work above are
 now implemented.  Leg U is split into six compilation units plus a facade:
 
@@ -552,6 +671,8 @@ result-clock order.
 
 #### Pointwise expression induction: everything but the call, 2026-09-22
 
+*History. Superseded by [Leg U — current state](#leg-u--current-state).*
+
 The lifting branches of `Emerge` and `Eite` and both delays now compile:
 `carries_Emerge_lift_streams`, `carries_Eite_lift_streams`,
 `carries_Efby_streams`, `carries_Earrow_streams`.  All four end the same way.
@@ -604,6 +725,9 @@ The contract does not carry it today; adding it to `carries_at_streams` and
 threading it through the eight existing cases is mechanical.
 
 #### The dependency lemma, designed, 2026-09-22
+
+*History, and partly wrong: the design it records was later found to fail
+during the substitution fold. See [Leg U — current state](#leg-u--current-state).*
 
 Two corrections to the sketch above, and the shape the premise should take.
 
@@ -839,6 +963,8 @@ same shape as `Efby`, simpler carried list), then the induction with the
 statement above, then equation, node and program level.
 
 ### Leg U: exactly where it stops, and the next lemma
+
+*History, long superseded. See [Leg U — current state](#leg-u--current-state).*
 
 Everything structural in the `Eapp` case is done. Both sides instantiate the
 *same* signature -- the source expression looks `f` up to build what it
@@ -1646,6 +1772,8 @@ configure + `make`.
 
 ## 11. Leg U — where the induction stands
 
+*History, long superseded. See [Leg U — current state](#leg-u--current-state).*
+
 **Blocker 1, cleared: the clock environment.** `generate_leqns_constraints`
 reads declared clocks through `eqn_clock_type`, so the two generators cannot
 be compared until the two `lnode_clock_env`s are known to agree. Unnesting
@@ -1701,6 +1829,9 @@ which does not exist yet.
 
 ### Leg U — cases proved, and what each one forced
 
+*History: this list stops at `Emerge` under `is_control`. See
+[Leg U — current state](#leg-u--current-state).*
+
 `Econst`, `Evar`, `Eunop`, `Ebinop`, the list level, `Ewhen`,
 `Emerge` under `is_control`.  Each new case has changed the statement once,
 and in every case the change was forced rather than chosen:
@@ -1731,6 +1862,8 @@ Next: assemble `carries_at P true (Eite ...)` from the pieces (all now in
 place), then the two lifting branches, `Efby`/`Earrow`, and `Eapp`.
 
 ### The next decision: which state-validity invariant to carry
+
+*History: this decision was taken. See [Leg U — current state](#leg-u--current-state).*
 
 The four lifting constructors (`Emerge`/`Eite` without `is_control`,
 `Efby`/`Earrow`) and `Eapp` all end by minting one variable per result with
