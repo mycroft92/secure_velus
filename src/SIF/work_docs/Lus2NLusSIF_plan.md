@@ -624,47 +624,57 @@ mirror them case for case.  `clock_prefix` and
 `assign_clk_type_prefix_incl` are language-independent and are needed either
 way.
 
-**The shape of the premise.**  Generalising `generate_constraints_mono_sem`
-to a `Forall3` over per-input ambients looked like it would force the whole
-substitution chain -- `cs_chain`, `cs_out`, `cs_le`, `amb_pair` -- to carry a
-vector of ambients.  It does not.  `cs_chain`'s third clause already reads
+**The shape of the premise.**  A first attempt tried to weaken clause 3 of
+`generate_constraints_mono_sem` in place, on the grounds that `cs_chain`'s
+third clause
 
     satisfiable dlt (remove_all R (fst c2)) (merge amb (remove_all R (fst c1)))
 
-that is, *the target constraint's whole content is below `amb` joined with
-the source constraint's whole content*.  Slack added at one input is
-therefore already inside the right-hand side, provided that slack is
-contained in `amb` joined with what the constraint already mentions.  The
-invariant does not change; only the first step, the input substitution, has
-to justify the containment.
+already bounds the target constraint's whole content by `amb` joined with
+the source's, so slack added at one input is absorbed.  That is true at the
+*end* of the fold but not during it: the fold substitutes the formals one at
+a time, and `a_j` is built from the actuals of *other* input positions --
+the clock variables of `j`.  Those are not yet in the constraint when
+position `j` is substituted, so the containment cannot be discharged at that
+step.  Repairing it would mean strengthening the chain invariant to carry
+the not-yet-substituted positions, which is the vector through the chain the
+attempt was trying to avoid.
 
-So the extra premise is semantic and local, one line per (input, output)
-pair rather than a new vector through the chain:
+The route that works needs **no change to `generate_constraints_mono_sem`
+at all**, which matters because two other proofs already use it.  Instantiate
+the signature on the source side with *augmented* argument types
 
-    for every constraint c of the signature, with snd c = [o],
-    and every input name y = nth j (s_in sig) with In y (fst c):
-      satisfiable dlt (nth j ambs []) (merge amb [o])
+    inp1''_j  :=  inp1_j  joined with the actuals of j's clock variables
 
-"each argument's ambient sits below the level of every output that argument
-feeds".  With it, clause 3 weakens from one uniform `amb` to per-input
-ambients and everything downstream is unchanged.
+and keep the uniform ambient `amb := call_amb`, the call's base-clock
+ambient `[rst_ty] ⊔ assign_clk_type bck`.  Then
 
-That premise is what the syntactic dependency lemma buys: if a constraint
-mentioning input `j` also mentions the variables of `j`'s declared clock,
-then after substitution those clock actuals are in the constraint's source,
-the source constraint puts them below `o`, and `a_j` -- which is
-`[rst_ty]` joined with the call's base ambient and exactly those clock
-actuals -- lands below `merge amb [o]`, using
-`assign_clk_type_prefix_incl` for the base part.
+  * clause 3 holds uniformly, because
+    `a_j = [rst_ty] ⊔ assign_clk_type(clock of arg j)` and that clock is
+    `bck` extended by exactly `j`'s clock variables, so
+    `merge a_j inp1_j` is contained in `call_amb` joined with `inp1''_j`;
+  * `amb_pair` holds, because `bck` is a prefix of every output clock, so
+    `call_amb` is below every result's ambient --
+    `assign_clk_type_prefix_incl`;
+  * and the augmentation changes *nothing*: by the dependency property, any
+    constraint mentioning input `j` already mentions `j`'s clock variables,
+    so substituting the larger actuals adds no member to any source.
+    `listSatisfiable_same_sources` then carries the source's satisfaction
+    across, since `hm_ext` is a join over members and cannot tell two types
+    with the same members apart.
+
+`satisfiable_of_incl`, `satisfiable_same_names` and
+`listSatisfiable_same_sources` are proved in `SecLusUnnestingBase.v`.
 
 The next tasks are, in order:
 
-1. add the semantic premise above to `generate_constraints_mono_sem` and
-   weaken its clause 3 to per-input ambients; then prove the Lustre-side
-   dependency lemma for `generate_leqns_constraints` (mirroring the CoreExpr
-   ones already in `SecLusUnnestingBase.v`), thread `wc_global` through the
+1. prove that substituting augmented actuals leaves every constraint source
+   unchanged as a set, given the dependency property -- the one new lemma
+   about `subst_constraints_inp_map`; then prove the Lustre-side dependency
+   lemma for `generate_leqns_constraints` (mirroring the CoreExpr ones
+   already in `SecLusUnnestingBase.v`), thread `wc_global` through the
    contract, and do the call case, which completes the pointwise expression
-   induction;
+   induction.  `generate_constraints_mono_sem` itself is not touched;
 2. re-establish the arbitrary-equation and equation-list theorems with that
    relation, then connect the proved moved-name freshness lemma to the naming
    run's clock/reset witnesses;

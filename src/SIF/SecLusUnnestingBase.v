@@ -168,6 +168,58 @@ Module SecLusUnnestingBase
            (@Coq.Init.Logic.eq_refl (option SymTypes.ST) (Some c1)) y Hy).
   Qed.
 
+  (** * Satisfaction depends only on the names a constraint mentions
+
+      [hm_ext] is a join over the members of a type, so a valuation cannot
+      tell two types with the same members apart.  Two consequences, both
+      used by the call case: a type below another by inclusion is below it
+      under every valuation, and two constraint lists whose sources have the
+      same members are satisfied by exactly the same valuations.
+
+      The second is what lets a call's argument types be *augmented* with the
+      actuals of their own clock variables before the signature is
+      instantiated.  The dependency property says those actuals are already
+      in any constraint that mentions the argument, so the augmentation adds
+      no member and changes no obligation -- while making the uniform
+      ambient of [generate_constraints_mono_sem] correct, because each
+      argument's ambient is then contained in the call's base ambient joined
+      with the argument's own augmented type. *)
+
+  Lemma satisfiable_of_incl :
+    forall dlt a b, (forall z, In z a -> In z b) -> satisfiable dlt a b.
+  Proof. intros dlt a b H. unfold satisfiable. apply hm_ext_incl. exact H. Qed.
+
+  Lemma satisfiable_same_names :
+    forall dlt a a' b b',
+      (forall z, In z a <-> In z a') ->
+      (forall z, In z b <-> In z b') ->
+      satisfiable dlt a b -> satisfiable dlt a' b'.
+  Proof.
+    intros dlt a a' b b' Ha Hb H. unfold satisfiable in H |- *.
+    apply Lat.order_trans with (y := hm_ext dlt a).
+    - apply hm_ext_incl. intros z Hz. now apply Ha.
+    - apply Lat.order_trans with (y := hm_ext dlt b); [exact H|].
+      apply hm_ext_incl. intros z Hz. now apply Hb.
+  Qed.
+
+  Lemma listSatisfiable_same_sources :
+    forall dlt cs cs',
+      Forall2
+        (fun c c' =>
+           (forall z, In z (fst c) <-> In z (fst c'))
+           /\ (forall z, In z (snd c) <-> In z (snd c'))) cs cs' ->
+      listSatisfiable dlt cs ->
+      listSatisfiable dlt cs'.
+  Proof.
+    intros dlt cs cs' Hrel Hsat.
+    induction Hrel as [|c c' l l' (Hs & Ht) Hr IH]; [constructor|].
+    inversion Hsat as [|z zs Hz Hzs]; subst.
+    constructor; [|exact (IH Hzs)].
+    destruct c as (s1 & t1). destruct c' as (s2 & t2).
+    simpl in Hs, Ht. unfold constraintSatisfiable in Hz |- *.
+    exact (satisfiable_same_names dlt s1 s2 t1 t2 Hs Ht Hz).
+  Qed.
+
   Lemma option_Some_inj :
     forall (A : Type) (x y : A), Some x = Some y -> x = y.
   Proof. intros A x y H. injection H. auto. Qed.
