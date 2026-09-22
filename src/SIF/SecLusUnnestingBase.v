@@ -91,6 +91,354 @@ Module SecLusUnnestingBase
       and the reset were carrying.  That shared list is what the emitted
       equation has to generate. *)
 
+  (** * Clocks, and the types assigned to them
+
+      [assign_clk_type] walks a clock from [Cbase] outwards, joining the
+      security name of each sampling variable onto what it has so far.  So it
+      is monotone along the [Con] chain: the type of a clock contains the type
+      of every clock that clock refines.
+
+      Two things rest on this.  A call instantiates all of its formals from
+      one base clock, so the call's own ambient sits below the ambient of
+      every one of its results; and a well-clocked expression reads each
+      variable at a clock its own clock refines, so the expression's clock
+      type dominates the clock type of everything it mentions. *)
+
+  Inductive clock_prefix : clock -> clock -> Prop :=
+  | clock_prefix_refl :
+      forall ck, clock_prefix ck ck
+  | clock_prefix_con :
+      forall ck ck' x b,
+        clock_prefix ck ck' -> clock_prefix ck (Con ck' x b).
+
+  Lemma clock_prefix_trans :
+    forall ck1 ck2 ck3,
+      clock_prefix ck1 ck2 -> clock_prefix ck2 ck3 -> clock_prefix ck1 ck3.
+  Proof.
+    intros ck1 ck2 ck3 H12 H23. revert ck1 H12.
+    induction H23 as [ck|ck ck' x b H IH]; intros ck1 H12.
+    - exact H12.
+    - apply clock_prefix_con. exact (IH ck1 H12).
+  Qed.
+
+  Lemma clock_prefix_con_inv :
+    forall ck ck' x b,
+      clock_prefix (Con ck x b) ck' -> clock_prefix ck ck'.
+  Proof.
+    intros ck ck' x b H.
+    apply clock_prefix_trans with (ck2 := Con ck x b);
+      [apply clock_prefix_con, clock_prefix_refl|exact H].
+  Qed.
+
+  (** A clock's type is defined exactly when every clock it refines has one. *)
+  Lemma assign_clk_type_prefix_defined :
+    forall env base_ty ck ck' ckty',
+      clock_prefix ck ck' ->
+      assign_clk_type env base_ty ck' = Some ckty' ->
+      exists ckty, assign_clk_type env base_ty ck = Some ckty.
+  Proof.
+    intros env base_ty ck ck' ckty' Hpre. revert ckty'.
+    induction Hpre as [ck0|ck0 ck1 x b Hpre IH]; intros ckty' H.
+    - exists ckty'. exact H.
+    - simpl in H.
+      destruct (assign_clk_type env base_ty ck1) as [c1|] eqn:Ec1;
+        [|discriminate H].
+      exact (IH c1 (@Coq.Init.Logic.eq_refl (option SymTypes.ST) (Some c1))).
+  Qed.
+
+  Lemma assign_clk_type_prefix_incl :
+    forall env base_ty ck ck' ckty ckty',
+      clock_prefix ck ck' ->
+      assign_clk_type env base_ty ck  = Some ckty ->
+      assign_clk_type env base_ty ck' = Some ckty' ->
+      incl ckty ckty'.
+  Proof.
+    intros env base_ty ck ck' ckty ckty' Hpre. revert ckty ckty'.
+    induction Hpre as [ck0|ck0 ck1 x b Hpre IH]; intros ckty ckty' H1 H2.
+    - rewrite H1 in H2. inversion H2; subst. apply incl_refl.
+    - simpl in H2.
+      destruct (assign_clk_type env base_ty ck1) as [c1|] eqn:Ec1;
+        [|discriminate H2].
+      destruct (Env.find x env) as [xt|] eqn:Ex; [|discriminate H2].
+      simpl in H2. inversion H2; subst ckty'.
+      intros y Hy.
+      apply in_merge_left.
+      exact
+        (IH ckty c1 H1
+           (@Coq.Init.Logic.eq_refl (option SymTypes.ST) (Some c1)) y Hy).
+  Qed.
+
+  Lemma option_Some_inj :
+    forall (A : Type) (x y : A), Some x = Some y -> x = y.
+  Proof. intros A x y H. injection H. auto. Qed.
+
+  (** Every variable a well-clocked CoreExpr expression mentions is read at
+      a clock its own clock refines -- with one exception, the sampling
+      variable a [merge] introduces, whose branches sit one [Con] deeper.
+      That variable is carried by the expression's *type*, because
+      [assign_cexp_type] joins it in.  So the two together --- the clock's
+      type and the expression's --- dominate the clock type of everything
+      mentioned, and that pair is exactly the shape of a generated
+      constraint source, [ambient(ck) ⊔ type(e)]. *)
+
+  Lemma assign_exp_type_clock_closed :
+    forall env base_ty vars,
+      env_injective env ->
+      NoDupMembers vars ->
+      forall e ck ety ckty,
+        CEClo.wc_exp vars e ck ->
+        assign_exp_type env e = Some ety ->
+        assign_clk_type env base_ty ck = Some ckty ->
+        forall v b ckv ckvty,
+          Env.find v env = Some b ->
+          In b ety ->
+          In (v, ckv) vars ->
+          assign_clk_type env base_ty ckv = Some ckvty ->
+          incl ckvty (merge ckty ety).
+  Proof.
+    intros env base_ty vars Hinj Hnd e ck ety ckty Hwc. revert ety ckty.
+    induction Hwc as
+      [c|x ck0 ty Hin|e0 x b0 ck0 Hwc IH Hin
+      |op e0 ck0 ty Hwc IH|op e1 e2 ck0 ty Hwc1 IH1 Hwc2 IH2];
+      intros ety ckty Hety Hckty v b ckv ckvty Hfv Hb Hinv Hckv.
+    - (** a constant mentions nothing *)
+      simpl in Hety. inversion Hety; subst ety. inversion Hb.
+    - (** a variable is read at its own clock *)
+      simpl in Hety.
+      destruct (Env.find x env) as [bx|] eqn:Ex; [|discriminate Hety].
+      simpl in Hety. inversion Hety; subst ety.
+      destruct Hb as [Hb|[]]. subst bx.
+      assert (v = x) as ? by (exact (Hinj v x b b Hfv Ex (@Coq.Init.Logic.eq_refl ident b))); subst v.
+      assert (ckv = ck0) as ?
+          by (exact (NoDupMembers_det x ckv ck0 vars Hnd Hinv Hin)); subst ckv.
+      rewrite Hckv in Hckty. inversion Hckty; subst ckty.
+      intros z Hz. apply in_merge_left. exact Hz.
+    - (** a sampled expression: the sampling variable is at the shallower
+          clock, and everything below it at that clock too *)
+      simpl in Hety.
+      destruct (assign_exp_type env e0) as [ety0|] eqn:Ee0;
+        [|discriminate Hety].
+      destruct (Env.find x env) as [bx|] eqn:Ex; [|discriminate Hety].
+      simpl in Hety. inversion Hety; subst ety.
+      simpl in Hckty.
+      destruct (assign_clk_type env base_ty ck0) as [c0|] eqn:Ec0;
+        [|discriminate Hckty].
+      rewrite Ex in Hckty. simpl in Hckty. inversion Hckty; subst ckty.
+      apply in_merge_inv in Hb as [Hb|Hb].
+      + intros z Hz.
+        assert (In z (merge c0 ety0)) as Hz0
+            by (exact (IH ety0 c0 (@Coq.Init.Logic.eq_refl (option SymTypes.ST) (Some ety0)) (@Coq.Init.Logic.eq_refl (option SymTypes.ST) (Some c0))
+                     v b ckv ckvty Hfv Hb Hinv Hckv z Hz)).
+        apply in_merge_inv in Hz0 as [Hz0|Hz0].
+        * apply in_merge_left, in_merge_left. exact Hz0.
+        * apply in_merge_right, in_merge_left. exact Hz0.
+      + destruct Hb as [Hb|[]]. subst bx.
+        assert (v = x) as ? by (exact (Hinj v x b b Hfv Ex (@Coq.Init.Logic.eq_refl ident b))); subst v.
+        assert (ckv = ck0) as ?
+            by (exact (NoDupMembers_det x ckv ck0 vars Hnd Hinv Hin));
+          subst ckv.
+        rewrite Hckv in Ec0. inversion Ec0; subst c0.
+        intros z Hz. apply in_merge_left, in_merge_left. exact Hz.
+    - (** a unary operator mentions what its operand does *)
+      simpl in Hety.
+      exact (IH ety ckty Hety Hckty v b ckv ckvty Hfv Hb Hinv Hckv).
+    - (** a binary operator, on one clock *)
+      simpl in Hety.
+      destruct (assign_exp_type env e1) as [e1ty|] eqn:Ee1;
+        [|discriminate Hety].
+      destruct (assign_exp_type env e2) as [e2ty|] eqn:Ee2;
+        [|discriminate Hety].
+      simpl in Hety. inversion Hety; subst ety.
+      apply in_merge_inv in Hb as [Hb|Hb]; intros z Hz.
+      + assert (In z (merge ckty e1ty)) as Hz0
+            by (exact
+                  (IH1 e1ty ckty (@Coq.Init.Logic.eq_refl (option SymTypes.ST) (Some e1ty)) Hckty
+                     v b ckv ckvty Hfv Hb Hinv Hckv z Hz)).
+        apply in_merge_inv in Hz0 as [Hz0|Hz0].
+        * apply in_merge_left. exact Hz0.
+        * apply in_merge_right, in_merge_left. exact Hz0.
+      + assert (In z (merge ckty e2ty)) as Hz0
+            by (exact
+                  (IH2 e2ty ckty (@Coq.Init.Logic.eq_refl (option SymTypes.ST) (Some e2ty)) Hckty
+                     v b ckv ckvty Hfv Hb Hinv Hckv z Hz)).
+        apply in_merge_inv in Hz0 as [Hz0|Hz0].
+        * apply in_merge_left. exact Hz0.
+        * apply in_merge_right, in_merge_right. exact Hz0.
+  Qed.
+
+  (** The same closure for a clock's own type: a well-clocked clock samples
+      on variables that are themselves declared on the clocks it refines, so
+      its type already contains theirs.  The base name is the one thing in a
+      clock type that is not a program variable's, which is what
+      [base_not_var] says. *)
+
+  Lemma assign_clk_type_clock_closed :
+    forall env base_ty vars,
+      env_injective env ->
+      NoDupMembers vars ->
+      (forall v ckv b, In (v, ckv) vars ->
+                       Env.find v env = Some b -> b <> base_ty) ->
+      forall ck ckty,
+        wc_clock vars ck ->
+        assign_clk_type env base_ty ck = Some ckty ->
+        forall v b ckv ckvty,
+          Env.find v env = Some b ->
+          In b ckty ->
+          In (v, ckv) vars ->
+          assign_clk_type env base_ty ckv = Some ckvty ->
+          incl ckvty ckty.
+  Proof.
+    intros env base_ty vars Hinj Hnd Hbase ck ckty Hwc. revert ckty.
+    induction Hwc as [|ck0 y b0 Hwc IH Hin];
+      intros ckty Hckty v b ckv ckvty Hfv Hb Hinv Hckv.
+    - (** the base clock mentions only the base name *)
+      simpl in Hckty. apply option_Some_inj in Hckty. subst ckty.
+      destruct Hb as [Hb|[]].
+      exfalso. exact (Hbase v ckv b Hinv Hfv (@Coq.Init.Logic.eq_sym _ _ _ Hb)).
+    - (** one more sampling variable, declared on the clock below it *)
+      cbn -[SymTypes.merge] in Hckty.
+      destruct (assign_clk_type env base_ty ck0) as [c0|] eqn:Ec0;
+        [|discriminate Hckty].
+      destruct (Env.find y env) as [by0|] eqn:Ey; [|discriminate Hckty].
+      cbn -[SymTypes.merge] in Hckty.
+      apply option_Some_inj in Hckty. subst ckty.
+      apply in_merge_inv in Hb as [Hb|Hb].
+      + intros z Hz. apply in_merge_left.
+        exact
+          (IH c0
+             (@Coq.Init.Logic.eq_refl (option SymTypes.ST) (Some c0))
+             v b ckv ckvty Hfv Hb Hinv Hckv z Hz).
+      + destruct Hb as [Hb|[]]. subst by0.
+        assert (v = y) as ?
+            by (exact (Hinj v y b b Hfv Ey (@Coq.Init.Logic.eq_refl ident b)));
+          subst v.
+        assert (ckv = ck0) as ?
+            by (exact (NoDupMembers_det y ckv ck0 vars Hnd Hinv Hin));
+          subst ckv.
+        rewrite Hckv in Ec0. apply option_Some_inj in Ec0. subst c0.
+        intros z Hz. apply in_merge_left. exact Hz.
+  Qed.
+
+  Lemma assign_cexp_type_clock_closed :
+    forall env base_ty vars,
+      env_injective env ->
+      NoDupMembers vars ->
+      forall ce ck ety ckty,
+        CEClo.wc_cexp vars ce ck ->
+        assign_cexp_type env ce = Some ety ->
+        assign_clk_type env base_ty ck = Some ckty ->
+        forall v b ckv ckvty,
+          Env.find v env = Some b ->
+          In b ety ->
+          In (v, ckv) vars ->
+          assign_clk_type env base_ty ckv = Some ckvty ->
+          incl ckvty (merge ckty ety).
+  Proof.
+    intros env base_ty vars Hinj Hnd ce ck ety ckty Hwc. revert ety ckty.
+    induction Hwc as
+      [x t f ck0 Hin Hwct IHt Hwcf IHf
+      |e0 t f ck0 Hwce Hwct IHt Hwcf IHf
+      |e0 ck0 Hwce];
+      intros ety ckty Hety Hckty v b ckv ckvty Hfv Hb Hinv Hckv.
+    - (** the sampling variable is at the shallower clock, and the type
+          carries it, so the branches' extra [Con] is paid for *)
+      cbn -[SymTypes.merge] in Hety.
+      destruct (Env.find x env) as [bx|] eqn:Ex; [|discriminate Hety].
+      destruct (assign_cexp_type env t) as [c1ty|] eqn:Et;
+        [|discriminate Hety].
+      destruct (assign_cexp_type env f) as [c2ty|] eqn:Ef;
+        [|discriminate Hety].
+      cbn -[SymTypes.merge] in Hety. apply option_Some_inj in Hety. subst ety.
+      assert (assign_clk_type env base_ty (Con ck0 x true)
+              = Some (merge ckty [bx])) as Ect.
+      { simpl. rewrite Hckty, Ex. reflexivity. }
+      assert (assign_clk_type env base_ty (Con ck0 x false)
+              = Some (merge ckty [bx])) as Ecf.
+      { simpl. rewrite Hckty, Ex. reflexivity. }
+      apply in_merge_inv in Hb as [Hb|Hb].
+      + apply in_merge_inv in Hb as [Hb|Hb].
+        * (** the sampling variable itself *)
+          destruct Hb as [Hb|[]]. subst bx.
+          assert (v = x) as ?
+              by (exact (Hinj v x b b Hfv Ex (@Coq.Init.Logic.eq_refl ident b)));
+            subst v.
+          assert (ckv = ck0) as ?
+              by (exact (NoDupMembers_det x ckv ck0 vars Hnd Hinv Hin));
+            subst ckv.
+          rewrite Hckv in Hckty. inversion Hckty; subst ckty.
+          intros z Hz. apply in_merge_left. exact Hz.
+        * (** the true branch, one [Con] deeper *)
+          intros z Hz.
+          assert (In z (merge (merge ckty [bx]) c1ty)) as Hz0
+              by (exact
+                    (IHt c1ty (merge ckty [bx])
+                       (@Coq.Init.Logic.eq_refl (option SymTypes.ST)
+                          (Some c1ty))
+                       Ect v b ckv ckvty Hfv Hb Hinv Hckv z Hz)).
+          apply in_merge_inv in Hz0 as [Hz0|Hz0].
+          -- apply in_merge_inv in Hz0 as [Hz0|Hz0].
+             ++ apply in_merge_left. exact Hz0.
+             ++ apply in_merge_right, in_merge_left, in_merge_left.
+                exact Hz0.
+          -- apply in_merge_right, in_merge_left, in_merge_right. exact Hz0.
+      + (** the false branch *)
+        intros z Hz.
+        assert (In z (merge (merge ckty [bx]) c2ty)) as Hz0
+            by (exact
+                  (IHf c2ty (merge ckty [bx])
+                     (@Coq.Init.Logic.eq_refl (option SymTypes.ST)
+                        (Some c2ty))
+                     Ecf v b ckv ckvty Hfv Hb Hinv Hckv z Hz)).
+        apply in_merge_inv in Hz0 as [Hz0|Hz0].
+        * apply in_merge_inv in Hz0 as [Hz0|Hz0].
+          -- apply in_merge_left. exact Hz0.
+          -- apply in_merge_right, in_merge_left, in_merge_left. exact Hz0.
+        * apply in_merge_right, in_merge_right. exact Hz0.
+    - (** a conditional: scrutinee and branches all on one clock *)
+      cbn -[SymTypes.merge] in Hety.
+      destruct (assign_exp_type env e0) as [ety0|] eqn:Ee0;
+        [|discriminate Hety].
+      destruct (assign_cexp_type env t) as [c1ty|] eqn:Et;
+        [|discriminate Hety].
+      destruct (assign_cexp_type env f) as [c2ty|] eqn:Ef;
+        [|discriminate Hety].
+      cbn -[SymTypes.merge] in Hety. apply option_Some_inj in Hety. subst ety.
+      apply in_merge_inv in Hb as [Hb|Hb]; [apply in_merge_inv in Hb as [Hb|Hb]|];
+        intros z Hz.
+      + assert (In z (merge ckty ety0)) as Hz0
+            by (exact
+                  (assign_exp_type_clock_closed
+                     env base_ty vars Hinj Hnd e0 ck0 ety0 ckty
+                     Hwce Ee0 Hckty v b ckv ckvty Hfv Hb Hinv Hckv z Hz)).
+        apply in_merge_inv in Hz0 as [Hz0|Hz0].
+        * apply in_merge_left. exact Hz0.
+        * apply in_merge_right, in_merge_left, in_merge_left. exact Hz0.
+      + assert (In z (merge ckty c1ty)) as Hz0
+            by (exact
+                  (IHt c1ty ckty
+                     (@Coq.Init.Logic.eq_refl (option SymTypes.ST)
+                        (Some c1ty))
+                     Hckty v b ckv ckvty Hfv Hb Hinv Hckv z Hz)).
+        apply in_merge_inv in Hz0 as [Hz0|Hz0].
+        * apply in_merge_left. exact Hz0.
+        * apply in_merge_right, in_merge_left, in_merge_right. exact Hz0.
+      + assert (In z (merge ckty c2ty)) as Hz0
+            by (exact
+                  (IHf c2ty ckty
+                     (@Coq.Init.Logic.eq_refl (option SymTypes.ST)
+                        (Some c2ty))
+                     Hckty v b ckv ckvty Hfv Hb Hinv Hckv z Hz)).
+        apply in_merge_inv in Hz0 as [Hz0|Hz0].
+        * apply in_merge_left. exact Hz0.
+        * apply in_merge_right, in_merge_right. exact Hz0.
+    - (** a plain expression *)
+      cbn -[SymTypes.merge] in Hety.
+      exact
+        (assign_exp_type_clock_closed
+           env base_ty vars Hinj Hnd e0 ck0 ety ckty
+           Hwce Hety Hckty v b ckv ckvty Hfv Hb Hinv Hckv).
+  Qed.
+
   Lemma assign_lexp_Eapp_inv :
     forall G env base_ty rst_ty f es er anns ts st st',
       assign_lexp_type G env base_ty rst_ty (Eapp f es er anns) st = OK (ts, st') ->
