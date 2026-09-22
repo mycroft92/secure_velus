@@ -603,12 +603,68 @@ gives from `WellInstantiated_bck` and `WellInstantiated_parent` -- but
 The contract does not carry it today; adding it to `carries_at_streams` and
 threading it through the eight existing cases is mechanical.
 
+#### The dependency lemma, designed, 2026-09-22
+
+Two corrections to the sketch above, and the shape the premise should take.
+
+**Which generator.**  The earlier note said the dependency property is about
+`generate_node_sig` in `SecNLusTyping.v`.  It is not, for Leg U's purposes.
+Leg U is Lustre-to-Lustre: the same `GL` types the source equation and the
+unnested one, and `GL`'s signatures come from `generate_lnode_sig` in
+`SecLTyping.v` -- the *Lustre* generator, which is editable.  So the eventual
+discharge is over `generate_leqns_constraints` and `assign_lexp_type`, not
+over the CoreExpr generator.
+
+`SecLusUnnestingBase.v` now carries the groundwork, but on the CoreExpr side:
+`assign_exp_type_clock_closed` and `assign_cexp_type_clock_closed` are about
+`CEClo.wc_exp`/`wc_cexp`, so they serve the *NLustre* signature generator, not
+Leg U's critical path.  They are still wanted -- the phases' signatures have
+to agree -- and their structure transfers directly to the Lustre forms, which
+mirror them case for case.  `clock_prefix` and
+`assign_clk_type_prefix_incl` are language-independent and are needed either
+way.
+
+**The shape of the premise.**  Generalising `generate_constraints_mono_sem`
+to a `Forall3` over per-input ambients looked like it would force the whole
+substitution chain -- `cs_chain`, `cs_out`, `cs_le`, `amb_pair` -- to carry a
+vector of ambients.  It does not.  `cs_chain`'s third clause already reads
+
+    satisfiable dlt (remove_all R (fst c2)) (merge amb (remove_all R (fst c1)))
+
+that is, *the target constraint's whole content is below `amb` joined with
+the source constraint's whole content*.  Slack added at one input is
+therefore already inside the right-hand side, provided that slack is
+contained in `amb` joined with what the constraint already mentions.  The
+invariant does not change; only the first step, the input substitution, has
+to justify the containment.
+
+So the extra premise is semantic and local, one line per (input, output)
+pair rather than a new vector through the chain:
+
+    for every constraint c of the signature, with snd c = [o],
+    and every input name y = nth j (s_in sig) with In y (fst c):
+      satisfiable dlt (nth j ambs []) (merge amb [o])
+
+"each argument's ambient sits below the level of every output that argument
+feeds".  With it, clause 3 weakens from one uniform `amb` to per-input
+ambients and everything downstream is unchanged.
+
+That premise is what the syntactic dependency lemma buys: if a constraint
+mentioning input `j` also mentions the variables of `j`'s declared clock,
+then after substitution those clock actuals are in the constraint's source,
+the source constraint puts them below `o`, and `a_j` -- which is
+`[rst_ty]` joined with the call's base ambient and exactly those clock
+actuals -- lands below `merge amb [o]`, using
+`assign_clk_type_prefix_incl` for the base part.
+
 The next tasks are, in order:
 
-1. prove the signature dependency lemma, generalise
-   `generate_constraints_mono_sem` to per-input ambients, thread `wc_global`
-   through the contract, and then do the call case, which completes the
-   pointwise expression induction;
+1. add the semantic premise above to `generate_constraints_mono_sem` and
+   weaken its clause 3 to per-input ambients; then prove the Lustre-side
+   dependency lemma for `generate_leqns_constraints` (mirroring the CoreExpr
+   ones already in `SecLusUnnestingBase.v`), thread `wc_global` through the
+   contract, and do the call case, which completes the pointwise expression
+   induction;
 2. re-establish the arbitrary-equation and equation-list theorems with that
    relation, then connect the proved moved-name freshness lemma to the naming
    run's clock/reset witnesses;
