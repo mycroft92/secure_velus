@@ -550,11 +550,65 @@ unnesting fresh state.  The expression contract now carries this state lookup
 invariant; the lifting cases will use it with `unnest_exp_clockof` to obtain
 result-clock order.
 
+#### Pointwise expression induction: everything but the call, 2026-09-22
+
+The lifting branches of `Emerge` and `Eite` and both delays now compile:
+`carries_Emerge_lift_streams`, `carries_Eite_lift_streams`,
+`carries_Efby_streams`, `carries_Earrow_streams`.  All four end the same way.
+`idents_for_anns` mints one variable per result; those identifiers land in
+the fresh state carrying their annotations; `state_clocks_found` says the
+naming run knows their clocks; and `declared_ambients_of_state` turns that
+into one ambient per minted variable, which `lifted_defs_streams` consumes.
+So every emitted definition stays above its own ambient and no sibling's.
+`ljoin_list_rel_plain_streams` is the new componentwise join with no head in
+front, which is what the two delays need.
+
+That leaves the call, and it is not a fifth instance of the same pattern.
+
+**Why the call is different.**  `generate_constraints_mono_sem` transports
+satisfaction across a call under *one* ambient `amb`: clause 3 asks each
+target actual to dominate `merge amb` of the source actual, and
+`amb_pair dlt os bs` makes each target output equal `amb` joined with the
+source output.  Instantiating it needs `amb` to be simultaneously
+
+  * **above** every argument's ambient, to discharge clause 3 from the
+    arguments' pointwise witnesses, and
+  * **below** every result's ambient, because the contract's conclusion
+    demands `satisfiable dlt (fst tgt_i) (merge a_i (fst src_i))`.
+
+For a node call those two cannot in general both hold.  Clocking
+instantiates every formal from the same base `bck`, but an input may be
+declared on a strictly deeper clock than an output: in `f(x when c)` with
+`f`'s input declared on a subclock and its output on `Cbase`, the argument
+sits on `bck on c'` while the result sits on `bck`.  The argument's ambient
+is then not below the result's, and no uniform `amb` exists.
+
+**What would close it.**  The per-input generalisation of
+`generate_constraints_mono_sem` -- clause 3 with one ambient per input --
+is sound only if a generated signature already carries the dependency
+
+    a constraint that mentions input `j` also mentions the variables of
+    `j`'s declared clock.
+
+That is a property of `generate_node_sig` in `SecNLusTyping.v`.  The file is
+read-only, but the property is about it rather than in it, so the lemma
+belongs in an editable unit.  With it, an argument's extra clock variables
+are already below every output the argument feeds, and the per-input clause
+absorbs into the output side exactly as the uniform one does.
+
+A second, smaller prerequisite: relating the call's own clock ambient to the
+results' needs `find_base_clock (clocksof es) = bck`, which `find_base_clock_bck`
+gives from `WellInstantiated_bck` and `WellInstantiated_parent` -- but
+`WellInstantiated_bck` wants `wc_env (idck n.(n_in))`, i.e. `wc_global P`.
+The contract does not carry it today; adding it to `carries_at_streams` and
+threading it through the eight existing cases is mechanical.
+
 The next tasks are, in order:
 
-1. complete the pointwise expression induction, next by migrating the lifting
-   (`is_control = false`) branches of `Emerge` and `Eite`, then
-   `Efby`/`Earrow`, and the call case;
+1. prove the signature dependency lemma, generalise
+   `generate_constraints_mono_sem` to per-input ambients, thread `wc_global`
+   through the contract, and then do the call case, which completes the
+   pointwise expression induction;
 2. re-establish the arbitrary-equation and equation-list theorems with that
    relation, then connect the proved moved-name freshness lemma to the naming
    run's clock/reset witnesses;
