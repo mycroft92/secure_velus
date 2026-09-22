@@ -309,6 +309,251 @@ Import UNN.Fresh.Tactics.
         + now apply in_merge_right.
     Qed.
 
+    (** * What the input map leaves behind
+
+        Substituting the formals one at a time is a fold, but its *result* has
+        a flat description: the source of a substituted constraint holds
+        exactly the names the original held that are not formals, together
+        with the actuals of every formal the original mentioned.  Stating it
+        this way avoids reasoning about the fold's intermediate states, which
+        is where two earlier attempts at the call case came apart.
+
+        The freshness premise -- no actual mentions a formal -- is what makes
+        the description stable: substituting one formal neither creates nor
+        destroys an occurrence of another. *)
+
+    Lemma subst_ident_in_constraints_members :
+      forall cs x v d sa sa',
+        ~ In x v ->
+        SIG.subst_ident_in_constraints cs x v sa = OK (d, sa') ->
+        Forall2
+          (fun c c' =>
+             snd c' = snd c
+             /\ forall z,
+                  In z (fst c') <->
+                  ((In z (fst c) /\ z <> x)
+                   \/ (In x (fst c) /\ In z v)))
+          cs d.
+    Proof.
+      intros cs x v. unfold SIG.subst_ident_in_constraints.
+      induction cs as [|c cs IH]; intros d sa sa' Hxv H.
+      - simpl in H. unfold SC.ret in H. inv H. constructor.
+      - simpl in H.
+        eapply sec_bind_inv in H as (c' & s1 & Hc' & H).
+        eapply sec_bind_inv in H as (cs' & s2 & Hcs' & Hret).
+        unfold SC.ret in Hret. inv Hret.
+        constructor; [|exact (IH cs' _ _ Hxv Hcs')].
+        destruct c as (ty & tg).
+        unfold SIG.subst_inp_ident_in_constraint in Hc'.
+        destruct tg as [|y [|]]; try discriminate Hc'.
+        destruct (ident_eqb x y) eqn:Hxy; try discriminate Hc'.
+        unfold SC.ret in Hc'. inv Hc'.
+        simpl. split; [reflexivity|].
+        destruct (in_dec ident_eq_dec x ty) as [Hin|Hnin].
+        + intros z. rewrite (subst_ident_in_type_In ty x v z Hin Hxv).
+          split.
+          * intros [(Hz & Hne)|Hz]; [left; split; assumption
+                                    |right; split; assumption].
+          * intros [(Hz & Hne)|(_ & Hz)]; [left; split; assumption
+                                          |right; exact Hz].
+        + rewrite subst_ident_in_type_notin by exact Hnin.
+          intros z. split.
+          * intros Hz. left. split; [exact Hz|].
+            intro; subst z; contradiction.
+          * intros [(Hz & _)|(Hc & _)]; [exact Hz|contradiction].
+    Qed.
+
+    Lemma subst_constraints_inp_map_members :
+      forall xs vs cs d sa sa',
+        NoDup xs ->
+        Forall (fun v => forall y, In y xs -> ~ In y v) vs ->
+        SIG.subst_constraints_inp_map cs xs vs sa = OK (d, sa') ->
+        Forall2
+          (fun c c' =>
+             snd c' = snd c
+             /\ forall z,
+                  In z (fst c') <->
+                  ((In z (fst c) /\ ~ In z xs)
+                   \/ (exists y w, In (y, w) (combine xs vs)
+                                   /\ In y (fst c) /\ In z w)))
+          cs d.
+    Proof.
+      induction xs as [|x xs IH]; intros vs cs d sa sa' Hnd Hfr H.
+      - destruct vs; simpl in H; [|discriminate].
+        unfold SC.ret in H. inv H.
+        clear. induction d as [|c cs IH]; constructor; [|exact IH].
+        split; [reflexivity|]. intros z. split.
+        + intros Hz. left. split; [exact Hz|intros []].
+        + intros [(Hz & _)|(y & w & Hyw & _)]; [exact Hz|inversion Hyw].
+      - destruct vs as [|v vs]; simpl in H; [discriminate|].
+        eapply sec_bind_inv in H as (d1 & s1 & Hd1 & H).
+        inversion Hfr as [|v0 vs0 Hv Hvs]; subst.
+        inversion Hnd as [|x0 xs0 Hxnin Hndr]; subst.
+        assert (~ In x v) as Hxv by (apply Hv; now left).
+        pose proof
+          (subst_ident_in_constraints_members cs x v d1 _ _ Hxv Hd1)
+          as Hstep.
+        assert (Forall (fun w => forall y, In y xs -> ~ In y w) vs) as Hfr'.
+        { eapply Forall_impl; [|exact Hvs].
+          intros w Hw y Hy. apply Hw. now right. }
+        pose proof (IH vs d1 d _ _ Hndr Hfr' H) as Hrest.
+
+        (** the formals still to come are untouched by this substitution *)
+        assert (forall (c c1 : SymTypes.constraint),
+                   (forall z, In z (fst c1) <->
+                              ((In z (fst c) /\ z <> x)
+                               \/ (In x (fst c) /\ In z v))) ->
+                   forall y, In y xs -> (In y (fst c1) <-> In y (fst c)))
+          as Hkeep.
+        { intros c c1 Hc1 y Hy. rewrite Hc1. split.
+          - intros [(Hz & _)|(_ & Hz)]; [exact Hz|].
+            exfalso. eapply (Hv y); [now right|exact Hz].
+          - intros Hz. left. split; [exact Hz|].
+            intro; subst y; contradiction. }
+
+        (** and the two descriptions compose *)
+        clear - Hstep Hrest Hkeep Hv Hxnin.
+        revert d1 d Hstep Hrest.
+        induction cs as [|c cs IHcs]; intros d1 d Hstep Hrest.
+        + inversion Hstep; subst. inversion Hrest; subst. constructor.
+        + inversion Hstep as [|c0 c1 cs0 d1r Hc1 Hstepr]; subst.
+          inversion Hrest as [|c1' c' d1r' dr Hc' Hrestr]; subst.
+          constructor; [|exact (IHcs d1r dr Hstepr Hrestr)].
+          destruct Hc1 as (Ht1 & Hm1). destruct Hc' as (Ht2 & Hm2).
+          split; [rewrite Ht2; exact Ht1|].
+          intros z. rewrite Hm2, (Hm1 z).
+          assert (forall y, In y xs -> (In y (fst c1) <-> In y (fst c)))
+            as Hkc by (intros y Hy; exact (Hkeep c c1 Hm1 y Hy)).
+          split.
+          * intros [(Hz & Hnxs)|(y & w & Hyw & Hy & Hzw)].
+            -- destruct Hz as [(Hz & Hne)|(Hx & Hzv)].
+               ++ left. split; [exact Hz|].
+                  intros [Heq|Hin]; [now apply Hne|now apply Hnxs].
+               ++ right. exists x, v. split; [now left|].
+                  split; [exact Hx|exact Hzv].
+            -- assert (In y xs) as Hyxs by (eapply in_combine_l; exact Hyw).
+               right. exists y, w. split; [now right|].
+               split; [|exact Hzw]. exact (proj1 (Hkc y Hyxs) Hy).
+          * intros [(Hz & Hnxs)|(y & w & Hyw & Hy & Hzw)].
+            -- left. split.
+               ++ left. split;
+                    [exact Hz|intro; subst z; apply Hnxs; now left].
+               ++ intro Hin. apply Hnxs. now right.
+            -- destruct Hyw as [Heq|Hyw].
+               ++ assert (y = x /\ w = v) as (Hy1 & Hw1)
+                      by (split; congruence).
+                  subst y w.
+                  left. split.
+                  ** right. split; [exact Hy|exact Hzw].
+                  ** intro Hin. eapply (Hv z); [now right|exact Hzw].
+               ++ assert (In y xs) as Hyxs by (eapply in_combine_l; exact Hyw).
+                  right. exists y, w. split; [exact Hyw|].
+                  split; [|exact Hzw]. exact (proj2 (Hkc y Hyxs) Hy).
+    Qed.
+
+    (** Positions line up, because [combine] pairs by position. *)
+
+    Lemma combine_grow_r :
+      forall (xs : list ident) (vs vs' : list ST),
+        Forall2 (fun v v' => forall z, In z v -> In z v') vs vs' ->
+        forall y w, In (y, w) (combine xs vs) ->
+          exists w', In (y, w') (combine xs vs')
+                     /\ (forall z, In z w -> In z w').
+    Proof.
+      intros xs vs vs' H. revert xs.
+      induction H as [|v v' l l' Hv Hl IH]; intros xs y w Hin.
+      - destruct xs; simpl in Hin; contradiction.
+      - destruct xs as [|x xs]; simpl in Hin; [contradiction|].
+        destruct Hin as [Heq|Hin].
+        + assert (y = x /\ w = v) as (? & ?) by (split; congruence); subst.
+          exists v'. split; [now left|exact Hv].
+        + destruct (IH xs y w Hin) as (w' & Hin' & Hsub).
+          exists w'. split; [now right|exact Hsub].
+    Qed.
+
+    Lemma combine_grow_l :
+      forall (xs : list ident) (vs vs' : list ST),
+        Forall2 (fun v v' => forall z, In z v -> In z v') vs vs' ->
+        forall y w', In (y, w') (combine xs vs') ->
+          exists w, In (y, w) (combine xs vs)
+                    /\ (forall z, In z w -> In z w').
+    Proof.
+      intros xs vs vs' H. revert xs.
+      induction H as [|v v' l l' Hv Hl IH]; intros xs y w' Hin.
+      - destruct xs; simpl in Hin; contradiction.
+      - destruct xs as [|x xs]; simpl in Hin; [contradiction|].
+        destruct Hin as [Heq|Hin].
+        + assert (y = x /\ w' = v') as (? & ?) by (split; congruence); subst.
+          exists v. split; [now left|exact Hv].
+        + destruct (IH xs y w' Hin) as (w & Hin' & Hsub).
+          exists w. split; [now right|exact Hsub].
+    Qed.
+
+    (** * Augmenting the actuals changes nothing
+
+        If every name an argument's type gains is one that some *other*
+        argument the constraint already mentions contributes, then
+        instantiating the signature with the larger types produces
+        constraints with exactly the same members -- and so, by
+        [listSatisfiable_same_sources], exactly the same obligations.
+
+        This is what the call case needs.  Each argument's ambient is the
+        call's base ambient joined with the security names of its own clock
+        variables; those variables are other arguments of the same call, and
+        the dependency property says a constraint mentioning the argument
+        mentions them too.  Augmenting by them therefore costs nothing, and
+        it is what makes the single ambient of
+        [generate_constraints_mono_sem] large enough for every argument
+        without being too large for any result. *)
+
+    Lemma subst_constraints_inp_map_augment :
+      forall xs vs vs' cs d d' sa sa' sb sb',
+        NoDup xs ->
+        Forall (fun v => forall y, In y xs -> ~ In y v) vs ->
+        Forall (fun v => forall y, In y xs -> ~ In y v) vs' ->
+        Forall2 (fun v v' => forall z, In z v -> In z v') vs vs' ->
+        (forall c, In c cs ->
+           forall y w', In (y, w') (combine xs vs') -> In y (fst c) ->
+             forall z, In z w' ->
+               exists y2 w2, In (y2, w2) (combine xs vs)
+                             /\ In y2 (fst c) /\ In z w2) ->
+        SIG.subst_constraints_inp_map cs xs vs  sa = OK (d,  sa') ->
+        SIG.subst_constraints_inp_map cs xs vs' sb = OK (d', sb') ->
+        Forall2
+          (fun a b =>
+             (forall z, In z (fst a) <-> In z (fst b))
+             /\ (forall z, In z (snd a) <-> In z (snd b)))
+          d d'.
+    Proof.
+      intros xs vs vs' cs d d' sa sa' sb sb' Hnd Hfr Hfr' Hgrow Hdep H H'.
+      pose proof (subst_constraints_inp_map_members xs vs cs d _ _ Hnd Hfr H)
+        as Hm.
+      pose proof (subst_constraints_inp_map_members xs vs' cs d' _ _ Hnd Hfr' H')
+        as Hm'.
+      clear H H'. revert d d' Hm Hm' Hdep.
+      induction cs as [|c cs IH]; intros d d' Hm Hm' Hdep.
+      - inversion Hm; subst. inversion Hm'; subst. constructor.
+      - inversion Hm as [|c0 a cs0 dr (Hta & Hma) Hmr]; subst.
+        inversion Hm' as [|c0' b cs0' dr' (Htb & Hmb) Hmr']; subst.
+        constructor.
+        + split.
+          * intros z. rewrite Hma, Hmb. split.
+            -- intros [Hz|(y & w & Hyw & Hy & Hzw)]; [now left|].
+               destruct (combine_grow_r xs vs vs' Hgrow y w Hyw)
+                 as (w' & Hyw' & Hsub).
+               right. exists y, w'. split; [exact Hyw'|].
+               split; [exact Hy|exact (Hsub z Hzw)].
+            -- intros [Hz|(y & w' & Hyw' & Hy & Hzw')]; [now left|].
+               right.
+               exact (Hdep c (or_introl (@Coq.Init.Logic.eq_refl _ c))
+                        y w' Hyw' Hy z Hzw').
+          * intros z.
+            destruct a as (a1 & a2). destruct b as (b1 & b2).
+            simpl in Hta, Htb |- *. subst a2 b2. tauto.
+        + apply IH; [exact Hmr|exact Hmr'|].
+          intros c1 Hc1. apply Hdep. now right.
+    Qed.
+
     (** * The invariant the chain carries
 
         Both sides start from the same signature, so what separates them is
