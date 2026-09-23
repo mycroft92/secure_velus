@@ -84,6 +84,90 @@ Module Type SECLNAMEGEN
     NMret (env', {| nname := n.(n_name); nclk := clk_name; nrst := rst_name;
                     ninst := inst_env |}).
 
+  (** * The naming environment's domain
+
+      Each node's security environment is built from [Env.empty] over the two
+      auxiliary names and the node's declared variables, so a successful
+      lookup identifies which of those the key is.
+
+      This is what rules out a nested call sitting at another input's clock
+      position: such a call's output name lives in [anon_in_eqs], which the
+      node record's own [n_nodup] keeps disjoint from the declared variables,
+      so [assign_clk_type] could not have succeeded on a clock naming it.
+      The exclusion is therefore a fact about this pass and about the node
+      record, not a condition on the programs a theorem covers. *)
+
+  Lemma fresh_insert_domain :
+    forall e k st e' st' w b,
+      fresh_insert e k st = OK (e', st') ->
+      Env.find w e' = Some b ->
+      w = k \/ exists b0, Env.find w e = Some b0.
+  Proof.
+    intros e k st e' st' w b H Hf.
+    unfold fresh_insert in H.
+    destruct (Env.mem k e); [discriminate H|].
+    apply name_bind_inv in H as (v & st1 & Hv & H).
+    apply name_bind_inv in H as (e1 & st2 & He1 & Hret).
+    unfold insert_env, NMret in He1, Hret.
+    inversion He1; subst e1. inversion Hret; subst e' st'.
+    destruct (ident_eq_dec w k) as [Heq|Hne]; [left; exact Heq|].
+    right. exists b. rewrite <- Hf. symmetry.
+    apply Env.gso. exact Hne.
+  Qed.
+
+  Lemma fresh_map_list_domain :
+    forall ks e st e' st' w b,
+      fresh_map_list ks e st = OK (e', st') ->
+      Env.find w e' = Some b ->
+      In w ks \/ exists b0, Env.find w e = Some b0.
+  Proof.
+    induction ks as [|k ks IH]; intros e st e' st' w b H Hf.
+    - simpl in H. unfold NMret in H. inversion H; subst e' st'.
+      right. exists b. exact Hf.
+    - simpl in H.
+      apply name_bind_inv in H as (e1 & st1 & He1 & H).
+      apply name_bind_inv in H as (e2 & st2 & He2 & Hret).
+      unfold NMret in Hret. inversion Hret; subst e2 st2.
+      destruct (IH e1 st1 e' st' w b He2 Hf) as [Hin|(b0 & Hb0)];
+        [left; right; exact Hin|].
+      destruct (fresh_insert_domain e k st e1 st1 w b0 He1 Hb0)
+        as [Heq|Hold]; [left; left; symmetry; exact Heq|].
+      right. exact Hold.
+  Qed.
+
+  Lemma fresh_map_list_domain_empty :
+    forall ks st e' st' w b,
+      fresh_map_list ks (Env.empty ident) st = OK (e', st') ->
+      Env.find w e' = Some b ->
+      In w ks.
+  Proof.
+    intros ks st e' st' w b H Hf.
+    destruct (fresh_map_list_domain ks (Env.empty ident) st e' st' w b H Hf)
+      as [Hin|(b0 & Hb0)]; [exact Hin|].
+    rewrite Env.gempty in Hb0. discriminate Hb0.
+  Qed.
+
+  (** And so, for one Lustre node's own environment. *)
+  Lemma generate_local_env_for_lnode_domain :
+    forall n st le aux st' w b,
+      generate_local_env_for_lnode n st = OK ((le, aux), st') ->
+      Env.find w le = Some b ->
+      w = aux.(nclk) \/ w = aux.(nrst)
+      \/ In w (List.map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars))).
+  Proof.
+    intros n st le aux st' w b H Hf.
+    unfold generate_local_env_for_lnode in H.
+    apply name_bind_inv in H as (clk & st1 & Hclk & H).
+    apply name_bind_inv in H as (rst & st2 & Hrst & H).
+    apply name_bind_inv in H as (env1 & st3 & Henv & H).
+    apply name_bind_inv in H as (ienv & st4 & Hienv & Hret).
+    unfold NMret in Hret. inversion Hret; subst le aux st'.
+    simpl.
+    apply (fresh_map_list_domain_empty _ st2 env1 st3 w b Henv) in Hf.
+    destruct Hf as [Hf|[Hf|Hf]]; [now left|now right; left|].
+    right. right. exact Hf.
+  Qed.
+
   Fixpoint generate_lnode_scoped_env'
     (ns : list node) (envs : node_scoped_env) (acc : list node_aux_names)
     : Name (node_scoped_env * list node_aux_names) :=

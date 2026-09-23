@@ -46,6 +46,13 @@ form but the call: `Econst`, `Evar`, `Eunop`, `Ebinop`, the list fold,
     case for case
   * `satisfiable_of_incl`, `satisfiable_same_names`,
     `listSatisfiable_same_sources`
+  * `fresh_insert_domain`, `fresh_map_list_domain`,
+    `fresh_map_list_domain_empty`,
+    `generate_local_env_for_lnode_domain` (`SecLNameInterface.v`) -- the
+    naming environment's domain is the two aux names plus the node's
+    declared variables, since each node's env is built from `Env.empty`.
+    This is the first of the two construction lemmas that replace the
+    would-be side condition on programs.
   * `subst_ident_in_constraints_members`,
     `subst_constraints_inp_map_members` -- a *flat* description of what the
     input map produces: the source of a substituted constraint holds exactly
@@ -177,10 +184,19 @@ constraint whose source mentions input `j` also mentions the variables of
 1. ~~`subst_constraints_inp_map` with augmented actuals leaves every
    constraint source unchanged as a set, given the dependency property.~~
    **Done** -- `subst_constraints_inp_map_augment`.
-2. The two construction lemmas above (`env` domain, and the exclusion of
-   nested calls at clock positions), then the dependency property for
-   `generate_leqns_constraints`, mirroring the CoreExpr closure lemmas.
-   These are what stand between the augmentation lemma and the call case.
+2. ~~`env` domain~~ **done** (`generate_local_env_for_lnode_domain`).  Next
+   the exclusion itself: at a clock position of a call in a well-clocked
+   node whose typing succeeds, the argument is a variable.  It needs the
+   domain lemma above, `n_nodup`, and the sec-vs-elab prefix argument for
+   which `unnest_node_new_id_not_sec_gensym` is the template.  Then the
+   dependency property for `generate_leqns_constraints`, mirroring the
+   CoreExpr closure lemmas.
+
+   Note on placement: Leg U takes `env` as an abstract section variable, so
+   the domain fact enters it as a hypothesis and is discharged at the
+   program level, where `SECLNAMEGEN` is in scope -- the same way
+   `sig_good` and the others are handled.  Proving it now is what makes
+   that hypothesis *known* dischargeable rather than hoped.
 3. Thread `wc_global P` through `carries_at_streams` -- needed for
    `find_base_clock (clocksof es) = bck` via `find_base_clock_bck`.
 4. The call case; then `carries_exp_streams`.
