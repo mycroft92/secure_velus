@@ -111,60 +111,60 @@ Three obligations:
     *[verified: `subst_constraints_inp_map_augment` proves exactly this,
     with the dependency property as its one remaining premise]*.
 
-**A blocker found while checking the design, 2026-09-23.**  The argument
-above assumes that when input `j`'s declared clock mentions input `k`, the
-*actual* at position `k` contributes `[env v]` to its own type, where `v` is
-the name the clock instantiates to.  Checked against the definitions, that
-assumption does **not** follow from `wc_exp` alone.
+**A near-blocker, and why it is not one, 2026-09-23.**  The augmentation
+argument needs the actual at a clock position to contribute its own security
+name to its type.  That does *not* follow from `wc_exp`: of the Lustre forms
+only `Evar` and `Eapp` may carry an nclock name (`wc_Evar` pins it to the
+variable; everything else is forced to `None` or carries
+`Forall unnamed_stream`), and `wc_equation` constrains only *top-level*
+names, not expressions nested inside a call's arguments.  So on the face of
+it a nested call could sit at a clock position carrying a name `w`, with
+nothing putting `[env w]` in its type while `clocks_covered` still demands
+it.  *[verified: `LClocking.v`, `ClockDefs.v`]*
 
-What is verified:
+The exclusion does not need a new hypothesis on programs.  It follows from
+well-formedness the `node` record already carries, plus the domain of our own
+naming pass:
 
-  * `instck bk sub (Con ck x b)` requires `sub x = Some x'`, so a clock
-    position must resolve through `sub` to a *name*; and `WellInstantiated`
-    fixes `sub x_k` to be the nclock name of the actual at position `k`.
-    So the actual at a clock position must be a named stream.  *[verified,
-    `ClockDefs.v`, `LClocking.v`]*
-  * Of the Lustre expression forms, only two may carry a name under
-    `wc_exp`: `Evar x (ty, (ck, Some x))` -- where `wc_Evar` forces the name
-    to be the variable itself -- and `Eapp`, whose annotations take their
-    names from `sub` on the callee's outputs.  `Econst`, `Eunop`, `Ebinop`,
-    `Ewhen`, `Emerge`, `Eite` are forced to `None`, and `Efby`/`Earrow` carry
-    `Forall unnamed_stream anns`.  *[verified, `LClocking.v`]*
-  * `wc_equation` pins a named *top-level* stream to the defined variable at
-    that position, but says nothing about expressions nested inside a call's
-    arguments.  *[verified]*
+  1. `anon_in (Eapp f es None _) = fresh_ins es`, and
+     `fresh_in (Eapp _ _ _ anns)` contains `anon_streams anns`.  So a
+     *nested* call's named output lands in `anon_in_eq` of the equation, and
+     hence in `anon_in_eqs n_eqs`.  *[verified, `LSyntax.v`]*
+  2. `n_nodup : NoDupMembers (n_in ++ n_vars ++ n_out ++ anon_in_eqs n_eqs)`
+     is a **field of the node record**, so such a name is never a declared
+     variable -- by construction, for every node, with no hypothesis.
+     *[verified, `LSyntax.v`]*
+  3. `generate_local_env_for_node` builds each node's environment from
+     `Env.empty` over `[clk_name; rst_name] ++ map fst (n_in ++ n_out ++
+     n_vars)`, so `Env.find w env = Some _` forces `w` to be an aux name or
+     a declared variable.  *[verified, `NameInterface.v`]*
+  4. The aux names are `Ids.gensym Ids.sec _` (`fresh_ident_gen`), while
+     `n_good` puts every declared and anonymous name in
+     `AtomOrGensym n_prefixes` with `n_prefixes = elab_prefs`.  The two are
+     disjoint, and `unnest_node_new_id_not_sec_gensym` in
+     `SecLusUnnestingNodes.v` is an existing template for exactly this
+     argument.  *[verified that the pieces exist; the composition is
+     untested]*
 
-So a *nested* `Eapp` may sit at a clock position carrying a name `w`, and
-then nothing makes `[env w]` part of that argument's type -- the type is the
-call's freshly minted result names.  The ambient `a_j` for argument `j` must
-contain `[env w]`, because `clocks_covered` forces it to cover
-`clockof arg_j = Con bck w b`; and no argument supplies it.  The augmentation
-step therefore fails for that shape.  **This is a genuine gap, not a proof
-difficulty.**
+Together: whenever `assign_clk_type` succeeds on an argument's clock -- which
+it must, or the generator errors and there is no signature to preserve -- the
+name at that clock position is a declared variable, so the argument there
+cannot be a nested call.  It is an `Evar`, whose type *is* `[env w]`.
 
-Two things bound it:
+So what was going to be a syntactic side condition on user programs becomes
+two lemmas about our own construction:
 
-  * If `w` is not in `env`'s domain then `assign_clk_type` returns `None` and
-    the generator errors, so no signature exists and there is nothing to
-    preserve.  Elaboration appears to give nested calls fresh names via
-    `inst_annot`'s `anon_cons`, which would put every such program in this
-    class -- but that is an observation about `LustreElab.v`, not a
-    hypothesis of any theorem here, and it is **not** something to rely on
-    without proving it.  *[untested]*
-  * Inside the theorem, all that is known is `wc_exp` plus the success of
-    `assign_clk_type`, and those do not exclude the shape.
+  * `env` domain: `Env.find w env = Some _` implies
+    `In w ([clk; rst] ++ map fst (n_in ++ n_out ++ n_vars))` -- a
+    `fresh_map_list` fact;
+  * the composed exclusion: at a clock position of a call in a well-clocked
+    node whose typing succeeds, the argument is a variable.
 
-The resolution is an explicit, syntactic side condition, to be introduced at
-the point of use rather than now:
-
-    every named argument stream of a call is a variable --
-    for each `Eapp f es _ _` and each `k`, if `snd (nth k (nclocksof es))`
-    is `Some w` then `nth k es` is `Evar w (_, (_, Some w))`
-
-It is checkable, it is what elaboration plausibly guarantees, and with it the
-augmentation argument closes.  Without it the call case is false as stated,
-so it must appear as a hypothesis and be discharged -- from the elaborator or
-from a Velus invariant -- rather than assumed away.
+Neither restricts the programs the theorem covers.  The general lesson, and
+worth applying to the remaining premises: **prefer assumptions the passes and
+the syntax already guarantee over conditions invented to make a proof go
+through** -- the `node` record's own invariants are doing work here that a
+hand-written side condition would have obscured.
 
 **The dependency property.**  For a signature generated by
 `generate_lnode_sig` (the *Lustre* generator -- Leg U is Lustre-to-Lustre, so
@@ -177,10 +177,10 @@ constraint whose source mentions input `j` also mentions the variables of
 1. ~~`subst_constraints_inp_map` with augmented actuals leaves every
    constraint source unchanged as a set, given the dependency property.~~
    **Done** -- `subst_constraints_inp_map_augment`.
-2. The dependency property for `generate_leqns_constraints`, mirroring the
-   CoreExpr closure lemmas -- **together with** the named-argument side
-   condition above, without which the call case is false.  These two are
-   what stand between the augmentation lemma and the call case.
+2. The two construction lemmas above (`env` domain, and the exclusion of
+   nested calls at clock positions), then the dependency property for
+   `generate_leqns_constraints`, mirroring the CoreExpr closure lemmas.
+   These are what stand between the augmentation lemma and the call case.
 3. Thread `wc_global P` through `carries_at_streams` -- needed for
    `find_base_clock (clocksof es) = bck` via `find_base_clock_bck`.
 4. The call case; then `carries_exp_streams`.
