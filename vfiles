@@ -144,6 +144,7 @@ src/SIF/SecTypes.v
 src/SIF/SecLusTypes.v
 src/SIF/LusTypes.v
 src/SIF/SecLNameInterface.v
+src/SIF/SecLNamingTotality.v
 src/SIF/SecLTyping.v
 src/SIF/SecNLusTyping.v
 src/SIF/SecNLusConstraintExport.v

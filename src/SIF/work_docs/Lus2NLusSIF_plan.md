@@ -66,6 +66,16 @@ form but the call: `Econst`, `Evar`, `Eunop`, `Ebinop`, the list fold,
     same members, provided every name an argument gains is one that some
     other argument the constraint already mentions contributes
 
+*Lustre naming pass* (`SecLNamingTotality.v`, new): the pass succeeds on
+every node and covers what the generators look up --
+`generate_local_env_for_lnode_ok` and `generate_local_env_for_lnode_covers`,
+with the two bridges the Lustre node record needs (`lnode_var_not_sec`,
+`lnode_declared_NoDup`, `lnode_gather_linsts_NoDup`).  `SecNamingTotality.v`
+did this for the NLustre pass only, so until now every Lustre-side theorem
+was conditioned on a naming hypothesis that had never been shown to hold of
+anything.  Still open: the program-level fold
+(`generate_lnode_scoped_env_ok`), which needs node-name distinctness.
+
 ### Assumed, not yet discharged
 
 Section hypotheses on `GL` in `SecLusUnnestingEquations.v`: `env_inj`,
@@ -207,6 +217,31 @@ constraint whose source mentions input `j` also mentions the variables of
 7. `unnest_global` by signature-global lockstep.  Leg U done.
 8. Leg I (`normfby_global`); then prepend `normalize_global_sem` so source
    Lustre is the entry to `lnode_noninterference_streams`.
+9. The program-level Lustre naming totality
+   (`generate_lnode_scoped_env_ok`), completing the discharge begun in
+   `SecLNamingTotality.v`.
+
+### Why the passes make preservation work
+
+Checked 2026-09-23, and worth recording because it is what makes the
+signature comparison meaningful at all.  Both `unnest_node` and
+`normfby_node` set
+
+    n_name := n_name n;   n_in := n_in n;   n_out := n_out n;
+    n_vars := n_vars n ++ nvars
+
+so the interface is *syntactically* unchanged and `n_vars` only grows.
+Hence `s_name`, `s_in`, `s_out`, `s_clk`, `s_reset` of a source and a
+transformed node's signature are **equal by computation**; only
+`s_constraints` differs, which is exactly what `preserves_on` speaks about.
+And since `n_vars n` is a *prefix* of the transformed node's, and
+`fresh_map_list` allocates in order from `Env.empty`, a variable keeps its
+security name.  *[verified: `Unnesting.v`, `NormFby.v`, `NameInterface.v`]*
+
+One architectural obligation follows and is not yet in any statement: the
+environment must come from the **normalised** program and be used for every
+phase, because `moved_by env init_st st'` presumes `env` maps the minted
+variables.  *[untested]*
 
 Sources of truth:
 
