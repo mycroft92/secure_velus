@@ -97,6 +97,9 @@ been shown to hold of anything.  Now:
 
 ### Assumed, not yet discharged
 
+**See the blocker above first**: two of these are not merely undischarged but
+currently *unsatisfiable* as stated.
+
 Section hypotheses on `GL` in `SecLusUnnestingEquations.v`: `env_inj`,
 `sig_good`, `sig_nodup`, `sig_scoped`, `sig_actuals_fresh`.  A sixth, the
 dependency property below, will join them.  All are discharged together at
@@ -105,6 +108,62 @@ the program level, which is not written.
 `node_carries` also still carries the two ambient premises that the
 per-equation statement cannot discharge; removing them is what the pointwise
 contract is for.
+
+### BLOCKER: `source_types_scoped` is unsatisfiable for programs with calls
+
+*Found 2026-09-24 while deriving the Lustre closure lemma.  Verified against
+the definitions, not conjectured.*
+
+`Section Preservation` in `SecLusUnnestingEquations.v` declares
+
+    Hypothesis source_types_scoped :
+      forall e ts s s',
+        assign_lexp_type GL env base_ty rst_ty e s = OK (ts, s') ->
+        Forall (fun t => st_scoped scope (fst t)) ts.
+
+For a call, `assign_lexp_type` returns
+`map (fun o => (([o] : ST), held)) outs` where
+`outs <- fresh_idents (length anns)` *[verified, `SecLTyping.v`]*, and
+`fresh_idents` mints `gensym sec s, gensym sec (succ s), …` from the state it
+is run at *[verified, `SecLTyping.v`, `SecContext.v`]*.  So
+`st_scoped scope (fst t_i)` demands `In (gensym sec s) scope`.
+
+The hypothesis quantifies over **all** states `s`, and `scope : list ident`
+is finite.  It therefore demands membership for unboundedly many distinct
+names: **unsatisfiable**, as soon as one call expression types at all.  The
+same applies to the `constraints_scoped scope (carried ts)` premises, since a
+call's carried constraints mention the same minted names.
+
+Consequence: every theorem in that section -- `carries_exp`,
+`eqn_carries_all`, `node_carries`, `node_carries_preserves` -- is currently
+**vacuous for any program containing a node call**, which is precisely the
+case the refinement types exist for.  Nothing has instantiated the section
+yet, so this has not bitten; it would have bitten at the program level.
+
+**The diagnosis is over-quantification, not a wrong idea.**  For the run the
+node level actually performs, the minted names *are* a finite set, and
+`SecLTyping.v` already names it: `minted st0 st1`, built from `sec_span`.
+`generate_lnode_sig` eliminates exactly `locals ++ minted st0 st1` with
+`simplify`.  Two repairs, in increasing invasiveness:
+
+1. **Bound the state.**  Give the section a starting state `st0`, quantify
+   the hypothesis over runs with `st0 ≤ s`, and let `scope` include
+   `minted st0 stfinal`.  The intended fact -- minted names are visible names
+   of the comparison, since both sides mint them and `simplify` removes them
+   together -- then holds, and `scope` stays finite.
+2. **A second moved-set.**  Carry the Sec-minted names the way `moved_by`
+   carries the unnesting-minted ones, with the witness free to move them.
+   This is the same shape as the existing `agree_off`/`moved_by` treatment
+   and would be uniform, but touches every statement in the leg.
+
+Repair 1 looks right: the minted names are not "moved" in the `moved_by`
+sense -- both sides of the comparison mint the *same* names, because the
+source and target runs start from the same state -- so they belong in
+`scope`, not in a moved-set.  What is missing is only the bound that keeps
+`scope` finite.
+
+This must be settled before more is built on the section, and it should be
+checked whether the analogous hypotheses in Leg A have the same defect.
 
 ### The open step: the call case
 
