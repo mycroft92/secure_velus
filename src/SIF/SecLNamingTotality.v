@@ -355,6 +355,153 @@ Module Type SECLNAMINGTOTALITY
     unfold gensym_prefs. right. right. now left.
   Qed.
 
+  (** * No key of a node's environment is one of its anonymous streams
+
+      This is the composition the call case needs, and the last step of the
+      argument that replaced what would otherwise have been a syntactic side
+      condition on programs.
+
+      A key of the environment is, by [generate_local_env_for_lnode_domain],
+      either one of the two auxiliary names or a declared variable.  An
+      auxiliary name is a [sec] gensym, and [n_good] puts every anonymous
+      stream among the atoms and the node's own prefixes, which
+      [gensym_prefs] excludes [sec] from.  A declared variable is kept apart
+      from the anonymous streams by the node record's own [n_nodup].
+
+      So a nested call's named output -- which lives in [anon_in_eqs] -- is
+      never in the environment, and [assign_clk_type] cannot have succeeded
+      on a clock naming it. *)
+
+  Lemma anon_stream_not_sec :
+    forall (n : node) w i,
+      PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs) ->
+      InMembers w (anon_in_eqs n.(n_eqs)) ->
+      w <> Ids.gensym Ids.sec i.
+  Proof.
+    intros n w i Hsub Hin.
+    destruct n.(n_good) as [Hgood _].
+    rewrite Forall_forall in Hgood.
+    apply atom_or_gensym_not_sec_gensym.
+    apply AtomOrGensym_mono with (p := n.(n_prefixes)); [exact Hsub|].
+    apply Hgood. rewrite !map_app. apply in_or_app. right.
+    apply in_or_app. right. apply in_or_app. right.
+    now apply fst_InMembers.
+  Qed.
+
+  Lemma declared_not_anon :
+    forall (n : node) w,
+      In w (List.map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars))) ->
+      ~ InMembers w (anon_in_eqs n.(n_eqs)).
+  Proof.
+    intros n w Hin.
+    apply (NoDupMembers_app_InMembers w
+             (n.(n_in) ++ n.(n_vars) ++ n.(n_out))
+             (anon_in_eqs n.(n_eqs))).
+    - rewrite <- !app_assoc. exact n.(n_nodup).
+    - apply fst_InMembers.
+      eapply Permutation_in; [apply Permutation_sym, lnode_keys_perm|exact Hin].
+  Qed.
+
+  Theorem env_key_not_anon :
+    forall (n : node) st le aux st' w b,
+      PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs) ->
+      generate_local_env_for_lnode n st = OK ((le, aux), st') ->
+      Env.find w le = Some b ->
+      ~ InMembers w (anon_in_eqs n.(n_eqs)).
+  Proof.
+    intros n st le aux st' w b Hsub Hgen Hf.
+    (** what the two auxiliary names are *)
+    assert (aux.(nclk) = Ids.gensym Ids.sec st
+            /\ aux.(nrst) = Ids.gensym Ids.sec (Pos.succ st)) as (Hclk & Hrst).
+    { unfold generate_local_env_for_lnode in Hgen.
+      apply name_bind_inv in Hgen as (c & s1 & Hc & Hgen).
+      apply name_bind_inv in Hgen as (r & s2 & Hr & Hgen).
+      apply name_bind_inv in Hgen as (e1 & s3 & He1 & Hgen).
+      apply name_bind_inv in Hgen as (i1 & s4 & Hi1 & Hret).
+      unfold NMret in Hret. inversion Hret; subst le aux st'.
+      unfold fresh_ident_gen in Hc, Hr.
+      inversion Hc; subst c s1. inversion Hr; subst r s2.
+      simpl. split; reflexivity. }
+    destruct (generate_local_env_for_lnode_domain n st le aux st' w b Hgen Hf)
+      as [Hw|[Hw|Hw]].
+    - rewrite Hclk in Hw. intro Hanon.
+      exact (anon_stream_not_sec n w st Hsub Hanon Hw).
+    - rewrite Hrst in Hw. intro Hanon.
+      exact (anon_stream_not_sec n w (Pos.succ st) Hsub Hanon Hw).
+    - exact (declared_not_anon n w Hw).
+  Qed.
+
+  (** * And so: a call argument's fresh streams are never environment keys
+
+      [anon_in] of a call is the fresh streams of its arguments, so anything
+      an argument introduces -- in particular the named output of a *nested*
+      call -- reaches [anon_in_eqs], which the previous theorem keeps out of
+      the environment.
+
+      This is what the call case uses.  Clocking makes the actual at another
+      input's clock position a *named* stream; of the Lustre forms only
+      [Evar] and [Eapp] may be named; and if it were an [Eapp] its name
+      would be one of these, so [assign_clk_type] could not have succeeded
+      on the clock naming it.  The actual is therefore an [Evar], whose
+      security type is exactly the name the clock mentions -- which is what
+      the augmentation step needs. *)
+
+  Lemma fresh_in_arg_in_anon_in :
+    forall f es er anns e w a,
+      In e es ->
+      In (w, a) (fresh_in e) ->
+      In (w, a) (anon_in (Eapp f es er anns)).
+  Proof.
+    intros f es er anns e w a He Hw.
+    assert (In (w, a) (fresh_ins es)) as Hins.
+    { unfold fresh_ins. apply in_concat.
+      exists (fresh_in e). split; [exact Hw|exact (in_map fresh_in es e He)]. }
+    destruct er as [r|]; simpl; [apply in_or_app; now left|exact Hins].
+  Qed.
+
+  Lemma anon_in_exp_in_eqs :
+    forall (eqs : list equation) eq e w a,
+      In eq eqs -> In e (snd eq) -> In (w, a) (anon_in e) ->
+      InMembers w (anon_in_eqs eqs).
+  Proof.
+    intros eqs eq e w a Heq He Hw.
+    apply In_InMembers with (b := a).
+    unfold anon_in_eqs. apply in_concat.
+    exists (anon_in_eq eq). split; [|exact (in_map anon_in_eq eqs eq Heq)].
+    unfold anon_in_eq, anon_ins. apply in_concat.
+    exists (anon_in e). split; [exact Hw|exact (in_map anon_in (snd eq) e He)].
+  Qed.
+
+  Theorem call_arg_fresh_not_env_key :
+    forall (n : node) st le aux st' eq f es er anns e w a,
+      PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs) ->
+      generate_local_env_for_lnode n st = OK ((le, aux), st') ->
+      In eq n.(n_eqs) ->
+      In (Eapp f es er anns) (snd eq) ->
+      In e es ->
+      In (w, a) (fresh_in e) ->
+      forall b, Env.find w le <> Some b.
+  Proof.
+    intros n st le aux st' eq f es er anns e w a Hsub Hgen Heq Hcall He Hw b Hf.
+    apply (env_key_not_anon n st le aux st' w b Hsub Hgen Hf).
+    apply (anon_in_exp_in_eqs n.(n_eqs) eq (Eapp f es er anns) w a);
+      [exact Heq|exact Hcall|].
+    exact (fresh_in_arg_in_anon_in f es er anns e w a He Hw).
+  Qed.
+
+  (** A named nested call is one such stream, by the definition of
+      [fresh_in]. *)
+  Lemma nested_call_name_fresh :
+    forall g gs gr ganns w a,
+      In (w, a) (anon_streams ganns) ->
+      In (w, a) (fresh_in (Eapp g gs gr ganns)).
+  Proof.
+    intros g gs gr ganns w a Hw.
+    destruct gr as [r|]; simpl.
+    - apply in_or_app. right. apply in_or_app. now right.
+    - apply in_or_app. now right.
+  Qed.
+
   (** * The pass succeeds on a whole program
 
       Node names are distinct, so no node's environment is inserted twice;

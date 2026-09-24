@@ -79,6 +79,16 @@ been shown to hold of anything.  Now:
     `generate_lnode_scoped_env_ok_from_ordered`, the latter taking
     `LOrd.Ordered_nodes` -- which the Lustre entry point already assumes --
     via `lOrdered_nodes_NoDup_names`;
+  * the exclusion the call case needs, end to end:
+    `anon_stream_not_sec`, `declared_not_anon`, `env_key_not_anon` -- no key
+    of a node's environment is one of its anonymous streams -- and then
+    `fresh_in_arg_in_anon_in`, `anon_in_exp_in_eqs`,
+    `call_arg_fresh_not_env_key`, `nested_call_name_fresh`.  Together: a
+    name appearing among the fresh streams of a call's argument is never in
+    the environment, so a nested call cannot sit at another input's clock
+    position and still have `assign_clk_type` succeed.  **The prefix
+    argument that was previously only "verified in pieces" is now
+    composed.**
   * and the one new hypothesis, `PS.Subset n_prefixes gensym_prefs`, is
     shown *satisfiable* rather than merely assumed: `singleton_elab_subset`
     for elaborated nodes, `unnested_prefixes_subset` and
@@ -203,13 +213,12 @@ constraint whose source mentions input `j` also mentions the variables of
 1. ~~`subst_constraints_inp_map` with augmented actuals leaves every
    constraint source unchanged as a set, given the dependency property.~~
    **Done** -- `subst_constraints_inp_map_augment`.
-2. ~~`env` domain~~ **done** (`generate_local_env_for_lnode_domain`).  Next
-   the exclusion itself: at a clock position of a call in a well-clocked
-   node whose typing succeeds, the argument is a variable.  It needs the
-   domain lemma above, `n_nodup`, and the sec-vs-elab prefix argument for
-   which `unnest_node_new_id_not_sec_gensym` is the template.  Then the
-   dependency property for `generate_leqns_constraints`, mirroring the
-   CoreExpr closure lemmas.
+2. ~~`env` domain~~ and ~~the exclusion~~ **both done**
+   (`generate_local_env_for_lnode_domain`, `call_arg_fresh_not_env_key`).
+   What remains before the call case is the dependency property for
+   `generate_leqns_constraints`, mirroring the CoreExpr closure lemmas
+   already in `SecLusUnnestingBase.v`; and threading these facts into Leg U,
+   where `env` is abstract, as hypotheses discharged at the program level.
 
    Note on placement: Leg U takes `env` as an abstract section variable, so
    the domain fact enters it as a hypothesis and is discharged at the
