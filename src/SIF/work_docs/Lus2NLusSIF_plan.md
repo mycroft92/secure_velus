@@ -66,15 +66,24 @@ form but the call: `Econst`, `Evar`, `Eunop`, `Ebinop`, the list fold,
     same members, provided every name an argument gains is one that some
     other argument the constraint already mentions contributes
 
-*Lustre naming pass* (`SecLNamingTotality.v`, new): the pass succeeds on
-every node and covers what the generators look up --
-`generate_local_env_for_lnode_ok` and `generate_local_env_for_lnode_covers`,
-with the two bridges the Lustre node record needs (`lnode_var_not_sec`,
-`lnode_declared_NoDup`, `lnode_gather_linsts_NoDup`).  `SecNamingTotality.v`
-did this for the NLustre pass only, so until now every Lustre-side theorem
-was conditioned on a naming hypothesis that had never been shown to hold of
-anything.  Still open: the program-level fold
-(`generate_lnode_scoped_env_ok`), which needs node-name distinctness.
+*Lustre naming pass* (`SecLNamingTotality.v`, new) -- **complete**.
+`SecNamingTotality.v` did this for the NLustre pass only, so until now every
+Lustre-side theorem was conditioned on a naming hypothesis that had never
+been shown to hold of anything.  Now:
+
+  * per node: `generate_local_env_for_lnode_ok`,
+    `generate_local_env_for_lnode_covers`, with the bridges the Lustre node
+    record needs (`AtomOrGensym_mono`, `lnode_var_not_sec`,
+    `lnode_declared_NoDup`, `lnode_gather_linsts_NoDup`);
+  * per program: `generate_lnode_scoped_env_ok` and
+    `generate_lnode_scoped_env_ok_from_ordered`, the latter taking
+    `LOrd.Ordered_nodes` -- which the Lustre entry point already assumes --
+    via `lOrdered_nodes_NoDup_names`;
+  * and the one new hypothesis, `PS.Subset n_prefixes gensym_prefs`, is
+    shown *satisfiable* rather than merely assumed: `singleton_elab_subset`
+    for elaborated nodes, `unnested_prefixes_subset` and
+    `normalized_prefixes_subset` for what the two passes add.  Without those
+    the result would have relocated the vacuity rather than removed it.
 
 ### Assumed, not yet discharged
 
@@ -217,9 +226,6 @@ constraint whose source mentions input `j` also mentions the variables of
 7. `unnest_global` by signature-global lockstep.  Leg U done.
 8. Leg I (`normfby_global`); then prepend `normalize_global_sem` so source
    Lustre is the entry to `lnode_noninterference_streams`.
-9. The program-level Lustre naming totality
-   (`generate_lnode_scoped_env_ok`), completing the discharge begun in
-   `SecLNamingTotality.v`.
 
 ### Why the passes make preservation work
 

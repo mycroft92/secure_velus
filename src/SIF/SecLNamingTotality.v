@@ -25,6 +25,7 @@ From Velus Require Import Environment.
 From Velus Require Import Operators.
 From Velus Require Import Clocks.
 From Velus Require Import Lustre.LSyntax.
+From Velus Require Import Lustre.LOrdered.
 From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import NLustre.NLSyntax.
 From Velus Require Import NLustre.Memories.
@@ -50,7 +51,8 @@ Module Type SECLNAMINGTOTALITY
   (Import NAMEGEN : NAMEGEN  Ids Op CESyn NLSyn)
   (Import TR      : TR Ids Op OpAux LSyn CESyn NLSyn)
   (Import SECLNG  : SECLNAMEGEN Ids Op OpAux LSyn CESyn NLSyn NAMEGEN TR)
-  (Import SECNT   : SECNAMINGTOTALITY Ids Op CESyn NLSyn Mem IsD Ord NAMEGEN).
+  (Import SECNT   : SECNAMINGTOTALITY Ids Op CESyn NLSyn Mem IsD Ord NAMEGEN)
+  (LOrd           : LORDERED Ids Op LSyn).
 
   Import NAMEMONADNotations.
 
@@ -303,4 +305,156 @@ Module Type SECLNAMINGTOTALITY
       intros x Hx. apply Hvars, in_or_app. right. apply in_or_app. now right.
   Qed.
 
+  (** * The prefix hypothesis is satisfied, not merely assumed
+
+      An elaborated node carries [PS.singleton elab]; [unnest_node] adds
+      [norm1] and [normfby_node] adds [norm2].  All three sit inside
+      [gensym_prefs], so the hypothesis above holds at every phase and the
+      totality result is not vacuous. *)
+
+  Lemma In_of_list_gensym_prefs :
+    forall x, List.In x gensym_prefs -> PS.In x (PSP.of_list gensym_prefs).
+  Proof.
+    intros x Hin. apply PSP.of_list_1, SetoidList.InA_alt.
+    exists x. split; [reflexivity|exact Hin].
+  Qed.
+
+  Lemma singleton_elab_subset :
+    PS.Subset (PS.singleton Ids.elab) (PSP.of_list gensym_prefs).
+  Proof.
+    intros x Hin. apply PS.singleton_spec in Hin. subst x.
+    apply In_of_list_gensym_prefs. unfold gensym_prefs. now left.
+  Qed.
+
+  Lemma add_prefix_subset :
+    forall pre p,
+      List.In pre gensym_prefs ->
+      PS.Subset p (PSP.of_list gensym_prefs) ->
+      PS.Subset (PS.add pre p) (PSP.of_list gensym_prefs).
+  Proof.
+    intros pre p Hpre Hsub x Hin.
+    apply PS.add_spec in Hin as [Heq|Hin];
+      [subst x; now apply In_of_list_gensym_prefs|now apply Hsub].
+  Qed.
+
+  Corollary unnested_prefixes_subset :
+    forall p,
+      PS.Subset p (PSP.of_list gensym_prefs) ->
+      PS.Subset (PS.add Ids.norm1 p) (PSP.of_list gensym_prefs).
+  Proof.
+    intros p Hsub. apply add_prefix_subset; [|exact Hsub].
+    unfold gensym_prefs. right. now left.
+  Qed.
+
+  Corollary normalized_prefixes_subset :
+    forall p,
+      PS.Subset p (PSP.of_list gensym_prefs) ->
+      PS.Subset (PS.add Ids.norm2 p) (PSP.of_list gensym_prefs).
+  Proof.
+    intros p Hsub. apply add_prefix_subset; [|exact Hsub].
+    unfold gensym_prefs. right. right. now left.
+  Qed.
+
+  (** * The pass succeeds on a whole program
+
+      Node names are distinct, so no node's environment is inserted twice;
+      and each node's own environment exists by the theorem above. *)
+
+  Lemma lOrdered_nodes_NoDup_names :
+    forall G, LOrd.Ordered_nodes G -> NoDup (List.map n_name G).
+  Proof.
+    induction 1 as [|nd nds Hord IH Hcalls Hdist]; simpl; constructor.
+    - intro Hin. apply in_map_iff in Hin as (nd' & Heq & Hin').
+      rewrite Forall_forall in Hdist.
+      exact (Hdist nd' Hin' (@Coq.Init.Logic.eq_sym _ _ _ Heq)).
+    - exact IH.
+  Qed.
+
+  Theorem generate_lnode_scoped_env'_ok :
+    forall ns envs acc st,
+      NoDup (List.map n_name ns) ->
+      Forall (fun n => PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs)) ns ->
+      (forall n, In n ns -> ~ Env.In n.(n_name) envs) ->
+      exists envs' aux st',
+        generate_lnode_scoped_env' ns envs acc st = OK ((envs', aux), st').
+  Proof.
+    induction ns as [|n ns IH]; intros envs acc st Hnd Hpre Hfresh.
+    - simpl. unfold NMret. eauto.
+    - simpl in Hnd. inversion Hnd as [|x xs Hnotin Hnd']; subst x xs.
+      inversion Hpre as [|n0 ns0 Hsub Hpre']; subst n0 ns0.
+      destruct (generate_local_env_for_lnode_ok n st Hsub)
+        as (env & rec & st1 & Hlocal).
+      assert (Hins : fresh_insert_node_env envs n.(n_name) env st1
+                     = OK (Env.add n.(n_name) env envs, st1)).
+      { unfold fresh_insert_node_env.
+        destruct (Env.mem n.(n_name) envs) eqn:Hmem.
+        - exfalso.
+          apply (Hfresh n (or_introl (@Coq.Init.Logic.eq_refl _ n))).
+          now apply Env.mem_2.
+        - unfold insert_node_env, NMret. reflexivity. }
+      destruct (IH (Env.add n.(n_name) env envs) (rec :: acc) st1 Hnd' Hpre')
+        as (envs' & aux & st' & Hrec).
+      { intros n' Hin' Hinenv.
+        assert (Hne : n'.(n_name) <> n.(n_name)).
+        { intro Heq. apply Hnotin. rewrite <- Heq. now apply in_map. }
+        apply (Hfresh n' (or_intror Hin')).
+        apply Env.Props.P.F.add_in_iff in Hinenv as [Heq|Hinenv];
+          [contradiction (Hne (@Coq.Init.Logic.eq_sym _ _ _ Heq))|exact Hinenv]. }
+      exists envs', aux, st'.
+      cbn [generate_lnode_scoped_env'].
+      eapply NMbind2_ok; [exact Hlocal|].
+      eapply NMbind_ok; [exact Hins|].
+      eapply NMbind2_ok; [exact Hrec|reflexivity].
+  Qed.
+
+  Theorem generate_lnode_scoped_env_ok :
+    forall ns,
+      NoDup (List.map n_name ns) ->
+      Forall (fun n => PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs)) ns ->
+      exists envs aux, generate_lnode_scoped_env ns = OK (envs, aux).
+  Proof.
+    intros ns Hnd Hpre.
+    unfold generate_lnode_scoped_env.
+    destruct (generate_lnode_scoped_env'_ok
+                ns (Env.empty _) [] init_state Hnd Hpre)
+      as (envs & aux & st' & Hgen).
+    { intros n _ Hin. eapply Env.Props.P.F.empty_in_iff; exact Hin. }
+    rewrite Hgen. eauto.
+  Qed.
+
+  (** The form the Lustre entry point can use: its hypotheses are already
+      there, [Ordered_nodes] for the names and the elaborated prefix set for
+      the rest. *)
+  Corollary generate_lnode_scoped_env_ok_from_ordered :
+    forall ns,
+      LOrd.Ordered_nodes ns ->
+      Forall (fun n => PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs)) ns ->
+      exists envs aux, generate_lnode_scoped_env ns = OK (envs, aux).
+  Proof.
+    intros ns Hord Hpre.
+    apply generate_lnode_scoped_env_ok;
+      [apply lOrdered_nodes_NoDup_names, Hord|exact Hpre].
+  Qed.
+
 End SECLNAMINGTOTALITY.
+
+Module SecLNamingTotality
+  (Ids     : IDS)
+  (Op      : OPERATORS)
+  (OpAux   : OPERATORS_AUX Op)
+  (LSyn    : LSYNTAX  Ids Op)
+  (CESyn   : CESYNTAX     Op)
+  (NLSyn   : NLSYNTAX Ids Op CESyn)
+  (Mem     : MEMORIES Ids Op CESyn NLSyn)
+  (IsD     : ISDEFINED Ids Op CESyn NLSyn Mem)
+  (Ord     : NLORDERED Ids Op CESyn NLSyn)
+  (NAMEGEN : NAMEGEN  Ids Op CESyn NLSyn)
+  (TR      : TR Ids Op OpAux LSyn CESyn NLSyn)
+  (SECLNG  : SECLNAMEGEN Ids Op OpAux LSyn CESyn NLSyn NAMEGEN TR)
+  (SECNT   : SECNAMINGTOTALITY Ids Op CESyn NLSyn Mem IsD Ord NAMEGEN)
+  (LOrd    : LORDERED Ids Op LSyn)
+  <: SECLNAMINGTOTALITY Ids Op OpAux LSyn CESyn NLSyn Mem IsD Ord NAMEGEN TR
+       SECLNG SECNT LOrd.
+  Include SECLNAMINGTOTALITY Ids Op OpAux LSyn CESyn NLSyn Mem IsD Ord NAMEGEN
+            TR SECLNG SECNT LOrd.
+End SecLNamingTotality.
