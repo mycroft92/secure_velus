@@ -234,6 +234,105 @@ Module SecLusUnnestingBase
       exact (IH ys s1 s' Hys).
   Qed.
 
+  (** * The window a run mints in
+
+      [minted s s'] lists [gensym sec s, …, gensym sec (s'-1)] -- exactly the
+      names a run from [s] to [s'] can have minted, since [fresh_ident] is the
+      only thing that moves the state and it mints at the state it is at.
+
+      Two facts make the window usable.  Membership is *exactly* "a [sec]
+      gensym at an index in [s, s')", which is what lets a name be shown
+      *not* to be minted; and the window only widens, so a sub-run's names
+      sit inside its parent's.  Together they are what discharges the call
+      case of the dependency property: a call's result names are minted, so a
+      name known not to be minted cannot be one of them. *)
+
+  Lemma sec_span_spec :
+    forall k s x,
+      In x (sec_span s k) <->
+      exists j, Pos.le s j
+                /\ (Pos.to_nat j < Pos.to_nat s + k)%nat
+                /\ x = Ids.gensym Ids.sec j.
+  Proof.
+    induction k as [|k IH]; intros s x; simpl.
+    - split; [contradiction|].
+      intros (j & Hsj & Hlt & _).
+      apply Pos2Nat.inj_le in Hsj. lia.
+    - split.
+      + intros [Hx|Hx].
+        * exists s. split; [apply Pos.le_refl|].
+          split; [lia|exact (@Coq.Init.Logic.eq_sym _ _ _ Hx)].
+        * apply IH in Hx as (j & Hsj & Hlt & Hxj).
+          rewrite Pos2Nat.inj_succ in Hlt.
+          exists j. split; [|split; [lia|exact Hxj]].
+          apply (Pos.le_trans s (Pos.succ s) j);
+            [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|exact Hsj].
+      + intros (j & Hsj & Hlt & Hxj); subst x.
+        apply Pos.lt_eq_cases in Hsj as [Hlt'|Heq].
+        * right. apply IH. exists j.
+          split; [apply Pos.le_succ_l; exact Hlt'|].
+          split; [rewrite Pos2Nat.inj_succ; lia|reflexivity].
+        * subst j. now left.
+  Qed.
+
+  Lemma minted_spec :
+    forall s s' x,
+      In x (minted s s') <->
+      exists j, Pos.le s j /\ Pos.lt j s' /\ x = Ids.gensym Ids.sec j.
+  Proof.
+    intros s s' x. unfold minted. rewrite sec_span_spec.
+    split; intros (j & Hsj & Hlt & Hxj); exists j;
+      (split; [exact Hsj|]); (split; [|exact Hxj]).
+    - apply Pos2Nat.inj_lt. apply Pos2Nat.inj_le in Hsj. lia.
+    - apply Pos2Nat.inj_lt in Hlt. apply Pos2Nat.inj_le in Hsj. lia.
+  Qed.
+
+  Corollary minted_gensym :
+    forall s s' x, In x (minted s s') -> exists j, x = Ids.gensym Ids.sec j.
+  Proof.
+    intros s s' x Hx. apply minted_spec in Hx as (j & _ & _ & ?).
+    now exists j.
+  Qed.
+
+  (** The window only widens: a sub-run of a bounded run mints inside it. *)
+  Corollary minted_window :
+    forall s1 s s' s1',
+      sec_le s1 s -> sec_le s' s1' -> incl (minted s s') (minted s1 s1').
+  Proof.
+    intros s1 s s' s1' H1 H2 x Hx.
+    apply minted_spec in Hx as (j & Hsj & Hlt & Hxj).
+    apply minted_spec. exists j.
+    split; [exact (Pos.le_trans s1 s j H1 Hsj)|].
+    split; [exact (Pos.lt_le_trans j s' s1' Hlt H2)|exact Hxj].
+  Qed.
+
+  Lemma fresh_ident_minted :
+    forall x s s', SC.fresh_ident s = OK (x, s') -> In x (minted s s').
+  Proof.
+    intros x s s' H. unfold SC.fresh_ident in H. inversion H; subst.
+    apply minted_spec. exists s.
+    split; [apply Pos.le_refl|].
+    split; [apply Pos.lt_succ_diag_r|reflexivity].
+  Qed.
+
+  Lemma fresh_idents_minted :
+    forall n xs s s', fresh_idents n s = OK (xs, s') -> incl xs (minted s s').
+  Proof.
+    induction n as [|n IH]; intros xs s s' H; simpl in H.
+    - unfold SC.ret in H. inversion H; subst. intros x [].
+    - apply sec_bind_inv in H as (x & s1 & Hx & H).
+      apply sec_bind_inv in H as (ys & s2 & Hys & Hret).
+      unfold SC.ret in Hret. inversion Hret; subst.
+      intros z [Hz|Hz].
+      + subst z.
+        apply (minted_window s s s1 s');
+          [apply sec_le_refl|exact (fresh_idents_sec_le n ys s1 s' Hys)|].
+        exact (fresh_ident_minted x s s1 Hx).
+      + apply (minted_window s s1 s' s');
+          [exact (fresh_ident_sec_le x s s1 Hx)|apply sec_le_refl|].
+        exact (IH ys s1 s' Hys z Hz).
+  Qed.
+
   (** * The scoping context of a typing run, stated once
 
       These three were declared, identically, in five separate sections --
@@ -2338,5 +2437,766 @@ Module SecLusUnnestingBase
       /\ 0 < List.length tys.
   Proof. intros * H. inv H. auto. Qed.
 
+
+  (** * The dependency property, expression level
+
+      What the call case of preservation needs about a *callee's* signature is
+      this: a constraint whose source mentions an input also mentions the
+      inputs of that input's declared clock.  On the Lustre side that is a
+      property of [assign_lexp_type] -- the type of an expression, taken
+      together with the type of the clock it runs on, already contains the
+      clock type of every declared variable it mentions.  It is the mirror of
+      [assign_cexp_type_clock_closed] above.
+
+      Two things are new here.  The type is a list, one entry per stream, so
+      the statement is a [Forall2] against [clocksof]; and the call case mints
+      names that belong to no program variable, so a name has to be known
+      *not* to have been minted by the run.  That is what the [minted] window
+      algebra is for, and at the use site it is free: [generate_lnode_sig]
+      runs [simplify] over [minted st0 st1], so no minted name survives into
+      a signature.
+
+      The statement is factored through a single-name form, because every
+      case of the induction needs the same two moves -- widen the target, or
+      account for a sampling variable -- and nothing else. *)
+
+  Definition name_clock_closed
+      (env : Env.t ident) (base_ty : ident) (vars : list (ident * clock))
+      (ckty target : ST) (b : ident) : Prop :=
+    forall v ckv ckvty,
+      Env.find v env = Some b ->
+      In (v, ckv) vars ->
+      assign_clk_type env base_ty ckv = Some ckvty ->
+      incl ckvty (merge ckty target).
+
+  Definition lst_clock_closed
+      (env : Env.t ident) (base_ty : ident) (vars : list (ident * clock))
+      (nomint : list ident) (t : LST) (ck : clock) : Prop :=
+    forall ckty b,
+      assign_clk_type env base_ty ck = Some ckty ->
+      ~ In b nomint ->
+      In b (fst t) ->
+      name_clock_closed env base_ty vars ckty (fst t) b.
+
+  (** Widening the pair [(clock type, target)] is the only thing the single-name
+      form ever needs. *)
+  Lemma name_clock_closed_weaken :
+    forall env base_ty vars ckty tgt ckty' tgt' b,
+      incl (merge ckty tgt) (merge ckty' tgt') ->
+      name_clock_closed env base_ty vars ckty tgt b ->
+      name_clock_closed env base_ty vars ckty' tgt' b.
+  Proof.
+    intros env base_ty vars ckty tgt ckty' tgt' b Hincl H v ckv ckvty Hfv Hinv Hckv.
+    intros z Hz. apply Hincl. exact (H v ckv ckvty Hfv Hinv Hckv z Hz).
+  Qed.
+
+  (** A sampling variable pays for itself: its own clock type is the one the
+      deeper clock was built from, and the name is in the target. *)
+  Lemma name_clock_closed_sampler :
+    forall env base_ty vars ckty tgt x g ck ckty0,
+      env_injective env ->
+      NoDupMembers vars ->
+      Env.find x env = Some g ->
+      In (x, ck) vars ->
+      assign_clk_type env base_ty ck = Some ckty0 ->
+      incl ckty0 (merge ckty tgt) ->
+      name_clock_closed env base_ty vars ckty tgt g.
+  Proof.
+    intros env base_ty vars ckty tgt x g ck ckty0 Hinj Hnd Hg Hin Hck0 Hincl
+      v ckv ckvty Hfv Hinv Hckv.
+    assert (v = x) as ?
+        by (exact (Hinj v x g g Hfv Hg (@Coq.Init.Logic.eq_refl ident g)));
+      subst v.
+    assert (ckv = ck) as ? by (exact (NoDupMembers_det x ckv ck vars Hnd Hinv Hin));
+      subst ckv.
+    rewrite Hckv in Hck0. apply option_Some_inj in Hck0. subst ckty0.
+    exact Hincl.
+  Qed.
+
+  Lemma lst_clock_closed_nomint :
+    forall env base_ty vars ns ns' t ck,
+      incl ns ns' ->
+      lst_clock_closed env base_ty vars ns t ck ->
+      lst_clock_closed env base_ty vars ns' t ck.
+  Proof.
+    intros env base_ty vars ns ns' t ck Hincl H ckty b Hck Hnm Hb.
+    exact (H ckty b Hck (fun Hc => Hnm (Hincl b Hc)) Hb).
+  Qed.
+
+  Corollary lst_clock_closed_nomint_list :
+    forall env base_ty vars ns ns' ts cks,
+      incl ns ns' ->
+      Forall2 (lst_clock_closed env base_ty vars ns) ts cks ->
+      Forall2 (lst_clock_closed env base_ty vars ns') ts cks.
+  Proof.
+    intros env base_ty vars ns ns' ts cks Hincl H.
+    induction H as [|t ck ts cks Ht Hr IH]; constructor;
+      [exact (lst_clock_closed_nomint env base_ty vars ns ns' t ck Hincl Ht)
+      |exact IH].
+  Qed.
+
+  (** Three [merge] inclusions, written once. *)
+  Lemma incl_merge_r_l :
+    forall a b c, incl (merge a b) (merge a (merge b c)).
+  Proof.
+    intros a b c z Hz. apply in_merge_inv in Hz as [Hz|Hz];
+      [now apply in_merge_left|apply in_merge_right; now apply in_merge_left].
+  Qed.
+
+  Lemma incl_merge_r_r :
+    forall a b c, incl (merge a c) (merge a (merge b c)).
+  Proof.
+    intros a b c z Hz. apply in_merge_inv in Hz as [Hz|Hz];
+      [now apply in_merge_left|apply in_merge_right; now apply in_merge_right].
+  Qed.
+
+  Lemma incl_merge_mono :
+    forall a a' b b', incl a a' -> incl b b' -> incl (merge a b) (merge a' b').
+  Proof.
+    intros a a' b b' Ha Hb z Hz. apply in_merge_inv in Hz as [Hz|Hz];
+      [apply in_merge_left; exact (Ha z Hz)
+      |apply in_merge_right; exact (Hb z Hz)].
+  Qed.
+
+  (** Joining two types at the same clock. *)
+  Lemma lst_clock_closed_ljoin :
+    forall env base_ty vars ns t u ck,
+      lst_clock_closed env base_ty vars ns t ck ->
+      lst_clock_closed env base_ty vars ns u ck ->
+      lst_clock_closed env base_ty vars ns (ljoin t u) ck.
+  Proof.
+    intros env base_ty vars ns t u ck Ht Hu ckty b Hck Hnm Hb.
+    rewrite fst_ljoin in Hb |- *.
+    apply in_merge_inv in Hb as [Hb|Hb].
+    - eapply name_clock_closed_weaken;
+        [|exact (Ht ckty b Hck Hnm Hb)].
+      apply incl_merge_mono;
+        [apply incl_refl|intros z Hz; now apply in_merge_left].
+    - eapply name_clock_closed_weaken;
+        [|exact (Hu ckty b Hck Hnm Hb)].
+      apply incl_merge_mono;
+        [apply incl_refl|intros z Hz; now apply in_merge_right].
+  Qed.
+
+  Lemma ljoin_list_closed :
+    forall env base_ty vars ns ts us rs cks s s',
+      ljoin_list ts us s = OK (rs, s') ->
+      Forall2 (lst_clock_closed env base_ty vars ns) ts cks ->
+      Forall2 (lst_clock_closed env base_ty vars ns) us cks ->
+      Forall2 (lst_clock_closed env base_ty vars ns) rs cks.
+  Proof.
+    intros env base_ty vars ns ts. revert ts.
+    induction ts as [|t ts IH]; intros us rs cks s s' Hj Hts Hus.
+    - destruct us as [|u us]; [|simpl in Hj; discriminate].
+      simpl in Hj. unfold SC.ret in Hj. inversion Hj; subst rs.
+      inversion Hts; subst. constructor.
+    - destruct us as [|u us]; [simpl in Hj; discriminate|].
+      simpl in Hj.
+      apply sec_bind_inv in Hj as (r & s1 & Hr & Hret).
+      unfold SC.ret in Hret. inversion Hret; subst rs.
+      inversion Hts as [|t0 ck ts0 cks0 Ht Htr]; subst.
+      inversion Hus as [|u0 ck0 us0 cks1 Hu Hur]; subst.
+      constructor;
+        [exact (lst_clock_closed_ljoin env base_ty vars ns t u ck Ht Hu)
+        |eapply IH; [exact Hr|exact Htr|exact Hur]].
+  Qed.
+
+  Lemma Forall2_eq_l :
+    forall {A} (l l' : list A),
+      Forall2 (@Coq.Init.Logic.eq A) l l' -> l = l'.
+  Proof. intros A l l' H. induction H as [|a b l0 l1 Hab Hr IH]; congruence. Qed.
+
+  Lemma Forall2_all_In :
+    forall {A B} (Q : A -> B -> Prop) l1 l2,
+      List.length l1 = List.length l2 ->
+      (forall a, In a l1 -> forall b, Q a b) ->
+      Forall2 Q l1 l2.
+  Proof.
+    intros A B Q l1. induction l1 as [|a l1 IH]; intros l2 Hl HQ.
+    - destruct l2; [constructor|discriminate].
+    - destruct l2 as [|b l2]; [discriminate|].
+      constructor.
+      + apply HQ. now left.
+      + apply IH; [simpl in Hl; congruence|].
+        intros a0 Ha0. apply HQ. now right.
+  Qed.
+
+  Lemma Forall2_eq_clock :
+    forall {A} (Q : A -> clock -> Prop) ts cks ck,
+      Forall2 Q ts cks ->
+      Forall (@Coq.Init.Logic.eq clock ck) cks ->
+      Forall (fun t => Q t ck) ts.
+  Proof.
+    intros A Q ts cks ck H. induction H as [|t ck0 ts0 cks0 Ht Hr IH];
+      intro Hall; [constructor|].
+    inversion Hall as [|c0 cs0 Hc Hcs]; subst.
+    constructor; [exact Ht|exact (IH Hcs)].
+  Qed.
+
+  Lemma assign_clk_type_Con :
+    forall env base_ty ck x b ckty g,
+      assign_clk_type env base_ty ck = Some ckty ->
+      Env.find x env = Some g ->
+      assign_clk_type env base_ty (Con ck x b) = Some (merge ckty [g]).
+  Proof.
+    intros env base_ty ck x b ckty g Hck Hg. simpl.
+    now rewrite Hck, Hg.
+  Qed.
+
+  Lemma assign_clk_type_Con_inv :
+    forall env base_ty ck x b ckty',
+      assign_clk_type env base_ty (Con ck x b) = Some ckty' ->
+      exists ckty g,
+        assign_clk_type env base_ty ck = Some ckty
+        /\ Env.find x env = Some g
+        /\ ckty' = merge ckty [g].
+  Proof.
+    intros env base_ty ck x b ckty' H. simpl in H.
+    destruct (assign_clk_type env base_ty ck) as [ckty|] eqn:Eck;
+      [|discriminate].
+    destruct (Env.find x env) as [g|] eqn:Eg; [|discriminate].
+    simpl in H. apply option_Some_inj in H.
+    exists ckty, g. auto.
+  Qed.
+
+  Section LexpClockClosed.
+
+    Variable G       : secglobal.
+    Variable env     : Env.t ident.
+    Variable base_ty : ident.
+    Variable rst_ty  : ident.
+    Variable P       : global.
+    Variable vars    : list (ident * clock).
+
+    Hypothesis Hinj : env_injective env.
+    Hypothesis Hndv : NoDupMembers vars.
+
+    Local Notation closed ns t ck :=
+      (lst_clock_closed env base_ty vars ns t ck).
+
+    (** Sampling on [x] deepens the clock by one [Con] and adds [x]'s own
+        security name to the type, which is exactly what pays for it. *)
+    Lemma lst_clock_closed_when :
+      forall ns t x g ck b,
+        Env.find x env = Some g ->
+        In (x, ck) vars ->
+        closed ns t ck ->
+        closed ns (ljoin t (lvar g)) (Con ck x b).
+    Proof.
+      intros ns t x g ck b Hg Hin Ht ckty' b0 Hck' Hnm Hb0.
+      apply assign_clk_type_Con_inv in Hck'
+        as (ckty & g' & Hck & Hg' & ?); subst ckty'.
+      rewrite Hg in Hg'. apply option_Some_inj in Hg'; subst g'.
+      rewrite fst_ljoin, fst_lvar in Hb0 |- *.
+      apply in_merge_inv in Hb0 as [Hb0|Hb0].
+      - eapply name_clock_closed_weaken; [|exact (Ht ckty b0 Hck Hnm Hb0)].
+        apply incl_merge_mono;
+          [intros z Hz; now apply in_merge_left
+          |intros z Hz; now apply in_merge_left].
+      - destruct Hb0 as [Hb0|[]]; subst b0.
+        eapply name_clock_closed_sampler;
+          [exact Hinj|exact Hndv|exact Hg|exact Hin|exact Hck|].
+        intros z Hz. apply in_merge_left. now apply in_merge_left.
+    Qed.
+
+    Lemma lst_clock_closed_when_list :
+      forall {A} ns ts x g ck b (tys : list A),
+        Env.find x env = Some g ->
+        In (x, ck) vars ->
+        Forall (fun t => closed ns t ck) ts ->
+        List.length ts = List.length tys ->
+        Forall2 (lst_clock_closed env base_ty vars ns)
+          (List.map (fun t => ljoin t (lvar g)) ts)
+          (List.map (fun _ : A => Con ck x b) tys).
+    Proof.
+      intros A ns ts x g ck b tys Hg Hin Hall. revert tys.
+      induction Hall as [|t ts Ht Hr IH]; intros tys Hl.
+      - destruct tys; [constructor|discriminate].
+      - destruct tys as [|ty tys]; [discriminate|].
+        simpl. constructor;
+          [exact (lst_clock_closed_when ns t x g ck b Hg Hin Ht)
+          |apply IH; simpl in Hl; congruence].
+    Qed.
+
+    (** [Emerge] is the other direction: the two branches run on the deeper
+        clocks, the result on the shallower one, and the sampling name is in
+        the merged type, so the branches' extra [Con] is paid for. *)
+    Lemma lst_clock_closed_merge_el :
+      forall ns t u x g ck,
+        Env.find x env = Some g ->
+        In (x, ck) vars ->
+        closed ns t (Con ck x true) ->
+        closed ns u (Con ck x false) ->
+        closed ns (ljoin (ljoin (lvar g) t) u) ck.
+    Proof.
+      intros ns t u x g ck Hg Hin Ht Hu ckty b0 Hck Hnm Hb0.
+      assert (assign_clk_type env base_ty (Con ck x true)
+              = Some (merge ckty [g])) as Hct
+          by exact (assign_clk_type_Con env base_ty ck x true ckty g Hck Hg).
+      assert (assign_clk_type env base_ty (Con ck x false)
+              = Some (merge ckty [g])) as Hcf
+          by exact (assign_clk_type_Con env base_ty ck x false ckty g Hck Hg).
+      rewrite !fst_ljoin, fst_lvar in Hb0 |- *.
+      apply in_merge_inv in Hb0 as [Hb0|Hb0].
+      - apply in_merge_inv in Hb0 as [Hb0|Hb0].
+        + destruct Hb0 as [Hb0|[]]; subst b0.
+          eapply name_clock_closed_sampler;
+            [exact Hinj|exact Hndv|exact Hg|exact Hin|exact Hck|].
+          intros z Hz. now apply in_merge_left.
+        + eapply name_clock_closed_weaken;
+            [|exact (Ht (merge ckty [g]) b0 Hct Hnm Hb0)].
+          intros z Hz. apply in_merge_inv in Hz as [Hz|Hz].
+          * apply in_merge_inv in Hz as [Hz|Hz];
+              [now apply in_merge_left|].
+            apply in_merge_right, in_merge_left. now apply in_merge_left.
+          * apply in_merge_right, in_merge_left. now apply in_merge_right.
+      - eapply name_clock_closed_weaken;
+          [|exact (Hu (merge ckty [g]) b0 Hcf Hnm Hb0)].
+        intros z Hz. apply in_merge_inv in Hz as [Hz|Hz].
+        + apply in_merge_inv in Hz as [Hz|Hz]; [now apply in_merge_left|].
+          apply in_merge_right, in_merge_left. now apply in_merge_left.
+        + now apply in_merge_right, in_merge_right.
+    Qed.
+
+    Lemma lst_clock_closed_merge_list :
+      forall {A} ns ts us rs x g ck s s' (tys : list A),
+        Env.find x env = Some g ->
+        In (x, ck) vars ->
+        ljoin_list (List.map (fun t => ljoin (lvar g) t) ts) us s = OK (rs, s') ->
+        Forall (fun t => closed ns t (Con ck x true)) ts ->
+        Forall (fun u => closed ns u (Con ck x false)) us ->
+        List.length ts = List.length tys ->
+        Forall2 (lst_clock_closed env base_ty vars ns) rs
+          (List.map (fun _ : A => ck) tys).
+    Proof.
+      intros A ns ts. revert ts.
+      induction ts as [|t ts IH];
+        intros us rs x g ck s s' tys Hg Hin Hj Hts Hus Hl.
+      - destruct us as [|u us]; [|simpl in Hj; discriminate].
+        simpl in Hj. unfold SC.ret in Hj. inversion Hj; subst rs.
+        destruct tys; [constructor|discriminate].
+      - destruct us as [|u us]; [simpl in Hj; discriminate|].
+        destruct tys as [|ty tys]; [discriminate|].
+        simpl in Hj.
+        apply sec_bind_inv in Hj as (r & s1 & Hr & Hret).
+        unfold SC.ret in Hret. inversion Hret; subst rs.
+        inversion Hts as [|t0 ts0 Ht Htr]; subst.
+        inversion Hus as [|u0 us0 Hu Hur]; subst.
+        simpl. constructor.
+        + exact (lst_clock_closed_merge_el ns t u x g ck Hg Hin Ht Hu).
+        + eapply IH; [exact Hg|exact Hin|exact Hr|exact Htr|exact Hur|].
+          simpl in Hl; congruence.
+    Qed.
+
+    Lemma lst_clock_closed_ite_list :
+      forall {A} ns th ts us rs ck s s' (tys : list A),
+        closed ns th ck ->
+        ljoin_list (List.map (fun t => ljoin th t) ts) us s = OK (rs, s') ->
+        Forall (fun t => closed ns t ck) ts ->
+        Forall (fun u => closed ns u ck) us ->
+        List.length ts = List.length tys ->
+        Forall2 (lst_clock_closed env base_ty vars ns) rs
+          (List.map (fun _ : A => ck) tys).
+    Proof.
+      intros A ns th ts. revert ts.
+      induction ts as [|t ts IH]; intros us rs ck s s' tys Hth Hj Hts Hus Hl.
+      - destruct us as [|u us]; [|simpl in Hj; discriminate].
+        simpl in Hj. unfold SC.ret in Hj. inversion Hj; subst rs.
+        destruct tys; [constructor|discriminate].
+      - destruct us as [|u us]; [simpl in Hj; discriminate|].
+        destruct tys as [|ty tys]; [discriminate|].
+        simpl in Hj.
+        apply sec_bind_inv in Hj as (r & s1 & Hr & Hret).
+        unfold SC.ret in Hret. inversion Hret; subst rs.
+        inversion Hts as [|t0 ts0 Ht Htr]; subst.
+        inversion Hus as [|u0 us0 Hu Hur]; subst.
+        simpl. constructor.
+        + apply lst_clock_closed_ljoin; [|exact Hu].
+          apply lst_clock_closed_ljoin; [exact Hth|exact Ht].
+        + eapply IH; [exact Hth|exact Hr|exact Htr|exact Hur|].
+          simpl in Hl; congruence.
+    Qed.
+
+    (** * The induction
+
+        [wc_exp] is inverted through these, so the main proof does not depend
+        on generated hypothesis names. *)
+
+    Lemma wc_Evar_inv' :
+      forall x a, wc_exp P vars (Evar x a) -> In (x, clock_of_nclock a) vars.
+    Proof. intros x a H. inv H; simpl; assumption. Qed.
+
+    Lemma wc_Eunop_inv' :
+      forall op e a,
+        wc_exp P vars (Eunop op e a) ->
+        wc_exp P vars e /\ clockof e = [clock_of_nclock a].
+    Proof. intros op e a H. inv H. simpl. auto. Qed.
+
+    Lemma wc_Ebinop_inv' :
+      forall op e1 e2 a,
+        wc_exp P vars (Ebinop op e1 e2 a) ->
+        wc_exp P vars e1 /\ wc_exp P vars e2
+        /\ clockof e1 = [clock_of_nclock a]
+        /\ clockof e2 = [clock_of_nclock a].
+    Proof. intros op e1 e2 a H. inv H. simpl. auto. Qed.
+
+    Lemma wc_Efby_inv' :
+      forall e0s es anns,
+        wc_exp P vars (Efby e0s es anns) ->
+        Forall (wc_exp P vars) e0s /\ Forall (wc_exp P vars) es
+        /\ List.map clock_of_nclock anns = clocksof e0s
+        /\ List.map clock_of_nclock anns = clocksof es.
+    Proof.
+      intros e0s es anns H. inv H.
+      repeat split; try assumption; apply Forall2_eq_l; assumption.
+    Qed.
+
+    Lemma wc_Earrow_inv' :
+      forall e0s es anns,
+        wc_exp P vars (Earrow e0s es anns) ->
+        Forall (wc_exp P vars) e0s /\ Forall (wc_exp P vars) es
+        /\ List.map clock_of_nclock anns = clocksof e0s
+        /\ List.map clock_of_nclock anns = clocksof es.
+    Proof.
+      intros e0s es anns H. inv H.
+      repeat split; try assumption; apply Forall2_eq_l; assumption.
+    Qed.
+
+    Lemma wc_Ewhen_inv' :
+      forall es x b tys cl,
+        wc_exp P vars (Ewhen es x b (tys, cl)) ->
+        exists ck,
+          stripname cl = Con ck x b
+          /\ Forall (wc_exp P vars) es
+          /\ In (x, ck) vars
+          /\ Forall (@Coq.Init.Logic.eq clock ck) (clocksof es)
+          /\ List.length tys = List.length (clocksof es).
+    Proof.
+      intros es x b tys cl H. inv H. eexists.
+      split; [reflexivity|]. repeat split; assumption.
+    Qed.
+
+    Lemma wc_Emerge_inv' :
+      forall x ets efs tys cl,
+        wc_exp P vars (Emerge x ets efs (tys, cl)) ->
+        exists ck,
+          stripname cl = ck
+          /\ Forall (wc_exp P vars) ets
+          /\ Forall (wc_exp P vars) efs
+          /\ In (x, ck) vars
+          /\ Forall (@Coq.Init.Logic.eq clock (Con ck x true)) (clocksof ets)
+          /\ Forall (@Coq.Init.Logic.eq clock (Con ck x false)) (clocksof efs)
+          /\ List.length tys = List.length (clocksof ets)
+          /\ List.length tys = List.length (clocksof efs).
+    Proof.
+      intros x ets efs tys cl H. inv H. eexists.
+      split; [reflexivity|]. repeat split; assumption.
+    Qed.
+
+    Lemma wc_Eite_inv' :
+      forall e0 ets efs tys cl,
+        wc_exp P vars (Eite e0 ets efs (tys, cl)) ->
+        exists ck,
+          stripname cl = ck
+          /\ wc_exp P vars e0
+          /\ Forall (wc_exp P vars) ets
+          /\ Forall (wc_exp P vars) efs
+          /\ clockof e0 = [ck]
+          /\ Forall (@Coq.Init.Logic.eq clock ck) (clocksof ets)
+          /\ Forall (@Coq.Init.Logic.eq clock ck) (clocksof efs)
+          /\ List.length tys = List.length (clocksof ets)
+          /\ List.length tys = List.length (clocksof efs).
+    Proof.
+      intros e0 ets efs tys cl H. inv H. eexists.
+      split; [reflexivity|]. repeat split; assumption.
+    Qed.
+
+    Lemma wc_Eapp_inv' :
+      forall f es ro anns,
+        wc_exp P vars (Eapp f es ro anns) -> Forall (wc_exp P vars) es.
+    Proof. intros f es ro anns H. inv H; assumption. Qed.
+
+    (** A sub-run's window sits inside whatever the caller's does. *)
+    Lemma minted_incl_sub :
+      forall s s1 s2 s' ns,
+        sec_le s s1 -> sec_le s2 s' ->
+        incl (minted s s') ns -> incl (minted s1 s2) ns.
+    Proof.
+      intros s s1 s2 s' ns H1 H2 Hns y Hy.
+      apply Hns. exact (minted_window s s1 s2 s' H1 H2 y Hy).
+    Qed.
+
+    (** The set of names to exclude is a parameter rather than the run's own
+        window.  That is what keeps the induction's conclusion stable: a
+        sub-run inherits the same set, so no case has to re-state which
+        window it is talking about. *)
+    Definition lexp_clock_closed (e : exp) : Prop :=
+      wc_exp P vars e ->
+      forall ts s s' ns,
+        incl (minted s s') ns ->
+        assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+        Forall2 (lst_clock_closed env base_ty vars ns) ts (clockof e).
+
+    Lemma assign_lexps_closed_of :
+      forall es,
+        Forall lexp_clock_closed es ->
+        Forall (wc_exp P vars) es ->
+        forall ts s s' ns,
+          incl (minted s s') ns ->
+          assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+          Forall2 (lst_clock_closed env base_ty vars ns) ts (clocksof es).
+    Proof.
+      induction es as [|e es IH]; intros Hall Hwc ts s s' ns Hns H.
+      - apply (assign_lexps_carried_nil G env base_ty rst_ty) in H
+          as (? & _ & ?); subst ts. constructor.
+      - apply assign_lexps_carried_cons in H
+          as (t & r & sa & Ht & Hr & ? & _); subst ts.
+        inversion Hall as [|e0 es0 He Her]; subst.
+        inversion Hwc as [|e1 es1 Hwce Hwcr]; subst.
+        unfold clocksof. simpl flat_map. apply Forall2_app.
+        + apply (He Hwce t s sa ns); [|exact Ht].
+          apply (minted_incl_sub s s sa s' ns); [apply sec_le_refl| |exact Hns].
+          eapply assign_lexps_sec_le; exact Hr.
+        + apply (IH Her Hwcr r sa s' ns); [|exact Hr].
+          apply (minted_incl_sub s sa s' s' ns);
+            [|apply sec_le_refl|exact Hns].
+          eapply assign_lexp_type_sec_le; exact Ht.
+    Qed.
+
+    (** The expression-level dependency property: the type of an expression,
+        together with the type of the clock it runs on, already contains the
+        clock type of every declared variable it mentions -- provided the name
+        was not minted by the run, which a call's results always are. *)
+    Theorem assign_lexp_type_clock_closed : forall e, lexp_clock_closed e.
+    Proof.
+      intro e. induction e using exp_ind2.
+
+      - (** Econst: the bottom type mentions nothing *)
+        intros Hwc ts s s' ns Hns Hrun.
+        rewrite assign_lexp_Econst in Hrun. unfold SC.ret in Hrun.
+        assert (ts = [lbot]) as ? by (inversion Hrun; reflexivity); subst ts.
+        simpl clockof. constructor; [|constructor].
+        intros ckty b Hck Hnm Hb. simpl in Hb. contradiction.
+
+      - (** Evar: its own name, and it is declared on the clock asked about *)
+        intros Hwc ts s s' ns Hns Hrun.
+        pose proof (wc_Evar_inv' x a Hwc) as Hin.
+        rewrite assign_lexp_Evar in Hrun.
+        apply sec_bind_inv in Hrun as (g & s1 & Hg & Hret).
+        apply find_env_inv in Hg as (Hg & ?); subst s1.
+        unfold SC.ret in Hret.
+        assert (ts = [lvar g]) as ? by (inversion Hret; reflexivity); subst ts.
+        simpl clockof. constructor; [|constructor].
+        intros ckty b Hck Hnm Hb. rewrite fst_lvar in Hb |- *.
+        destruct Hb as [Hb|[]]; subst b.
+        eapply name_clock_closed_sampler;
+          [exact Hinj|exact Hndv|exact Hg|exact Hin|exact Hck|].
+        intros z Hz. now apply in_merge_left.
+
+      - (** Eunop: same type, same clock *)
+        intros Hwc ts s s' ns Hns Hrun.
+        apply wc_Eunop_inv' in Hwc as (Hwce & Hcke).
+        rewrite assign_lexp_Eunop in Hrun.
+        simpl clockof. rewrite <- Hcke.
+        exact (IHe Hwce ts s s' ns Hns Hrun).
+
+      - (** Ebinop: two single flows on one clock *)
+        intros Hwc ts s s' ns Hns Hrun.
+        apply wc_Ebinop_inv' in Hwc as (Hwc1 & Hwc2 & Hck1 & Hck2).
+        rewrite assign_lexp_Ebinop in Hrun.
+        apply sec_bind_inv in Hrun as (t1 & sa & Ht1 & Hrun).
+        apply sec_bind_inv in Hrun as (t2 & sb & Ht2 & Hrun).
+        apply sec_bind_inv in Hrun as (a1 & sc & Ha1 & Hrun).
+        apply sec_bind_inv in Hrun as (a2 & sd & Ha2 & Hret).
+        apply single_inv in Ha1 as (? & ?); subst t1 sc.
+        apply single_inv in Ha2 as (? & ?); subst t2 sd.
+        unfold SC.ret in Hret.
+        assert (ts = [ljoin a1 a2] /\ sb = s') as (? & ?)
+            by (inversion Hret; auto); subst ts; subst sb.
+        assert (Forall2 (lst_clock_closed env base_ty vars ns)
+                  [a1] (clockof e1)) as Hcl1.
+        { apply (IHe1 Hwc1 [a1] s sa ns); [|exact Ht1].
+          apply (minted_incl_sub s s sa s' ns); [apply sec_le_refl| |exact Hns].
+          eapply assign_lexp_type_sec_le; exact Ht2. }
+        assert (Forall2 (lst_clock_closed env base_ty vars ns)
+                  [a2] (clockof e2)) as Hcl2.
+        { apply (IHe2 Hwc2 [a2] sa s' ns); [|exact Ht2].
+          apply (minted_incl_sub s sa s' s' ns);
+            [|apply sec_le_refl|exact Hns].
+          eapply assign_lexp_type_sec_le; exact Ht1. }
+        rewrite Hck1 in Hcl1. rewrite Hck2 in Hcl2.
+        inversion Hcl1 as [|p1 c1 ps1 cs1 Hp1 _]; subst.
+        inversion Hcl2 as [|p2 c2 ps2 cs2 Hp2 _]; subst.
+        simpl clockof. constructor; [|constructor].
+        exact (lst_clock_closed_ljoin env base_ty vars ns
+                 a1 a2 (clock_of_nclock a) Hp1 Hp2).
+
+      - (** Efby: one join per stream, all on the annotation's clock *)
+        intros Hwc ts s s' ns Hns Hrun.
+        apply wc_Efby_inv' in Hwc as (Hwc0 & Hwc1 & Hc0 & Hc1).
+        rewrite assign_lexp_Efby in Hrun.
+        apply sec_bind_inv in Hrun as (ts0 & sa & Hts0 & Hrun).
+        apply sec_bind_inv in Hrun as (us & sb & Hus & Hj).
+        assert (sec_le sb s') as Hbs'
+            by (rewrite (ljoin_list_pure ts0 us ts sb s' Hj); apply sec_le_refl).
+        simpl clockof.
+        eapply ljoin_list_closed; [exact Hj| |].
+        + rewrite Hc0. apply (assign_lexps_closed_of e0s H Hwc0 ts0 s sa ns);
+            [|exact Hts0].
+          apply (minted_incl_sub s s sa s' ns); [apply sec_le_refl| |exact Hns].
+          apply (sec_le_trans _ sb _); [|exact Hbs'].
+          eapply assign_lexps_sec_le; exact Hus.
+        + rewrite Hc1. apply (assign_lexps_closed_of es H0 Hwc1 us sa sb ns);
+            [|exact Hus].
+          apply (minted_incl_sub s sa sb s' ns); [|exact Hbs'|exact Hns].
+          eapply assign_lexps_sec_le; exact Hts0.
+
+      - (** Earrow: the same body *)
+        intros Hwc ts s s' ns Hns Hrun.
+        apply wc_Earrow_inv' in Hwc as (Hwc0 & Hwc1 & Hc0 & Hc1).
+        rewrite assign_lexp_Earrow in Hrun.
+        apply sec_bind_inv in Hrun as (ts0 & sa & Hts0 & Hrun).
+        apply sec_bind_inv in Hrun as (us & sb & Hus & Hj).
+        assert (sec_le sb s') as Hbs'
+            by (rewrite (ljoin_list_pure ts0 us ts sb s' Hj); apply sec_le_refl).
+        simpl clockof.
+        eapply ljoin_list_closed; [exact Hj| |].
+        + rewrite Hc0. apply (assign_lexps_closed_of e0s H Hwc0 ts0 s sa ns);
+            [|exact Hts0].
+          apply (minted_incl_sub s s sa s' ns); [apply sec_le_refl| |exact Hns].
+          apply (sec_le_trans _ sb _); [|exact Hbs'].
+          eapply assign_lexps_sec_le; exact Hus.
+        + rewrite Hc1. apply (assign_lexps_closed_of es H0 Hwc1 us sa sb ns);
+            [|exact Hus].
+          apply (minted_incl_sub s sa sb s' ns); [|exact Hbs'|exact Hns].
+          eapply assign_lexps_sec_le; exact Hts0.
+
+      - (** Ewhen: the sampling name is added, and the clock deepens by it *)
+        intros Hwc ts s s' ns Hns Hrun. destruct a as (tys & cl).
+        apply wc_Ewhen_inv' in Hwc as (ck & Hcl & Hwces & Hin & Heq & Hlen).
+        rewrite assign_lexp_Ewhen in Hrun.
+        apply sec_bind_inv in Hrun as (ts0 & sa & Hts0 & Hrun).
+        apply sec_bind_inv in Hrun as (g & s1 & Hg & Hret).
+        apply find_env_inv in Hg as (Hg & ?); subst s1.
+        unfold SC.ret in Hret.
+        assert (ts = List.map (fun t => ljoin t (lvar g)) ts0 /\ sa = s')
+          as (? & ?) by (inversion Hret; auto); subst ts; subst sa.
+        assert (Forall2 (lst_clock_closed env base_ty vars ns)
+                  ts0 (clocksof es)) as Hts
+            by exact (assign_lexps_closed_of es H Hwces ts0 s s' ns Hns Hts0).
+        assert (List.length ts0 = List.length tys) as Hl
+            by (apply Forall2_length in Hts; congruence).
+        assert (clock_of_nclock (tys, cl) = Con ck x b) as Hcc by exact Hcl.
+        simpl clockof. rewrite Hcc.
+        apply (lst_clock_closed_when_list ns ts0 x g ck b tys Hg Hin);
+          [exact (Forall2_eq_clock _ ts0 (clocksof es) ck Hts Heq)|exact Hl].
+
+      - (** Emerge: the branches run deeper; the sampling name pays for it *)
+        intros Hwc ts s s' ns Hns Hrun. destruct a as (tys & cl).
+        apply wc_Emerge_inv' in Hwc
+          as (ck & Hcl & Hwct & Hwcf & Hin & Heqt & Heqf & Hlt & Hlf).
+        rewrite assign_lexp_Emerge in Hrun.
+        apply sec_bind_inv in Hrun as (g & s1 & Hg & Hrun).
+        apply find_env_inv in Hg as (Hg & ?); subst s1.
+        apply sec_bind_inv in Hrun as (ts0 & sa & Hts0 & Hrun).
+        apply sec_bind_inv in Hrun as (us & sb & Hus & Hj).
+        assert (sec_le sb s') as Hbs'
+            by (rewrite (ljoin_list_pure _ us ts sb s' Hj); apply sec_le_refl).
+        assert (Forall2 (lst_clock_closed env base_ty vars ns)
+                  ts0 (clocksof ets)) as Hts.
+        { apply (assign_lexps_closed_of ets H Hwct ts0 s sa ns); [|exact Hts0].
+          apply (minted_incl_sub s s sa s' ns); [apply sec_le_refl| |exact Hns].
+          apply (sec_le_trans _ sb _); [|exact Hbs'].
+          eapply assign_lexps_sec_le; exact Hus. }
+        assert (Forall2 (lst_clock_closed env base_ty vars ns)
+                  us (clocksof efs)) as Hus'.
+        { apply (assign_lexps_closed_of efs H0 Hwcf us sa sb ns); [|exact Hus].
+          apply (minted_incl_sub s sa sb s' ns); [|exact Hbs'|exact Hns].
+          eapply assign_lexps_sec_le; exact Hts0. }
+        assert (List.length ts0 = List.length tys) as Hl
+            by (apply Forall2_length in Hts; congruence).
+        assert (clock_of_nclock (tys, cl) = ck) as Hcc by exact Hcl.
+        simpl clockof. rewrite Hcc.
+        eapply (lst_clock_closed_merge_list ns ts0 us ts x g ck sb s' tys
+                  Hg Hin Hj);
+          [exact (Forall2_eq_clock _ ts0 (clocksof ets) _ Hts Heqt)
+          |exact (Forall2_eq_clock _ us (clocksof efs) _ Hus' Heqf)
+          |exact Hl].
+
+      - (** Eite: everything on the same clock *)
+        intros Hwc ts s s' ns Hns Hrun. destruct a as (tys & cl).
+        apply wc_Eite_inv' in Hwc
+          as (ck & Hcl & Hwce & Hwct & Hwcf & Hcke & Heqt & Heqf & Hlt & Hlf).
+        rewrite assign_lexp_Eite in Hrun.
+        apply sec_bind_inv in Hrun as (t0 & sa & Ht0 & Hrun).
+        apply sec_bind_inv in Hrun as (th & s1 & Hth & Hrun).
+        apply single_inv in Hth as (? & ?); subst t0 s1.
+        apply sec_bind_inv in Hrun as (ts0 & sb & Hts0 & Hrun).
+        apply sec_bind_inv in Hrun as (us & sc & Hus & Hj).
+        assert (sec_le sc s') as Hcs'
+            by (rewrite (ljoin_list_pure _ us ts sc s' Hj); apply sec_le_refl).
+        assert (sec_le sa sc) as Hac
+            by (apply (sec_le_trans _ sb _);
+                [eapply assign_lexps_sec_le; exact Hts0
+                |eapply assign_lexps_sec_le; exact Hus]).
+        assert (lst_clock_closed env base_ty vars ns th ck) as Hthc.
+        { assert (Forall2 (lst_clock_closed env base_ty vars ns)
+                    [th] (clockof e)) as Hh.
+          { apply (IHe Hwce [th] s sa ns); [|exact Ht0].
+            apply (minted_incl_sub s s sa s' ns);
+              [apply sec_le_refl| |exact Hns].
+            exact (sec_le_trans _ _ _ Hac Hcs'). }
+          rewrite Hcke in Hh. now inversion Hh. }
+        assert (Forall2 (lst_clock_closed env base_ty vars ns)
+                  ts0 (clocksof ets)) as Hts.
+        { apply (assign_lexps_closed_of ets H Hwct ts0 sa sb ns); [|exact Hts0].
+          apply (minted_incl_sub s sa sb s' ns); [| |exact Hns].
+          - eapply assign_lexp_type_sec_le; exact Ht0.
+          - apply (sec_le_trans _ sc _); [|exact Hcs'].
+            eapply assign_lexps_sec_le; exact Hus. }
+        assert (Forall2 (lst_clock_closed env base_ty vars ns)
+                  us (clocksof efs)) as Hus'.
+        { apply (assign_lexps_closed_of efs H0 Hwcf us sb sc ns); [|exact Hus].
+          apply (minted_incl_sub s sb sc s' ns); [|exact Hcs'|exact Hns].
+          apply (sec_le_trans _ sa _);
+            [eapply assign_lexp_type_sec_le; exact Ht0
+            |eapply assign_lexps_sec_le; exact Hts0]. }
+        assert (List.length ts0 = List.length tys) as Hl
+            by (apply Forall2_length in Hts; congruence).
+        assert (clock_of_nclock (tys, cl) = ck) as Hcc by exact Hcl.
+        simpl clockof. rewrite Hcc.
+        eapply (lst_clock_closed_ite_list ns th ts0 us ts ck sc s' tys
+                  Hthc Hj);
+          [exact (Forall2_eq_clock _ ts0 (clocksof ets) _ Hts Heqt)
+          |exact (Forall2_eq_clock _ us (clocksof efs) _ Hus' Heqf)
+          |exact Hl].
+
+      - (** Eapp: every result name was minted by this run, so no name the
+            statement speaks about is one of them *)
+        intros Hwc ts s s' ns Hns Hrun.
+        apply assign_lexp_Eapp_inv in Hrun
+          as (sg & argts & rstty & ckty0 & outs & cs & sta & stb & stc
+              & Hargs & _ & Hrst & _ & Houts & Hcs & Hts).
+        pose proof (assign_lexp_Eapp_stages_le G env base_ty rst_ty es ro a
+                      s s' sg argts rstty ckty0 outs cs sta stb stc
+                      Hargs Hrst Houts Hcs) as (Hab & Hbc & Hcs').
+        assert (incl outs ns) as Hmo.
+        { intros y Hy.
+          apply (minted_incl_sub s stb stc s' ns);
+            [apply (sec_le_trans _ sta _);
+             [eapply assign_lexps_sec_le; exact Hargs|exact Hab]
+            |exact Hcs'|exact Hns|].
+          exact (fresh_idents_minted (List.length a) outs stb stc Houts y Hy). }
+        subst ts. simpl clockof.
+        apply Forall2_all_In.
+        + rewrite !map_length.
+          exact (fresh_idents_length (List.length a) outs stb stc Houts).
+        + intros t Ht ck ckty b Hck Hnm Hb.
+          apply in_map_iff in Ht as (o & Ho & Hin).
+          subst t. simpl in Hb. destruct Hb as [Hb|[]]; subst b.
+          exfalso. exact (Hnm (Hmo o Hin)).
+    Qed.
+
+  End LexpClockClosed.
 
 End SecLusUnnestingBase.

@@ -380,12 +380,83 @@ this is `SecLTyping.v`, which is editable, not `SecNLusTyping.v`): a
 constraint whose source mentions input `j` also mentions the variables of
 `j`'s declared clock.
 
+**Expression level: done, 2026-09-25** *[verified, compiles]*.
+`assign_lexp_type_clock_closed` in `SecLusUnnestingBase.v`, stated through
+two single-name pieces so that every case of the induction makes only one of
+two moves -- widen the target, or account for a sampling variable:
+
+    name_clock_closed env base_ty vars ckty target b :=
+      forall v ckv ckvty,
+        Env.find v env = Some b -> In (v, ckv) vars ->
+        assign_clk_type env base_ty ckv = Some ckvty ->
+        incl ckvty (merge ckty target)
+
+    lst_clock_closed env base_ty vars nomint t ck :=
+      forall ckty b,
+        assign_clk_type env base_ty ck = Some ckty ->
+        ~ In b nomint -> In b (fst t) ->
+        name_clock_closed env base_ty vars ckty (fst t) b
+
+and the theorem, by `exp_ind2` over all ten constructors:
+
+    wc_exp P vars e ->
+    incl (minted s s') ns ->
+    assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+    Forall2 (lst_clock_closed env base_ty vars ns) ts (clockof e)
+
+Three things are worth recording.
+
+*The clocking rules do the work, in two directions.*  `Ewhen` deepens the
+clock by one `Con` and adds the sampling variable's own security name to the
+type, which is exactly what pays for the deeper clock.  `Emerge` is the
+reverse: the branches run on `Con ck x true/false` while the result is on
+`ck`, and again the sampling name sits in the merged type, so the branches'
+extra `Con` is covered.  These are `lst_clock_closed_when` and
+`lst_clock_closed_merge_el`.
+
+*The call case needs a name to be known not to be minted.*  A call's type is
+its freshly minted result name, which belongs to no program variable, so
+nothing about declared clocks can be said about it.  The statement therefore
+carries `~ In b nomint`, and the case is discharged by showing the result
+names lie in the run's window.  That needed the window algebra --
+`sec_span_spec`, `minted_spec`, `minted_gensym`, `minted_window`,
+`fresh_ident_minted`, `fresh_idents_minted` (`SecLusUnnestingBase.v`), where
+`minted_spec` is the load-bearing one: membership in `minted s s'` is
+*exactly* a `sec` gensym at an index in `[s, s')`, which is what lets a name
+be shown **not** to be minted.  At the use site the premise is free:
+`generate_lnode_sig` runs `simplify` over `minted st0 st1`, so no minted name
+survives into a signature.
+
+*The exclusion set is a parameter, not the run's own window.*  A first
+version wrote `minted s s'` into the conclusion; every case then had to
+re-state which window it was talking about, and the proofs broke on which of
+two equal state names `subst` happened to keep.  Taking `ns` with
+`incl (minted s s') ns` makes the conclusion stable under any sub-run, and
+`minted_incl_sub` is then the only plumbing.
+
+**Still missing, in order**: lift this to `generate_ldef_constraint` and
+`generate_lvars_constraints` (a constraint's *source* is
+`merge (merge [rst_ty] ckty) (fst t)`, so the lemma above is exactly the
+right shape); then to `generate_leqns_constraints`; then through `simplify`
+to `s_constraints (generate_lnode_sig ...)`, which is the form
+`subst_constraints_inp_map_augment` asks for.  The call rule's own
+constraints come from a callee's signature via `generate_constraints`, so
+that step will need the property as an invariant on `GL`, discharged at the
+program level alongside `sig_good` and the others -- *[untested]*.
+
 ### Next steps, in order
 
 0. ~~Repair the three scoping hypotheses, which were unsatisfiable for any
    program with a call.~~ **Done 2026-09-25** -- Repair 1, the checkmark
    bound; see the section above.  What it leaves open is the *discharge*,
    which belongs to step 6.
+0b. ~~The dependency property at the **expression** level.~~ **Done
+   2026-09-25** -- `assign_lexp_type_clock_closed`
+   (`SecLusUnnestingBase.v`), the Lustre mirror of
+   `assign_cexp_type_clock_closed`: the type of an expression, taken with
+   the type of the clock it runs on, already contains the clock type of
+   every declared variable it mentions.  Details and what is still missing
+   are in the section below.
 1. ~~`subst_constraints_inp_map` with augmented actuals leaves every
    constraint source unchanged as a set, given the dependency property.~~
    **Done** -- `subst_constraints_inp_map_augment`.

@@ -87,6 +87,43 @@ eternity, and not for every local or clock name either.
 *See `Lus2NLusSIF_plan.md`, "RESOLVED 2026-09-25", for the full diagnosis and
 what the repair does not settle.*
 
+### The dependency property, expression level
+
+The call case of preservation needs this about a *callee's* signature: a
+constraint whose source mentions an input also mentions the inputs of that
+input's declared clock.  `assign_lexp_type_clock_closed`
+(`SecLusUnnestingBase.v`) is the expression-level half, and the Lustre mirror
+of `assign_cexp_type_clock_closed`:
+
+    wc_exp P vars e ->
+    incl (minted s s') ns ->
+    assign_lexp_type GL env base_ty rst_ty e s = OK (ts, s') ->
+    Forall2 (lst_clock_closed env base_ty vars ns) ts (clockof e)
+
+`lst_clock_closed ns t ck` says: for any name in `fst t` that the run did not
+mint, the clock type of the variable it names is already inside
+`merge ckty (fst t)`.
+
+The clocking rules do the work in two opposite directions, which is why both
+`Ewhen` and `Emerge` have their own lemma.  `Ewhen` deepens the clock by one
+`Con` and adds the sampling variable's name to the type, paying for the
+deeper clock.  `Emerge` runs its branches on `Con ck x true/false` while the
+result is on `ck`, and the sampling name in the merged type pays for the
+branches' extra `Con`.
+
+The call case is the only one that cannot say anything: a call's type is its
+freshly minted result name, which belongs to no program variable.  Hence the
+`~ In b ns` premise, discharged by showing the result names lie in the run's
+window (`fresh_idents_minted`, `minted_window`).  At the use site it is free,
+because `generate_lnode_sig` runs `simplify` over `minted st0 st1` and no
+minted name survives into a signature.
+
+What remains is to lift this to `generate_ldef_constraint` and
+`generate_lvars_constraints` -- a constraint's source is
+`merge (merge [rst_ty] ckty) (fst t)`, which is the shape the lemma already
+has -- then to `generate_leqns_constraints`, then through `simplify` to a
+signature's `s_constraints`.
+
 ### Why the third conjunct is domination, and in that direction
 
 This took the longest to get right, and it is the one place where the
