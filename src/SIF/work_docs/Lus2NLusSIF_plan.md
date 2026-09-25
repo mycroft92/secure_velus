@@ -434,15 +434,70 @@ two equal state names `subst` happened to keep.  Taking `ns` with
 `incl (minted s s') ns` makes the conclusion stable under any sub-run, and
 `minted_incl_sub` is then the only plumbing.
 
-**Still missing, in order**: lift this to `generate_ldef_constraint` and
-`generate_lvars_constraints` (a constraint's *source* is
-`merge (merge [rst_ty] ckty) (fst t)`, so the lemma above is exactly the
-right shape); then to `generate_leqns_constraints`; then through `simplify`
-to `s_constraints (generate_lnode_sig ...)`, which is the form
-`subst_constraints_inp_map_augment` asks for.  The call rule's own
-constraints come from a callee's signature via `generate_constraints`, so
-that step will need the property as an invariant on `GL`, discharged at the
-program level alongside `sig_good` and the others -- *[untested]*.
+**Constraint level: done for every rule but the call, 2026-09-25**
+*[verified, compiles]*.  A constraint's source is
+`merge (merge [rst_ty] ckty) (fst t)`, so the property to carry up is
+self-contained -- no separate clock type to quantify over:
+
+    constraint_clock_closed env base_ty vars nomint c :=
+      forall v b ckv ckvty,
+        Env.find v env = Some b -> ~ In b nomint -> In b (fst c) ->
+        In (v, ckv) vars -> assign_clk_type env base_ty ckv = Some ckvty ->
+        incl ckvty (fst c)
+
+Three parts of that source, three arguments.  The reset name is not a
+declared variable's -- a new hypothesis `rst_not_var`, the exact sibling of
+the `base_not_var` the CoreExpr closure lemmas already take.  The clock type
+is handled by `assign_clk_type_clock_closed` (already proved).  The
+right-hand side's type is handled by `assign_lexp_type_clock_closed`.  That
+is `constraint_clock_closed_head`, and
+`constraints_clock_closed_lconstrain` wraps it for the shape the generators
+emit.
+
+Proved on top of it, all in `SecLusUnnestingBase.v`:
+
+  * `generate_lvars_constraints_clock_closed` -- the variable rule, one
+    ordering per defined name.  Its hypothesis is the one the equation level
+    can actually supply: each right-hand side type is closed at the clock its
+    defined variable is *declared* on, which is what `wc_equation` pins;
+  * `generate_ldef_constraint_clock_closed` -- one variable, one expression;
+  * `generate_lgen_constraint_clock_closed` -- a list against a list.  The
+    two `Forall2`s (variables against `clocksof es` from `wc_equation`, types
+    against the same list from the closure theorem) are composed by
+    `Forall2_trans_clock`, with `NoDupMembers vars` supplying the clock's
+    uniqueness;
+  * `generate_leqn_constraint_clock_closed_plain` -- a whole equation whose
+    right-hand side holds no call.
+
+Supporting: `eqn_clock_type_inv`, `generate_lvars_constraints_advances`
+(the variable rule mints nothing -- proved here rather than reused from the
+equation file, which comes later), `constraints_clock_closed_cmerge` and
+`_app`.
+
+The carried constraints are isolated as one hypothesis,
+`lexp_carried_closed`, with `assign_lexps_carried_closed_of` for the list
+form.  That is deliberate: carried constraints come *only* from nested calls,
+so this is exactly the hypothesis the callee-signature invariant will
+discharge, and nothing above it depends on that step.
+
+**Still missing, in order**: the **call rule**
+(`generate_lcall_constraint`), whose constraints are a callee's instantiated
+by `generate_constraints` -- so it needs the property as an invariant on
+`GL`, discharged at the program level alongside `sig_good` and the others;
+then `generate_lone_constraint` / `generate_lsplit_constraints` and
+`generate_leqns_constraints` over a list of equations (that one belongs in
+`SecLusUnnestingEquations.v`, which has the `generate_l*_sec_le` family
+needed to split the minting window per equation); then through `simplify` to
+`s_constraints (generate_lnode_sig ...)`, which is the form
+`subst_constraints_inp_map_augment` asks for.  *[untested]*
+
+**Two new hypotheses, both discharge-able and neither restricting programs**:
+`rst_not_var` (the reset name is not a declared variable's -- true because it
+is an aux name and `env` is injective) and the `cenv`/`vars` agreement
+`find_clock cenv y = OK ck -> In (y, ck) vars` (true because `cenv` is
+`lnode_clock_env n` and `vars` is `idck` of the same three lists), plus
+`wc_env`-style `In (y, ck) vars -> wc_clock vars ck`, which is a field of
+`wc_node`.
 
 ### Next steps, in order
 
@@ -455,8 +510,11 @@ program level alongside `sig_good` and the others -- *[untested]*.
    (`SecLusUnnestingBase.v`), the Lustre mirror of
    `assign_cexp_type_clock_closed`: the type of an expression, taken with
    the type of the clock it runs on, already contains the clock type of
-   every declared variable it mentions.  Details and what is still missing
-   are in the section below.
+   every declared variable it mentions.
+0c. ~~The same at the **constraint** level, for every rule but the call.~~
+   **Done 2026-09-25** -- the variable, definition and general rules, and a
+   whole call-free equation.  What is left is the call rule, which needs the
+   property as an invariant on `GL`.  Details of both in the section below.
 1. ~~`subst_constraints_inp_map` with augmented actuals leaves every
    constraint source unchanged as a set, given the dependency property.~~
    **Done** -- `subst_constraints_inp_map_augment`.

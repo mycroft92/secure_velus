@@ -118,11 +118,32 @@ window (`fresh_idents_minted`, `minted_window`).  At the use site it is free,
 because `generate_lnode_sig` runs `simplify` over `minted st0 st1` and no
 minted name survives into a signature.
 
-What remains is to lift this to `generate_ldef_constraint` and
-`generate_lvars_constraints` -- a constraint's source is
-`merge (merge [rst_ty] ckty) (fst t)`, which is the shape the lemma already
-has -- then to `generate_leqns_constraints`, then through `simplify` to a
-signature's `s_constraints`.
+### The same, at the constraint level
+
+A constraint's source is `merge (merge [rst_ty] ckty) (fst t)`, so the
+property carried up is self-contained -- `constraint_clock_closed` asks only
+that the source contain the clock type of every declared variable it
+mentions.  Three parts of that source, three arguments: the reset name is not
+a declared variable's (`rst_not_var`, the sibling of the `base_not_var` the
+CoreExpr lemmas already take), the clock type is handled by
+`assign_clk_type_clock_closed`, and the right-hand side's type by
+`assign_lexp_type_clock_closed`.  That is `constraint_clock_closed_head`.
+
+On top of it: `generate_lvars_constraints_clock_closed` (the variable rule),
+`generate_ldef_constraint_clock_closed`,
+`generate_lgen_constraint_clock_closed`, and
+`generate_leqn_constraint_clock_closed_plain` for a whole equation with no
+call on its right-hand side.
+
+The carried constraints are isolated as a single hypothesis,
+`lexp_carried_closed`.  They come only from nested calls, so that hypothesis
+is exactly where the callee-signature invariant plugs in, and nothing above
+it depends on that step.
+
+What remains is the call rule -- its constraints are a callee's, instantiated
+by `generate_constraints`, so closing it needs the property as an invariant
+on `GL`, discharged at the program level alongside `sig_good` -- then the
+equation list, then `simplify` and a signature's `s_constraints`.
 
 ### Why the third conjunct is domination, and in that direction
 

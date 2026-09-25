@@ -3199,4 +3199,418 @@ Module SecLusUnnestingBase
 
   End LexpClockClosed.
 
+  (** * The dependency property, constraint level
+
+      A constraint's source is [merge (merge [rst_ty] ckty) (fst t)] -- the
+      ambient reset, the clock of the variable being defined, and what the
+      right-hand side carries.  The property to carry up is therefore
+      self-contained: if the source mentions a declared variable's security
+      name, it already contains that variable's clock type.
+
+      Three things have to be accounted for, one per part of the source.  The
+      reset name is not a declared variable's -- that is [rst_not_var], the
+      sibling of the [base_not_var] hypothesis the CoreExpr closure lemmas
+      already take.  The clock type is handled by
+      [assign_clk_type_clock_closed].  And the right-hand side's own type is
+      handled by [assign_lexp_type_clock_closed]. *)
+
+  Definition constraint_clock_closed
+      (env : Env.t ident) (base_ty : ident) (vars : list (ident * clock))
+      (nomint : list ident) (c : constraint) : Prop :=
+    forall v b ckv ckvty,
+      Env.find v env = Some b ->
+      ~ In b nomint ->
+      In b (fst c) ->
+      In (v, ckv) vars ->
+      assign_clk_type env base_ty ckv = Some ckvty ->
+      incl ckvty (fst c).
+
+  Definition constraints_clock_closed
+      (env : Env.t ident) (base_ty : ident) (vars : list (ident * clock))
+      (nomint : list ident) (cs : list constraint) : Prop :=
+    Forall (constraint_clock_closed env base_ty vars nomint) cs.
+
+  Lemma constraints_clock_closed_cmerge :
+    forall env base_ty vars ns c1 c2,
+      constraints_clock_closed env base_ty vars ns (cmerge c1 c2)
+      <-> constraints_clock_closed env base_ty vars ns c1
+          /\ constraints_clock_closed env base_ty vars ns c2.
+  Proof.
+    intros env base_ty vars ns c1 c2.
+    unfold constraints_clock_closed. rewrite !Forall_forall. split.
+    - intros H. split; intros c Hin; apply H, cmerge_In; tauto.
+    - intros (H1 & H2) c Hin. apply cmerge_In in Hin. destruct Hin; auto.
+  Qed.
+
+  Lemma constraints_clock_closed_app :
+    forall env base_ty vars ns c1 c2,
+      constraints_clock_closed env base_ty vars ns c1 ->
+      constraints_clock_closed env base_ty vars ns c2 ->
+      constraints_clock_closed env base_ty vars ns (c1 ++ c2).
+  Proof.
+    intros env base_ty vars ns c1 c2 H1 H2.
+    unfold constraints_clock_closed. now apply Forall_app.
+  Qed.
+
+  Lemma constraint_clock_closed_head :
+    forall env base_ty rst_ty vars ns ck ckty t tgt,
+      env_injective env ->
+      NoDupMembers vars ->
+      (forall v ckv c, In (v, ckv) vars ->
+                       Env.find v env = Some c -> c <> base_ty) ->
+      (forall v ckv c, In (v, ckv) vars ->
+                       Env.find v env = Some c -> c <> rst_ty) ->
+      wc_clock vars ck ->
+      assign_clk_type env base_ty ck = Some ckty ->
+      lst_clock_closed env base_ty vars ns t ck ->
+      constraint_clock_closed env base_ty vars ns
+        (merge (merge [rst_ty] ckty) (fst t), tgt).
+  Proof.
+    intros env base_ty rst_ty vars ns ck ckty t tgt
+      Hinj Hnd Hbase Hrst Hwc Hck Ht v b ckv ckvty Hfv Hnm Hb Hinv Hckv.
+    cbn [fst] in Hb |- *.
+    apply in_merge_inv in Hb as [Hb|Hb].
+    - apply in_merge_inv in Hb as [Hb|Hb].
+      + destruct Hb as [Hb|[]].
+        exfalso. exact (Hrst v ckv b Hinv Hfv (@Coq.Init.Logic.eq_sym _ _ _ Hb)).
+      + intros z Hz. apply in_merge_left, in_merge_right.
+        exact (assign_clk_type_clock_closed env base_ty vars Hinj Hnd Hbase
+                 ck ckty Hwc Hck v b ckv ckvty Hfv Hb Hinv Hckv z Hz).
+    - intros z Hz.
+      assert (In z (merge ckty (fst t))) as Hz'
+          by exact (Ht ckty b Hck Hnm Hb v ckv ckvty Hfv Hinv Hckv z Hz).
+      apply in_merge_inv in Hz' as [Hz'|Hz'];
+        [apply in_merge_left; now apply in_merge_right
+        |now apply in_merge_right].
+  Qed.
+
+  (** The ambient part of [ljoin (ambient ckty) t] carries nothing, so the
+      generated block splits into the ordering constraint and whatever the
+      right-hand side was already carrying. *)
+  Lemma constraints_clock_closed_lconstrain :
+    forall env base_ty rst_ty vars ns ck ckty t b,
+      env_injective env ->
+      NoDupMembers vars ->
+      (forall v ckv c, In (v, ckv) vars ->
+                       Env.find v env = Some c -> c <> base_ty) ->
+      (forall v ckv c, In (v, ckv) vars ->
+                       Env.find v env = Some c -> c <> rst_ty) ->
+      wc_clock vars ck ->
+      assign_clk_type env base_ty ck = Some ckty ->
+      lst_clock_closed env base_ty vars ns t ck ->
+      constraints_clock_closed env base_ty vars ns (snd t) ->
+      constraints_clock_closed env base_ty vars ns
+        (lconstrain (ljoin (ljoin (lvar rst_ty) (ckty, [])) t) b).
+  Proof.
+    intros env base_ty rst_ty vars ns ck ckty t b
+      Hinj Hnd Hbase Hrst Hwc Hck Ht Hcar.
+    unfold lconstrain. apply constraints_clock_closed_cmerge. split.
+    - constructor; [|constructor].
+      rewrite !fst_ljoin, fst_lvar. cbn [fst].
+      exact (constraint_clock_closed_head env base_ty rst_ty vars ns ck ckty t
+               [b] Hinj Hnd Hbase Hrst Hwc Hck Ht).
+    - rewrite !snd_ljoin, snd_lvar. cbn [snd].
+      rewrite cmerge_nil, cmerge_nil2. exact Hcar.
+  Qed.
+
+  Lemma eqn_clock_type_inv :
+    forall env base_ty cenv x ckty s s',
+      eqn_clock_type env base_ty cenv x s = OK (ckty, s') ->
+      exists ck, find_clock cenv x = OK ck
+                 /\ assign_clk_type env base_ty ck = Some ckty
+                 /\ s' = s.
+  Proof.
+    intros env base_ty cenv x ckty s s' H. unfold eqn_clock_type in H.
+    apply sec_bind_inv in H as (ck & s1 & Hck & H).
+    unfold res_to_sec in Hck.
+    destruct (find_clock cenv x) as [ck0|] eqn:Eck; [|discriminate].
+    unfold SC.ret in Hck. inversion Hck; subst ck0 s1.
+    apply option_to_sec_inv in H as (Hty & ?); subst s'.
+    exists ck. auto.
+  Qed.
+
+  (** The variable rule mints nothing: [eqn_clock_type] is a lookup and the
+      recursion threads the state untouched.  Proved here rather than reused
+      from the equation file, which comes later. *)
+  Lemma generate_lvars_constraints_advances :
+    forall env base_ty rst_ty cenv xs bs ts cs s s',
+      generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
+        = OK (cs, s') ->
+      sec_le s s'.
+  Proof.
+    intros env base_ty rst_ty cenv xs.
+    induction xs as [|x xs IH]; intros bs ts cs s s' H.
+    - destruct bs as [|b bs]; destruct ts as [|t ts]; simpl in H;
+        try discriminate.
+      unfold SC.ret in H.
+      assert (s' = s) as ? by (inversion H; reflexivity); subst s'.
+      apply sec_le_refl.
+    - destruct bs as [|b bs]; destruct ts as [|t ts]; simpl in H;
+        try discriminate.
+      apply sec_bind_inv in H as (ckty & s1 & Hckty & H).
+      apply sec_bind_inv in H as (rest & s2 & Hrest & Hret).
+      apply eqn_clock_type_inv in Hckty as (ck & _ & _ & ?); subst s1.
+      unfold SC.ret in Hret.
+      assert (s' = s2) as ? by (inversion Hret; reflexivity); subst s'.
+      eapply IH; exact Hrest.
+  Qed.
+
+  (** The variable rule, one ordering per defined name.  The hypothesis is
+      the one the equation level can actually supply: each right-hand side
+      type is closed at the clock its defined variable is declared on, which
+      is what [wc_equation] pins. *)
+  Lemma generate_lvars_constraints_clock_closed :
+    forall env base_ty rst_ty vars cenv ns,
+      env_injective env ->
+      NoDupMembers vars ->
+      (forall v ckv c, In (v, ckv) vars ->
+                       Env.find v env = Some c -> c <> base_ty) ->
+      (forall v ckv c, In (v, ckv) vars ->
+                       Env.find v env = Some c -> c <> rst_ty) ->
+      (forall x ck, find_clock cenv x = OK ck -> In (x, ck) vars) ->
+      (forall x ck, In (x, ck) vars -> wc_clock vars ck) ->
+      forall xs bs ts cs s s',
+        Forall2 (fun x t =>
+                   forall ck, find_clock cenv x = OK ck ->
+                     lst_clock_closed env base_ty vars ns t ck) xs ts ->
+        Forall (fun t => constraints_clock_closed env base_ty vars ns (snd t))
+          ts ->
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
+          = OK (cs, s') ->
+        constraints_clock_closed env base_ty vars ns cs.
+  Proof.
+    intros env base_ty rst_ty vars cenv ns Hinj Hnd Hbase Hrst Hcv Hwcv
+      xs. induction xs as [|x xs IH]; intros bs ts cs s s' Hall Hcar H.
+    - destruct bs as [|b bs]; destruct ts as [|t ts]; simpl in H;
+        try discriminate.
+      unfold SC.ret in H.
+      assert (cs = []) as ? by (inversion H; reflexivity); subst cs.
+      constructor.
+    - destruct bs as [|b bs]; destruct ts as [|t ts]; simpl in H;
+        try discriminate.
+      apply sec_bind_inv in H as (ckty & s1 & Hckty & H).
+      apply sec_bind_inv in H as (rest & s2 & Hrest & Hret).
+      apply eqn_clock_type_inv in Hckty as (ck & Hck & Hcka & ?); subst s1.
+      unfold SC.ret in Hret.
+      assert (cs = lconstrain (ljoin (ljoin (lvar rst_ty) (ckty, [])) t) b
+                     ++ rest) as ?
+          by (inversion Hret; reflexivity); subst cs.
+      inversion Hall as [|x0 t0 xs0 ts0 Hxt Hallr]; subst.
+      inversion Hcar as [|t1 ts1 Hct Hcarr]; subst.
+      apply constraints_clock_closed_app.
+      + apply (constraints_clock_closed_lconstrain env base_ty rst_ty vars ns
+                 ck ckty t b Hinj Hnd Hbase Hrst);
+          [exact (Hwcv x ck (Hcv x ck Hck))|exact Hcka
+          |exact (Hxt ck Hck)|exact Hct].
+      + eapply IH; [exact Hallr|exact Hcarr|exact Hrest].
+  Qed.
+
+  (** What a right-hand side's *carried* constraints have to satisfy.  These
+      come only from nested calls, so this is where a callee's signature
+      invariant will eventually plug in; isolating it as one hypothesis keeps
+      the rules below independent of that step. *)
+  Definition lexp_carried_closed
+      (G : secglobal) (env : Env.t ident) (base_ty rst_ty : ident)
+      (vars : list (ident * clock)) (ns : list ident) (e : exp) : Prop :=
+    forall ts s s',
+      assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+      Forall (fun t => constraints_clock_closed env base_ty vars ns (snd t)) ts.
+
+  Lemma assign_lexps_carried_closed_of :
+    forall G env base_ty rst_ty vars ns es ts s s',
+      Forall (lexp_carried_closed G env base_ty rst_ty vars ns) es ->
+      assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+      Forall (fun t => constraints_clock_closed env base_ty vars ns (snd t)) ts.
+  Proof.
+    intros G env base_ty rst_ty vars ns es.
+    induction es as [|e es IH]; intros ts s s' Hall H.
+    - apply (assign_lexps_carried_nil G env base_ty rst_ty) in H
+        as (? & _ & ?); subst ts. constructor.
+    - apply assign_lexps_carried_cons in H
+        as (t & r & sa & Ht & Hr & ? & _); subst ts.
+      inversion Hall as [|e0 es0 He Her]; subst.
+      apply Forall_app. split; [exact (He t s sa Ht)|eapply IH; eauto].
+  Qed.
+
+  (** Two [Forall2]s over a common list of clocks, composed.  This is how the
+      equation rule pairs each defined variable with the type of the
+      expression that defines it: [wc_equation] relates the variables to
+      [clocksof es], and the closure theorem relates the types to the same
+      list. *)
+  Lemma Forall2_trans_clock :
+    forall {A B} (R : A -> clock -> Prop) (Q : B -> clock -> Prop)
+           (S : A -> B -> Prop) xs ts cks,
+      Forall2 R xs cks ->
+      Forall2 Q ts cks ->
+      (forall x t ck, R x ck -> Q t ck -> S x t) ->
+      Forall2 S xs ts.
+  Proof.
+    intros A B R Q S xs ts cks HR. revert ts.
+    induction HR as [|x ck xs cks Hx HRr IH]; intros ts HQ Hcomb.
+    - inversion HQ; subst. constructor.
+    - inversion HQ as [|t ck0 ts0 cks0 Ht HQr]; subst.
+      constructor; [exact (Hcomb x t ck Hx Ht)|exact (IH ts0 HQr Hcomb)].
+  Qed.
+
+  (** The definition rule: one variable, one expression. *)
+  Lemma generate_ldef_constraint_clock_closed :
+    forall G env base_ty rst_ty vars cenv Pg ns x e cs s s',
+      env_injective env ->
+      NoDupMembers vars ->
+      (forall v ckv c, In (v, ckv) vars ->
+                       Env.find v env = Some c -> c <> base_ty) ->
+      (forall v ckv c, In (v, ckv) vars ->
+                       Env.find v env = Some c -> c <> rst_ty) ->
+      (forall y ck, find_clock cenv y = OK ck -> In (y, ck) vars) ->
+      (forall y ck, In (y, ck) vars -> wc_clock vars ck) ->
+      wc_exp Pg vars e ->
+      (forall ck, find_clock cenv x = OK ck -> clockof e = [ck]) ->
+      lexp_carried_closed G env base_ty rst_ty vars ns e ->
+      incl (minted s s') ns ->
+      generate_ldef_constraint G env base_ty rst_ty cenv x e s = OK (cs, s') ->
+      constraints_clock_closed env base_ty vars ns cs.
+  Proof.
+    intros G env base_ty rst_ty vars cenv Pg ns x e cs s s'
+      Hinj Hnd Hbase Hrst Hcv Hwcv Hwce Hcke Hcar Hns H.
+    apply generate_ldef_constraint_inv in H
+      as (ck & ckty & sa & rho & b & Hck & Hcka & Hty & Hb & ?); subst cs.
+    assert (lst_clock_closed env base_ty vars ns (sa, rho) ck) as Hcl.
+    { assert (Forall2 (lst_clock_closed env base_ty vars ns)
+                [(sa, rho)] (clockof e)) as Hf
+          by exact (assign_lexp_type_clock_closed G env base_ty rst_ty Pg vars
+                      Hinj Hnd e Hwce [(sa, rho)] s s' ns Hns Hty).
+      rewrite (Hcke ck Hck) in Hf. now inversion Hf. }
+    apply constraints_clock_closed_cmerge. split.
+    - constructor; [|constructor].
+      exact (constraint_clock_closed_head env base_ty rst_ty vars ns ck ckty
+               (sa, rho) [b] Hinj Hnd Hbase Hrst
+               (Hwcv x ck (Hcv x ck Hck)) Hcka Hcl).
+    - assert (Forall (fun t =>
+                 constraints_clock_closed env base_ty vars ns (snd t))
+                [(sa, rho)]) as Hr by exact (Hcar [(sa, rho)] s s' Hty).
+      inversion Hr as [|t0 ts0 Ht0 _]; subst. exact Ht0.
+  Qed.
+
+  (** The general rule: a list of expressions against a list of defined
+      variables, typed and then ordered. *)
+  Lemma generate_lgen_constraint_clock_closed :
+    forall G env base_ty rst_ty vars cenv Pg ns xs es cs s s',
+      env_injective env ->
+      NoDupMembers vars ->
+      (forall v ckv c, In (v, ckv) vars ->
+                       Env.find v env = Some c -> c <> base_ty) ->
+      (forall v ckv c, In (v, ckv) vars ->
+                       Env.find v env = Some c -> c <> rst_ty) ->
+      (forall y ck, find_clock cenv y = OK ck -> In (y, ck) vars) ->
+      (forall y ck, In (y, ck) vars -> wc_clock vars ck) ->
+      Forall (wc_exp Pg vars) es ->
+      Forall2 (fun x ck => In (x, ck) vars) xs (clocksof es) ->
+      Forall (lexp_carried_closed G env base_ty rst_ty vars ns) es ->
+      incl (minted s s') ns ->
+      generate_lgen_constraint G env base_ty rst_ty cenv xs es s = OK (cs, s') ->
+      constraints_clock_closed env base_ty vars ns cs.
+  Proof.
+    intros G env base_ty rst_ty vars cenv Pg ns xs es cs s s'
+      Hinj Hnd Hbase Hrst Hcv Hwcv Hwces Hxck Hcar Hns H.
+    unfold generate_lgen_constraint in H.
+    apply sec_bind_inv in H as (ts & s1 & Hts & H).
+    apply sec_bind_inv in H as (bs & s2 & Hbs & Hlv).
+    apply option_to_sec_inv in Hbs as (_ & ?); subst s2.
+    assert (sec_le s1 s') as Hle1
+        by exact (generate_lvars_constraints_advances env base_ty rst_ty cenv
+                    xs bs ts cs s1 s' Hlv).
+    assert (incl (minted s s1) ns) as Hns1
+        by exact (minted_incl_sub s s s1 s' ns (sec_le_refl s) Hle1 Hns).
+    assert (Forall2 (lst_clock_closed env base_ty vars ns) ts (clocksof es))
+      as Hcls.
+    { eapply (assign_lexps_closed_of G env base_ty rst_ty Pg vars es);
+        [|exact Hwces|exact Hns1|exact Hts].
+      apply Forall_forall. intros e0 _.
+      exact (assign_lexp_type_clock_closed G env base_ty rst_ty Pg vars
+               Hinj Hnd e0). }
+    eapply generate_lvars_constraints_clock_closed;
+      [exact Hinj|exact Hnd|exact Hbase|exact Hrst|exact Hcv|exact Hwcv| | |
+       exact Hlv].
+    - eapply (Forall2_trans_clock (fun x ck => In (x, ck) vars)
+                (lst_clock_closed env base_ty vars ns));
+        [exact Hxck|exact Hcls|].
+      intros x0 t ck Hin Hcl ck0 Hck0.
+      assert (ck0 = ck) as ?
+          by (exact (NoDupMembers_det x0 ck0 ck vars Hnd (Hcv x0 ck0 Hck0) Hin));
+        subst ck0.
+      exact Hcl.
+    - exact (assign_lexps_carried_closed_of G env base_ty rst_ty vars ns es
+               ts s s1 Hcar Hts).
+  Qed.
+
+  (** The equation rule, for a right-hand side with no call on it.  The call
+      rule is the one case left: its constraints are a callee's, instantiated,
+      so closing it needs the property as an invariant on [G] -- discharged at
+      the program level, like [sig_good] and the others. *)
+  Lemma generate_leqn_constraint_clock_closed_plain :
+    forall G env base_ty rst_ty vars cenv Pg ns xs es cs s s',
+      env_injective env ->
+      NoDupMembers vars ->
+      (forall v ckv c, In (v, ckv) vars ->
+                       Env.find v env = Some c -> c <> base_ty) ->
+      (forall v ckv c, In (v, ckv) vars ->
+                       Env.find v env = Some c -> c <> rst_ty) ->
+      (forall y ck, find_clock cenv y = OK ck -> In (y, ck) vars) ->
+      (forall y ck, In (y, ck) vars -> wc_clock vars ck) ->
+      Forall (fun e => match e with
+                       | Eapp _ _ _ _ => False | _ => True end) es ->
+      Forall (wc_exp Pg vars) es ->
+      Forall2 (fun x ck => In (x, ck) vars) xs (clocksof es) ->
+      Forall (lexp_carried_closed G env base_ty rst_ty vars ns) es ->
+      incl (minted s s') ns ->
+      generate_leqn_constraint G env base_ty rst_ty cenv (xs, es) s
+        = OK (cs, s') ->
+      constraints_clock_closed env base_ty vars ns cs.
+  Proof.
+    intros G env base_ty rst_ty vars cenv Pg ns xs es cs s s'
+      Hinj Hnd Hbase Hrst Hcv Hwcv Hne Hwces Hxck Hcar Hns H.
+    destruct es as [|e [|e2 es2]].
+
+    - (** nothing on the right: the general rule *)
+      eapply generate_lgen_constraint_clock_closed;
+        [exact Hinj|exact Hnd|exact Hbase|exact Hrst|exact Hcv|exact Hwcv
+        |exact Hwces|exact Hxck|exact Hcar|exact Hns|exact H].
+
+    - (** one expression: the definition rule when it defines one variable *)
+      inversion Hne as [|e0 es0 Hnee _]; subst.
+      inversion Hwces as [|e1 es1 Hwce _]; subst.
+      inversion Hcar as [|e3 es3 Hcare _]; subst.
+      rewrite <- generate_lone_is_leqn in H.
+      assert (clocksof [e] = clockof e) as Hcl1
+          by (unfold clocksof; simpl; now rewrite app_nil_r).
+      destruct xs as [|x [|x2 xs2]].
+      + eapply generate_lgen_constraint_clock_closed;
+          [exact Hinj|exact Hnd|exact Hbase|exact Hrst|exact Hcv|exact Hwcv
+          |exact Hwces|exact Hxck|exact Hcar|exact Hns|].
+        destruct e; (exact H || contradiction).
+      + assert (forall ck, find_clock cenv x = OK ck -> clockof e = [ck])
+          as Hcke.
+        { intros ck Hck.
+          inversion Hxck as [|y ck0 ys cks Hin Hr]; subst.
+          inversion Hr; subst.
+          assert (ck0 = ck) as ?
+              by (exact (NoDupMembers_det x ck0 ck vars Hnd Hin
+                           (Hcv x ck Hck))); subst ck0.
+          now rewrite <- Hcl1. }
+        eapply generate_ldef_constraint_clock_closed;
+          [exact Hinj|exact Hnd|exact Hbase|exact Hrst|exact Hcv|exact Hwcv
+          |exact Hwce|exact Hcke|exact Hcare|exact Hns|].
+        destruct e; (exact H || contradiction).
+      + eapply generate_lgen_constraint_clock_closed;
+          [exact Hinj|exact Hnd|exact Hbase|exact Hrst|exact Hcv|exact Hwcv
+          |exact Hwces|exact Hxck|exact Hcar|exact Hns|].
+        destruct e; (exact H || contradiction).
+
+    - (** two or more, and none of them a call: the general rule again *)
+      rewrite gen_leqn_cons2, (has_lcall_false _ Hne) in H.
+      eapply generate_lgen_constraint_clock_closed;
+        [exact Hinj|exact Hnd|exact Hbase|exact Hrst|exact Hcv|exact Hwcv
+        |exact Hwces|exact Hxck|exact Hcar|exact Hns|exact H].
+  Qed.
+
 End SecLusUnnestingBase.
