@@ -3777,4 +3777,108 @@ Module SecLusUnnestingBase
                 |exact Htgt|exact Hcns].
   Qed.
 
+  (** * Instantiating a clock, and what its type can mention
+
+      At a call, a formal's declared clock [ck] is instantiated as
+      [instck bck sub ck]: the sampling variables are mapped through [sub] to
+      the caller's streams, and the whole thing is rooted at the call's base
+      clock.  Its security type therefore mentions only the base clock's type
+      and the security names of those substituted streams -- nothing else.
+
+      That is the fact both remaining consumers need.  The dependency property
+      needs it to see that an argument's clock type is already covered by the
+      actuals; the pointwise contract needs it for the same reason on the
+      streams side. *)
+
+  Fixpoint clock_vars (ck : clock) : list ident :=
+    match ck with
+    | Cbase => []
+    | Con ck' x _ => x :: clock_vars ck'
+    end.
+
+  Lemma assign_clk_type_instck :
+    forall env base_ty bk sub ck ck' bkty ckty,
+      instck bk sub ck = Some ck' ->
+      assign_clk_type env base_ty bk = Some bkty ->
+      assign_clk_type env base_ty ck' = Some ckty ->
+      forall z, In z ckty ->
+        In z bkty
+        \/ exists x x', In x (clock_vars ck)
+                        /\ sub x = Some x'
+                        /\ Env.find x' env = Some z.
+  Proof.
+    intros env base_ty bk sub ck. revert bk.
+    induction ck as [|ck0 IH x b]; intros bk ck' bkty ckty Hi Hbk Hck z Hz.
+    - (** the base clock: the instantiated clock *is* the base clock *)
+      simpl in Hi. apply option_Some_inj in Hi. subst ck'.
+      rewrite Hbk in Hck. apply option_Some_inj in Hck. subst ckty.
+      now left.
+    - (** one more sampling variable, and it came from [sub] *)
+      simpl in Hi.
+      destruct (instck bk sub ck0) as [ck0'|] eqn:Ei; [|discriminate Hi].
+      destruct (sub x) as [x'|] eqn:Ex; [|discriminate Hi].
+      apply option_Some_inj in Hi. subst ck'.
+      apply assign_clk_type_Con_inv in Hck
+        as (ck0ty & g & Hck0 & Hg & ?); subst ckty.
+      apply in_merge_inv in Hz as [Hz|Hz].
+      + destruct (IH bk ck0' bkty ck0ty Ei Hbk Hck0 z Hz)
+          as [Hzb|(x0 & x0' & Hin & Hs & He)];
+          [now left|].
+        right. exists x0, x0'. split; [now right|auto].
+      + destruct Hz as [Hz|[]]; subst g.
+        right. exists x, x'. split; [now left|auto].
+  Qed.
+
+  Corollary assign_clk_type_instck_incl :
+    forall env base_ty bk sub ck ck' bkty ckty acts,
+      instck bk sub ck = Some ck' ->
+      assign_clk_type env base_ty bk = Some bkty ->
+      assign_clk_type env base_ty ck' = Some ckty ->
+      (forall x x' z, In x (clock_vars ck) -> sub x = Some x' ->
+                      Env.find x' env = Some z -> In z acts) ->
+      incl ckty (merge bkty acts).
+  Proof.
+    intros env base_ty bk sub ck ck' bkty ckty acts Hi Hbk Hck Hact z Hz.
+    destruct (assign_clk_type_instck env base_ty bk sub ck ck' bkty ckty
+                Hi Hbk Hck z Hz) as [Hzb|(x & x' & Hin & Hs & He)].
+    - now apply in_merge_left.
+    - apply in_merge_right. exact (Hact x x' z Hin Hs He).
+  Qed.
+
+  (** A well-clocked clock's variables are declared, which is what turns the
+      membership above into a fact about [vars]. *)
+  Lemma clock_vars_wc :
+    forall vars ck,
+      wc_clock vars ck ->
+      forall x, In x (clock_vars ck) -> exists ckx, In (x, ckx) vars.
+  Proof.
+    intros vars ck Hwc. induction Hwc as [|ck0 y b Hwc IH Hin];
+      intros x Hx; [contradiction|].
+    destruct Hx as [Hx|Hx]; [subst x; now exists ck0|exact (IH x Hx)].
+  Qed.
+
+  (** The generator reads the call's base clock off the arguments, as
+      [find_base_clock (clocksof es)]; clocking calls it [bck].  They agree,
+      and this is where [wc_global] is needed -- the callee's own
+      [wc_env (idck n_in)] is what makes [bck] the common parent.  The
+      argument is Velus's, lifted out of [TrClocking] so both consumers can
+      use it as a lemma. *)
+  Lemma wc_exp_Eapp_base_clock :
+    forall P n f es bck sub,
+      wc_global P ->
+      find_node f P = Some n ->
+      Forall2 (WellInstantiated bck sub) (idck n.(n_in)) (nclocksof es) ->
+      find_base_clock (clocksof es) = bck.
+  Proof.
+    intros P n f es bck sub Hwcg Hfind WIi.
+    pose proof (wc_find_node P f n Hwcg Hfind) as (G' & (Wcin & _)).
+    apply find_base_clock_bck.
+    - rewrite clocksof_nclocksof.
+      eapply WellInstantiated_bck; [exact Wcin| |exact WIi].
+      unfold idck. rewrite map_length. exact (n_ingt0 n).
+    - apply WellInstantiated_parent in WIi.
+      rewrite clocksof_nclocksof, Forall_map.
+      eapply Forall_impl; [|exact WIi]. now simpl.
+  Qed.
+
 End SecLusUnnestingBase.
