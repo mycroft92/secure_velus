@@ -4147,4 +4147,17 @@ Module SecLusUnnestingBase
         exact (Hanon e' f es' ro anns (or_intror Hin) Heq w g Hw).
   Qed.
 
+  Lemma nth_error_combine :
+    forall {A B} (xs : list A) (ys : list B) i x y,
+      nth_error xs i = Some x -> nth_error ys i = Some y ->
+      nth_error (combine xs ys) i = Some (x, y).
+  Proof.
+    intros A B xs. induction xs as [|a xs IH]; intros ys i x y Hx Hy.
+    - destruct i; discriminate.
+    - destruct ys as [|b ys]; [destruct i; discriminate|].
+      destruct i as [|i]; simpl in Hx, Hy |- *.
+      + inversion Hx; inversion Hy; subst. reflexivity.
+      + exact (IH ys i x y Hx Hy).
+  Qed.
+
 End SecLusUnnestingBase.

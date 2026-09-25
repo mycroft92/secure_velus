@@ -328,16 +328,43 @@ Three obligations:
     chain, the callee's `wc_env (idck n_in)`, and the argument types the
     generator produced]*.
 
-**All three obligations of the design in force are now discharged** as
-statements *[verified, compiles]*.  What is left before `carries_Eapp`
-closes is the bookkeeping that puts them together on the concrete run: the
-augmentation has to be *built* (as `merge (fst argts_i) (the actuals of the
-formal's clock variables)`, whose shape hypothesis `call_augment_dep_at_call`
-then discharges), and the two remaining hypotheses -- the callee naming
-agreement `nth_error (idck n_in) i = Some (x,ck) -> nth_error (s_in sg) i =
-Some y -> nm x = Some y`, and `sig_inputs_clock_closed` itself -- enter Leg U
-on `GL` the way `sig_good` and the others do, discharged at the program
-level.
+**All three obligations of the design in force are discharged, and now on the
+concrete augmentation** *[verified, compiles]*.
+
+*The augmentation, built.*  `sub_names`, `clock_actuals`, `augment_actuals`
+(`SecLusUnnestingCalls.v`), with `clock_actuals_inv` / `clock_actuals_intro`,
+`augment_actuals_cons` / `_nth` / `_nth_inv` / `_grows`:
+
+    clock_actuals sub ck   = the security names of the streams that ck's
+                             variables were instantiated to
+    augment_actuals sub ins argts
+                           = per slot, merge (fst argts_i)
+                                            (clock_actuals sub ck_i)
+
+This is the design's "joined with the actuals of j's clock variables" made
+precise, and it is *minimal*: by `assign_clk_type_instck` the only part of an
+argument's own ambient the uniform ambient does not already carry is exactly
+those names.  `augment_actuals_grows` also closes the growth premise of
+`subst_constraints_inp_map_augment`.
+
+*The two program-level facts, named.*  `sig_inputs_ok P` pairs them, because
+they are established together when `generate_lnode_sig` runs: a callee's
+signature input list lines up with its node's inputs under the callee's own
+naming, and its constraints are closed under those inputs' declared clocks.
+It is parameterised by the Lustre program, since the pairing of `GL` with `P`
+is fixed at the program level, and it joins `sig_good`, `sig_scoped` and
+`sig_actuals_fresh` as a hypothesis discharged there.
+
+*The whole thing.*  `call_augment_dep_concrete` is the premise
+`subst_constraints_inp_map_augment` asks for, on the concrete augmentation,
+with nothing abstract left but `sig_inputs_ok`.
+`call_amb_covers_augmented_concrete` is clause 3 on the same augmentation.
+
+**What is left for `carries_Eapp`**: threading these through the existing
+`cs_chain` fold, i.e. instantiating the signature on the source side with
+`augment_actuals` and rewriting the call case's chain application to use it.
+That is editing an existing proof rather than proving anything new
+*[untested]*.
 
 **A near-blocker, and why it is not one, 2026-09-23.**  The augmentation
 argument needs the actual at a clock position to contribute its own security

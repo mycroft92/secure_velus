@@ -661,6 +661,146 @@ Import UNN.Fresh.Tactics.
           intros c1 Hc1. apply Hdep. now right.
     Qed.
 
+    (** * The augmentation, made concrete
+
+        The design in force prescribes
+
+            inp1''_j := inp1_j joined with the actuals of j's clock variables
+
+        and what that has to contribute is exactly the security names of the
+        streams those clock variables were instantiated to -- minimal, and by
+        [call_amb_covers_augmented] sufficient: it is precisely the part of an
+        argument's own ambient that the uniform ambient does not already
+        carry. *)
+
+    Fixpoint sub_names (sub : ident -> option ident) (xs : list ident) : ST :=
+      match xs with
+      | [] => []
+      | x :: xs' =>
+          match sub x with
+          | Some u =>
+              match Env.find u env with
+              | Some g => merge [g] (sub_names sub xs')
+              | None => sub_names sub xs'
+              end
+          | None => sub_names sub xs'
+          end
+      end.
+
+    Definition clock_actuals (sub : ident -> option ident) (ck : clock) : ST :=
+      sub_names sub (clock_vars ck).
+
+    Lemma sub_names_inv :
+      forall sub xs z,
+        In z (sub_names sub xs) ->
+        exists x u, In x xs /\ sub x = Some u /\ Env.find u env = Some z.
+    Proof.
+      intros sub xs. induction xs as [|x xs IH]; intros z Hz; [contradiction|].
+      cbn [sub_names] in Hz.
+      destruct (sub x) as [u|] eqn:Ex;
+        [|destruct (IH z Hz) as (x0 & u0 & H1 & H2 & H3);
+          exists x0, u0; split; [now right|auto]].
+      destruct (Env.find u env) as [g|] eqn:Eg;
+        [|destruct (IH z Hz) as (x0 & u0 & H1 & H2 & H3);
+          exists x0, u0; split; [now right|auto]].
+      apply in_merge_inv in Hz as [Hz|Hz].
+      - destruct Hz as [Hz|[]]; subst g.
+        exists x, u. split; [now left|auto].
+      - destruct (IH z Hz) as (x0 & u0 & H1 & H2 & H3).
+        exists x0, u0. split; [now right|auto].
+    Qed.
+
+    Lemma sub_names_intro :
+      forall sub xs x u g,
+        In x xs -> sub x = Some u -> Env.find u env = Some g ->
+        In g (sub_names sub xs).
+    Proof.
+      intros sub xs. induction xs as [|x0 xs IH]; intros x u g Hin Hs Hg;
+        [contradiction|].
+      cbn [sub_names]. destruct Hin as [Heq|Hin].
+      - subst x0. rewrite Hs, Hg. apply in_merge_left. now left.
+      - destruct (sub x0) as [u0|] eqn:E0; [|exact (IH x u g Hin Hs Hg)].
+        destruct (Env.find u0 env) as [g0|] eqn:Eg0;
+          [|exact (IH x u g Hin Hs Hg)].
+        apply in_merge_right. exact (IH x u g Hin Hs Hg).
+    Qed.
+
+    Corollary clock_actuals_inv :
+      forall sub ck z,
+        In z (clock_actuals sub ck) ->
+        exists x u, In x (clock_vars ck) /\ sub x = Some u
+                    /\ Env.find u env = Some z.
+    Proof. intros sub ck z. apply sub_names_inv. Qed.
+
+    Corollary clock_actuals_intro :
+      forall sub ck x u g,
+        In x (clock_vars ck) -> sub x = Some u -> Env.find u env = Some g ->
+        In g (clock_actuals sub ck).
+    Proof. intros sub ck. apply sub_names_intro. Qed.
+
+    Definition augment_actuals (sub : ident -> option ident)
+        (ins : list (ident * clock)) (argts : list LST) : list ST :=
+      List.map (fun p => merge (fst (snd p)) (clock_actuals sub (snd (fst p))))
+        (combine ins argts).
+
+    Lemma augment_actuals_cons :
+      forall sub p ins t argts,
+        augment_actuals sub (p :: ins) (t :: argts)
+        = merge (fst t) (clock_actuals sub (snd p))
+            :: augment_actuals sub ins argts.
+    Proof. reflexivity. Qed.
+
+    Lemma augment_actuals_nth :
+      forall sub ins argts i x ck t,
+        nth_error ins i = Some (x, ck) ->
+        nth_error argts i = Some t ->
+        nth_error (augment_actuals sub ins argts) i
+          = Some (merge (fst t) (clock_actuals sub ck)).
+    Proof.
+      intros sub ins argts i x ck t Hxi Hti.
+      unfold augment_actuals.
+      rewrite (map_nth_error _ i (combine ins argts)
+                 (nth_error_combine ins argts i (x, ck) t Hxi Hti)).
+      reflexivity.
+    Qed.
+
+    (** Read off by position, without going through the equation -- which
+        would have to be rewritten under an alias. *)
+    Lemma augment_actuals_nth_inv :
+      forall sub ins argts i x ck t w' z,
+        nth_error ins i = Some (x, ck) ->
+        nth_error argts i = Some t ->
+        nth_error (augment_actuals sub ins argts) i = Some w' ->
+        In z w' ->
+        In z (fst t) \/ In z (clock_actuals sub ck).
+    Proof.
+      intros sub ins. induction ins as [|p ins IH];
+        intros argts i x ck t w' z Hxi Hti Hw' Hz.
+      - destruct i; discriminate Hxi.
+      - destruct argts as [|t0 argts]; [destruct i; discriminate Hti|].
+        rewrite augment_actuals_cons in Hw'.
+        destruct i as [|i]; simpl in Hxi, Hti, Hw'.
+        + inversion Hxi; inversion Hti; inversion Hw'; subst.
+          cbn [snd] in Hz.
+          apply in_merge_inv in Hz as [Hz|Hz]; [now left|now right].
+        + exact (IH argts i x ck t w' z Hxi Hti Hw' Hz).
+    Qed.
+
+    Lemma augment_actuals_grows :
+      forall sub ins argts,
+        List.length ins = List.length argts ->
+        Forall2 (fun v v' => forall z, In z v -> In z v')
+          (List.map fst argts) (augment_actuals sub ins argts).
+    Proof.
+      intros sub ins. induction ins as [|p ins IH]; intros argts Hl.
+      - destruct argts; [constructor|discriminate].
+      - destruct argts as [|t argts]; [discriminate|].
+        rewrite augment_actuals_cons. cbn [List.map].
+        constructor;
+          [intros z Hz; now apply in_merge_left
+          |apply IH; simpl in Hl; congruence].
+    Qed.
+
     (** The same, read off what the call site actually has: [wc_exp]'s
         [WellInstantiated] chain, the callee's own [wc_env (idck n_in)], and the
         argument types the generator produced.  The three positional hypotheses
@@ -728,6 +868,66 @@ Import UNN.Fresh.Tactics.
                  (wc_env_var (idck n.(n_in)) x ck Hwce Hin) x' Hx').
     Qed.
 
+
+    (** * What the program level must supply about the signatures
+
+        Two facts, paired because they are established together when
+        [generate_lnode_sig] runs: a callee's signature input list lines up with
+        its node's inputs under the callee's own naming, and its constraints are
+        closed under those inputs' declared clocks.  Parameterised by the Lustre
+        program, because the pairing of [GL] with [P] is fixed at the program
+        level -- this joins [sig_good], [sig_scoped] and [sig_actuals_fresh] as
+        a hypothesis discharged there. *)
+    Definition sig_inputs_ok (P : global) : Prop :=
+      forall f n sg,
+        find_node f P = Some n ->
+        find_signature f GL = Some sg ->
+        exists nm,
+          List.length (idck n.(n_in)) = List.length (s_in sg)
+          /\ (forall i x ck y,
+                 nth_error (idck n.(n_in)) i = Some (x, ck) ->
+                 nth_error (s_in sg) i = Some y -> nm x = Some y)
+          /\ sig_inputs_clock_closed sg (idck n.(n_in)) nm.
+
+    (** And the whole of it, on the concrete augmentation: the premise
+        [subst_constraints_inp_map_augment] asks for, with nothing left
+        abstract but the two program-level facts. *)
+    Corollary call_augment_dep_concrete :
+      forall (P : global) (sg : signature) (n : LSyn.node) (bck : clock)
+             (sub : ident -> option ident) (f : ident) (es : list exp)
+             (argts : list LST) (c : SymTypes.constraint),
+        sig_inputs_ok P ->
+        find_node f P = Some n ->
+        find_signature f GL = Some sg ->
+        wc_env (idck n.(n_in)) ->
+        Forall2 (WellInstantiated bck sub) (idck n.(n_in)) (nclocksof es) ->
+        Forall2 (fun t nck => forall w g,
+                     snd nck = Some w -> Env.find w env = Some g ->
+                     In g (fst t))
+          argts (nclocksof es) ->
+        In c (s_constraints sg) ->
+        forall y w',
+          In (y, w') (combine (s_in sg)
+                        (augment_actuals sub (idck n.(n_in)) argts)) ->
+          In y (fst c) ->
+          forall z, In z w' ->
+            exists y2 w2,
+              In (y2, w2) (combine (s_in sg) (List.map fst argts))
+              /\ In y2 (fst c) /\ In z w2.
+    Proof.
+      intros P sg n bck sub f es argts c Hok Hfn Hfs Hwce Hwi Hcov Hc.
+      destruct (Hok f n sg Hfn Hfs) as (nm & Hl1 & Hnm & Hinv).
+      eapply (call_augment_dep_at_call sg n bck sub nm es argts
+                (augment_actuals sub (idck n.(n_in)) argts) c);
+        [exact Hl1|exact Hnm|exact Hinv|exact Hwce|exact Hwi|exact Hcov| |exact Hc].
+      (** the shape of the augmentation: it adds only clock names *)
+      intros i x ck w w' z Hxi Hwi0 Hw' Hz.
+      apply nth_error_map_inv in Hwi0 as (t & Hti & ?); subst w.
+      destruct (augment_actuals_nth_inv sub (idck n.(n_in)) argts i x ck t w' z
+                  Hxi Hti Hw' Hz) as [Hz'|Hz']; [now left|].
+      right. exact (clock_actuals_inv sub ck z Hz').
+    Qed.
+
     (** * Clause 3 of the chain, uniformly
 
         The obligation the design in force records for the augmented
@@ -765,6 +965,23 @@ Import UNN.Fresh.Tactics.
           * apply in_merge_right. now apply in_merge_right.
       - apply in_merge_right. now apply in_merge_left.
     Qed.
+
+    (** Clause 3, on the concrete augmentation. *)
+    Corollary call_amb_covers_augmented_concrete :
+      forall bck sub ck (t : LST) bckty ckjty ckj,
+        instck bck sub ck = Some ckj ->
+        assign_clk_type env base_ty bck = Some bckty ->
+        assign_clk_type env base_ty ckj = Some ckjty ->
+        incl (merge (merge [rst_ty] ckjty) (fst t))
+             (merge (merge [rst_ty] bckty)
+                (merge (fst t) (clock_actuals sub ck))).
+    Proof.
+      intros bck sub ck t bckty ckjty ckj Hi Hbk Hck.
+      eapply call_amb_covers_augmented; [exact Hi|exact Hbk|exact Hck|].
+      intros x' u z Hx' Hs Hu.
+      exact (clock_actuals_intro sub ck x' u z Hx' Hs Hu).
+    Qed.
+
 
     (** * The invariant the chain carries
 
