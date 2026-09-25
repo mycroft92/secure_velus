@@ -140,7 +140,31 @@ Consequence: every theorem in that section -- `carries_exp`,
 case the refinement types exist for.  Nothing has instantiated the section
 yet, so this has not bitten; it would have bitten at the program level.
 
-**The diagnosis is over-quantification, not a wrong idea.**  For the run the
+**Repair 1 chosen (2026-09-25), and its foundation is now proved.**  The
+framing: name identity only has to be tracked for names generated *in
+lockstep up to a checkmark state*, not for all eternity -- and not for every
+local or clock name either.  So the window is two-sided and `scope` stays
+finite.
+
+The Sec monad had no ordering at all, so that came first
+(`SecLusUnnestingBase.v`):
+
+  * `sec_le` with `refl`/`trans`/`succ`, `state_pure_sec_le`, `sec_bind_le`,
+    `fresh_ident_sec_le`, `fresh_idents_sec_le`;
+  * `assign_lexps_sec_le_of` and `assign_lexp_type_sec_le` -- **typing an
+    expression never moves the counter backwards**, by `exp_ind2` over all
+    ten constructors.  The only case that advances it is the call, through
+    `fresh_idents`; everything else is pure (`find_env`, `single`,
+    `ljoin_list`, `option_to_sec`, `generate_constraints`).
+
+With that, a run's minted names lie in `[s, s')`, every sub-run's window sits
+inside its parent's, and a finite `scope` containing `minted st0 stF` covers
+them all.  What remains of the repair is to add the upper bound to the three
+hypotheses in the five sections that declare them, and to discharge it at
+each use site (~30) from this monotonicity.
+
+**The original diagnosis, for the record: over-quantification, not a wrong
+idea.**  For the run the
 node level actually performs, the minted names *are* a finite set, and
 `SecLTyping.v` already names it: `minted st0 st1`, built from `sec_span`.
 `generate_lnode_sig` eliminates exactly `locals ++ minted st0 st1` with

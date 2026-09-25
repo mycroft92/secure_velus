@@ -168,6 +168,72 @@ Module SecLusUnnestingBase
            (@Coq.Init.Logic.eq_refl (option SymTypes.ST) (Some c1)) y Hy).
   Qed.
 
+  (** * The security monad's state only advances
+
+      [sec_state] is a positive and every allocation takes [Pos.succ], so a
+      successful run never moves the counter backwards.  This is what lets a
+      *finite* scope contain the names a run mints: the names live in the
+      window between the state the run starts at and the state it ends at,
+      and the run's sub-runs all lie inside that window.
+
+      Without it the scoping hypotheses of the leg quantify over every state
+      and so demand that a finite [scope] contain [Ids.gensym Ids.sec n] for
+      unboundedly many [n] -- which no [scope] does.  The window is the
+      "checkmark": names generated in lockstep up to it are the ones whose
+      identity has to be tracked, and no others. *)
+
+  Definition sec_le (s s' : sec_state) : Prop := Pos.le s s'.
+
+  Lemma sec_le_refl : forall s, sec_le s s.
+  Proof. intro s. apply Pos.le_refl. Qed.
+
+  Lemma sec_le_trans : forall s1 s2 s3, sec_le s1 s2 -> sec_le s2 s3 -> sec_le s1 s3.
+  Proof. intros s1 s2 s3. apply Pos.le_trans. Qed.
+
+  Lemma sec_le_succ : forall s, sec_le s (Pos.succ s).
+  Proof.
+    intro s. unfold sec_le. apply Pos.lt_le_incl, Pos.lt_succ_diag_r.
+  Qed.
+
+  Lemma state_pure_sec_le :
+    forall {A} (m : Sec A) a s s',
+      state_pure m -> m s = OK (a, s') -> sec_le s s'.
+  Proof.
+    intros A m a s s' Hp Hm.
+    destruct (Hp s s a s' Hm) as (Heq & _). subst s'. apply sec_le_refl.
+  Qed.
+
+  Lemma sec_bind_le :
+    forall {A B} (m : Sec A) (f : A -> Sec B) b s s',
+      (forall a s1 s2, m s1 = OK (a, s2) -> sec_le s1 s2) ->
+      (forall a b' s1 s2, f a s1 = OK (b', s2) -> sec_le s1 s2) ->
+      SC.bind m f s = OK (b, s') -> sec_le s s'.
+  Proof.
+    intros A B m f b s s' Hm Hf H.
+    apply sec_bind_inv in H as (a & s1 & Ha & Hb).
+    apply (sec_le_trans _ s1 _); [exact (Hm a s s1 Ha)|].
+    exact (Hf a b s1 s' Hb).
+  Qed.
+
+  Lemma fresh_ident_sec_le :
+    forall x s s', SC.fresh_ident s = OK (x, s') -> sec_le s s'.
+  Proof.
+    intros x s s' H. unfold SC.fresh_ident in H.
+    inversion H; subst. apply sec_le_succ.
+  Qed.
+
+  Lemma fresh_idents_sec_le :
+    forall n xs s s', fresh_idents n s = OK (xs, s') -> sec_le s s'.
+  Proof.
+    induction n as [|n IH]; intros xs s s' H; simpl in H.
+    - unfold SC.ret in H. inversion H; subst. apply sec_le_refl.
+    - apply sec_bind_inv in H as (x & s1 & Hx & H).
+      apply sec_bind_inv in H as (ys & s2 & Hys & Hret).
+      unfold SC.ret in Hret. inversion Hret; subst.
+      apply (sec_le_trans _ s1 _); [exact (fresh_ident_sec_le x s s1 Hx)|].
+      exact (IH ys s1 s' Hys).
+  Qed.
+
   (** * Satisfaction depends only on the names a constraint mentions
 
       [hm_ext] is a join over the members of a type, so a valuation cannot
@@ -1498,6 +1564,126 @@ Module SecLusUnnestingBase
       eapply sec_bind_inv in H as (r & sta & Hr & Hret).
       unfold ret in Hret. inv Hret. eauto.
   Qed.
+
+  (** Typing an expression advances the counter monotonically: the only thing
+      that moves it is [fresh_idents] in the call case. *)
+
+  Lemma assign_lexps_sec_le_of :
+    forall G env base_ty rst_ty es,
+      Forall (fun e => forall ts s s',
+                  assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+                  sec_le s s') es ->
+      forall ts s s',
+        assign_lexps G env base_ty rst_ty es s = OK (ts, s') -> sec_le s s'.
+  Proof.
+    intros G env base_ty rst_ty es Hall.
+    induction Hall as [|e es He Hes IH]; intros ts s s' H.
+    - rewrite assign_lexps_nil in H. unfold SC.ret in H.
+      inversion H; subst. apply sec_le_refl.
+    - rewrite assign_lexps_cons in H.
+      apply sec_bind_inv in H as (t & s1 & Ht & H).
+      apply sec_bind_inv in H as (r & s2 & Hr & Hret).
+      unfold SC.ret in Hret. inversion Hret; subst.
+      apply (sec_le_trans _ s1 _); [exact (He t s s1 Ht)|].
+      exact (IH r s1 s' Hr).
+  Qed.
+
+  Lemma assign_lexp_type_sec_le :
+    forall G env base_ty rst_ty e ts s s',
+      assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') -> sec_le s s'.
+  Proof.
+    intros G env base_ty rst_ty e.
+    induction e using exp_ind2; intros ts s s' Hrun.
+    - (** Econst *)
+      rewrite assign_lexp_Econst in Hrun. unfold SC.ret in Hrun.
+      inversion Hrun; subst. apply sec_le_refl.
+    - (** Evar *)
+      rewrite assign_lexp_Evar in Hrun.
+      apply sec_bind_inv in Hrun as (b & s1 & Hb & Hret).
+      apply find_env_inv in Hb as (_ & ?); subst s1.
+      unfold SC.ret in Hret. inversion Hret; subst. apply sec_le_refl.
+    - (** Eunop *)
+      rewrite assign_lexp_Eunop in Hrun. exact (IHe ts s s' Hrun).
+    - (** Ebinop *)
+      rewrite assign_lexp_Ebinop in Hrun.
+      apply sec_bind_inv in Hrun as (t1 & s1 & Ht1 & Hrun).
+      apply sec_bind_inv in Hrun as (t2 & s2 & Ht2 & Hrun).
+      apply sec_bind_inv in Hrun as (a1 & s3 & Ha1 & Hrun).
+      apply single_inv in Ha1 as (_ & ?); subst s3.
+      apply sec_bind_inv in Hrun as (a2 & s4 & Ha2 & Hret).
+      apply single_inv in Ha2 as (_ & ?); subst s4.
+      unfold SC.ret in Hret. inversion Hret; subst.
+      apply (sec_le_trans _ s1 _); [exact (IHe1 t1 s s1 Ht1)|].
+      exact (IHe2 t2 s1 s' Ht2).
+    - (** Efby *)
+      rewrite assign_lexp_Efby in Hrun.
+      apply sec_bind_inv in Hrun as (t1 & s1 & Ht1 & Hrun).
+      apply sec_bind_inv in Hrun as (t2 & s2 & Ht2 & Hj).
+      apply (sec_le_trans _ s1 _).
+      + exact (assign_lexps_sec_le_of G env base_ty rst_ty e0s H t1 s s1 Ht1).
+      + apply (sec_le_trans _ s2 _).
+        * exact (assign_lexps_sec_le_of G env base_ty rst_ty es H0 t2 s1 s2 Ht2).
+        * rewrite (ljoin_list_pure t1 t2 ts s2 s' Hj). apply sec_le_refl.
+    - (** Earrow *)
+      rewrite assign_lexp_Earrow in Hrun.
+      apply sec_bind_inv in Hrun as (t1 & s1 & Ht1 & Hrun).
+      apply sec_bind_inv in Hrun as (t2 & s2 & Ht2 & Hj).
+      apply (sec_le_trans _ s1 _).
+      + exact (assign_lexps_sec_le_of G env base_ty rst_ty e0s H t1 s s1 Ht1).
+      + apply (sec_le_trans _ s2 _).
+        * exact (assign_lexps_sec_le_of G env base_ty rst_ty es H0 t2 s1 s2 Ht2).
+        * rewrite (ljoin_list_pure t1 t2 ts s2 s' Hj). apply sec_le_refl.
+    - (** Ewhen *)
+      rewrite assign_lexp_Ewhen in Hrun.
+      apply sec_bind_inv in Hrun as (t1 & s1 & Ht1 & Hrun).
+      apply sec_bind_inv in Hrun as (g & s2 & Hg & Hret).
+      apply find_env_inv in Hg as (_ & ?); subst s2.
+      unfold SC.ret in Hret. inversion Hret; subst.
+      exact (assign_lexps_sec_le_of G env base_ty rst_ty es H t1 s s' Ht1).
+    - (** Emerge *)
+      rewrite assign_lexp_Emerge in Hrun.
+      apply sec_bind_inv in Hrun as (g & s1 & Hg & Hrun).
+      apply find_env_inv in Hg as (_ & ?); subst s1.
+      apply sec_bind_inv in Hrun as (t1 & s2 & Ht1 & Hrun).
+      apply sec_bind_inv in Hrun as (t2 & s3 & Ht2 & Hj).
+      apply (sec_le_trans _ s2 _).
+      + exact (assign_lexps_sec_le_of G env base_ty rst_ty ets H t1 s s2 Ht1).
+      + apply (sec_le_trans _ s3 _).
+        * exact (assign_lexps_sec_le_of G env base_ty rst_ty efs H0 t2 s2 s3 Ht2).
+        * rewrite (ljoin_list_pure _ t2 ts s3 s' Hj). apply sec_le_refl.
+    - (** Eite *)
+      rewrite assign_lexp_Eite in Hrun.
+      apply sec_bind_inv in Hrun as (t0 & s1 & Ht0 & Hrun).
+      apply sec_bind_inv in Hrun as (th & s2 & Hth & Hrun).
+      apply single_inv in Hth as (_ & ?); subst s2.
+      apply sec_bind_inv in Hrun as (t1 & s3 & Ht1 & Hrun).
+      apply sec_bind_inv in Hrun as (t2 & s4 & Ht2 & Hj).
+      apply (sec_le_trans _ s1 _); [exact (IHe t0 s s1 Ht0)|].
+      apply (sec_le_trans _ s3 _).
+      + exact (assign_lexps_sec_le_of G env base_ty rst_ty ets H t1 s1 s3 Ht1).
+      + apply (sec_le_trans _ s4 _).
+        * exact (assign_lexps_sec_le_of G env base_ty rst_ty efs H0 t2 s3 s4 Ht2).
+        * rewrite (ljoin_list_pure _ t2 ts s4 s' Hj). apply sec_le_refl.
+    - (** Eapp: the only case that mints *)
+      apply assign_lexp_Eapp_inv in Hrun
+        as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
+            & Hargs & _ & Hrst & _ & Houts & Hcs & _).
+      apply (sec_le_trans _ sta _).
+      + exact (assign_lexps_sec_le_of G env base_ty rst_ty es H0 argts s sta
+                 Hargs).
+      + apply (sec_le_trans _ stb _).
+        * destruct ro as [e1|].
+          -- destruct Hrst as (t1 & a1 & rck & stm & Ht1 & Hsg & _ & _).
+             apply single_inv in Hsg as (_ & ?); subst stb.
+             exact (H t1 sta stm Ht1).
+          -- destruct Hrst as (_ & ?); subst stb. apply sec_le_refl.
+        * apply (sec_le_trans _ stc _).
+          -- exact (fresh_idents_sec_le (List.length a) outs stb stc Houts).
+          -- exact (state_pure_sec_le _ cs stc s'
+                      (state_pure_generate_constraints sg
+                         (List.map fst argts) ckty (fst rstty) outs) Hcs).
+  Qed.
+
 
   Lemma assign_lexp_normalized_lexp_pure :
     forall G env base_ty rst_ty e,
