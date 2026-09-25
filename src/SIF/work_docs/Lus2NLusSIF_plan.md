@@ -539,25 +539,65 @@ premise, discharged at the program level by `call_arg_fresh_not_env_key`.
 The statement is about top-level streams only, so no recursion is needed and
 the premise is needed only for a call at the top of the expression.
 
-*(iii) The callee-side invariant, and the assembly* -- **not done**
-*[untested]*.  This is what is left.  The invariant is, pleasingly, **the
-same property read at the callee**: a constraint of the callee's signature
-whose source mentions formal input `i` also mentions the formals of `i`'s
-declared clock.  That is exactly `constraint_clock_closed` restricted to the
-callee's inputs -- so the property is *inductive over the call graph*, and the
-`keep` set of the `simplify` transport (`base_ty` plus the inputs' security
-names) is precisely what makes it survive into the published signature.
+*(iii) The callee-side invariant, and the [Hdep] discharge* -- **done
+2026-09-25** *[verified, compiles]*.  `sig_inputs_clock_closed` and
+`call_augment_dep` (`SecLusUnnestingCalls.v`), with `In_combine_nth_error`,
+`nth_error_In_combine`, `nth_error_lt`, `nth_error_lt_inv`
+(`SecLusUnnestingBase.v`) for the positional matching.
 
-Two things the assembly must still deal with.  Each node has its **own** `env`
-(`generate_lnode_scoped_env` maps a node name to its local env), so the
-invariant cannot be phrased with the caller's section `env`; it has to be
-stated over the callee's formals and its own naming, and related to the call
-site through `Forall2 (WellInstantiated bck sub) (idck n_in) (nclocksof es)`.
-And the chaining through `generate_constraints` -- input map, then clk, then
-reset, then output map -- needs the `subst_ident_in_constraints_members`
-description at each stage, with `call_subst_fresh` (already a section
-hypothesis) supplying the freshness that keeps the callee's interface names
-out of the caller's clock types.
+The invariant is the dependency property itself, read at the callee and
+restricted to its inputs:
+
+    sig_inputs_clock_closed sg ins nm :=
+      forall c, In c (s_constraints sg) ->
+      forall x ck y, In (x, ck) ins -> nm x = Some y -> In y (fst c) ->
+      forall x' y', In x' (clock_vars ck) -> nm x' = Some y' -> In y' (fst c)
+
+so the property is **inductive over the call graph**, and the `keep` set of
+the `simplify` transport -- the base name plus the inputs' security names --
+is exactly what carries it into the published signature.  Each node has its
+own naming, so the invariant is stated over the callee's `ins` and its own
+`nm`, never the caller's `env`.
+
+`call_augment_dep` discharges the one premise
+`subst_constraints_inp_map_augment` had left open, matching the call's four
+lists -- the callee's inputs with clocks, its formal names, the actuals'
+nclocks, the actuals' types -- by position.  Its two substantive inputs are
+(i) and (ii) above: the clock names an augmentation may add are exactly
+`env (sub x')` for `x'` a variable of the formal's clock, and the actual at
+`x'`'s own slot carries that name because its stream is named `sub x'`.
+
+**OPEN DESIGN QUESTION, and the reason (iii) is not the end of the call
+rule.**  `call_augment_dep` takes the augmentation's *shape* as a hypothesis:
+what it adds must be clock names of its own formal's clock.  Instantiating
+that with a concrete augmentation runs into this.  An argument's ambient is
+`merge [rst_ty] ck_i`, so the natural augmentation is
+`merge w_i (merge [rst_ty] ck_i)`; but `assign_clk_type_instck` says `ck_i`'s
+members are either such clock names **or members of the base clock type
+`bckty`** -- and `bckty` is *not* covered by any actual.  An argument can be a
+constant, whose type is `[]`, so nothing forces `base_ty` into an actual.
+
+The base and reset parts *are* present in the final instantiated source, but
+only after the `clk` and `reset` substitutions of `generate_constraints`
+replace `s_clk sg` and `s_reset sg`.  At the stage
+`subst_constraints_inp_map_augment` speaks about -- after the input map alone
+-- they are still the *formal* names, so the augmented and plain sources are
+not yet equal as sets; they become equal one stage later.
+
+So the augmentation argument has to be applied **after** the clk and reset
+substitutions, not to the input map in isolation -- or the statement has to
+be about the whole of `generate_constraints`.  Which of the two is right is a
+decision about `generate_constraints_mono_sem`'s clause 3, whose repair is
+not written.  It would also need a new fact about generated signatures --
+that every constraint source mentions `s_clk` and `s_reset` -- which is
+plausible by construction but is **not** implied by `signature_good`,
+`signature_scoped` or `wf_constraints` *[verified: none of the three
+mentions sources]*.
+
+Recorded rather than guessed: two designs for this call case have already
+died on contact with `subst_constraints_inp_map`, and this is the same kind
+of decision.  The next step is to settle it against
+`generate_constraints_mono_sem`, not to pick an augmentation and hope.
 
 **Two new hypotheses, both discharge-able and neither restricting programs**:
 `rst_not_var` (the reset name is not a declared variable's -- true because it

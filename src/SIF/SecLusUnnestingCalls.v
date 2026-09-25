@@ -501,6 +501,118 @@ Import UNN.Fresh.Tactics.
         [generate_constraints_mono_sem] large enough for every argument
         without being too large for any result. *)
 
+    (** * The last premise of the augmentation argument, discharged
+
+        [subst_constraints_inp_map_augment] above leaves exactly one premise:
+        that augmenting an actual with the security names of the clock it runs
+        on adds nothing the constraint's source did not already reach through
+        *some* formal.  This is where that is discharged.
+
+        The invariant it rests on is the dependency property itself, read at
+        the callee and restricted to its inputs: a constraint of the callee's
+        signature whose source mentions formal input [x] also mentions the
+        formals of [x]'s declared clock.  So the property is inductive over the
+        call graph, and the [keep] set of the [simplify] transport -- the base
+        name plus the inputs' security names -- is exactly what carries it into
+        the published signature.
+
+        Each node has its own naming, so the invariant is stated over the
+        callee's inputs [ins] and its own [nm], never the caller's [env]. *)
+
+    Definition sig_inputs_clock_closed
+        (sg : signature) (ins : list (ident * clock))
+        (nm : ident -> option ident) : Prop :=
+      forall c, In c (s_constraints sg) ->
+      forall x ck y,
+        In (x, ck) ins -> nm x = Some y -> In y (fst c) ->
+        forall x' y', In x' (clock_vars ck) -> nm x' = Some y' -> In y' (fst c).
+
+    (** The four lists of a call, matched by position, and what each one
+        contributes.  [augs] is the augmented actuals; the hypothesis on it
+        says only that what it adds are clock names of *its own* formal's
+        clock, which is what [assign_clk_type_instck] delivers. *)
+    Lemma call_augment_dep :
+      forall (sg : signature) (ins : list (ident * clock))
+             (nm sub : ident -> option ident) (ncks : list nclock)
+             (argts augs : list SymTypes.ST) (c : SymTypes.constraint),
+        List.length ins = List.length (s_in sg) ->
+        List.length ins = List.length ncks ->
+        List.length ins = List.length argts ->
+        sig_inputs_clock_closed sg ins nm ->
+        (** the callee's naming agrees with its signature's input list *)
+        (forall i x ck y,
+            nth_error ins i = Some (x, ck) ->
+            nth_error (s_in sg) i = Some y -> nm x = Some y) ->
+        (** [WellInstantiated]: the formal's image is the actual's stream name *)
+        (forall i x ck nck,
+            nth_error ins i = Some (x, ck) ->
+            nth_error ncks i = Some nck -> sub x = snd nck) ->
+        (** a named actual stream carries its own name *)
+        (forall i nck w u g,
+            nth_error ncks i = Some nck -> nth_error argts i = Some w ->
+            snd nck = Some u -> Env.find u env = Some g -> In g w) ->
+        (** the augmentation adds only clock names of its own formal's clock *)
+        (forall i x ck w w' z,
+            nth_error ins i = Some (x, ck) -> nth_error argts i = Some w ->
+            nth_error augs i = Some w' -> In z w' ->
+            In z w
+            \/ exists x' u, In x' (clock_vars ck)
+                            /\ sub x' = Some u
+                            /\ Env.find u env = Some z) ->
+        (** every variable of a formal's clock is itself a formal *)
+        (forall i x ck x',
+            nth_error ins i = Some (x, ck) -> In x' (clock_vars ck) ->
+            exists ck', In (x', ck') ins) ->
+        In c (s_constraints sg) ->
+        forall y w', In (y, w') (combine (s_in sg) augs) -> In y (fst c) ->
+          forall z, In z w' ->
+            exists y2 w2, In (y2, w2) (combine (s_in sg) argts)
+                          /\ In y2 (fst c) /\ In z w2.
+    Proof.
+      intros sg ins nm sub ncks argts augs c Hl1 Hl2 Hl3 Hinv
+        Hnm Hwi Hnamed Haug Hformal Hc y w' Hyw Hy z Hz.
+      apply In_combine_nth_error in Hyw as (i & Hyi & Hwi').
+      (** the slot this name came from *)
+      assert (exists x ck, nth_error ins i = Some (x, ck)) as (x & ck & Hxi).
+      { assert (i < List.length ins)%nat as Hlt
+            by (rewrite Hl1; exact (nth_error_lt_inv (s_in sg) i y Hyi)).
+        destruct (nth_error_lt ins i Hlt) as ((x & ck) & Hxi).
+        now exists x, ck. }
+      assert (exists w, nth_error argts i = Some w) as (w & Hwi0).
+      { apply nth_error_lt. rewrite <- Hl3.
+        exact (nth_error_lt_inv ins i (x, ck) Hxi). }
+      destruct (Haug i x ck w w' z Hxi Hwi0 Hwi' Hz)
+        as [Hzw|(x' & u & Hx' & Hsub & Hu)].
+      - (** already in the actual: the formal itself will do *)
+        exists y, w. split; [exact (nth_error_In_combine (s_in sg) argts i y w Hyi Hwi0)|].
+        split; [exact Hy|exact Hzw].
+      - (** a clock name: the formal of that clock variable will do *)
+        destruct (Hformal i x ck x' Hxi Hx') as (ck2 & Hin2).
+        apply In_nth_error in Hin2 as (j & Hxj).
+        assert (exists y2, nth_error (s_in sg) j = Some y2) as (y2 & Hyj).
+        { apply nth_error_lt. rewrite <- Hl1.
+          exact (nth_error_lt_inv ins j (x', ck2) Hxj). }
+        assert (exists nck2, nth_error ncks j = Some nck2) as (nck2 & Hnj).
+        { apply nth_error_lt. rewrite <- Hl2.
+          exact (nth_error_lt_inv ins j (x', ck2) Hxj). }
+        assert (exists w2, nth_error argts j = Some w2) as (w2 & Hwj).
+        { apply nth_error_lt. rewrite <- Hl3.
+          exact (nth_error_lt_inv ins j (x', ck2) Hxj). }
+        exists y2, w2.
+        split;
+          [exact (nth_error_In_combine (s_in sg) argts j y2 w2 Hyj Hwj)|].
+        split.
+        + (** here the invariant is used: the source reaches that formal too *)
+          assert (In (x, ck) ins) as Hinx
+              by exact (nth_error_In ins i Hxi).
+          exact (Hinv c Hc x ck y Hinx (Hnm i x ck y Hxi Hyi) Hy x' y2 Hx'
+                   (Hnm j x' ck2 y2 Hxj Hyj)).
+        + (** and the actual at that slot carries the name *)
+          assert (snd nck2 = Some u) as Hs2
+              by (rewrite <- (Hwi j x' ck2 nck2 Hxj Hnj); exact Hsub).
+          exact (Hnamed j nck2 w2 u z Hnj Hwj Hs2 Hu).
+    Qed.
+
     Lemma subst_constraints_inp_map_augment :
       forall xs vs vs' cs d d' sa sa' sb sb',
         NoDup xs ->

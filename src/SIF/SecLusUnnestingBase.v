@@ -4003,4 +4003,53 @@ Module SecLusUnnestingBase
       apply in_map_iff. exists ann. split; [exact Hw|exact Hin].
   Qed.
 
+  (** * Slots of a call, by position
+
+      A call lines up four lists: the callee's declared inputs with their
+      clocks, the callee's formal security names, the actuals' nclocks, and the
+      actuals' types.  The arguments below match them up by index, so these
+      two directions between [combine] and [nth_error] are needed. *)
+
+  Lemma In_combine_nth_error :
+    forall {A B} (xs : list A) (ys : list B) x y,
+      In (x, y) (combine xs ys) ->
+      exists i, nth_error xs i = Some x /\ nth_error ys i = Some y.
+  Proof.
+    intros A B xs. induction xs as [|a xs IH]; intros ys x y Hin.
+    - destruct ys; simpl in Hin; contradiction.
+    - destruct ys as [|b ys]; simpl in Hin; [contradiction|].
+      destruct Hin as [Heq|Hin].
+      + inversion Heq; subst. exists 0%nat. split; reflexivity.
+      + destruct (IH ys x y Hin) as (i & H1 & H2).
+        exists (S i). split; [exact H1|exact H2].
+  Qed.
+
+  Lemma nth_error_In_combine :
+    forall {A B} (xs : list A) (ys : list B) i x y,
+      nth_error xs i = Some x -> nth_error ys i = Some y ->
+      In (x, y) (combine xs ys).
+  Proof.
+    intros A B xs. induction xs as [|a xs IH]; intros ys i x y Hx Hy.
+    - destruct i; discriminate.
+    - destruct ys as [|b ys]; [destruct i; discriminate|].
+      destruct i as [|i]; simpl in Hx, Hy.
+      + inversion Hx; inversion Hy; subst. now left.
+      + right. exact (IH ys i x y Hx Hy).
+  Qed.
+
+  Lemma nth_error_lt :
+    forall {A} (l : list A) i,
+      (i < List.length l)%nat -> exists x, nth_error l i = Some x.
+  Proof.
+    intros A l i Hi. destruct (nth_error l i) as [x|] eqn:E; [now exists x|].
+    exfalso. apply nth_error_None in E. lia.
+  Qed.
+
+  Lemma nth_error_lt_inv :
+    forall {A} (l : list A) i x,
+      nth_error l i = Some x -> (i < List.length l)%nat.
+  Proof.
+    intros A l i x H. apply nth_error_Some. now rewrite H.
+  Qed.
+
 End SecLusUnnestingBase.
