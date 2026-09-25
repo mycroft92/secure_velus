@@ -50,6 +50,7 @@ The expression-level property is `carries_at P is_control e`, and
     generate_leqns_constraints ... cenv eqs xst   = OK (ce,  xst')
     assign_lexps GL env base_ty rst_ty es'  yst   = OK (ts'', yst')
     listSatisfiable dlt (carried ts)
+    sec_le sst' stF
     ------------------------------------------------------------------
     exists dlt',
          agree_off (moved_by st st') dlt dlt'
@@ -62,6 +63,29 @@ The expression-level property is `carries_at P is_control e`, and
 One valuation goes in — one satisfying what the *source* expression carries,
 i.e. the obligations its nested calls impose on the names the security monad
 minted.  One comes out, satisfying what unnesting *emitted*.
+
+### The last premise: the checkmark bound
+
+`sec_le sst' stF` says this run of the *source* typer finishes at or before a
+fixed state `stF`.  It is there for one reason: the section's scoping
+hypotheses on the source typer are false without it.
+
+A call's type is `gensym sec s` for the state `s` the run is at, so
+"every type the source typer produces is inside `scope`" quantified over all
+states would demand that a finite `scope` contain unboundedly many names.
+Bounding the run makes the demand finite: the names a run `[s, sst')` mints
+lie in `minted s sst'`, and `generate_lnode_sig` already builds its scope
+from `minted st0 st1`, so `stF := st1` covers them.  The bound is threaded
+through every contract in the leg and discharged at each use from the
+generators' monotonicity (`assign_lexp_type_sec_le` and the
+`generate_l*_sec_le` family), by `eauto` over the hint database `sec`.
+
+The framing matters and is not incidental: name identity only has to be
+tracked for names minted *in lockstep up to a checkmark*, not for all
+eternity, and not for every local or clock name either.
+
+*See `Lus2NLusSIF_plan.md`, "RESOLVED 2026-09-25", for the full diagnosis and
+what the repair does not settle.*
 
 ### Why the third conjunct is domination, and in that direction
 

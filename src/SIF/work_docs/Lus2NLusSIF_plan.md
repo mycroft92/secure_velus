@@ -10,7 +10,7 @@ Target branch: `Lus2NLusSIF`.
 
 ## Leg U — current state
 
-*Rewritten in place. Last checked against a clean `make -j1` on 2026-09-22.*
+*Rewritten in place. Last checked against a clean `make -j1` on 2026-09-25.*
 
 A design recorded here is marked either **[verified]** -- it has been checked
 against the actual definitions, or better, compiled -- or **[untested]** --
@@ -95,24 +95,52 @@ been shown to hold of anything.  Now:
     `normalized_prefixes_subset` for what the two passes add.  Without those
     the result would have relocated the vacuity rather than removed it.
 
-### Assumed, not yet discharged
+*The security monad's ordering, and the checkmark bound* (2026-09-25) --
+complete and compiled:
 
-**See the blocker above first**: two of these are not merely undischarged but
-currently *unsatisfiable* as stated.
+  * `sec_le` with `refl`/`trans`/`succ`, `state_pure_sec_le`, `sec_bind_le`,
+    `fresh_ident_sec_le`, `fresh_idents_sec_le`, `assign_lexps_sec_le_of`,
+    `assign_lexp_type_sec_le`, `assign_lexps_sec_le`,
+    `assign_lexp_Eapp_stages_le` (`SecLusUnnestingBase.v`);
+  * the equation generator's monotonicity:
+    `state_pure_generate_lvars_constraints`, then `sec_le` for
+    `generate_lvars_constraints`, `generate_lgen_constraint`,
+    `generate_lcall_constraint`, `generate_ldef_constraint`,
+    `generate_lone_constraint`, `generate_lsplit_constraints`,
+    `generate_leqn_constraint`, `generate_leqns_constraints`
+    (`SecLusUnnestingEquations.v`);
+  * the discharge steps and their hint database, `sec_le_of_lexp`,
+    `sec_le_of_lexps`, `sec_le_of_ljoin_list`, `sec_le_of_single`
+    (`SecLusUnnestingBase.v`, db `sec`);
+  * the three scoping statements, factored:
+    `source_types_scoped_upto`, `source_lexps_scoped_upto`,
+    `source_lexps_carried_scoped_upto` (`SecLusUnnestingBase.v`), each
+    bounded by `stF`, quoted by all five sections.
+
+### Assumed, not yet discharged
 
 Section hypotheses on `GL` in `SecLusUnnestingEquations.v`: `env_inj`,
 `sig_good`, `sig_nodup`, `sig_scoped`, `sig_actuals_fresh`.  A sixth, the
 dependency property below, will join them.  All are discharged together at
 the program level, which is not written.
 
+The three scoping hypotheses on the source generator --
+`source_types_scoped`, `source_lexps_scoped`,
+`source_lexps_carried_scoped` -- are now bounded by a checkmark state and so
+are *satisfiable*; see the section below.  They are still undischarged, and
+the discharge is the node level's job.
+
 `node_carries` also still carries the two ambient premises that the
 per-equation statement cannot discharge; removing them is what the pointwise
 contract is for.
 
-### BLOCKER: `source_types_scoped` is unsatisfiable for programs with calls
+### RESOLVED 2026-09-25: `source_types_scoped` was unsatisfiable for programs with calls
 
-*Found 2026-09-24 while deriving the Lustre closure lemma.  Verified against
-the definitions, not conjectured.*
+*Found 2026-09-24 while deriving the Lustre closure lemma; verified against
+the definitions, not conjectured.  Repaired 2026-09-25 (Repair 1, the
+checkmark bound) and the repair compiles.  The diagnosis is kept in full
+below because the shape of the mistake -- over-quantification in a hypothesis
+that looks innocuous -- is the kind worth recognising again.*
 
 `Section Preservation` in `SecLusUnnestingEquations.v` declares
 
@@ -354,6 +382,10 @@ constraint whose source mentions input `j` also mentions the variables of
 
 ### Next steps, in order
 
+0. ~~Repair the three scoping hypotheses, which were unsatisfiable for any
+   program with a call.~~ **Done 2026-09-25** -- Repair 1, the checkmark
+   bound; see the section above.  What it leaves open is the *discharge*,
+   which belongs to step 6.
 1. ~~`subst_constraints_inp_map` with augmented actuals leaves every
    constraint source unchanged as a set, given the dependency property.~~
    **Done** -- `subst_constraints_inp_map_augment`.
@@ -375,7 +407,12 @@ constraint whose source mentions input `j` also mentions the variables of
 5. Re-establish the equation and equation-list theorems on the pointwise
    relation, which removes the two ambient premises from `node_carries`.
 6. Concrete `unnest_node`: freshness to the naming run, `simplify`,
-   `signatures_preserved`.
+   `signatures_preserved`.  This is also where the three scoping hypotheses
+   are discharged, with `stF := st1` (the state `generate_lnode_sig` ends at)
+   and `scope` covering `locals ++ minted st0 st1`.  Open question to settle
+   there and not before: the node-level `scope` must also contain the
+   interface names, which the current `simplify cs (locals ++ minted st0 st1)`
+   does not by itself give.
 7. `unnest_global` by signature-global lockstep.  Leg U done.
 8. Leg I (`normfby_global`); then prepend `normalize_global_sem` so source
    Lustre is the entry to `lnode_noninterference_streams`.
