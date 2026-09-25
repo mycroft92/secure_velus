@@ -514,19 +514,50 @@ thing that would have been found only at the node level.
 What `findST` substitutes in is itself the source of a constraint of the
 list, hence itself closed, which is the other half of the step.
 
-**Still missing, and it is the one hard piece left at this level**: the
-**call rule** (`generate_lcall_constraint`).  Its constraints are a callee's,
-instantiated by `generate_constraints`, so closing it needs the property as
-an invariant on `GL`, discharged at the program level alongside `sig_good`
-and the others.  `subst_constraints_inp_map_members` already gives a flat
-description of what the instantiated sources contain -- either a callee-side
-name that is not a substituted formal, or a member of an actual whose formal
-occurs in the callee's source -- so the shape of the argument is clear.  What
-it needs is the clock-instantiation machinery (`WellInstantiated`, `instck`,
-`find_base_clock_bck`): the argument at a clock position must contribute its
-own security name.  That is the *same* machinery the open "call case" of the
-leg needs, so the two should be done together rather than separately.
-*[untested]*
+**The call rule: its three ingredients, two of them now proved.**
+
+*(i) What an instantiated clock's type can mention* -- **done 2026-09-25**
+*[verified, compiles]*.  `clock_vars`, `assign_clk_type_instck`,
+`assign_clk_type_instck_incl`, `clock_vars_wc`, and
+`wc_exp_Eapp_base_clock` (`SecLusUnnestingBase.v`).  A formal's declared
+clock is instantiated as `instck bck sub ck`, and its security type mentions
+only the base clock's type and the security names of the substituted streams
+-- nothing else.  `wc_exp_Eapp_base_clock` settles that the generator's base
+clock, `find_base_clock (clocksof es)`, is clocking's `bck`; this is where
+`wc_global` is needed, because it is the *callee's* `wc_env (idck n_in)` that
+makes `bck` the common parent.  The argument is Velus's, lifted out of
+`TrClocking` so both consumers use it as a lemma.
+
+*(ii) A named argument stream carries its own name* -- **done 2026-09-25**
+*[verified, compiles]*.  `assign_lexp_named_covered`, with
+`named_covered_vacuous` and `unnamed_no_key`.  Only two constructors can
+carry a stream name: `wc_exp` forces `None` on the other eight.  `Evar`'s
+name is pinned to the variable and its type is exactly that variable's
+security name.  `Eapp`'s names are *anonymous* and therefore not keys of
+`env` at all -- which cannot be proved where `env` is abstract, so it is a
+premise, discharged at the program level by `call_arg_fresh_not_env_key`.
+The statement is about top-level streams only, so no recursion is needed and
+the premise is needed only for a call at the top of the expression.
+
+*(iii) The callee-side invariant, and the assembly* -- **not done**
+*[untested]*.  This is what is left.  The invariant is, pleasingly, **the
+same property read at the callee**: a constraint of the callee's signature
+whose source mentions formal input `i` also mentions the formals of `i`'s
+declared clock.  That is exactly `constraint_clock_closed` restricted to the
+callee's inputs -- so the property is *inductive over the call graph*, and the
+`keep` set of the `simplify` transport (`base_ty` plus the inputs' security
+names) is precisely what makes it survive into the published signature.
+
+Two things the assembly must still deal with.  Each node has its **own** `env`
+(`generate_lnode_scoped_env` maps a node name to its local env), so the
+invariant cannot be phrased with the caller's section `env`; it has to be
+stated over the callee's formals and its own naming, and related to the call
+site through `Forall2 (WellInstantiated bck sub) (idck n_in) (nclocksof es)`.
+And the chaining through `generate_constraints` -- input map, then clk, then
+reset, then output map -- needs the `subst_ident_in_constraints_members`
+description at each stage, with `call_subst_fresh` (already a section
+hypothesis) supplying the freshness that keeps the callee's interface names
+out of the caller's clock types.
 
 **Two new hypotheses, both discharge-able and neither restricting programs**:
 `rst_not_var` (the reset name is not a declared variable's -- true because it
