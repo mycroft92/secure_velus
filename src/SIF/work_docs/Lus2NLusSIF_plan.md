@@ -308,7 +308,9 @@ Three obligations:
 
   * clause 3 holds uniformly, since `a_j = [rst_ty] ⊔ assign_clk_type(clock
     of arg j)` and that clock is `bck` extended by exactly `j`'s clock
-    variables, so `merge a_j inp1_j ⊆ call_amb ∪ inp1''_j`  *[untested]*;
+    variables, so `merge a_j inp1_j ⊆ call_amb ∪ inp1''_j`
+    *[verified 2026-09-25: `call_amb_covers_augmented`, from
+    `assign_clk_type_instck_incl`]*;
   * `amb_pair` holds, since `bck` is a prefix of every output clock --
     `assign_clk_type_prefix_incl`  *[verified: the lemma is proved; its
     application to the call is untested]*;
@@ -567,8 +569,29 @@ nclocks, the actuals' types -- by position.  Its two substantive inputs are
 `env (sub x')` for `x'` a variable of the formal's clock, and the actual at
 `x'`'s own slot carries that name because its stream is named `sub x'`.
 
-**OPEN DESIGN QUESTION, and the reason (iii) is not the end of the call
-rule.**  `call_augment_dep` takes the augmentation's *shape* as a hypothesis:
+**RESOLVED 2026-09-25, and it was a misreading on my part, not a gap in the
+design.**  The design in force (see "The open step: the call case" below)
+already specifies the augmentation as
+
+    inp1''_j := inp1_j joined with *the actuals of j's clock variables*
+
+-- clock names only.  The base and reset levels are **not** the
+augmentation's job: they are the uniform ambient's,
+`call_amb = [rst_ty] ⊔ assign_clk_type bck`.  So the obstruction I had
+written down does not arise, and `call_augment_dep`'s hypothesis on the
+augmentation's shape is exactly right as stated.
+
+`call_amb_covers_augmented` (`SecLusUnnestingCalls.v`) discharges the
+inclusion this leaves -- `merge a_j inp1_j ⊆ call_amb ∪ inp1''_j` -- straight
+from `assign_clk_type_instck_incl`.  That was the first of the three
+obligations the design lists, and it was the one marked `[untested]`.
+
+Also settled: the fact that every generated constraint source mentions
+`s_clk` and `s_reset` is **not needed** for this argument.  It is true and
+could be packed into a signature predicate, but nothing here wants it, so it
+is not being built.
+
+**The former open question, kept because the reasoning is worth having.**  `call_augment_dep` takes the augmentation's *shape* as a hypothesis:
 what it adds must be clock names of its own formal's clock.  Instantiating
 that with a concrete augmentation runs into this.  An argument's ambient is
 `merge [rst_ty] ck_i`, so the natural augmentation is

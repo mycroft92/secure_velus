@@ -661,6 +661,44 @@ Import UNN.Fresh.Tactics.
           intros c1 Hc1. apply Hdep. now right.
     Qed.
 
+    (** * Clause 3 of the chain, uniformly
+
+        The obligation the design in force records for the augmented
+        instantiation, and the reason the augmentation carries *only* the clock
+        variables' actuals: the base and reset levels are not its job, they are
+        the uniform ambient's.
+
+        An argument's own ambient is [merge [rst_ty] ckjty] for its
+        instantiated clock; that clock is the call's base clock extended by
+        exactly the formal's clock variables, so by
+        [assign_clk_type_instck_incl] its type splits into the base clock's
+        type -- which [call_amb] already carries -- and the actuals of those
+        variables, which are what the augmentation adds.  Nothing else. *)
+
+    Lemma call_amb_covers_augmented :
+      forall bck sub ckf ckj bckty ckjty (w acts : SymTypes.ST),
+        instck bck sub ckf = Some ckj ->
+        assign_clk_type env base_ty bck = Some bckty ->
+        assign_clk_type env base_ty ckj = Some ckjty ->
+        (forall x' u z, In x' (clock_vars ckf) -> sub x' = Some u ->
+                        Env.find u env = Some z -> In z acts) ->
+        incl (merge (merge [rst_ty] ckjty) w)
+             (merge (merge [rst_ty] bckty) (merge w acts)).
+    Proof.
+      intros bck sub ckf ckj bckty ckjty w acts Hi Hbk Hck Hact z Hz.
+      apply in_merge_inv in Hz as [Hz|Hz].
+      - apply in_merge_inv in Hz as [Hz|Hz].
+        + apply in_merge_left. now apply in_merge_left.
+        + (** the argument's clock, split by [assign_clk_type_instck] *)
+          assert (In z (merge bckty acts)) as Hz'
+              by exact (assign_clk_type_instck_incl env base_ty bck sub ckf ckj
+                          bckty ckjty acts Hi Hbk Hck Hact z Hz).
+          apply in_merge_inv in Hz' as [Hz'|Hz'].
+          * apply in_merge_left. now apply in_merge_right.
+          * apply in_merge_right. now apply in_merge_right.
+      - apply in_merge_right. now apply in_merge_left.
+    Qed.
+
     (** * The invariant the chain carries
 
         Both sides start from the same signature, so what separates them is
