@@ -1146,6 +1146,84 @@ Import UNN.Fresh.Tactics.
         + eapply IH; exact Ht.
     Qed.
 
+    (** * The dependency property over a list of equations
+
+        Each equation's run is a sub-run of the list's, so the window it mints
+        in sits inside the list's and the per-equation hypothesis applies
+        unchanged.  This is the last piece of plumbing before the node level:
+        what is left is the call rule, which is a hypothesis on [GL]. *)
+
+    Lemma generate_leqns_constraints_clock_closed :
+      forall ns eqs cs s s',
+        Forall (fun eq =>
+                  forall c s1 s2,
+                    incl (minted s1 s2) ns ->
+                    generate_leqn_constraint GL env base_ty rst_ty cenv eq s1
+                      = OK (c, s2) ->
+                    constraints_clock_closed env base_ty vars ns c) eqs ->
+        incl (minted s s') ns ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs s
+          = OK (cs, s') ->
+        constraints_clock_closed env base_ty vars ns cs.
+    Proof.
+      intros ns eqs. induction eqs as [|eq eqs IH]; intros cs s s' Hall Hns H.
+      - apply generate_leqns_constraints_nil in H as (? & ?); subst cs.
+        constructor.
+      - rewrite generate_leqns_constraints_cons in H.
+        apply sec_bind_inv in H as (c & s1 & Hc & H).
+        apply sec_bind_inv in H as (cr & s2 & Hcr & Hret).
+        unfold SC.ret in Hret.
+        assert (cs = c ++ cr /\ s2 = s') as (? & ?)
+            by (inversion Hret; auto); subst cs; subst s2.
+        inversion Hall as [|eq0 eqs0 Heq Heqs]; subst.
+        apply constraints_clock_closed_app.
+        + apply (Heq c s s1); [|exact Hc].
+          apply (minted_incl_sub s s s1 s' ns (sec_le_refl s)); [|exact Hns].
+          eapply generate_leqns_constraints_sec_le; exact Hcr.
+        + apply (IH cr s1 s' Heqs); [|exact Hcr].
+          apply (minted_incl_sub s s1 s' s' ns); [|apply sec_le_refl|exact Hns].
+          eapply generate_leqn_constraint_sec_le; exact Hc.
+    Qed.
+
+    (** And the form the node level will use: a node all of whose equations
+        have a call-free right-hand side is covered outright.  [wc_equation]
+        supplies exactly the two premises the equation rule needs -- the
+        expressions are well-clocked, and each defined variable is declared on
+        the clock of the flow that defines it. *)
+    Corollary generate_leqns_constraints_clock_closed_plain :
+      forall Pg ns eqs cs s s',
+        (forall v ckv c, In (v, ckv) vars ->
+                         Env.find v env = Some c -> c <> base_ty) ->
+        (forall v ckv c, In (v, ckv) vars ->
+                         Env.find v env = Some c -> c <> rst_ty) ->
+        (forall y ck, find_clock cenv y = OK ck -> In (y, ck) vars) ->
+        (forall y ck, In (y, ck) vars -> wc_clock vars ck) ->
+        NoDupMembers vars ->
+        Forall (fun eq =>
+                  Forall (fun e => match e with
+                                   | Eapp _ _ _ _ => False | _ => True end)
+                    (snd eq)) eqs ->
+        Forall (wc_equation Pg vars) eqs ->
+        Forall (fun eq =>
+                  Forall (lexp_carried_closed GL env base_ty rst_ty vars ns)
+                    (snd eq)) eqs ->
+        incl (minted s s') ns ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs s
+          = OK (cs, s') ->
+        constraints_clock_closed env base_ty vars ns cs.
+    Proof.
+      intros Pg ns eqs cs s s' Hbase Hrst Hcv Hwcv Hndv Hne Hwc Hcar Hns H.
+      eapply generate_leqns_constraints_clock_closed; [|exact Hns|exact H].
+      rewrite Forall_forall in Hne, Hwc, Hcar |- *.
+      intros (xs, es) Hin c s1 s2 Hns1 Hgen.
+      specialize (Hne _ Hin). specialize (Hwc _ Hin). specialize (Hcar _ Hin).
+      simpl in Hne, Hcar.
+      destruct Hwc as (Hwces & _ & Hxck).
+      exact (generate_leqn_constraint_clock_closed_plain GL env base_ty rst_ty
+               vars cenv Pg ns xs es c s1 s2 env_inj Hndv Hbase Hrst Hcv Hwcv
+               Hne Hwces Hxck Hcar Hns1 Hgen).
+    Qed.
+
     Lemma state_pure_single :
       forall (ts : list LST), state_pure (single ts).
     Proof.
