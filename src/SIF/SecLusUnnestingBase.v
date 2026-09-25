@@ -4052,4 +4052,99 @@ Module SecLusUnnestingBase
     intros A l i x H. apply nth_error_Some. now rewrite H.
   Qed.
 
+  (** Instantiation only ever *extends* the base clock, so the call's base
+      clock is a prefix of every clock it instantiates -- of the outputs' as
+      much as the inputs'.  With [assign_clk_type_prefix_incl] this is what
+      makes the uniform ambient small enough for every result: it is below each
+      output's own ambient. *)
+  Lemma instck_clock_prefix :
+    forall bk sub ck ck',
+      instck bk sub ck = Some ck' -> clock_prefix bk ck'.
+  Proof.
+    intros bk sub ck. revert bk.
+    induction ck as [|ck0 IH x b]; intros bk ck' Hi.
+    - simpl in Hi. apply option_Some_inj in Hi. subst ck'.
+      apply clock_prefix_refl.
+    - simpl in Hi.
+      destruct (instck bk sub ck0) as [ck0'|] eqn:Ei; [|discriminate Hi].
+      destruct (sub x) as [x'|] eqn:Ex; [|discriminate Hi].
+      apply option_Some_inj in Hi. subst ck'.
+      apply clock_prefix_con. exact (IH bk ck0' Ei).
+  Qed.
+
+  Corollary assign_clk_type_instck_base_incl :
+    forall env base_ty bk sub ck ck' bkty ckty,
+      instck bk sub ck = Some ck' ->
+      assign_clk_type env base_ty bk = Some bkty ->
+      assign_clk_type env base_ty ck' = Some ckty ->
+      incl bkty ckty.
+  Proof.
+    intros env base_ty bk sub ck ck' bkty ckty Hi Hbk Hck.
+    exact (assign_clk_type_prefix_incl env base_ty bk ck' bkty ckty
+             (instck_clock_prefix bk sub ck ck' Hi) Hbk Hck).
+  Qed.
+
+  (** [Forall2] read off by position, which is how a [WellInstantiated] chain
+      feeds the positional statements. *)
+  Lemma Forall2_nth_error :
+    forall {A B} (R : A -> B -> Prop) xs ys i x y,
+      Forall2 R xs ys ->
+      nth_error xs i = Some x -> nth_error ys i = Some y -> R x y.
+  Proof.
+    intros A B R xs ys i x y H. revert i.
+    induction H as [|a b xs' ys' Hab Hr IH]; intros i Hx Hy.
+    - destruct i; discriminate.
+    - destruct i as [|i]; simpl in Hx, Hy.
+      + inversion Hx; inversion Hy; subst. exact Hab.
+      + exact (IH i Hx Hy).
+  Qed.
+
+  Lemma nth_error_map_inv :
+    forall {A B} (f : A -> B) (l : list A) i y,
+      nth_error (List.map f l) i = Some y ->
+      exists x, nth_error l i = Some x /\ y = f x.
+  Proof.
+    intros A B f l. induction l as [|a l IH]; intros i y H.
+    - destruct i; discriminate.
+    - destruct i as [|i]; simpl in H.
+      + inversion H. now exists a.
+      + exact (IH i y H).
+  Qed.
+
+  (** The list form of [assign_lexp_named_covered]: every stream of an argument
+      list that carries a name carries its own security name.  The premise is
+      needed only for the calls sitting at the top of the list. *)
+  Lemma assign_lexps_named_covered :
+    forall P G env base_ty rst_ty vars es,
+      Forall (wl_exp P) es ->
+      Forall (wc_exp P vars) es ->
+      (forall e f es' ro anns, In e es -> e = Eapp f es' ro anns ->
+          forall w g, In (Some w) (List.map stream_name anns) ->
+                      Env.find w env <> Some g) ->
+      forall ts s s',
+        assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+        Forall2 (fun t nck => forall w g,
+                     snd nck = Some w -> Env.find w env = Some g ->
+                     In g (fst t))
+          ts (nclocksof es).
+  Proof.
+    intros P G env base_ty rst_ty vars es.
+    induction es as [|e es IH]; intros Hwl Hwc Hanon ts s s' H.
+    - apply (assign_lexps_carried_nil G env base_ty rst_ty) in H
+        as (? & _ & ?); subst ts. constructor.
+    - apply assign_lexps_carried_cons in H
+        as (t & r & sa & Ht & Hr & ? & _); subst ts.
+      inversion Hwl as [|e0 es0 Hwle Hwlr]; subst.
+      inversion Hwc as [|e1 es1 Hwce Hwcr]; subst.
+      unfold nclocksof. simpl flat_map. apply Forall2_app.
+      + eapply (assign_lexp_named_covered P G env base_ty rst_ty vars e
+                  Hwle Hwce); [|exact Ht].
+        intros f es' ro anns Heq w g Hw.
+        exact (Hanon e f es' ro anns (or_introl (@Coq.Init.Logic.eq_refl _ e))
+                 Heq w g Hw).
+      + eapply (IH Hwlr Hwcr); [|exact Hr].
+        intros e' f es' ro anns Hin Heq w g Hw.
+        exact (Hanon e' f es' ro anns (or_intror Hin) Heq w g Hw).
+  Qed.
+
 End SecLusUnnestingBase.

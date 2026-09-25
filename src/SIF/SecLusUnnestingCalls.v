@@ -661,6 +661,73 @@ Import UNN.Fresh.Tactics.
           intros c1 Hc1. apply Hdep. now right.
     Qed.
 
+    (** The same, read off what the call site actually has: [wc_exp]'s
+        [WellInstantiated] chain, the callee's own [wc_env (idck n_in)], and the
+        argument types the generator produced.  The three positional hypotheses
+        of [call_augment_dep] are discharged from those; what remains as a
+        hypothesis is the callee's naming agreement with its signature's input
+        list, which is a fact about [generate_lnode_sig] and so belongs at the
+        program level, like [sig_good]. *)
+    Lemma call_augment_dep_at_call :
+      forall (sg : signature) (n : LSyn.node) (bck : clock)
+             (sub nm : ident -> option ident) (es : list exp)
+             (argts : list LST) (augs : list SymTypes.ST)
+             (c : SymTypes.constraint),
+        List.length (idck n.(n_in)) = List.length (s_in sg) ->
+        (forall i x ck y,
+            nth_error (idck n.(n_in)) i = Some (x, ck) ->
+            nth_error (s_in sg) i = Some y -> nm x = Some y) ->
+        sig_inputs_clock_closed sg (idck n.(n_in)) nm ->
+        wc_env (idck n.(n_in)) ->
+        Forall2 (WellInstantiated bck sub) (idck n.(n_in)) (nclocksof es) ->
+        Forall2 (fun t nck => forall w g,
+                     snd nck = Some w -> Env.find w env = Some g ->
+                     In g (fst t))
+          argts (nclocksof es) ->
+        (forall i x ck w w' z,
+            nth_error (idck n.(n_in)) i = Some (x, ck) ->
+            nth_error (List.map fst argts) i = Some w ->
+            nth_error augs i = Some w' -> In z w' ->
+            In z w
+            \/ exists x' u, In x' (clock_vars ck)
+                            /\ sub x' = Some u
+                            /\ Env.find u env = Some z) ->
+        In c (s_constraints sg) ->
+        forall y w', In (y, w') (combine (s_in sg) augs) -> In y (fst c) ->
+          forall z, In z w' ->
+            exists y2 w2,
+              In (y2, w2) (combine (s_in sg) (List.map fst argts))
+              /\ In y2 (fst c) /\ In z w2.
+    Proof.
+      intros sg n bck sub nm es argts augs c Hl1 Hnm Hinv Hwce Hwi Hcov Haug.
+      eapply (call_augment_dep sg (idck n.(n_in)) nm sub (nclocksof es)
+                (List.map fst argts) augs c);
+        [exact Hl1| | |exact Hinv|exact Hnm| | |exact Haug| ].
+      - (** the actuals' nclocks are one per formal *)
+        exact (Forall2_length _ _ _ Hwi).
+      - (** and so are the argument types *)
+        rewrite map_length.
+        transitivity (List.length (nclocksof es));
+          [exact (Forall2_length _ _ _ Hwi)
+          |symmetry; exact (Forall2_length _ _ _ Hcov)].
+      - (** [WellInstantiated]'s first component *)
+        intros i x ck nck Hxi Hni.
+        destruct (Forall2_nth_error _ (idck n.(n_in)) (nclocksof es) i
+                    (x, ck) nck Hwi Hxi Hni) as (Hs & _).
+        exact Hs.
+      - (** a named actual carries its own name *)
+        intros i nck w u g Hni Hwi0 Hs Hu.
+        apply nth_error_map_inv in Hwi0 as (t & Hti & ?); subst w.
+        exact (Forall2_nth_error _ argts (nclocksof es) i t nck Hcov Hti Hni
+                 u g Hs Hu).
+      - (** every variable of a formal's clock is itself a formal *)
+        intros i x ck x' Hxi Hx'.
+        assert (In (x, ck) (idck n.(n_in))) as Hin
+            by exact (nth_error_In _ i Hxi).
+        exact (clock_vars_wc (idck n.(n_in)) ck
+                 (wc_env_var (idck n.(n_in)) x ck Hwce Hin) x' Hx').
+    Qed.
+
     (** * Clause 3 of the chain, uniformly
 
         The obligation the design in force records for the augmented

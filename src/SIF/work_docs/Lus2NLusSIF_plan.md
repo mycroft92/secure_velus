@@ -312,14 +312,32 @@ Three obligations:
     *[verified 2026-09-25: `call_amb_covers_augmented`, from
     `assign_clk_type_instck_incl`]*;
   * `amb_pair` holds, since `bck` is a prefix of every output clock --
-    `assign_clk_type_prefix_incl`  *[verified: the lemma is proved; its
-    application to the call is untested]*;
+    `assign_clk_type_prefix_incl`  *[verified 2026-09-25:
+    `instck_clock_prefix` says instantiation only ever extends the base
+    clock, and `assign_clk_type_instck_base_incl` turns that into
+    `incl bkty ckty`, which is what makes the uniform ambient small enough
+    for every result]*;
   * the augmentation changes nothing, since by the dependency property any
     constraint mentioning input `j` already mentions `j`'s clock variables,
     so the larger actuals add no member to any source, and
     `listSatisfiable_same_sources` carries satisfaction across
-    *[verified: `subst_constraints_inp_map_augment` proves exactly this,
-    with the dependency property as its one remaining premise]*.
+    *[verified 2026-09-25: `subst_constraints_inp_map_augment` proves this
+    given `Hdep`; `call_augment_dep` proves `Hdep` from the callee-side
+    invariant; and `call_augment_dep_at_call` reads its positional
+    hypotheses off what the call site has -- `wc_exp`'s `WellInstantiated`
+    chain, the callee's `wc_env (idck n_in)`, and the argument types the
+    generator produced]*.
+
+**All three obligations of the design in force are now discharged** as
+statements *[verified, compiles]*.  What is left before `carries_Eapp`
+closes is the bookkeeping that puts them together on the concrete run: the
+augmentation has to be *built* (as `merge (fst argts_i) (the actuals of the
+formal's clock variables)`, whose shape hypothesis `call_augment_dep_at_call`
+then discharges), and the two remaining hypotheses -- the callee naming
+agreement `nth_error (idck n_in) i = Some (x,ck) -> nth_error (s_in sg) i =
+Some y -> nm x = Some y`, and `sig_inputs_clock_closed` itself -- enter Leg U
+on `GL` the way `sig_good` and the others do, discharged at the program
+level.
 
 **A near-blocker, and why it is not one, 2026-09-23.**  The augmentation
 argument needs the actual at a clock position to contribute its own security
