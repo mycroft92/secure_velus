@@ -3881,4 +3881,126 @@ Module SecLusUnnestingBase
       eapply Forall_impl; [|exact WIi]. now simpl.
   Qed.
 
+  (** * A named argument stream carries its own name
+
+      The dependency property's call case needs this: the actual sitting at a
+      *clock* position of a call contributes its own security name to its type,
+      so the callee's instantiated clock type is covered by the actuals.
+
+      Only two constructors can carry a stream name at all.  [wc_exp] forces
+      [None] on every other one, so they are vacuous.  [Evar]'s name is pinned
+      to the variable, and its type is exactly that variable's security name.
+      [Eapp]'s names are *anonymous*: they are in [anon_streams] of the
+      annotation, hence -- by [n_nodup] and the naming pass's domain -- not
+      keys of [env] at all.  That last fact cannot be proved here, where [env]
+      is abstract, so it is a premise; at the program level it is
+      [call_arg_fresh_not_env_key].
+
+      Note this speaks about the *top-level* streams only, so the premise is
+      needed only for a call at the top of the expression -- no recursion. *)
+
+  Lemma named_covered_vacuous :
+    forall (env : Env.t ident) (l : list nclock) (us : list LST),
+      List.length us = List.length l ->
+      Forall (fun nck => forall w g,
+                  snd nck = Some w -> Env.find w env <> Some g) l ->
+      Forall2 (fun t nck => forall w g,
+                   snd nck = Some w -> Env.find w env = Some g -> In g (fst t))
+        us l.
+  Proof.
+    intros env l. induction l as [|nck l IH]; intros us Hl Hno.
+    - destruct us; [constructor|discriminate].
+    - destruct us as [|t us]; [discriminate|].
+      inversion Hno as [|nck0 l0 Hn Hr]; subst.
+      constructor; [|apply IH; [simpl in Hl; congruence|exact Hr]].
+      intros w g Hw Hg. exfalso. exact (Hn w g Hw Hg).
+  Qed.
+
+  Lemma unnamed_no_key :
+    forall (env : Env.t ident) (l : list nclock),
+      Forall (fun nck => snd nck = None) l ->
+      Forall (fun nck => forall w g,
+                  snd nck = Some w -> Env.find w env <> Some g) l.
+  Proof.
+    intros env l H. rewrite Forall_forall in H |- *.
+    intros nck Hin w g Hw Hg.
+    specialize (H nck Hin).
+    assert (@None ident = Some w) as Hc by (rewrite <- H; exact Hw).
+    discriminate Hc.
+  Qed.
+
+  Lemma assign_lexp_named_covered :
+    forall P G env base_ty rst_ty vars e,
+      wl_exp P e ->
+      wc_exp P vars e ->
+      (forall f es' ro anns, e = Eapp f es' ro anns ->
+          forall w g, In (Some w) (List.map stream_name anns) ->
+                      Env.find w env <> Some g) ->
+      forall ts s s',
+        assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+        Forall2 (fun t nck => forall w g,
+                     snd nck = Some w -> Env.find w env = Some g ->
+                     In g (fst t))
+          ts (nclockof e).
+  Proof.
+    intros P G env base_ty rst_ty vars e Hwl Hwc Hanon ts s s' Hty.
+    assert (List.length ts = List.length (nclockof e)) as Hlen'.
+    { rewrite (assign_lexp_type_length P G env base_ty rst_ty e Hwl ts s s' Hty).
+      symmetry. apply length_nclockof_numstreams. }
+    destruct e as [c|x a|op e1 a|op e1 e2 a|e0s es anns|e0s es anns
+                  |es x b a|x ets efs a|e0 ets efs a|f es ro anns].
+    - (** Econst *)
+      apply named_covered_vacuous; [exact Hlen'|].
+      apply unnamed_no_key. simpl. now repeat constructor.
+    - (** Evar: the name is the variable, and the type is its own *)
+      rewrite assign_lexp_Evar in Hty.
+      apply sec_bind_inv in Hty as (g0 & s1 & Hg0 & Hret).
+      apply find_env_inv in Hg0 as (Hg0 & ?); subst s1.
+      unfold SC.ret in Hret.
+      assert (ts = [lvar g0]) as ? by (inversion Hret; reflexivity); subst ts.
+      simpl nclockof. constructor; [|constructor].
+      inv Hwc.
+      + cbn [snd]. intros w g Hw Hg.
+        assert (w = x) as ? by (inversion Hw; reflexivity); subst w.
+        rewrite Hg0 in Hg. apply option_Some_inj in Hg; subst g.
+        rewrite fst_lvar. now left.
+      + cbn [snd]. intros w g Hw. discriminate.
+    - (** Eunop *)
+      apply named_covered_vacuous; [exact Hlen'|].
+      apply unnamed_no_key. inv Hwc. simpl. now repeat constructor.
+    - (** Ebinop *)
+      apply named_covered_vacuous; [exact Hlen'|].
+      apply unnamed_no_key. inv Hwc. simpl. now repeat constructor.
+    - (** Efby: [wc_exp] makes every annotation unnamed *)
+      apply named_covered_vacuous; [exact Hlen'|].
+      apply unnamed_no_key. inv Hwc. simpl nclockof. rewrite Forall_map.
+      match goal with H : Forall unnamed_stream anns |- _ =>
+        eapply Forall_impl; [|exact H] end.
+      intros ann Hann. exact Hann.
+    - (** Earrow *)
+      apply named_covered_vacuous; [exact Hlen'|].
+      apply unnamed_no_key. inv Hwc. simpl nclockof. rewrite Forall_map.
+      match goal with H : Forall unnamed_stream anns |- _ =>
+        eapply Forall_impl; [|exact H] end.
+      intros ann Hann. exact Hann.
+    - (** Ewhen *)
+      apply named_covered_vacuous; [exact Hlen'|].
+      apply unnamed_no_key. inv Hwc. simpl nclockof. rewrite Forall_map.
+      apply Forall_forall. intros ? _. reflexivity.
+    - (** Emerge *)
+      apply named_covered_vacuous; [exact Hlen'|].
+      apply unnamed_no_key. inv Hwc. simpl nclockof. rewrite Forall_map.
+      apply Forall_forall. intros ? _. reflexivity.
+    - (** Eite *)
+      apply named_covered_vacuous; [exact Hlen'|].
+      apply unnamed_no_key. inv Hwc. simpl nclockof. rewrite Forall_map.
+      apply Forall_forall. intros ? _. reflexivity.
+    - (** Eapp: the names are anonymous, so the premise makes it vacuous *)
+      apply named_covered_vacuous; [exact Hlen'|].
+      simpl nclockof. rewrite Forall_map. apply Forall_forall.
+      intros ann Hin w g Hw.
+      apply (Hanon f es ro anns (@Coq.Init.Logic.eq_refl _ _) w g).
+      apply in_map_iff. exists ann. split; [exact Hw|exact Hin].
+  Qed.
+
 End SecLusUnnestingBase.
