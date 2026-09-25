@@ -234,6 +234,44 @@ Module SecLusUnnestingBase
       exact (IH ys s1 s' Hys).
   Qed.
 
+  (** * The scoping context of a typing run, stated once
+
+      These three were declared, identically, in five separate sections --
+      and carried the same defect in all five.  Stating them here means the
+      sections quote a name rather than a body, so they cannot drift.
+
+      Each is bounded above by a checkmark state [stF].  Without that bound
+      they quantify over every state, and since a call's result type is
+      [gensym sec s] for the state [s] the run is at, they would demand that
+      a finite [scope] contain unboundedly many names -- unsatisfiable for
+      any program with a call.  With it, a run's minted names lie in a
+      window (see [assign_lexp_type_sec_le]) and a [scope] containing
+      [minted st0 stF] covers them. *)
+
+  Definition source_types_scoped_upto
+      (GL : secglobal) (env : Env.t ident) (base_ty rst_ty : ident)
+      (scope : list ident) (stF : sec_state) : Prop :=
+    forall e ts s s',
+      assign_lexp_type GL env base_ty rst_ty e s = OK (ts, s') ->
+      sec_le s' stF ->
+      Forall (fun t => st_scoped scope (fst t)) ts.
+
+  Definition source_lexps_scoped_upto
+      (GL : secglobal) (env : Env.t ident) (base_ty rst_ty : ident)
+      (scope : list ident) (stF : sec_state) : Prop :=
+    forall es ts s s',
+      assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
+      sec_le s' stF ->
+      Forall (fun t => st_scoped scope (fst t)) ts.
+
+  Definition source_lexps_carried_scoped_upto
+      (GL : secglobal) (env : Env.t ident) (base_ty rst_ty : ident)
+      (scope : list ident) (stF : sec_state) : Prop :=
+    forall es ts s s',
+      assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
+      sec_le s' stF ->
+      constraints_scoped scope (carried ts).
+
   (** * Satisfaction depends only on the names a constraint mentions
 
       [hm_ext] is a join over the members of a type, so a valuation cannot
@@ -1682,6 +1720,109 @@ Module SecLusUnnestingBase
           -- exact (state_pure_sec_le _ cs stc s'
                       (state_pure_generate_constraints sg
                          (List.map fst argts) ckty (fst rstty) outs) Hcs).
+  Qed.
+
+  (** The list form, with no side condition: every element is monotone, so
+      the [Forall] premise of [assign_lexps_sec_le_of] is always met. *)
+  Corollary assign_lexps_sec_le :
+    forall G env base_ty rst_ty es ts s s',
+      assign_lexps G env base_ty rst_ty es s = OK (ts, s') -> sec_le s s'.
+  Proof.
+    intros G env base_ty rst_ty es ts s s' Hrun.
+    eapply assign_lexps_sec_le_of; [|exact Hrun].
+    apply Forall_forall. intros e _ t s1 s2 Ht.
+    exact (assign_lexp_type_sec_le G env base_ty rst_ty e t s1 s2 Ht).
+  Qed.
+
+  (** Discharging a checkmark bound is always the same shape: walk the runs
+      that the inversion of the enclosing run already put in the context,
+      then land on the bound the caller supplied.  Collect the steps so the
+      use sites can say [eauto with sec]. *)
+  (** Discharging a checkmark bound always has the same shape: walk back
+      along the runs the inversion of the enclosing run already put in the
+      context, then land on the bound the caller supplied.  Each step is
+      stated so that it *consumes* a run hypothesis and leaves a bound on an
+      earlier state, which makes the search directed -- [sec_le_trans] as a
+      hint would instead open a goal with an unknown middle state and search
+      the whole context for it. *)
+
+  Lemma sec_le_of_lexp :
+    forall G env base_ty rst_ty e ts s s' stF,
+      assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+      sec_le s' stF -> sec_le s stF.
+  Proof.
+    intros G env base_ty rst_ty e ts s s' stF Hrun Hb.
+    exact (sec_le_trans _ _ _
+             (assign_lexp_type_sec_le G env base_ty rst_ty e ts s s' Hrun) Hb).
+  Qed.
+
+  Lemma sec_le_of_lexps :
+    forall G env base_ty rst_ty es ts s s' stF,
+      assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+      sec_le s' stF -> sec_le s stF.
+  Proof.
+    intros G env base_ty rst_ty es ts s s' stF Hrun Hb.
+    exact (sec_le_trans _ _ _
+             (assign_lexps_sec_le G env base_ty rst_ty es ts s s' Hrun) Hb).
+  Qed.
+
+  Lemma sec_le_of_ljoin_list :
+    forall ts us rs s s' stF,
+      ljoin_list ts us s = OK (rs, s') -> sec_le s' stF -> sec_le s stF.
+  Proof.
+    intros ts us rs s s' stF Hrun Hb.
+    rewrite (ljoin_list_pure ts us rs s s' Hrun) in Hb. exact Hb.
+  Qed.
+
+  Lemma sec_le_of_single :
+    forall (ts : list LST) t s s' stF,
+      single ts s = OK (t, s') -> sec_le s' stF -> sec_le s stF.
+  Proof.
+    intros ts t s s' stF Hrun Hb.
+    apply single_inv in Hrun as (_ & ?); subst s'. exact Hb.
+  Qed.
+
+  Hint Resolve sec_le_refl : sec.
+  Hint Resolve sec_le_of_lexp : sec.
+  Hint Resolve sec_le_of_lexps : sec.
+  Hint Resolve sec_le_of_ljoin_list : sec.
+  Hint Resolve sec_le_of_single : sec.
+
+  (** [Eapp] is the only constructor whose run has stages, so it is the only
+      one where a bound on the whole run has to be pushed down by hand.  The
+      stages come straight out of [assign_lexp_Eapp_inv]; this packages their
+      order once so the call case does not have to repeat it. *)
+  Lemma assign_lexp_Eapp_stages_le :
+    forall G env base_ty rst_ty es er (anns : list LSyn.ann) st st'
+           sg argts rstty ckty outs cs sta stb stc,
+      assign_lexps G env base_ty rst_ty es st = OK (argts, sta) ->
+      (match er with
+       | None => rstty = lvar rst_ty /\ stb = sta
+       | Some e1 =>
+           exists t1 a1 rck stm,
+             assign_lexp_type G env base_ty rst_ty e1 sta = OK (t1, stm)
+             /\ single t1 stm = OK (a1, stb)
+             /\ assign_clk_type env base_ty (hd Cbase (LSyn.clockof e1))
+                = Some rck
+             /\ rstty = ljoin (lvar rst_ty) (ljoin a1 (rck, []))
+       end) ->
+      fresh_idents (List.length anns) stb = OK (outs, stc) ->
+      generate_constraints sg (List.map fst argts) ckty (fst rstty) outs stc
+        = OK (cs, st') ->
+      sec_le sta stb /\ sec_le stb stc /\ sec_le stc st'.
+  Proof.
+    intros G env base_ty rst_ty es er anns st st'
+           sg argts rstty ckty outs cs sta stb stc Hargs Hrst Houts Hcs.
+    repeat split.
+    - destruct er as [e1|].
+      + destruct Hrst as (t1 & a1 & rck & stm & Ht1 & Hsg & _ & _).
+        apply single_inv in Hsg as (_ & ?); subst stb.
+        exact (assign_lexp_type_sec_le G env base_ty rst_ty e1 t1 sta stm Ht1).
+      + destruct Hrst as (_ & ?); subst stb. apply sec_le_refl.
+    - exact (fresh_idents_sec_le (List.length anns) outs stb stc Houts).
+    - exact (state_pure_sec_le _ cs stc st'
+               (state_pure_generate_constraints sg (List.map fst argts)
+                  ckty (fst rstty) outs) Hcs).
   Qed.
 
 

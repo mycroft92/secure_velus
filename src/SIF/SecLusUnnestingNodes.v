@@ -95,6 +95,7 @@ Import UNN.Fresh.Tactics.
     Variable vars    : list (ident * clock).
     Variable cenv    : Env.t (type * clock).
     Variable scope   : list ident.
+    Variable stF     : sec_state.
     Variable amb     : ST.
 
     Hypothesis env_inj : env_injective env.
@@ -104,13 +105,9 @@ Import UNN.Fresh.Tactics.
     Hypothesis sig_nodup :
       forall f sg, find_signature f GL = Some sg -> NoDup (signature_scope sg).
     Hypothesis source_types_scoped :
-      forall e ts s s',
-        assign_lexp_type GL env base_ty rst_ty e s = OK (ts, s') ->
-        Forall (fun t => st_scoped scope (fst t)) ts.
+      source_types_scoped_upto GL env base_ty rst_ty scope stF.
     Hypothesis source_lexps_scoped :
-      forall es ts s s',
-        assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
-        Forall (fun t => st_scoped scope (fst t)) ts.
+      source_lexps_scoped_upto GL env base_ty rst_ty scope stF.
     Hypothesis rst_ty_scoped : In rst_ty scope.
     Hypothesis clk_types_scoped :
       forall ck ckty,
@@ -118,9 +115,7 @@ Import UNN.Fresh.Tactics.
     Hypothesis env_range_scoped :
       forall x b, Env.find x env = Some b -> In b scope.
     Hypothesis source_lexps_carried_scoped :
-      forall es ts s s',
-        assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
-        constraints_scoped scope (carried ts).
+      source_lexps_carried_scoped_upto GL env base_ty rst_ty scope stF.
     Hypothesis sig_scoped :
       forall f sg, find_signature f GL = Some sg -> signature_scoped sg.
     Hypothesis sig_actuals_fresh :
@@ -191,6 +186,9 @@ Import UNN.Fresh.Tactics.
         generate_leqns_constraints GL env base_ty rst_ty cenv
           (List.concat eqss) yst = OK (cet, yst') ->
         listSatisfiable dlt ce ->
+        (** The checkmark bound: this run of the source generator, and
+            every sub-run of it, finishes before [stF]. *)
+        sec_le xst' stF ->
         exists dlt',
           agree_off (moved_by st st') dlt dlt'
           /\ listSatisfiable dlt' cet
@@ -198,7 +196,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       induction eqs as [|eq eqs IH];
         intros eqss st st' ce xst xst' cet yst yst' dlt
-        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd.
       - apply map_bind_unnest_equation_nil in Hun as (? & ?); subst.
         simpl in Hgent.
         destruct
@@ -270,8 +268,14 @@ Import UNN.Fresh.Tactics.
             (NoDup_drop_middle (vars_defined (List.concat eqsr))
                (fst eq) (st_ids st1) Hndmapped). }
 
+        (** the first equation's run ends before the rest's, so the
+            checkmark bound reaches it too *)
+        assert (sec_le xst1 stF) as Hbh.
+        { eapply sec_le_trans; [|exact Hbnd].
+          eapply generate_leqns_constraints_sec_le; exact Hgen2. }
+
         edestruct
-          (eqn_carries_all GL env base_ty rst_ty vars cenv scope amb
+          (eqn_carries_all GL env base_ty rst_ty vars cenv scope stF amb
              env_inj amb_scoped sig_good sig_nodup source_types_scoped
              source_lexps_scoped rst_ty_scoped clk_types_scoped
              env_range_scoped source_lexps_carried_scoped sig_scoped
@@ -293,6 +297,7 @@ Import UNN.Fresh.Tactics.
         { exact Hgen1. }
         { exact Hgt1. }
         { exact Hsat1. }
+        { exact Hbh. }
 
         edestruct (IH eqsr st1 st' c2 xst1 xst' ct2 ystm yst' dlt1)
           as (dlt2 & Hoff2 & Hce2 & Hscope2).
@@ -332,6 +337,7 @@ Import UNN.Fresh.Tactics.
           exact
             (listSatisfiable_off scope c2 (moved_by st st1) dlt dlt1
                Hcesc2 Hprefixfresh Hoff1 Hsat2). }
+        { exact Hbnd. }
 
         assert (forall y, In y (moved_by st1 st') ->
                           ~ In y (scope ++ moved_by st st1)) as Hsep.
@@ -397,6 +403,7 @@ Import UNN.Fresh.Tactics.
     Variable vars    : list (ident * clock).
     Variable cenv    : Env.t (type * clock).
     Variable scope   : list ident.
+    Variable stF     : sec_state.
 
     Hypothesis env_inj : env_injective env.
     Hypothesis sig_good :
@@ -404,13 +411,9 @@ Import UNN.Fresh.Tactics.
     Hypothesis sig_nodup :
       forall f sg, find_signature f GL = Some sg -> NoDup (signature_scope sg).
     Hypothesis source_types_scoped :
-      forall e ts s s',
-        assign_lexp_type GL env base_ty rst_ty e s = OK (ts, s') ->
-        Forall (fun t => st_scoped scope (fst t)) ts.
+      source_types_scoped_upto GL env base_ty rst_ty scope stF.
     Hypothesis source_lexps_scoped :
-      forall es ts s s',
-        assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
-        Forall (fun t => st_scoped scope (fst t)) ts.
+      source_lexps_scoped_upto GL env base_ty rst_ty scope stF.
     Hypothesis rst_ty_scoped : In rst_ty scope.
     Hypothesis clk_types_scoped :
       forall ck ckty,
@@ -418,9 +421,7 @@ Import UNN.Fresh.Tactics.
     Hypothesis env_range_scoped :
       forall x b, Env.find x env = Some b -> In b scope.
     Hypothesis source_lexps_carried_scoped :
-      forall es ts s s',
-        assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
-        constraints_scoped scope (carried ts).
+      source_lexps_carried_scoped_upto GL env base_ty rst_ty scope stF.
     Hypothesis sig_scoped :
       forall f sg, find_signature f GL = Some sg -> signature_scoped sg.
     Hypothesis sig_actuals_fresh :
@@ -458,6 +459,9 @@ Import UNN.Fresh.Tactics.
         generate_leqns_constraints GL env base_ty rst_ty cenv
           (List.concat eqss) yst = OK (cet, yst') ->
         listSatisfiable dlt ce ->
+        (** The checkmark bound: this run of the source generator, and
+            every sub-run of it, finishes before [stF]. *)
+        sec_le xst' stF ->
         exists dlt',
           agree_off (moved_by env st st') dlt dlt'
           /\ listSatisfiable dlt' cet
@@ -465,7 +469,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       induction eqs as [|eq eqs IH];
         intros eqss st st' ce xst xst' cet yst yst' dlt
-          Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+          Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd.
       - apply map_bind_unnest_equation_nil in Hun as (Hq1 & Hq2); subst.
         simpl List.concat in Hgent.
         apply generate_leqns_constraints_nil in Hgent as (Hq3 & Hq4); subst.
@@ -534,8 +538,14 @@ Import UNN.Fresh.Tactics.
             (NoDup_drop_middle (vars_defined (List.concat eqsr))
                (fst eq) (st_ids st1) Hndmapped). }
 
+        (** the first equation's run ends before the rest's, so the
+            checkmark bound reaches it too *)
+        assert (sec_le xst1 stF) as Hbh.
+        { eapply sec_le_trans; [|exact Hbnd].
+          eapply generate_leqns_constraints_sec_le; exact Hgen2. }
+
         edestruct
-          (eqn_carries_all GL env base_ty rst_ty vars cenv scope (A eq)
+          (eqn_carries_all GL env base_ty rst_ty vars cenv scope stF (A eq)
              env_inj (A_scoped eq) sig_good sig_nodup source_types_scoped
              source_lexps_scoped rst_ty_scoped clk_types_scoped
              env_range_scoped source_lexps_carried_scoped sig_scoped
@@ -557,6 +567,7 @@ Import UNN.Fresh.Tactics.
         { exact Hgen1. }
         { exact Hgt1. }
         { exact Hsat1. }
+        { exact Hbh. }
 
         edestruct (IH eqsr st1 st' c2 xst1 xst' ct2 ystm yst' dlt1)
           as (dlt2 & Hoff2 & Hce2 & Hscope2).
@@ -599,6 +610,7 @@ Import UNN.Fresh.Tactics.
           exact
             (listSatisfiable_off scope c2 (moved_by env st st1) dlt dlt1
                Hcesc2 Hprefixfresh Hoff1 Hsat2). }
+        { exact Hbnd. }
 
         assert (forall y, In y (moved_by env st1 st') ->
                           ~ In y (scope ++ moved_by env st st1)) as Hsep.
@@ -679,13 +691,16 @@ Import UNN.Fresh.Tactics.
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
           = OK (cet, yst') ->
         listSatisfiable dlt ce ->
+        (** The checkmark bound: this run of the source generator, and
+            every sub-run of it, finishes before [stF]. *)
+        sec_le xst' stF ->
         exists dlt',
           agree_off (moved_by env init_st st') dlt dlt'
           /\ listSatisfiable dlt' cet
           /\ constraints_scoped (scope ++ moved_by env init_st st') cet.
     Proof.
       intros P eqs eqs' st' ce xst xst' cet yst yst' dlt
-        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd.
       apply unnest_equations_inv in Hun as (eqss & Hmap & ?); subst.
       assert (NoDup
                 (vars_defined (List.concat eqss) ++
@@ -696,7 +711,7 @@ Import UNN.Fresh.Tactics.
       exact
         (eqns_carries_amb P eqs eqss (init_st : fresh_st (type * clock))
            st' ce xst xst' cet yst yst'
-           dlt Hwl Hwc Hnd0 Hmv Hamb Hbs0 Hcesc Hmap Hgen Hgent Hsat).
+           dlt Hwl Hwc Hnd0 Hmv Hamb Hbs0 Hcesc Hmap Hgen Hgent Hsat Hbnd).
     Qed.
 
     (** The valuation produced by [node_carries] changes only the security
@@ -726,13 +741,17 @@ Import UNN.Fresh.Tactics.
           = OK (ce, xst') ->
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
           = OK (cet, yst') ->
+        (** The checkmark bound: this run of the source generator, and
+            every sub-run of it, finishes before [stF]. *)
+        sec_le xst' stF ->
         preserves_on scope ce cet.
     Proof.
       intros P eqs eqs' st' ce xst xst' cet yst yst'
-        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent dlt Hsat.
+        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hbnd dlt Hsat.
       destruct
         (node_carries P eqs eqs' st' ce xst xst' cet yst yst' dlt
-           Hwl Hwc Hnd Hmv Hamb (Hbs0 dlt Hsat) Hcesc Hun Hgen Hgent Hsat)
+           Hwl Hwc Hnd Hmv Hamb (Hbs0 dlt Hsat) Hcesc Hun Hgen Hgent Hsat
+           Hbnd)
         as (dlt' & Hoff & Hsat' & Hscoped).
       exists dlt'. split.
       - exact

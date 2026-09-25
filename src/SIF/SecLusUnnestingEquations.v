@@ -95,6 +95,7 @@ Import UNN.Fresh.Tactics.
     Variable vars    : list (ident * clock).
     Variable cenv    : Env.t (type * clock).
     Variable scope   : list ident.
+    Variable stF     : sec_state.
     Variable amb     : ST.
 
     Hypothesis env_inj : env_injective env.
@@ -104,13 +105,9 @@ Import UNN.Fresh.Tactics.
     Hypothesis sig_nodup :
       forall f sg, find_signature f GL = Some sg -> NoDup (signature_scope sg).
     Hypothesis source_types_scoped :
-      forall e ts s s',
-        assign_lexp_type GL env base_ty rst_ty e s = OK (ts, s') ->
-        Forall (fun t => st_scoped scope (fst t)) ts.
+      source_types_scoped_upto GL env base_ty rst_ty scope stF.
     Hypothesis source_lexps_scoped :
-      forall es ts s s',
-        assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
-        Forall (fun t => st_scoped scope (fst t)) ts.
+      source_lexps_scoped_upto GL env base_ty rst_ty scope stF.
     Hypothesis rst_ty_scoped : In rst_ty scope.
     Hypothesis clk_types_scoped :
       forall ck ckty,
@@ -118,9 +115,7 @@ Import UNN.Fresh.Tactics.
     Hypothesis env_range_scoped :
       forall x b, Env.find x env = Some b -> In b scope.
     Hypothesis source_lexps_carried_scoped :
-      forall es ts s s',
-        assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
-        constraints_scoped scope (carried ts).
+      source_lexps_carried_scoped_upto GL env base_ty rst_ty scope stF.
     Hypothesis sig_scoped :
       forall f sg, find_signature f GL = Some sg -> signature_scoped sg.
     Hypothesis sig_actuals_fresh :
@@ -132,15 +127,15 @@ Import UNN.Fresh.Tactics.
     Local Notation sec_of := (CALLS.sec_of env).
     Local Notation moved_by := (CALLS.moved_by env).
     Local Notation carries_at :=
-      (CALLS.carries_at GL env base_ty rst_ty vars cenv scope amb).
+      (CALLS.carries_at GL env base_ty rst_ty vars cenv scope stF amb).
     Local Notation carries :=
-      (CALLS.carries GL env base_ty rst_ty vars cenv scope amb).
+      (CALLS.carries GL env base_ty rst_ty vars cenv scope stF amb).
     Local Notation carries_list :=
-      (CALLS.carries_list GL env base_ty rst_ty vars cenv scope amb).
+      (CALLS.carries_list GL env base_ty rst_ty vars cenv scope stF amb).
     Local Notation lifted_defs_local :=
       (CALLS.lifted_defs GL env base_ty rst_ty cenv amb env_inj).
     Local Notation carries_list_intro_local :=
-      (CALLS.carries_list_intro GL env base_ty rst_ty vars cenv scope amb
+      (CALLS.carries_list_intro GL env base_ty rst_ty vars cenv scope stF amb
          env_inj amb_scoped).
     Local Notation sig_nodup_pipeline_local :=
       (CALLS.sig_nodup_pipeline GL sig_nodup).
@@ -151,7 +146,7 @@ Import UNN.Fresh.Tactics.
     Local Notation unnest_arrow_types_local :=
       (CALLS.unnest_arrow_types GL env base_ty rst_ty).
     Local Notation carries_Eapp_local :=
-      (CALLS.carries_Eapp GL env base_ty rst_ty vars cenv scope amb
+      (CALLS.carries_Eapp GL env base_ty rst_ty vars cenv scope stF amb
          env_inj amb_scoped sig_good sig_nodup source_types_scoped
          source_lexps_scoped rst_ty_scoped clk_types_scoped sig_scoped
          sig_actuals_fresh).
@@ -160,7 +155,7 @@ Import UNN.Fresh.Tactics.
     Local Notation noops_step_local :=
       (CALLS.noops_step GL env base_ty rst_ty cenv amb env_inj).
     Local Notation reset_step_local :=
-      (CALLS.reset_step GL env base_ty rst_ty vars cenv scope amb env_inj
+      (CALLS.reset_step GL env base_ty rst_ty vars cenv scope stF amb env_inj
          amb_scoped).
     Local Notation amb_pair_local := (CALLS.amb_pair amb).
 
@@ -247,6 +242,9 @@ Import UNN.Fresh.Tactics.
           = OK (ce, xst') ->
         assign_lexps GL env base_ty rst_ty es' yst = OK (ts'', yst') ->
         listSatisfiable dlt (carried ts) ->
+        (** The checkmark bound: this run of the source generator, and
+            every sub-run of it, finishes before [stF]. *)
+        sec_le sst' stF ->
         exists dlt',
           agree_off (moved_by st st') dlt dlt'
           /\ listSatisfiable dlt' ce
@@ -281,7 +279,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P e He
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd.
       rewrite unnest_rhs_other in Hun by exact He.
       assert (Forall normalized_cexp es') as Hne
           by exact (unnest_exp_normalized_cexp P e es' eqs st st' Hun).
@@ -474,7 +472,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P e0s es anns
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd.
       pose proof Hwl as Hwlfby.
       inv Hwl. inv Hwc.
       apply unnest_rhs_Efby_inv in Hun
@@ -491,6 +489,15 @@ Import UNN.Fresh.Tactics.
       rewrite assign_lexp_Efby in Has.
       apply sec_bind_inv in Has as (ts0 & sa & Hts0 & Has).
       apply sec_bind_inv in Has as (us & sb & Hus & Hj).
+
+      (** the source run's two stages: the join is pure, so the second stage
+          already ends at the run's final state, and the first is before it *)
+      assert (sec_le sb stF) as Hbb.
+      { rewrite <- (ljoin_list_pure ts0 us ts sb sst' Hj). exact Hbnd. }
+      assert (sec_le sa stF) as Hba
+          by exact (sec_le_trans _ _ _
+                      (assign_lexps_sec_le GL env base_ty rst_ty es us sa sb Hus)
+                      Hbb).
 
       apply generate_leqns_constraints_app in Hgen
         as (ce1 & ce2 & xstm & Hgen1 & Hgen2 & ?); subst.
@@ -549,6 +556,7 @@ Import UNN.Fresh.Tactics.
       { exact Hgen1. }
       { apply (Ht0x yst). }
       { exact Hcar0. }
+      { exact Hba. }
 
       edestruct (carries_exps P es false ess1 eqss1 st1 st' us
                    sa sb ce2 xstm xst' usx yst yst dlt1)
@@ -572,6 +580,7 @@ Import UNN.Fresh.Tactics.
           apply (eq_moved_by_prefix st st1 st' Hf1). exact Hy. }
         exact (listSatisfiable_off scope (carried us) (moved_by st st1)
                  dlt dlt1 Hsc1 Hfresh Hoff1 Hcar1). }
+      { exact Hbb. }
 
       assert (Forall2 (fun e t =>
                 (forall s, assign_lexp_type GL env base_ty rst_ty e s
@@ -691,7 +700,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P e0s es anns
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd.
       pose proof Hwl as Hwlarrow.
       inv Hwl. inv Hwc.
       apply unnest_rhs_Earrow_inv in Hun
@@ -708,6 +717,15 @@ Import UNN.Fresh.Tactics.
       rewrite assign_lexp_Earrow in Has.
       apply sec_bind_inv in Has as (ts0 & sa & Hts0 & Has).
       apply sec_bind_inv in Has as (us & sb & Hus & Hj).
+
+      (** the source run's two stages: the join is pure, so the second stage
+          already ends at the run's final state, and the first is before it *)
+      assert (sec_le sb stF) as Hbb.
+      { rewrite <- (ljoin_list_pure ts0 us ts sb sst' Hj). exact Hbnd. }
+      assert (sec_le sa stF) as Hba
+          by exact (sec_le_trans _ _ _
+                      (assign_lexps_sec_le GL env base_ty rst_ty es us sa sb Hus)
+                      Hbb).
 
       apply generate_leqns_constraints_app in Hgen
         as (ce1 & ce2 & xstm & Hgen1 & Hgen2 & ?); subst.
@@ -766,6 +784,7 @@ Import UNN.Fresh.Tactics.
       { exact Hgen1. }
       { apply (Ht0x yst). }
       { exact Hcar0. }
+      { exact Hba. }
 
       edestruct (carries_exps P es false ess1 eqss1 st1 st' us
                    sa sb ce2 xstm xst' usx yst yst dlt1)
@@ -789,6 +808,7 @@ Import UNN.Fresh.Tactics.
           apply (eq_moved_by_prefix st st1 st' Hf1). exact Hy. }
         exact (listSatisfiable_off scope (carried us) (moved_by st st1)
                  dlt dlt1 Hsc1 Hfresh Hoff1 Hcar1). }
+      { exact Hbb. }
 
       assert (Forall2 (fun e t =>
                 (forall s, assign_lexp_type GL env base_ty rst_ty e s
@@ -970,6 +990,161 @@ Import UNN.Fresh.Tactics.
         equation rule needs: unnesting emits every split equation before
         every auxiliary one, while the typing rule interleaves them chunk by
         chunk. *)
+
+    (** The variable rule emits an ordering per bound name and mints
+        nothing, so its run leaves the state where it found it.  That is what
+        lets the checkmark bound on a whole equation's run be read off as a
+        bound on the run of its right-hand side. *)
+
+    Lemma state_pure_generate_lvars_constraints :
+      forall xs bs ts,
+        state_pure (generate_lvars_constraints env base_ty rst_ty cenv xs bs ts).
+    Proof.
+      intros xs. induction xs as [|x xs IH]; intros bs ts;
+        (destruct bs as [|b bs]; destruct ts as [|t ts];
+         try apply state_pure_error; try apply state_pure_ret).
+      apply state_pure_bind; [apply eqn_clock_type_pure|intro ckty].
+      apply state_pure_bind; [apply IH|intro rest]. apply state_pure_ret.
+    Qed.
+
+    (** * The source generator only advances the state
+
+        Every rule mints exactly where [assign_lexp_type] does -- on a call's
+        results -- so a run of any of them lands at or after the state it
+        started from.  This is what turns a checkmark bound on a whole
+        equation's run into a bound on each of its stages, which is what the
+        scoping hypotheses on the source generator need. *)
+
+    Lemma generate_lvars_constraints_sec_le :
+      forall xs bs ts c s s',
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
+          = OK (c, s') ->
+        sec_le s s'.
+    Proof.
+      intros xs bs ts c s s' H.
+      destruct (state_pure_generate_lvars_constraints xs bs ts s s c s' H)
+        as (Heq & _). subst s'. apply sec_le_refl.
+    Qed.
+
+    Lemma generate_lgen_constraint_sec_le :
+      forall xs es c s s',
+        generate_lgen_constraint GL env base_ty rst_ty cenv xs es s
+          = OK (c, s') ->
+        sec_le s s'.
+    Proof.
+      intros xs es c s s' H.
+      unfold generate_lgen_constraint in H.
+      apply sec_bind_inv in H as (ts & s1 & Hts & H).
+      apply sec_bind_inv in H as (bs & s2 & Hbs & H).
+      apply option_to_sec_inv in Hbs as (_ & ?); subst s2.
+      apply (sec_le_trans _ s1 _).
+      - exact (assign_lexps_sec_le GL env base_ty rst_ty es ts s s1 Hts).
+      - eapply generate_lvars_constraints_sec_le; exact H.
+    Qed.
+
+    Lemma generate_lcall_constraint_sec_le :
+      forall xs f es rstty c s s',
+        generate_lcall_constraint GL env base_ty rst_ty xs f es rstty s
+          = OK (c, s') ->
+        sec_le s s'.
+    Proof.
+      intros xs f es rstty c s s' H.
+      apply generate_lcall_constraint_inv in H
+        as (sg & ckty & argts & outs & sti & cs0 & _ & _ & Hargs & _ & Hgc & _).
+      apply (sec_le_trans _ sti _).
+      - exact (assign_lexps_sec_le GL env base_ty rst_ty es argts s sti Hargs).
+      - exact (state_pure_sec_le _ cs0 sti s'
+                 (state_pure_generate_constraints sg (List.map fst argts) ckty
+                    (fst rstty) outs) Hgc).
+    Qed.
+
+    Lemma generate_ldef_constraint_sec_le :
+      forall x e c s s',
+        generate_ldef_constraint GL env base_ty rst_ty cenv x e s = OK (c, s') ->
+        sec_le s s'.
+    Proof.
+      intros x e c s s' H.
+      apply generate_ldef_constraint_inv in H
+        as (ck & ckty & tf & b & s1 & _ & _ & Ht & _ & ? & _); subst s'.
+      exact (assign_lexp_type_sec_le GL env base_ty rst_ty e [tf] s s1 Ht).
+    Qed.
+
+    Lemma generate_lone_constraint_sec_le :
+      forall ys e c s s',
+        generate_lone_constraint GL env base_ty rst_ty cenv ys e s = OK (c, s') ->
+        sec_le s s'.
+    Proof.
+      intros ys e c s s' H.
+      destruct e as [| | | | | | | | |f args ro a].
+      1-9: (destruct ys as [|x [|x2 xs2]];
+            [ eapply generate_lgen_constraint_sec_le; exact H
+            | eapply generate_ldef_constraint_sec_le; exact H
+            | eapply generate_lgen_constraint_sec_le; exact H ]).
+      destruct ro as [e1|]; destruct ys as [|x xs2].
+      - unfold generate_lone_constraint, SC.ret in H. inv H. apply sec_le_refl.
+      - apply sec_bind_inv in H as (t1 & s1 & Ht1 & H).
+        apply sec_bind_inv in H as (a1 & s2 & Ha1 & H).
+        apply single_inv in Ha1 as (_ & ?); subst s2.
+        apply sec_bind_inv in H as (rck & s3 & Hrck & H).
+        apply option_to_sec_inv in Hrck as (_ & ?); subst s3.
+        apply (sec_le_trans _ s1 _).
+        + exact (assign_lexp_type_sec_le GL env base_ty rst_ty e1 t1 s s1 Ht1).
+        + eapply generate_lcall_constraint_sec_le; exact H.
+      - unfold generate_lone_constraint, SC.ret in H. inv H. apply sec_le_refl.
+      - eapply generate_lcall_constraint_sec_le; exact H.
+    Qed.
+
+    Lemma generate_lsplit_constraints_sec_le :
+      forall es xs c s s',
+        generate_lsplit_constraints GL env base_ty rst_ty cenv xs es s
+          = OK (c, s') ->
+        sec_le s s'.
+    Proof.
+      induction es as [|e es IH]; intros xs c s s' H.
+      - rewrite gen_lsplit_nil in H. unfold SC.ret in H. inv H.
+        apply sec_le_refl.
+      - rewrite gen_lsplit_cons in H.
+        apply sec_bind_inv in H as (ch & s1 & Hh & H).
+        apply sec_bind_inv in H as (ct & s2 & Ht & Hret).
+        unfold SC.ret in Hret. inv Hret.
+        apply (sec_le_trans _ s1 _).
+        + eapply generate_lone_constraint_sec_le; exact Hh.
+        + eapply IH; exact Ht.
+    Qed.
+
+    Lemma generate_leqn_constraint_sec_le :
+      forall eq c s s',
+        generate_leqn_constraint GL env base_ty rst_ty cenv eq s = OK (c, s') ->
+        sec_le s s'.
+    Proof.
+      intros (xs, es) c s s' H.
+      destruct es as [|e [|e2 es2]].
+      - eapply generate_lgen_constraint_sec_le; exact H.
+      - rewrite <- generate_lone_is_leqn in H.
+        eapply generate_lone_constraint_sec_le; exact H.
+      - rewrite gen_leqn_cons2 in H.
+        destruct (has_lcall (e :: e2 :: es2));
+          [eapply generate_lsplit_constraints_sec_le
+          |eapply generate_lgen_constraint_sec_le]; exact H.
+    Qed.
+
+    Lemma generate_leqns_constraints_sec_le :
+      forall eqs c s s',
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs s
+          = OK (c, s') ->
+        sec_le s s'.
+    Proof.
+      induction eqs as [|eq eqs IH]; intros c s s' H.
+      - apply generate_leqns_constraints_nil in H as (_ & ?); subst s'.
+        apply sec_le_refl.
+      - rewrite generate_leqns_constraints_cons in H.
+        apply sec_bind_inv in H as (ch & s1 & Hh & H).
+        apply sec_bind_inv in H as (ct & s2 & Ht & Hret).
+        unfold SC.ret in Hret. inv Hret.
+        apply (sec_le_trans _ s1 _).
+        + eapply generate_leqn_constraint_sec_le; exact Hh.
+        + eapply IH; exact Ht.
+    Qed.
 
     Lemma state_pure_single :
       forall (ts : list LST), state_pure (single ts).
@@ -1424,6 +1599,9 @@ Import UNN.Fresh.Tactics.
         assign_lexps GL env base_ty rst_ty (List.concat es') yst
           = OK (ts'', yst') ->
         listSatisfiable dlt (carried ts) ->
+        (** The checkmark bound: this run of the source generator, and
+            every sub-run of it, finishes before [stF]. *)
+        sec_le sst' stF ->
         exists dlt',
           agree_off (moved_by st st') dlt dlt'
           /\ listSatisfiable dlt' ce
@@ -1441,7 +1619,7 @@ Import UNN.Fresh.Tactics.
       intros P es Hall.
       induction Hall as [|e es IHe IHes IH];
         intros es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-          Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar.
+          Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd.
 
       - apply map_bind2_unnest_rhs_nil in Hun as (? & ? & ?); subst.
         apply (assign_lexps_carried_nil GL env base_ty rst_ty) in Has
@@ -1497,6 +1675,7 @@ Import UNN.Fresh.Tactics.
         { exact Hgen1. }
         { exact Hu. }
         { exact Hcar1. }
+        { exact (sec_le_trans _ _ _ (assign_lexps_sec_le GL env base_ty rst_ty es r sa sst' Hr) Hbnd). }
 
         edestruct (IH fr eqsr st1 st' r sa sst' ce2 xst1 xst' v ya yst' dlt1)
           as (dlt2 & Hoff2 & Hce2 & Hcy2 & Hrel2 & Hscope2 & Hcs2 & Hts2).
@@ -1520,6 +1699,7 @@ Import UNN.Fresh.Tactics.
                    (fun x Hx =>
                       Hmv x (eq_moved_by_prefix st st1 st' Hf2 x Hx))
                    Hoff1 Hcar2). }
+        { exact Hbnd. }
 
         assert (forall x, In x (moved_by st1 st') ->
                           ~ In x (scope ++ moved_by st st1)) as Hsep.
@@ -2239,13 +2419,16 @@ Import UNN.Fresh.Tactics.
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
           = OK (cet, yst') ->
         listSatisfiable dlt ce ->
+        (** The checkmark bound: this run of the source generator, and
+            every sub-run of it, finishes before [stF]. *)
+        sec_le xst' stF ->
         exists dlt',
           agree_off (moved_by st st') dlt dlt'
           /\ listSatisfiable dlt' cet
           /\ constraints_scoped (scope ++ moved_by st st') cet.
     Proof.
       intros P xs es eqs' st st' ce xst xst' cet yst yst' dlt
-        Hne Hwl Hwc Hlen Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+        Hne Hwl Hwc Hlen Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd.
 
       apply unnest_equation_inv in Hun
         as (es1 & eqs1 & ess & eqss & Hmap & ? & ? & ?); subst.
@@ -2286,6 +2469,13 @@ Import UNN.Fresh.Tactics.
           by exact (generate_lvars_constraints_carried
                       dlt xs bs ts ce si xst' Hlv Hsat).
 
+      (** the variable rule is pure, so the right-hand side's run already
+          ends where the equation's run does: the checkmark bound transfers *)
+      assert (sec_le si stF) as Hbsi.
+      { destruct (state_pure_generate_lvars_constraints xs bs ts
+                    si si ce xst' Hlv) as (Heq & _).
+        rewrite <- Heq. exact Hbnd. }
+
       edestruct (rhs_carries_list_intro P es Hrall
                    ess eqss st st' ts xst si ce2 ystm yst' ts'' yst q' dlt)
         as (dlt' & Hoff & Hce2 & Hcy & Hrel & Hscope2 & Hcs2 & Hts2).
@@ -2294,8 +2484,8 @@ Import UNN.Fresh.Tactics.
       { exact (@NoDup_app_r ident xs
                  (vars_defined (List.concat eqss) ++ st_ids st) Hnd). }
       { exact Hmv. }
-      { exact (source_lexps_carried_scoped es ts xst si Hts). }
-      { exact (source_lexps_scoped es ts xst si Hts). }
+      { exact (source_lexps_carried_scoped es ts xst si Hts Hbsi). }
+      { exact (source_lexps_scoped es ts xst si Hts Hbsi). }
       { intros y cky ckty Hy.
         exact (Hamb y cky ckty
                  (in_or_app xs (vars_defined (List.concat eqss)) y
@@ -2305,6 +2495,7 @@ Import UNN.Fresh.Tactics.
       { exact Hgen2. }
       { exact Hts''. }
       { exact Hcarts. }
+      { exact Hbsi. }
 
       (** the split's constraints, as the general rule would have put them *)
       assert (generate_lvars_constraints env base_ty rst_ty cenv xs bs ts'' si
@@ -2429,13 +2620,16 @@ Import UNN.Fresh.Tactics.
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
           = OK (cet, yst') ->
         listSatisfiable dlt ce ->
+        (** The checkmark bound: this run of the source generator, and
+            every sub-run of it, finishes before [stF]. *)
+        sec_le xst' stF ->
         exists dlt',
           agree_off (moved_by st st') dlt dlt'
           /\ listSatisfiable dlt' cet
           /\ constraints_scoped (scope ++ moved_by st st') cet.
     Proof.
       intros P xs f args er anns eqs' st st' ce xst xst' cet yst yst' dlt
-        Hwl Hwc Hlen Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+        Hwl Hwc Hlen Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd.
       pose proof Hwl as Hwl0. pose proof Hwc as Hwc0.
       assert (anns <> []) as Hanne.
       { intro Hc. subst anns. inv Hwl0;
@@ -2539,6 +2733,18 @@ Import UNN.Fresh.Tactics.
           exists sg, (lvar rst_ty), ckty, argts, outs, sti, cs, xst.
           split; [exact Esg|]. split; [left; repeat split; auto|].
           repeat split; auto. }
+
+      (** the source run's stages, on the security monad.  Generating the
+          call's constraints is pure, so its last stage already ends where
+          the whole run does, and the checkmark bound transfers to both. *)
+      assert (sec_le sti stF) as Hbsti.
+      { destruct (state_pure_generate_constraints sg (List.map fst argts) ckty
+                    (fst rstty) outs sti sti cs xst' Hcs) as (Heq & _).
+        rewrite <- Heq. exact Hbnd. }
+      assert (sec_le stm stF) as Hbstm
+          by exact (sec_le_trans _ _ _
+                      (assign_lexps_sec_le GL env base_ty rst_ty args argts
+                         stm sti Hargs) Hbsti).
 
       (** and the emitted call's, whose outputs are the same *)
       pose proof Hunr2 as Hunr3.
@@ -2662,7 +2868,7 @@ Import UNN.Fresh.Tactics.
       { intros y Hy. apply Hmv.
         apply (eq_moved_by_prefix st sta st1 Hfa1). exact Hy. }
       { exact Hcargsc. }
-      { exact (source_lexps_scoped args argts stm sti Hargs). }
+      { exact (source_lexps_scoped args argts stm sti Hargs Hbsti). }
       { intros y cky ckty0 Hy. apply Hamb. apply in_or_app. right.
         rewrite !vars_defined_app. apply in_or_app. now left. }
       { exact Hmape. }
@@ -2670,6 +2876,7 @@ Import UNN.Fresh.Tactics.
       { exact Hgen1. }
       { apply (Hargts1 yst). }
       { exact Hcarg. }
+      { exact Hbsti. }
 
       assert (forall y, In y (moved_by sta stb) ->
                         ~ In y (scope ++ moved_by st sta)) as Hsep12.
@@ -2738,7 +2945,7 @@ Import UNN.Fresh.Tactics.
           assert (numstreams e1 = 1) as Hns1 by (inv Hwl0; assumption).
           assert (st_scoped scope (fst a1)) as Hsca1'.
           { assert (Forall (fun t => st_scoped scope (fst t)) [a1]) as Hf
-                by exact (source_types_scoped e1 [a1] xst stm Hty1).
+                by exact (source_types_scoped e1 [a1] xst stm Hty1 Hbstm).
             now inv Hf. }
           assert (snd rstty = snd a1) as Hsndr.
           { rewrite Hr1. rewrite !snd_ljoin, snd_lvar. simpl snd.
@@ -2774,6 +2981,7 @@ Import UNN.Fresh.Tactics.
                      (fun y Hy Hin =>
                         Hmv y (eq_moved_by_prefix st stb st1 Hfc y Hy) Hin)
                      Hoff12 Hcrst). }
+          { exact Hbstm. }
           exists dlt3. split; [exact Hoff3|]. split; [exact Hce3'|].
           split; [exact Hscope3|]. split.
           + rewrite Hr1, Hcke. rewrite !fst_ljoin, !fst_lvar. cbn [fst].
@@ -2890,7 +3098,7 @@ Import UNN.Fresh.Tactics.
           by exact (st_scoped_weaken scope (scope ++ moved_by st stb) amb
                       Hinc0b amb_scoped).
       assert (Forall (fun t => st_scoped scope (fst t)) argts) as Hscargts
-          by exact (source_lexps_scoped args argts stm sti Hargs).
+          by exact (source_lexps_scoped args argts stm sti Hargs Hbsti).
       assert (Forall (fun t => st_scoped (scope ++ moved_by st stb) (fst t))
                 argts) as Hsc_argts.
       { exact (@Forall_impl LST
@@ -3208,6 +3416,9 @@ Import UNN.Fresh.Tactics.
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
           = OK (cet, yst') ->
         listSatisfiable dlt ce ->
+        (** The checkmark bound: this run of the source generator, and
+            every sub-run of it, finishes before [stF]. *)
+        sec_le xst' stF ->
         exists dlt',
           agree_off (moved_by st st') dlt dlt'
           /\ listSatisfiable dlt' cet
@@ -3218,14 +3429,14 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P (xs, es) Hcov
         eqs' st st' ce xst xst' cet yst yst' dlt
-        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd.
       unfold eqn_covered in Hcov. simpl in Hcov, Hbs0.
       destruct Hwl as (Hwles & Hlen).
       destruct Hwc as (Hwces & _ & _).
       destruct Hcov as [Hne|(f & args & er & anns & Hes)].
       - exact (eqn_carries_plain P xs es eqs' st st' ce xst xst'
                  cet yst yst' dlt Hne Hwles Hwces Hlen Hnd Hmv Hamb Hbs0
-                 Hcesc Hun Hgen Hgent Hsat).
+                 Hcesc Hun Hgen Hgent Hsat Hbnd).
       - subst es.
         assert (List.length xs = List.length anns) as Hlen'.
         { rewrite Hlen. unfold annots. simpl.
@@ -3234,7 +3445,7 @@ Import UNN.Fresh.Tactics.
         assert (wc_exp P vars (Eapp f args er anns)) as Hwcapp by now inv Hwces.
         exact (eqn_carries_call P xs f args er anns eqs' st st' ce
                  xst xst' cet yst yst' dlt Hwlapp Hwcapp Hlen' Hnd Hmv
-                 Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat).
+                 Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd).
     Qed.
 
     (** * A right-hand side with several expressions on it
@@ -3371,13 +3582,16 @@ Import UNN.Fresh.Tactics.
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
           = OK (cet, yst') ->
         listSatisfiable dlt ce ->
+        (** The checkmark bound: this run of the source generator, and
+            every sub-run of it, finishes before [stF]. *)
+        sec_le xst' stF ->
         exists dlt',
           agree_off (moved_by st st') dlt dlt'
           /\ listSatisfiable dlt' cet
           /\ constraints_scoped (scope ++ moved_by st st') cet.
     Proof.
       intros P ys e eqs' st st' ce xst xst' cet yst yst' dlt
-        Hwl Hwc Hlen Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+        Hwl Hwc Hlen Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd.
       assert (List.length ys = List.length (annots [e])) as Hlena.
       { rewrite Hlen. unfold annots. simpl. rewrite app_nil_r.
         now rewrite length_annot_numstreams. }
@@ -3397,14 +3611,14 @@ Import UNN.Fresh.Tactics.
         { constructor; [exact Hwc|constructor]. }
         exact (eqn_carries_plain P ys [e] eqs' st st' ce
                  xst xst' cet yst yst' dlt Hne0 Hwl0 Hwc0 Hlena Hnd
-                 Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat). }
+                 Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd). }
       destruct e as [| | | | | | | | |f args er anns];
         try (apply Hplain; exact I).
       assert (List.length ys = List.length anns) as Hlencall.
       { simpl in Hlen. exact Hlen. }
       exact (eqn_carries_call P ys f args er anns eqs' st st' ce
                xst xst' cet yst yst' dlt Hwl Hwc Hlencall Hnd Hmv Hamb
-               Hbs0 Hcesc Hun Hgen Hgent Hsat).
+               Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd).
     Qed.
 
     Lemma eqn_carries_split :
@@ -3426,6 +3640,9 @@ Import UNN.Fresh.Tactics.
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
           = OK (cet, yst') ->
         listSatisfiable dlt ce ->
+        (** The checkmark bound: this run of the source generator, and
+            every sub-run of it, finishes before [stF]. *)
+        sec_le xst' stF ->
         exists dlt',
           agree_off (moved_by st st') dlt dlt'
           /\ listSatisfiable dlt' cet
@@ -3433,7 +3650,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P es. induction es as [|e es IH];
         intros xs eqs' st st' ce xst xst' cet yst yst' dlt
-          Hwles Hwces Hlen Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+          Hwles Hwces Hlen Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd.
       - (** nothing on the right: nothing emitted, nothing generated *)
         apply unnest_equation_inv in Hun
           as (es1 & eqs1 & ess & eqss & Hmap & ? & ? & ?); subst.
@@ -3464,6 +3681,13 @@ Import UNN.Fresh.Tactics.
         apply sec_bind_inv in Hgen as (cer & xstr & Hgenr & Hret).
         unfold SC.ret in Hret. inv Hret.
         rewrite generate_lone_is_leqn in Hgenh.
+
+        (** the head chunk's run ends before the tail's, so the checkmark
+            bound reaches it too *)
+        assert (sec_le xsth stF) as Hbh
+            by exact (sec_le_trans _ _ _
+                        (generate_lsplit_constraints_sec_le es
+                           (skipn (numstreams e) xs) cer xsth xst' Hgenr) Hbnd).
         apply listSatisfiable_app in Hsat as (Hsath & Hsatr).
         apply Forall_app in Hcesc as (Hcesch & Hcescr).
 
@@ -3660,6 +3884,7 @@ Import UNN.Fresh.Tactics.
         { exact Hgenh. }
         { exact HgH. }
         { exact Hsath. }
+        { exact Hbh. }
 
         (** and the rest *)
         assert (Permutation
@@ -3776,6 +4001,7 @@ Import UNN.Fresh.Tactics.
           exact
             (listSatisfiable_off scope cer (moved_by st s1) dlt dlt1
                Hcescr Hprefixfresh Hoff1 Hsatr). }
+        { exact Hbnd. }
 
         assert (forall y, In y (moved_by s1 st') ->
                           ~ In y (scope ++ moved_by st s1)) as Hsep.
@@ -3855,14 +4081,14 @@ Import UNN.Fresh.Tactics.
       - destruct (has_lcall (e :: e2 :: es2)) eqn:Hh;
           [|apply eqn_carries_covered; left; now apply has_lcall_false_inv].
         intros eqs' st st' ce xst xst' cet yst yst' dlt
-          Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat.
+          Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd.
         destruct Hwl as (Hwles & Hlen).
         destruct Hwc as (Hwces & _ & _).
         rewrite gen_leqn_split in Hgen by exact Hh.
         exact
           (eqn_carries_split P (e :: e2 :: es2) xs eqs' st st' ce xst xst'
              cet yst yst' dlt Hwles Hwces Hlen Hnd Hmv Hamb Hbs0 Hcesc
-             Hun Hgen Hgent Hsat).
+             Hun Hgen Hgent Hsat Hbnd).
     Qed.
 
 

@@ -159,9 +159,70 @@ The Sec monad had no ordering at all, so that came first
 
 With that, a run's minted names lie in `[s, s')`, every sub-run's window sits
 inside its parent's, and a finite `scope` containing `minted st0 stF` covers
-them all.  What remains of the repair is to add the upper bound to the three
-hypotheses in the five sections that declare them, and to discharge it at
-each use site (~30) from this monotonicity.
+them all.
+
+**Repair 1 carried out, 2026-09-25.**  Three things, in this order.
+
+*The statements, factored.*  The three hypotheses were written out,
+identically, in five separate sections, and carried the same defect in all
+five.  They are now definitions in `SecLusUnnestingBase.v` --
+`source_types_scoped_upto`, `source_lexps_scoped_upto`,
+`source_lexps_carried_scoped_upto` -- each taking the checkmark `stF` and
+each demanding `sec_le s' stF` of the run it speaks about, *after* the run
+hypothesis so that a use site resolves the run first.  The five sections now
+quote a name rather than a body, so they cannot drift again, and each gained
+`Variable stF : sec_state` right after `scope`.
+
+*The bound, threaded.*  A single premise `sec_le <source run's final state>
+stF` was added, last, to each of the five contracts: `carries_at` and
+`carries_list` (`SecLusUnnestingExpr.v`), `rhs_carries` and
+`rhs_carries_list` and `eqn_carries` (`SecLusUnnestingEquations.v`), plus the
+five equation-level lemma statements that restate `eqn_carries`'s shape and
+the four node-level ones (`eqns_carries`, `eqns_carries_amb`, `node_carries`,
+`node_carries_preserves`).  Every proof of a contract now has the bound as a
+hypothesis; every application of one discharges it.
+
+*The monotonicity that discharges it.*  A sub-run's bound follows from its
+parent's only if the generator advances monotonically, so the missing pieces
+were filled in:
+
+  * `assign_lexps_sec_le` (`SecLusUnnestingBase.v`) -- the list form with no
+    side condition, and a `sec` hint database holding it and its siblings, so
+    the ~19 expression-level sites discharge with `eauto with sec`;
+  * `assign_lexp_Eapp_stages_le` (`SecLusUnnestingBase.v`) -- the call is the
+    only constructor whose run has stages, so its three stage bounds are
+    packaged once instead of being re-derived in `carries_Eapp` and in
+    `eqn_carries_call`;
+  * `state_pure_generate_lvars_constraints`, then
+    `generate_lvars_constraints_sec_le`, `generate_lgen_constraint_sec_le`,
+    `generate_lcall_constraint_sec_le`, `generate_ldef_constraint_sec_le`,
+    `generate_lone_constraint_sec_le`,
+    `generate_lsplit_constraints_sec_le`, `generate_leqn_constraint_sec_le`,
+    `generate_leqns_constraints_sec_le` (`SecLusUnnestingEquations.v`) -- the
+    **equation** generator advances monotonically too.  This family was
+    needed for the chunked rule (the head chunk's run must be bounded by the
+    tail's) and for the equation list, and it is the same family the node
+    level will need to reason about `minted st0 st1`.
+
+*Cost, and one lesson about the discharge tactic.*  A first attempt put
+`sec_le_trans` in the hint database and discharged the expression-level sites
+with `eauto 8 with sec`.  It worked but opened a goal with an unknown middle
+state at every site, and `SecLusUnnestingExpr.v` went from about a minute to
+over eighteen.  Replacing it with two *directed* steps -- `sec_le_of_lexp`
+and `sec_le_of_lexps`, each of which consumes a run hypothesis and leaves a
+bound on an earlier state -- plus `sec_le_of_ljoin_list` and
+`sec_le_of_single` for the pure stages, brought it back to 66s.  `eauto 4
+with sec` suffices.  *[verified: clean `rm -f src/SIF/*.vo src/SIF/*.glob &&
+make -j1` passes, extraction and the OCaml build included, 0 admits.]*
+
+*What this does and does not settle.*  It makes the three hypotheses
+satisfiable in principle: a run bounded by `stF` mints only inside
+`minted <start> stF`, and `generate_lnode_sig` already builds its scope as
+`locals ++ minted st0 st1`, so taking `stF := st1` covers them.  It does
+**not** discharge them -- that happens at the node level, and the node-level
+`scope` will have to be `locals ++ minted st0 st1` *plus the interface names*,
+which the current `simplify` argument does not yet spell out.  Recorded as
+the next obligation, not as done.
 
 **The original diagnosis, for the record: over-quantification, not a wrong
 idea.**  For the run the
