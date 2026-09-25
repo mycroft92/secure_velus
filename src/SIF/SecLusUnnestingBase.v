@@ -3613,4 +3613,168 @@ Module SecLusUnnestingBase
         |exact Hwces|exact Hxck|exact Hcar|exact Hns|exact H].
   Qed.
 
+  (** * Transporting the property through [simplify]
+
+      [generate_lnode_sig] does not publish the constraints it generated: it
+      publishes [simplify cs (locals ++ minted st0 st1)], which eliminates
+      every declared local and every minted call-result name by substituting
+      what dominates it.  The dependency property has to survive that.
+
+      It does, but only for the variables it is actually needed for.
+      Elimination *removes* names from a source, so a clock type mentioning an
+      eliminated name would not survive.  That never happens for an **input**:
+      [wc_node] requires [wc_env (idck n_in)], so an input's declared clock
+      mentions only inputs, and inputs are exactly what [simplify] keeps.
+      That is what the [keep] set below is: the names a clock type of interest
+      may mention, and which no elimination touches. *)
+
+  Definition st_clock_closed
+      (env : Env.t ident) (base_ty : ident) (vars : list (ident * clock))
+      (nomint : list ident) (t : ST) : Prop :=
+    forall v b ckv ckvty,
+      Env.find v env = Some b ->
+      ~ In b nomint ->
+      In b t ->
+      In (v, ckv) vars ->
+      assign_clk_type env base_ty ckv = Some ckvty ->
+      incl ckvty t.
+
+  Lemma constraint_clock_closed_fst :
+    forall env base_ty vars ns c,
+      constraint_clock_closed env base_ty vars ns c
+      <-> st_clock_closed env base_ty vars ns (fst c).
+  Proof. intros env base_ty vars ns c. split; intro H; exact H. Qed.
+
+  (** The three shapes an elimination can take, so the proof below can
+      [rewrite] rather than unfold through an alias. *)
+  Lemma subST_cases :
+    forall st d st',
+      SymTypes.subST st d st' = st
+      \/ SymTypes.subST st d st'
+         = merge (SymTypes.st_remove d st) (SymTypes.st_remove d st')
+      \/ SymTypes.subST st d st' = merge (SymTypes.st_remove d st) st'.
+  Proof.
+    intros st d st'. unfold SymTypes.subST.
+    destruct (SymTypes.st_mem d st) eqn:Em; [|now left].
+    destruct (SymTypes.st_mem d st') eqn:Em';
+      [right; now left|right; now right].
+  Qed.
+
+  (** One elimination step.  Three removals happen -- the eliminated name from
+      the source, the eliminated name from the substituted type, and the
+      constraint's own target -- and none of them can touch a clock type,
+      because none of the three is in [keep]. *)
+  Lemma subAll_clock_closed :
+    forall env base_ty vars ns keep cns d st',
+      (forall v ckv ckvty, In (v, ckv) vars ->
+          assign_clk_type env base_ty ckv = Some ckvty -> incl ckvty keep) ->
+      ~ In d keep ->
+      (forall c, In c cns -> forall y, In y (snd c) -> ~ In y keep) ->
+      st_clock_closed env base_ty vars ns st' ->
+      constraints_clock_closed env base_ty vars ns cns ->
+      constraints_clock_closed env base_ty vars ns (subAll cns d st').
+  Proof.
+    intros env base_ty vars ns keep cns d st' Hkeep Hd Htgt Hst' Hcns.
+    induction cns as [|c cns IH]; [constructor|].
+    inversion Hcns as [|c0 cns0 Hc Hcns']; subst.
+    assert (forall c0, In c0 cns -> forall y, In y (snd c0) -> ~ In y keep)
+      as Htgt' by (intros c0 Hin; apply Htgt; now right).
+    destruct c as (st, tgt).
+    destruct tgt as [|d' [|]]; simpl; try exact (IH Htgt' Hcns').
+    destruct (ident_eqb d' d) eqn:Edd; [exact (IH Htgt' Hcns')|].
+    constructor; [|exact (IH Htgt' Hcns')].
+    assert (~ In d' keep) as Hd'
+        by (apply (Htgt (st, [d'])); [now left|now left]).
+    intros v b ckv ckvty Hfv Hnm Hb Hinv Hckv.
+    assert (incl ckvty keep) as Hck by exact (Hkeep v ckv ckvty Hinv Hckv).
+    cbn [fst] in Hb |- *.
+    apply st_remove_in_inv in Hb as (Hb & _).
+    (** the eliminated name and the target are both outside [keep], so a clock
+        type survives every removal *)
+    assert (forall t, incl ckvty t -> incl ckvty (st_remove d t)) as Hkd.
+    { intros t Ht z Hz. apply st_remove_preserves_other_in;
+        [intro; subst z; exact (Hd (Hck d Hz))|exact (Ht z Hz)]. }
+    assert (incl ckvty (SymTypes.subST st d st')) as Hsub.
+    { destruct (subST_cases st d st') as [E|[E|E]]; rewrite E in Hb |- *.
+      - exact (Hc v b ckv ckvty Hfv Hnm Hb Hinv Hckv).
+      - apply in_merge_inv in Hb as [Hb|Hb].
+        + apply st_remove_in_inv in Hb as (Hb & _).
+          intros z Hz. apply in_merge_left.
+          exact (Hkd st (Hc v b ckv ckvty Hfv Hnm Hb Hinv Hckv) z Hz).
+        + apply st_remove_in_inv in Hb as (Hb & _).
+          intros z Hz. apply in_merge_right.
+          exact (Hkd st' (Hst' v b ckv ckvty Hfv Hnm Hb Hinv Hckv) z Hz).
+      - apply in_merge_inv in Hb as [Hb|Hb].
+        + apply st_remove_in_inv in Hb as (Hb & _).
+          intros z Hz. apply in_merge_left.
+          exact (Hkd st (Hc v b ckv ckvty Hfv Hnm Hb Hinv Hckv) z Hz).
+        + intros z Hz. apply in_merge_right.
+          exact (Hst' v b ckv ckvty Hfv Hnm Hb Hinv Hckv z Hz). }
+    intros z Hz. apply st_remove_preserves_other_in;
+      [intro; subst z; exact (Hd' (Hck d' Hz))|exact (Hsub z Hz)].
+  Qed.
+
+  (** [findST] returns the source of a constraint of the list, so what gets
+      substituted in is itself closed. *)
+  Lemma findST_clock_closed :
+    forall env base_ty vars ns cns d st',
+      constraints_clock_closed env base_ty vars ns cns ->
+      findST cns d = Some st' ->
+      st_clock_closed env base_ty vars ns st'.
+  Proof.
+    intros env base_ty vars ns cns d st' Hcns Hf.
+    apply find_correct in Hf.
+    unfold constraints_clock_closed in Hcns.
+    rewrite Forall_forall in Hcns.
+    exact (Hcns (st', [d]) Hf).
+  Qed.
+
+  (** Eliminating a name can only drop targets, never add them, so the
+      side condition on targets survives each step. *)
+  Lemma subAll_targets :
+    forall keep cns d st',
+      (forall c, In c cns -> forall y, In y (snd c) -> ~ In y keep) ->
+      forall c, In c (subAll cns d st') -> forall y, In y (snd c) -> ~ In y keep.
+  Proof.
+    intros keep cns d st' Htgt.
+    induction cns as [|c0 cns IH]; [intros c []|].
+    assert (forall c, In c cns -> forall y, In y (snd c) -> ~ In y keep)
+      as Htgt' by (intros c Hin; apply Htgt; now right).
+    destruct c0 as (st, tgt).
+    destruct tgt as [|d' [|]]; simpl; try exact (IH Htgt').
+    destruct (ident_eqb d' d); [exact (IH Htgt')|].
+    intros c [Hc|Hc]; [|exact (IH Htgt' c Hc)].
+    subst c. cbn [snd]. intros y Hy.
+    exact (Htgt (st, [d']) (or_introl (@Coq.Init.Logic.eq_refl _ (st, [d'])))
+             y Hy).
+  Qed.
+
+  (** And so the whole of [simplify].  The premise is about the eliminated
+      names only: none of them may occur in a clock type of interest, which
+      for a node's *inputs* is what [wc_env (idck n_in)] gives -- an input's
+      clock mentions only inputs, and inputs are not eliminated. *)
+  Lemma simplify_clock_closed :
+    forall env base_ty vars ns keep ds cns,
+      (forall v ckv ckvty, In (v, ckv) vars ->
+          assign_clk_type env base_ty ckv = Some ckvty -> incl ckvty keep) ->
+      (forall d, In d ds -> ~ In d keep) ->
+      (forall c, In c cns -> forall y, In y (snd c) -> ~ In y keep) ->
+      constraints_clock_closed env base_ty vars ns cns ->
+      constraints_clock_closed env base_ty vars ns (simplify cns ds).
+  Proof.
+    intros env base_ty vars ns keep ds.
+    induction ds as [|d ds IH]; intros cns Hkeep Hds Htgt Hcns;
+      [exact Hcns|].
+    simpl. destruct (SymTypes.findST cns d) as [st'|] eqn:Ef.
+    - apply IH;
+        [exact Hkeep|intros d0 Hd0; apply Hds; now right| |].
+      + exact (subAll_targets keep cns d st' Htgt).
+      + apply (subAll_clock_closed env base_ty vars ns keep cns d st' Hkeep);
+          [apply Hds; now left|exact Htgt
+          |exact (findST_clock_closed env base_ty vars ns cns d st' Hcns Ef)
+          |exact Hcns].
+    - apply IH; [exact Hkeep|intros d0 Hd0; apply Hds; now right
+                |exact Htgt|exact Hcns].
+  Qed.
+
 End SecLusUnnestingBase.

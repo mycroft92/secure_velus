@@ -140,10 +140,25 @@ The carried constraints are isolated as a single hypothesis,
 is exactly where the callee-signature invariant plugs in, and nothing above
 it depends on that step.
 
-What remains is the call rule -- its constraints are a callee's, instantiated
-by `generate_constraints`, so closing it needs the property as an invariant
-on `GL`, discharged at the program level alongside `sig_good` -- then the
-equation list, then `simplify` and a signature's `s_constraints`.
+The equation list follows (`generate_leqns_constraints_clock_closed`, and its
+call-free corollary), each equation's window sitting inside the list's.
+
+And it survives `simplify`, which is what `generate_lnode_sig` actually
+publishes.  That needed care: elimination *removes* three names per step --
+the eliminated name from the source, the same from the substituted type, and
+the constraint's own target -- so a clock type mentioning any of them would
+not survive.  It never does for an **input**, because `wc_node` requires
+`wc_env (idck n_in)`: an input's clock mentions only inputs, and inputs are
+exactly what `simplify` keeps.  The lemmas (`subAll_clock_closed`,
+`simplify_clock_closed`) take that as a `keep` set.  Stated for *all*
+declared variables the property would be false after `simplify` -- a local's
+clock type can mention another local, which gets eliminated.
+
+What remains is the call rule: its constraints are a callee's, instantiated by
+`generate_constraints`, so closing it needs the property as an invariant on
+`GL`, discharged at the program level alongside `sig_good`.  It needs the same
+clock-instantiation machinery as the leg's open call case, so the two belong
+together.
 
 ### Why the third conjunct is domination, and in that direction
 

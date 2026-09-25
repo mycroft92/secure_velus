@@ -480,16 +480,53 @@ form.  That is deliberate: carried constraints come *only* from nested calls,
 so this is exactly the hypothesis the callee-signature invariant will
 discharge, and nothing above it depends on that step.
 
-**Still missing, in order**: the **call rule**
-(`generate_lcall_constraint`), whose constraints are a callee's instantiated
-by `generate_constraints` -- so it needs the property as an invariant on
-`GL`, discharged at the program level alongside `sig_good` and the others;
-then `generate_lone_constraint` / `generate_lsplit_constraints` and
-`generate_leqns_constraints` over a list of equations (that one belongs in
-`SecLusUnnestingEquations.v`, which has the `generate_l*_sec_le` family
-needed to split the minting window per equation); then through `simplify` to
-`s_constraints (generate_lnode_sig ...)`, which is the form
-`subst_constraints_inp_map_augment` asks for.  *[untested]*
+**Equation list: done, 2026-09-25** *[verified, compiles]*.
+`generate_leqns_constraints_clock_closed` in
+`SecLusUnnestingEquations.v`: each equation's run is a sub-run of the list's,
+so the window it mints in sits inside the list's and the per-equation
+hypothesis applies unchanged -- `generate_leqn_constraint_sec_le` and
+`generate_leqns_constraints_sec_le` (from the monotonicity family) are what
+split the window.  The corollary
+`generate_leqns_constraints_clock_closed_plain` discharges the per-equation
+hypothesis for a node whose equations all have a call-free right-hand side,
+reading the two premises the equation rule needs straight off
+`wc_equation`.
+
+**Transport through `simplify`: done, 2026-09-25** *[verified, compiles]*.
+`generate_lnode_sig` publishes `simplify cs (locals ++ minted st0 st1)`, not
+`cs`, so the property has to survive elimination.  `subAll_clock_closed`,
+`subAll_targets`, `findST_clock_closed`, `simplify_clock_closed` and
+`subST_cases` (`SecLusUnnestingBase.v`).
+
+The point worth recording is **why it survives, and for which variables**.
+Elimination *removes* names from a source -- three of them per step: the
+eliminated name from the source, the eliminated name from the substituted
+type, and the constraint's own target -- so a clock type mentioning any of
+those would not survive.  That never happens for an **input**: `wc_node`
+requires `wc_env (idck n_in)`, so an input's declared clock mentions only
+inputs, and inputs are exactly what `simplify` keeps.  The lemmas take that
+as a `keep` set: the names a clock type of interest may mention, and which no
+elimination touches.  Had the property been stated for all declared
+variables, it would be **false** after `simplify` -- a local's clock type can
+mention another local, and that name is eliminated.  This is the kind of
+thing that would have been found only at the node level.
+
+What `findST` substitutes in is itself the source of a constraint of the
+list, hence itself closed, which is the other half of the step.
+
+**Still missing, and it is the one hard piece left at this level**: the
+**call rule** (`generate_lcall_constraint`).  Its constraints are a callee's,
+instantiated by `generate_constraints`, so closing it needs the property as
+an invariant on `GL`, discharged at the program level alongside `sig_good`
+and the others.  `subst_constraints_inp_map_members` already gives a flat
+description of what the instantiated sources contain -- either a callee-side
+name that is not a substituted formal, or a member of an actual whose formal
+occurs in the callee's source -- so the shape of the argument is clear.  What
+it needs is the clock-instantiation machinery (`WellInstantiated`, `instck`,
+`find_base_clock_bck`): the argument at a clock position must contribute its
+own security name.  That is the *same* machinery the open "call case" of the
+leg needs, so the two should be done together rather than separately.
+*[untested]*
 
 **Two new hypotheses, both discharge-able and neither restricting programs**:
 `rst_not_var` (the reset name is not a declared variable's -- true because it
