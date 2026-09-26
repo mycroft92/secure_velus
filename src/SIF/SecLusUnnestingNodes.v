@@ -1074,6 +1074,117 @@ Import UNN.Fresh.Tactics.
     exists d2. split; [exact (agree_on_trans _ _ _ _ Hag1 Hag2)|exact Hs2].
   Qed.
 
+  (** * The program, in lockstep
+
+      What a node contributes to the accumulator relation, and the induction
+      that carries it along a program.  Both are stated abstractly in the pass:
+      the node lists are related by a parameter [R], and the per-node step is a
+      hypothesis.  Nothing here mentions unnesting, so [normfby] -- and the
+      composition of the two -- reuse the induction unchanged and owe only the
+      per-node step.
+
+      The two runs thread *separate* states.  They have to: a source node's
+      nested call mints one security name per result, while the equation the
+      pass lifts it into borrows the name of the variable it defines and mints
+      nothing, so the target run falls behind from the first such node onward.
+      Decoupling the states is what makes the induction insensitive to that,
+      and it costs nothing, because a signature global is consulted only
+      through [call_weakens], which says nothing about states. *)
+
+  Definition sig_head_weakens (sg1 sg2 : signature) : Prop :=
+    s_name sg1 = s_name sg2 /\ sig_call_weakens sg1 sg2.
+
+  Theorem generate_all_lsignatures_weakens' :
+    forall (R : node -> node -> Prop) envs aux nsS nsT,
+      Forall2 R nsS nsT ->
+      (forall accS accT nS nT sgS stS0 stS1 sgT stT0 stT1,
+          R nS nT ->
+          call_weakens accS accT ->
+          generate_lnode_sig_scoped_env accS nS envs aux stS0 = OK (sgS, stS1) ->
+          generate_lnode_sig_scoped_env accT nT envs aux stT0 = OK (sgT, stT1) ->
+          sig_head_weakens sgS sgT) ->
+      forall accS accT stS stT GSout stfS GTout stfT,
+        call_weakens accS accT ->
+        generate_all_lsignatures' accS nsS envs aux stS = OK (GSout, stfS) ->
+        generate_all_lsignatures' accT nsT envs aux stT = OK (GTout, stfT) ->
+        call_weakens GSout GTout.
+  Proof.
+    intros R envs aux nsS nsT HR Hstep.
+    induction HR as [|nS nT nsS nsT Hn HR IH];
+      intros accS accT stS stT GSout stfS GTout stfT Hw Hl Hr.
+    - simpl in Hl, Hr. inversion Hl; subst. inversion Hr; subst. exact Hw.
+    - simpl in Hl, Hr.
+      destruct (generate_lnode_sig_scoped_env accS nS envs aux stS)
+        as [[sgS stS1]|] eqn:ES; [|discriminate Hl].
+      destruct (generate_lnode_sig_scoped_env accT nT envs aux stT)
+        as [[sgT stT1]|] eqn:ET; [|discriminate Hr].
+      destruct (Hstep accS accT nS nT sgS stS stS1 sgT stT stT1 Hn Hw ES ET)
+        as (Hname & Hcall).
+      eapply IH; [|exact Hl|exact Hr].
+      exact (call_weakens_cons sgS sgT accS accT Hname Hcall Hw).
+  Qed.
+
+  (** From the empty accumulator, which is the shape the entry points have. *)
+  Corollary generate_all_lsignatures_weakens :
+    forall (R : node -> node -> Prop) envs aux nsS nsT,
+      Forall2 R nsS nsT ->
+      (forall accS accT nS nT sgS stS0 stS1 sgT stT0 stT1,
+          R nS nT ->
+          call_weakens accS accT ->
+          generate_lnode_sig_scoped_env accS nS envs aux stS0 = OK (sgS, stS1) ->
+          generate_lnode_sig_scoped_env accT nT envs aux stT0 = OK (sgT, stT1) ->
+          sig_head_weakens sgS sgT) ->
+      forall stS stT GSout GTout,
+        generate_all_lsignatures_scoped_env nsS envs aux stS = OK GSout ->
+        generate_all_lsignatures_scoped_env nsT envs aux stT = OK GTout ->
+        call_weakens GSout GTout.
+  Proof.
+    intros R envs aux nsS nsT HR Hstep stS stT GSout GTout Hl Hr.
+    unfold generate_all_lsignatures_scoped_env in Hl, Hr.
+    destruct (generate_all_lsignatures' [] nsS envs aux stS)
+      as [[sigsS stfS]|] eqn:ES; [|discriminate Hl].
+    destruct (generate_all_lsignatures' [] nsT envs aux stT)
+      as [[sigsT stfT]|] eqn:ET; [|discriminate Hr].
+    inversion Hl; subst sigsS. inversion Hr; subst sigsT.
+    eapply generate_all_lsignatures_weakens';
+      [exact HR|exact Hstep|apply call_weakens_nil|exact ES|exact ET].
+  Qed.
+
+  (** * The node lists the two drivers walk
+
+      The drivers generate over [rev nodes], so the relation between the source
+      and target node lists is carried as a [Forall2], which reverses where a
+      [unnest_global] run does not.  The pass's proof arguments are part of the
+      relation because [unnest_node]'s result mentions them: two different
+      well-formedness proofs give two nodes that are equal only up to proof
+      irrelevance, which Coq's conversion does not grant. *)
+
+  Definition unnested_nodes (ns nt : list node) : Prop :=
+    Forall2 (fun n m =>
+               exists P (Hwl : wl_node P n) (Hpref : n_prefixes n = elab_prefs),
+                 m = unnest_node P n Hwl Hpref) ns nt.
+
+  Lemma unnest_global_unnested_nodes :
+    forall G Hwl Hprefs, unnested_nodes G (unnest_global G Hwl Hprefs).
+  Proof.
+    induction G as [|n G IH]; intros Hwl Hprefs; simpl.
+    - constructor.
+    - constructor; [|apply IH].
+      eexists. eexists. eexists. reflexivity.
+  Qed.
+
+  Lemma Forall2_app_both :
+    forall {A B : Type} (R : A -> B -> Prop) l1 l2 m1 m2,
+      Forall2 R l1 l2 -> Forall2 R m1 m2 -> Forall2 R (l1 ++ m1) (l2 ++ m2).
+  Proof. induction 1; simpl; auto. Qed.
+
+  Lemma unnested_nodes_rev :
+    forall ns nt, unnested_nodes ns nt -> unnested_nodes (rev ns) (rev nt).
+  Proof.
+    unfold unnested_nodes. induction 1; simpl; [constructor|].
+    apply Forall2_app_both; [assumption|constructor; [assumption|constructor]].
+  Qed.
+
   Section Preservation.
 
     Variable GL      : secglobal.
@@ -2040,9 +2151,9 @@ Import UNN.Fresh.Tactics.
       forall (P : global) (n : node) (Hwl : wl_node P n)
              (Hpref : n_prefixes n = elab_prefs)
              (G G' : secglobal) (aux : list node_aux_names)
-             st0 sg st1 sg' st1',
+             st0 st0' sg st1 sg' st1',
         generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
-        generate_lnode_sig G' (unnest_node P n Hwl Hpref) env aux st0
+        generate_lnode_sig G' (unnest_node P n Hwl Hpref) env aux st0'
           = OK (sg', st1') ->
         s_name sg' = s_name sg
         /\ s_in sg' = s_in sg
@@ -2050,7 +2161,7 @@ Import UNN.Fresh.Tactics.
         /\ s_clk sg' = s_clk sg
         /\ s_reset sg' = s_reset sg.
     Proof.
-      intros P n Hwl Hpref G G' aux st0 sg st1 sg' st1' H H'.
+      intros P n Hwl Hpref G G' aux st0 st0' sg st1 sg' st1' H H'.
       apply lnode_sig_inv in H
         as (c1 & r1 & ct1 & rt1 & i1 & o1 & l1 & cs1
             & Ha1 & Hc1 & Hr1 & Hi1 & Ho1 & _ & _ & ?); subst sg.
@@ -2359,8 +2470,8 @@ Import UNN.Fresh.Tactics.
               /\ s_out sg' = s_out sg
               /\ s_clk sg' = s_clk sg
               /\ s_reset sg' = s_reset sg) as Hiface
-          by exact (unnest_node_sig_interface P n Hwl Hpref G G aux st0 sg st1
-                      sg' st1' H H').
+          by exact (unnest_node_sig_interface P n Hwl Hpref G G aux st0 st0 sg
+                      st1 sg' st1' H H').
       destruct Hiface as (Hn & Hi & Ho & Hc & Hr).
       repeat split; try assumption.
       apply lnode_sig_inv in H
@@ -2451,8 +2562,8 @@ Import UNN.Fresh.Tactics.
               /\ s_out sg' = s_out sg
               /\ s_clk sg' = s_clk sg
               /\ s_reset sg' = s_reset sg) as Hiface
-          by exact (unnest_node_sig_interface P n Hwl Hpref G1 G2 aux st0 sg st1
-                      sg' st1' H H').
+          by exact (unnest_node_sig_interface P n Hwl Hpref G1 G2 aux st0 st0 sg
+                      st1 sg' st1' H H').
       destruct Hiface as (Hn & Hi & Ho & Hc & Hr).
       repeat split; try assumption.
       apply lnode_sig_inv in H
@@ -2481,6 +2592,111 @@ Import UNN.Fresh.Tactics.
       eapply preserves_on_trans;
         [apply preserves_on_from_entailment; exact Hce
         |exact (Hpres cs1' cs2 st1 st1' Hcs1' Hcs2)].
+    Qed.
+
+
+    (** * The same, with the two runs' states decoupled
+
+        The form the program-level lockstep needs.  The two drivers cannot be
+        kept at a common state: a source node's nested call mints one security
+        name per result, while the equation the pass lifts it into borrows the
+        name of the variable it defines and mints nothing, so the target run
+        falls behind from the first such node onward.
+
+        Nothing is lost by decoupling them, because on the pass's *output* the
+        generator is state-pure -- an unnested equation holds no nested call,
+        and the call case is the only place the generator touches its state.
+        [state_pure_generate_leqns] says exactly that, so the target run can be
+        restarted at the source's state, which is where the equation-level
+        theorem wants it.  The target's own [simplify] window then needs no
+        attention at all: [preserves_on_simplify] eliminates on each side
+        independently. *)
+    Theorem unnest_node_signatures_preserved_decoupled :
+      forall (P Q : global) (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs)
+             (G1 G2 : secglobal) (aux : list node_aux_names)
+             stS stT sg stS1 sg' stT1,
+        (** the two aux levels are the ones this section speaks about *)
+        (forall clk_id rst_id,
+            get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
+            Env.find clk_id env = Some base_ty
+            /\ Env.find rst_id env = Some rst_ty) ->
+        (** the pass's output is unnested, which is what makes it pure *)
+        Forall (unnested_equation Q) (unnest_node P n Hwl Hpref).(n_eqs) ->
+        (** the target accumulator's callees are weaker *)
+        call_weakens G1 G2 ->
+        (** the equation-level entailment, against the target accumulator, at
+            the state the source run starts from *)
+        (forall ce cet ct1 ct1',
+            generate_leqns_constraints G2 env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) stS = OK (ce, ct1) ->
+            generate_leqns_constraints G2 env base_ty rst_ty
+              (lnode_clock_env (unnest_node P n Hwl Hpref))
+              (unnest_node P n Hwl Hpref).(n_eqs) stS = OK (cet, ct1') ->
+            preserves_on scope ce cet) ->
+        (** the source's raw constraints are well formed *)
+        (forall ce ct1,
+            generate_leqns_constraints G1 env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) stS = OK (ce, ct1) ->
+            wf_constraints ce) ->
+        (** and what it eliminates lies outside the interface *)
+        (forall locals cns ct1,
+            get_mappings_from_node n.(n_vars) env = Some locals ->
+            generate_leqns_constraints G1 env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) stS = OK (cns, ct1) ->
+            forall x, In x (locals ++ minted stS ct1) -> ~ In x scope) ->
+        generate_lnode_sig G1 n env aux stS = OK (sg, stS1) ->
+        generate_lnode_sig G2 (unnest_node P n Hwl Hpref) env aux stT
+          = OK (sg', stT1) ->
+        s_name sg' = s_name sg
+        /\ s_in sg' = s_in sg
+        /\ s_out sg' = s_out sg
+        /\ s_clk sg' = s_clk sg
+        /\ s_reset sg' = s_reset sg
+        /\ preserves_on scope sg.(s_constraints) sg'.(s_constraints).
+    Proof.
+      intros P Q n Hwl Hpref G1 G2 aux stS stT sg stS1 sg' stT1
+        Haux Hun Hw Hpres Hwf Hdisj H H'.
+      assert (s_name sg' = s_name sg
+              /\ s_in sg' = s_in sg
+              /\ s_out sg' = s_out sg
+              /\ s_clk sg' = s_clk sg
+              /\ s_reset sg' = s_reset sg) as Hiface
+          by exact (unnest_node_sig_interface P n Hwl Hpref G1 G2 aux stS stT sg
+                      stS1 sg' stT1 H H').
+      destruct Hiface as (Hn & Hi & Ho & Hc & Hr).
+      repeat split; try assumption.
+      apply lnode_sig_inv in H
+        as (c1 & r1 & ct1 & rt1 & i1 & o1 & l1 & cs1
+            & Ha1 & Hc1 & Hr1 & _ & _ & Hl1 & Hcs1 & ?); subst sg.
+      apply lnode_sig_inv in H'
+        as (c2 & r2 & ct2 & rt2 & i2 & o2 & l2 & cs2
+            & Ha2 & Hc2 & Hr2 & _ & _ & Hl2 & Hcs2 & ?); subst sg'.
+      (** the aux lookups pin the two levels to the section's *)
+      destruct (Haux c1 r1 Ha1) as (Hb1 & Hbr1).
+      rewrite Hc1 in Hb1. apply option_Some_inj in Hb1; subst ct1.
+      rewrite Hr1 in Hbr1. apply option_Some_inj in Hbr1; subst rt1.
+      cbn [n_name unnest_node] in Ha2.
+      destruct (Haux c2 r2 Ha2) as (Hb2 & Hbr2).
+      rewrite Hc2 in Hb2. apply option_Some_inj in Hb2; subst ct2.
+      rewrite Hr2 in Hbr2. apply option_Some_inj in Hbr2; subst rt2.
+      cbn [s_constraints].
+      (** the target run, restarted where the source run starts *)
+      destruct (state_pure_generate_leqns G2 env base_ty rst_ty
+                  (lnode_clock_env (unnest_node P n Hwl Hpref)) Q
+                  (unnest_node P n Hwl Hpref).(n_eqs) Hun
+                  stT stS cs2 stT1 Hcs2) as (_ & Hcs2s).
+      (** and the source equations, read against the target accumulator *)
+      destruct (generate_leqns_constraints_weaken G1 G2 env base_ty rst_ty
+                  (lnode_clock_env n) n.(n_eqs) cs1 stS stS1 Hw Hcs1)
+        as (cs1' & Hcs1' & Hce).
+      eapply preserves_on_simplify;
+        [exact (Hwf cs1 stS1 Hcs1)
+        |exact (Hdisj l1 cs1 stS1 Hl1 Hcs1)
+        |].
+      eapply preserves_on_trans;
+        [apply preserves_on_from_entailment; exact Hce
+        |exact (Hpres cs1' cs2 stS1 stS Hcs1' Hcs2s)].
     Qed.
 
   End NodeEquations.
