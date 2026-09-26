@@ -1130,6 +1130,66 @@ Import UNN.Fresh.Tactics.
       exact (proj2 (unnest_node_fields P n Hwl Hpref)).
     Qed.
 
+    (** And the premise discharged: a variable the source equations *define* is
+        never one the run created, so the two clock environments agree
+        everywhere [generate_leqns_constraints] looks.
+
+        [n_defd] puts a defined variable among the declared ones, and
+        [unnest_node_new_ids_fresh] keeps the created ones out of those.  Since
+        the run starts at [init_st], which has no annotations, every key of
+        [st_anns] is a created id. *)
+    Corollary find_clock_unnest_node_defd :
+      forall (P : global) (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs) eqs' st' x,
+        unnest_equations P n.(n_eqs) init_st = (eqs', st') ->
+        In x (vars_defined n.(n_eqs)) ->
+        find_clock (lnode_clock_env (unnest_node P n Hwl Hpref)) x
+        = find_clock (lnode_clock_env n) x.
+    Proof.
+      intros P n Hwl Hpref eqs' st' x Hrun Hx.
+      (** the variable is declared *)
+      assert (InMembers x (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) as Hdecl.
+      { pose proof (n_defd n) as Hperm.
+        assert (In x (List.map fst (n.(n_vars) ++ n.(n_out)))) as Hm
+            by (rewrite <- Hperm; exact Hx).
+        apply fst_InMembers in Hm.
+        apply InMembers_app. right.
+        apply InMembers_app in Hm as [Hm|Hm];
+          [apply InMembers_app; now left|apply InMembers_app; now right]. }
+      (** so it is not one the run created *)
+      assert (~ InMembers x (st_anns st')) as Hnew.
+      { intro Hc.
+        apply (unnest_node_new_ids_fresh P n Hwl Hpref eqs' st' x Hrun);
+          [|exact Hdecl].
+        unfold new_ids. apply filter_In. split.
+        - unfold st_ids. apply fst_InMembers. exact Hc.
+        - destruct (in_dec ident_eq_dec x
+                     (st_ids (init_st : fresh_st (type * clock))))
+            as [Hin|_]; [|reflexivity].
+          exfalso. unfold st_ids in Hin. rewrite init_st_anns in Hin.
+          contradiction. }
+      (** and the two environments agree on it *)
+      apply (find_clock_unnest_node_ext P n Hwl Hpref x).
+      rewrite Hrun in *. exact Hnew.
+    Qed.
+
+    (** The bridge, assembled: the source equations generate the same
+        constraints against either clock environment. *)
+    Corollary generate_leqns_unnest_node_cenv :
+      forall (P : global) (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs) (G : secglobal) eqs' st' s,
+        unnest_equations P n.(n_eqs) init_st = (eqs', st') ->
+        generate_leqns_constraints G env base_ty rst_ty
+          (lnode_clock_env (unnest_node P n Hwl Hpref)) n.(n_eqs) s
+        = generate_leqns_constraints G env base_ty rst_ty
+            (lnode_clock_env n) n.(n_eqs) s.
+    Proof.
+      intros P n Hwl Hpref G eqs' st' s Hrun.
+      apply EQ.generate_leqns_constraints_cenv_ext.
+      intros x Hx.
+      exact (find_clock_unnest_node_defd P n Hwl Hpref eqs' st' x Hrun Hx).
+    Qed.
+
     (** * A node's locals are not its interface
 
         Half of [unnest_node_signatures_preserved]'s disjointness side
