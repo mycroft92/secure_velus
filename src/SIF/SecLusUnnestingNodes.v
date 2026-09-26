@@ -86,6 +86,948 @@ Include EQ.
 Import SECMONADNotations.
 Import UNN.Fresh.Tactics.
 
+  (** * Two signature globals
+
+      The program level does not generate a node's signature against one
+      signature global.  The source run reads the accumulator built from the
+      source callees; the target run reads the one built from the *unnested*
+      callees.  Those two are not equal -- a callee whose body held a nested
+      call publishes weaker constraints after unnesting, which is the whole
+      content of this leg -- so the node-level entailment, which fixes a
+      single [GL], does not by itself compose along a program.
+
+      What bridges them is that the difference is confined to a callee's
+      stored constraints, and that at a call site an instantiated block is
+      scoped to the *caller*.  So [preserves_on] on the callee's own scope
+      collapses to plain implication under the caller's valuation --
+      [signatures_preserved_equal_calls_from_good] followed by
+      [preserves_on_sat] -- and the weakening travels through the generator as
+      an implication between constraint lists at a *fixed* valuation.  There
+      is no witness to move and no scope to track, so it composes over
+      [cmerge] and over lists by nothing but [listSatisfiable_cmerge].
+
+      That is the same observation the transcription leg makes, and for the
+      same reason; the difference is only which two globals are being
+      compared. *)
+
+  Definition cs_entails (cs1 cs2 : list constraint) : Prop :=
+    forall dlt, listSatisfiable dlt cs1 -> listSatisfiable dlt cs2.
+
+  Definition lst_entails (t1 t2 : LST) : Prop :=
+    fst t1 = fst t2 /\ cs_entails (snd t1) (snd t2).
+
+  Lemma cs_entails_refl : forall cs, cs_entails cs cs.
+  Proof. intros cs dlt H. exact H. Qed.
+
+  Lemma cs_entails_trans :
+    forall a b c, cs_entails a b -> cs_entails b c -> cs_entails a c.
+  Proof. intros a b c H1 H2 dlt H. exact (H2 dlt (H1 dlt H)). Qed.
+
+  Lemma cs_entails_cmerge :
+    forall a1 a2 b1 b2,
+      cs_entails a1 a2 -> cs_entails b1 b2 ->
+      cs_entails (cmerge a1 b1) (cmerge a2 b2).
+  Proof.
+    intros a1 a2 b1 b2 Ha Hb dlt H.
+    apply listSatisfiable_cmerge in H as (H1 & H2).
+    apply listSatisfiable_cmerge. split; [exact (Ha dlt H1)|exact (Hb dlt H2)].
+  Qed.
+
+  Lemma cs_entails_app :
+    forall a1 a2 b1 b2,
+      cs_entails a1 a2 -> cs_entails b1 b2 ->
+      cs_entails (a1 ++ b1) (a2 ++ b2).
+  Proof.
+    intros a1 a2 b1 b2 Ha Hb dlt H.
+    unfold listSatisfiable in *.
+    apply Forall_app in H as (H1 & H2).
+    apply Forall_app. split; [exact (Ha dlt H1)|exact (Hb dlt H2)].
+  Qed.
+
+  Lemma lst_entails_refl : forall t, lst_entails t t.
+  Proof. intros t. split; [reflexivity|apply cs_entails_refl]. Qed.
+
+  Lemma lst_entails_ljoin :
+    forall a1 a2 b1 b2,
+      lst_entails a1 a2 -> lst_entails b1 b2 ->
+      lst_entails (ljoin a1 b1) (ljoin a2 b2).
+  Proof.
+    intros a1 a2 b1 b2 (Hfa & Hca) (Hfb & Hcb). split.
+    - rewrite !fst_ljoin, Hfa, Hfb. reflexivity.
+    - rewrite !snd_ljoin. exact (cs_entails_cmerge _ _ _ _ Hca Hcb).
+  Qed.
+
+  Lemma lconstrain_entails :
+    forall p1 p2 b,
+      lst_entails p1 p2 -> cs_entails (lconstrain p1 b) (lconstrain p2 b).
+  Proof.
+    intros p1 p2 b (Hf & Hc). unfold lconstrain. rewrite Hf.
+    apply cs_entails_cmerge; [apply cs_entails_refl|exact Hc].
+  Qed.
+
+  Lemma lst_entails_fst :
+    forall ts1 ts2,
+      Forall2 lst_entails ts1 ts2 ->
+      List.map fst ts1 = List.map fst ts2.
+  Proof.
+    induction 1 as [|t1 t2 ts1 ts2 (Hf & _) Hr IH]; simpl;
+      [reflexivity|rewrite Hf, IH; reflexivity].
+  Qed.
+
+  Lemma carried_entails :
+    forall ts1 ts2,
+      Forall2 lst_entails ts1 ts2 -> cs_entails (carried ts1) (carried ts2).
+  Proof.
+    induction 1 as [|t1 t2 ts1 ts2 (_ & Hc) Hr IH];
+      [apply cs_entails_refl|].
+    rewrite !carried_cons. exact (cs_entails_cmerge _ _ _ _ Hc IH).
+  Qed.
+
+  (** Mapping a join over one side, on either side of the join: the shapes
+      [Ewhen], [Emerge] and [Eite] produce. *)
+
+  Lemma Forall2_map_ljoin_r :
+    forall u1 u2 ts1 ts2,
+      lst_entails u1 u2 -> Forall2 lst_entails ts1 ts2 ->
+      Forall2 lst_entails (List.map (fun t => ljoin t u1) ts1)
+                          (List.map (fun t => ljoin t u2) ts2).
+  Proof.
+    intros u1 u2 ts1 ts2 Hu H. induction H as [|t1 t2 ts1 ts2 Ht Hr IH];
+      simpl; constructor; [exact (lst_entails_ljoin _ _ _ _ Ht Hu)|exact IH].
+  Qed.
+
+  Lemma Forall2_map_ljoin_l :
+    forall u1 u2 ts1 ts2,
+      lst_entails u1 u2 -> Forall2 lst_entails ts1 ts2 ->
+      Forall2 lst_entails (List.map (fun t => ljoin u1 t) ts1)
+                          (List.map (fun t => ljoin u2 t) ts2).
+  Proof.
+    intros u1 u2 ts1 ts2 Hu H. induction H as [|t1 t2 ts1 ts2 Ht Hr IH];
+      simpl; constructor; [exact (lst_entails_ljoin _ _ _ _ Hu Ht)|exact IH].
+  Qed.
+
+  (** [single] and [ljoin_list] are state-pure and blind to the signature
+      global, so both transport an entailment without any side condition. *)
+
+  Lemma single_entails :
+    forall ts1 ts2 t1 s s',
+      Forall2 lst_entails ts1 ts2 ->
+      single ts1 s = OK (t1, s') ->
+      exists t2, single ts2 s = OK (t2, s) /\ lst_entails t1 t2.
+  Proof.
+    intros ts1 ts2 t1 s s' H Hs.
+    apply single_inv in Hs as (? & ?); subst ts1 s'.
+    inversion H as [|a b l1 l2 Hab Hl]; subst.
+    inversion Hl; subst. exists b. split; [reflexivity|exact Hab].
+  Qed.
+
+  Lemma ljoin_list_entails :
+    forall ts1 ts2 us1 us2 rs1 s s',
+      Forall2 lst_entails ts1 ts2 ->
+      Forall2 lst_entails us1 us2 ->
+      ljoin_list ts1 us1 s = OK (rs1, s') ->
+      exists rs2, ljoin_list ts2 us2 s = OK (rs2, s)
+                  /\ Forall2 lst_entails rs1 rs2.
+  Proof.
+    intros ts1 ts2 us1 us2 rs1 s s' Ht.
+    revert us1 us2 rs1 s s'.
+    induction Ht as [|t1 t2 ts1 ts2 Ht12 Htr IH];
+      intros us1 us2 rs1 s s' Hu H;
+      destruct us1 as [|u1 vs1].
+    - inversion Hu; subst us2.
+      simpl in H. unfold SC.ret in H. inversion H; subst.
+      exists []. split; [reflexivity|constructor].
+    - simpl in H. unfold SC.error in H. discriminate H.
+    - simpl in H. unfold SC.error in H. discriminate H.
+    - inversion Hu as [|w1 u2 ws1 vs2 Hu12 Hur]; subst.
+      simpl in H. apply sec_bind_inv in H as (r & sa & Hr & Hret).
+      unfold SC.ret in Hret. inversion Hret; subst.
+      destruct (IH vs1 vs2 r _ _ Hur Hr) as (r2 & Hr2 & Hre).
+      exists (ljoin t2 u2 :: r2). split.
+      + simpl. eapply sec_bind_ok; [exact Hr2|reflexivity].
+      + constructor; [exact (lst_entails_ljoin _ _ _ _ Ht12 Hu12)|exact Hre].
+  Qed.
+
+  (** One layer of the call case, so that a target run can be *built* and not
+      only taken apart.  [assign_lexp_Eapp_inv] does the taking apart; there
+      is no companion for the other direction because no proof needed one
+      until now. *)
+
+  Lemma assign_lexp_Eapp_eq :
+    forall G env base_ty rst_ty f es er anns,
+      assign_lexp_type G env base_ty rst_ty (Eapp f es er anns)
+      = (do argts <- assign_lexps G env base_ty rst_ty es;
+         do rstty <- (match er with
+                      | None => SC.ret (lvar rst_ty)
+                      | Some e1 =>
+                          do t1  <- assign_lexp_type G env base_ty rst_ty e1;
+                          do a1  <- single t1;
+                          do rck <- option_to_sec
+                                      (assign_clk_type env base_ty
+                                         (hd Cbase (LSyn.clockof e1)));
+                          SC.ret (ljoin (lvar rst_ty) (ljoin a1 (rck, [])))
+                      end);
+         do ckty <- option_to_sec
+                      (assign_clk_type env base_ty
+                         (find_base_clock (LSyn.clocksof es)));
+         match find_signature f G with
+         | None => SC.error (MSG "Signature not found for: " :: [CTX f])
+         | Some sg =>
+             do outs <- fresh_idents (List.length anns);
+             do cs   <- generate_constraints sg (List.map fst argts) ckty
+                                             (fst rstty) outs;
+             SC.ret (List.map
+                    (fun o => (([o] : ST),
+                               cmerge cs (cmerge (carried argts) (snd rstty))))
+                    outs)
+         end).
+  Proof. reflexivity. Qed.
+
+  (** A call's result names are pairwise distinct: [fresh_ident] mints at the
+      state it is at and then moves past it, so the first name cannot be in
+      the window the rest are minted in.  [generate_constraints_ok_from_good]
+      asks for this, and nothing until now did. *)
+
+  Lemma fresh_ident_notin_minted :
+    forall x s s1 s',
+      SC.fresh_ident s = OK (x, s1) -> ~ In x (minted s1 s').
+  Proof.
+    intros x s s1 s' H Hin.
+    unfold SC.fresh_ident in H. inversion H; subst x s1.
+    apply minted_spec in Hin as (j & Hle & _ & Hj).
+    apply gensym_injective in Hj as (_ & ?); subst j.
+    apply Pos.le_succ_l in Hle. exact (Pos.lt_irrefl s Hle).
+  Qed.
+
+  Lemma fresh_idents_NoDup :
+    forall n xs s s', fresh_idents n s = OK (xs, s') -> NoDup xs.
+  Proof.
+    induction n as [|n IH]; intros xs s s' H; simpl in H.
+    - unfold SC.ret in H. inversion H; subst. constructor.
+    - apply sec_bind_inv in H as (x & s1 & Hx & H).
+      apply sec_bind_inv in H as (ys & s2 & Hys & Hret).
+      unfold SC.ret in Hret. inversion Hret; subst.
+      constructor.
+      + intro Hin.
+        eapply fresh_ident_notin_minted; [exact Hx|].
+        eapply fresh_idents_minted; [exact Hys|exact Hin].
+      + eapply IH; exact Hys.
+  Qed.
+
+  (** [preserves_on] read at a fixed valuation.  When the target list is
+      scoped to the same names the witness is allowed to move on, the witness
+      can be carried back and the extension disappears. *)
+
+  Lemma preserves_on_sat :
+    forall scope a b,
+      constraints_scoped scope b ->
+      preserves_on scope a b ->
+      cs_entails a b.
+  Proof.
+    intros scope a b Hsc Hp dlt Hsat.
+    destruct (Hp dlt Hsat) as (dlt' & Hagree & Hsat').
+    eapply listSatisfiable_ext; [exact Hsc| |exact Hsat'].
+    intros x Hin. symmetry. exact (Hagree x Hin).
+  Qed.
+
+  (** The scope a call site can always offer: the actuals' own names.  Every
+      side condition [signatures_preserved_equal_calls_from_good] asks for is
+      then either trivial or exactly [call_subst_fresh]. *)
+
+  Definition actuals_scope (inp : list ST) (ck rst : ST) (outs : list ident)
+    : list ident := List.concat inp ++ ck ++ rst ++ outs.
+
+  Lemma In_concat_intro :
+    forall {A : Type} (x : A) (t : list A) (ls : list (list A)),
+      In t ls -> In x t -> In x (List.concat ls).
+  Proof.
+    intros A x t ls. induction ls as [|l ls IH]; simpl; [contradiction|].
+    intros [Hl|Hl] Hx;
+      [subst l; apply in_or_app; now left
+      |apply in_or_app; right; exact (IH Hl Hx)].
+  Qed.
+
+  Lemma actuals_scope_scoped :
+    forall inp ck rst outs,
+      call_subst_scoped (actuals_scope inp ck rst outs) inp ck rst outs.
+  Proof.
+    intros inp ck rst outs. unfold actuals_scope.
+    unfold call_subst_scoped, call_actuals_scoped.
+    split; [split; [|split]|].
+    - apply Forall_forall. intros t Ht y Hy.
+      apply in_or_app. left. exact (In_concat_intro y t inp Ht Hy).
+    - intros y Hy. apply in_or_app. right. apply in_or_app. now left.
+    - apply Forall_forall. intros y Hy.
+      apply in_or_app. right. apply in_or_app. right.
+      apply in_or_app. now right.
+    - intros y Hy. apply in_or_app. right. apply in_or_app. right.
+      apply in_or_app. now left.
+  Qed.
+
+  Lemma actuals_scope_fresh :
+    forall sg inp ck rst outs,
+      call_subst_fresh sg inp ck rst outs ->
+      scope_fresh (actuals_scope inp ck rst outs) sg.
+  Proof.
+    intros sg inp ck rst outs (Hinp & Hck & Hrst & Hout) x Hx.
+    unfold actuals_scope in Hx.
+    apply in_app_or in Hx as [Hx|Hx].
+    { apply in_concat in Hx as (t & Ht & Hxt).
+      unfold types_fresh in Hinp. rewrite Forall_forall in Hinp.
+      unfold type_fresh in Hinp. specialize (Hinp t Hxt).
+      rewrite Forall_forall in Hinp. exact (Hinp x Ht). }
+    apply in_app_or in Hx as [Hx|Hx].
+    { unfold type_fresh in Hck. rewrite Forall_forall in Hck.
+      exact (Hck x Hx). }
+    apply in_app_or in Hx as [Hx|Hx].
+    { unfold type_fresh in Hrst. rewrite Forall_forall in Hrst.
+      exact (Hrst x Hx). }
+    unfold outputs_fresh in Hout. rewrite Forall_forall in Hout.
+    exact (Hout x Hx).
+  Qed.
+
+
+  Lemma Forall2_map_pair :
+    forall (h1 h2 : list constraint) (outs : list ident),
+      cs_entails h1 h2 ->
+      Forall2 lst_entails
+        (List.map (fun o => (([o] : ST), h1)) outs)
+        (List.map (fun o => (([o] : ST), h2)) outs).
+  Proof.
+    intros h1 h2 outs Hh. induction outs as [|o outs IH]; simpl; [constructor|].
+    constructor; [split; [reflexivity|exact Hh]|exact IH].
+  Qed.
+
+  (** * The generator is monotone in its callees
+
+      Reading the same expression against a weaker signature global gives the
+      same types, in the same state, carrying weaker constraints.  The types
+      and the state do not move because the only thing a signature's
+      constraints reach is the block [generate_constraints] builds, and that
+      block is state-pure and appears only in the *carried* component.  So the
+      whole statement is a [Forall2] of [lst_entails]: equal on the left,
+      entailed on the right. *)
+
+  Section CalleeWeakening.
+
+    Variable G1 G2   : secglobal.
+    Variable env     : Env.t ident.
+    Variable base_ty : ident.
+    Variable rst_ty  : ident.
+
+    (** Every callee is found on both sides, with the same interface and
+        constraints the source's entail.  This is what the program-level
+        lockstep carries, and what each node's signature preservation
+        contributes to it. *)
+    Hypothesis G_entails :
+      forall f sg1,
+        find_signature f G1 = Some sg1 ->
+        exists sg2,
+          find_signature f G2 = Some sg2
+          /\ SIGPROOFS.signatures_preserved sg1 sg2.
+
+    Hypothesis sig_good1 :
+      forall f sg, find_signature f G1 = Some sg -> signature_good sg.
+    Hypothesis sig_nodup1 :
+      forall f sg, find_signature f G1 = Some sg -> NoDup (signature_scope sg).
+    Hypothesis sig_good2 :
+      forall f sg, find_signature f G2 = Some sg -> signature_good sg.
+    Hypothesis sig_scoped2 :
+      forall f sg, find_signature f G2 = Some sg -> signature_scoped sg.
+    Hypothesis sig_actuals_fresh1 :
+      forall f sg inp ck rst os cns sa sb,
+        find_signature f G1 = Some sg ->
+        generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
+        call_subst_fresh sg inp ck rst os.
+
+    (** Stated, like [sig_actuals_fresh1], as a property of the
+        instantiations the generator actually makes rather than of arbitrary
+        actuals -- which is what makes it true.  A nested call's results are
+        freshly minted, so distinct by [fresh_idents_NoDup]; an equation's are
+        the security names of the variables it defines, so distinct because
+        [env] is injective and a node defines each variable once. *)
+    Hypothesis sig_out_nodup1 :
+      forall f sg inp ck rst os cns sa sb,
+        find_signature f G1 = Some sg ->
+        generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
+        NoDup os.
+
+    Local Notation T1  := (assign_lexp_type G1 env base_ty rst_ty).
+    Local Notation T2  := (assign_lexp_type G2 env base_ty rst_ty).
+    Local Notation Ts1 := (assign_lexps G1 env base_ty rst_ty).
+    Local Notation Ts2 := (assign_lexps G2 env base_ty rst_ty).
+
+    (** One call site.  The target block exists because the two signatures
+        have the same interface, so every premise of
+        [generate_constraints_ok_from_good] transfers; and it is entailed
+        because an instantiated block is scoped to the actuals, which is all
+        [preserves_on_sat] needs to drop the witness. *)
+    Lemma call_block_entails_G :
+      forall f sg1 inp ck rst outs cs1 st st1,
+        find_signature f G1 = Some sg1 ->
+        generate_constraints sg1 inp ck rst outs st = OK (cs1, st1) ->
+        exists sg2 cs2,
+          find_signature f G2 = Some sg2
+          /\ generate_constraints sg2 inp ck rst outs st = OK (cs2, st)
+          /\ cs_entails cs1 cs2.
+    Proof.
+      intros f sg1 inp ck rst outs cs1 st st1 Hf1 Hg1.
+      pose proof (sig_out_nodup1 f sg1 inp ck rst outs cs1 st st1 Hf1 Hg1)
+        as Hnd.
+      destruct (G_entails f sg1 Hf1) as (sg2 & Hf2 & Hpres).
+      pose proof Hpres as Hpres0. destruct Hpres0 as (Hfields & _).
+      pose proof (signature_fields_agree_scope_eq _ _ Hfields) as Hscope.
+      pose proof (sig_actuals_fresh1 f sg1 inp ck rst outs cs1 st st1 Hf1 Hg1)
+        as Hfresh.
+      destruct (SIGPROOFS.generate_constraints_lengths _ _ _ _ _ _ _ _ Hg1)
+        as (Hleni & Hleno).
+      pose proof Hfields as Hfields0.
+      destruct Hfields0 as (Hin & Hout & Hrst & Hclk).
+      destruct (SIGPROOFS.generate_constraints_ok_from_good sg2 inp ck rst outs st)
+        as (cs2 & Hg2).
+      { apply SIGPROOFS.signature_good_targets_out. exact (sig_good2 f sg2 Hf2). }
+      { rewrite <- Hscope. exact (sig_nodup1 f sg1 Hf1). }
+      { rewrite <- Hin. exact Hleni. }
+      { rewrite <- Hout. exact Hleno. }
+      { rewrite <- Hscope.
+        destruct Hfresh as (_ & _ & _ & Ho). exact Ho. }
+      { exact Hnd. }
+      exists sg2, cs2. split; [exact Hf2|split; [exact Hg2|]].
+      pose proof (actuals_scope_scoped inp ck rst outs) as Hsc.
+      pose proof Hsc as Hsc0.
+      destruct Hsc0 as ((Hsi & Hsc' & Hso) & Hsr).
+      eapply preserves_on_sat with (scope := actuals_scope inp ck rst outs).
+      - eapply generate_constraints_scoped;
+          [exact (sig_scoped2 f sg2 Hf2)|exact Hsi|exact Hsc'|exact Hsr|exact Hso
+          |exact Hg2].
+      - eapply SIGPROOFS.signatures_preserved_equal_calls_from_good;
+          [exact (sig_good1 f sg1 Hf1)
+          |exact (sig_nodup1 f sg1 Hf1)
+          |exact (sig_scoped2 f sg2 Hf2)
+          |exact Hpres
+          |exact (actuals_scope_fresh sg1 inp ck rst outs Hfresh)
+          |exact Hsc
+          |exact Hfresh
+          |exact Hg1
+          |exact Hg2].
+    Qed.
+
+    Definition lexp_entails_G (e : exp) : Prop :=
+      forall ts1 s s1,
+        T1 e s = OK (ts1, s1) ->
+        exists ts2, T2 e s = OK (ts2, s1) /\ Forall2 lst_entails ts1 ts2.
+
+    Lemma assign_lexps_entails_of :
+      forall es,
+        Forall lexp_entails_G es ->
+        forall ts1 s s1,
+          Ts1 es s = OK (ts1, s1) ->
+          exists ts2, Ts2 es s = OK (ts2, s1) /\ Forall2 lst_entails ts1 ts2.
+    Proof.
+      intros es Hall. induction Hall as [|e es He Hes IH]; intros ts1 s s1 H.
+      - rewrite assign_lexps_nil in H. unfold SC.ret in H. inversion H; subst.
+        exists []. split; [rewrite assign_lexps_nil; reflexivity|constructor].
+      - rewrite assign_lexps_cons in H.
+        apply sec_bind_inv in H as (t & sa & Ht & H).
+        apply sec_bind_inv in H as (r & sb & Hr & Hret).
+        unfold SC.ret in Hret. inversion Hret; subst.
+        destruct (He t _ _ Ht) as (t2 & Ht2 & Het).
+        destruct (IH r _ _ Hr) as (r2 & Hr2 & Her).
+        exists (t2 ++ r2). split.
+        + rewrite assign_lexps_cons.
+          eapply sec_bind_ok; [exact Ht2|].
+          eapply sec_bind_ok; [exact Hr2|reflexivity].
+        + apply Forall2_app; [exact Het|exact Her].
+    Qed.
+
+    Theorem assign_lexp_type_entails_G : forall e, lexp_entails_G e.
+    Proof.
+      intro e. induction e using exp_ind2.
+
+      - (** Econst *)
+        intros ts1 s s1 Hrun. rewrite assign_lexp_Econst in Hrun.
+        unfold SC.ret in Hrun. inversion Hrun; subst.
+        exists [lbot]. split;
+          [rewrite assign_lexp_Econst; reflexivity
+          |constructor; [apply lst_entails_refl|constructor]].
+
+      - (** Evar *)
+        intros ts1 s s1 Hrun. rewrite assign_lexp_Evar in Hrun.
+        apply sec_bind_inv in Hrun as (b & sa & Hb & Hret).
+        pose proof Hb as Hb0. apply find_env_inv in Hb0 as (_ & ?); subst sa.
+        unfold SC.ret in Hret. inversion Hret; subst.
+        exists [lvar b]. split.
+        + rewrite assign_lexp_Evar.
+          eapply sec_bind_ok; [exact Hb|reflexivity].
+        + constructor; [apply lst_entails_refl|constructor].
+
+      - (** Eunop *)
+        intros ts1 s s1 Hrun. rewrite assign_lexp_Eunop in Hrun.
+        destruct (IHe ts1 _ _ Hrun) as (ts2 & Ht2 & Hr).
+        exists ts2. split; [rewrite assign_lexp_Eunop; exact Ht2|exact Hr].
+
+      - (** Ebinop *)
+        intros ts1 s s1 Hrun. rewrite assign_lexp_Ebinop in Hrun.
+        apply sec_bind_inv in Hrun as (t1 & sa & Ht1 & Hrun).
+        apply sec_bind_inv in Hrun as (t2 & sb & Ht2 & Hrun).
+        apply sec_bind_inv in Hrun as (a1 & sc & Ha1 & Hrun).
+        pose proof Ha1 as Ha1'. apply single_inv in Ha1' as (_ & ?); subst sc.
+        apply sec_bind_inv in Hrun as (a2 & sd & Ha2 & Hret).
+        pose proof Ha2 as Ha2'. apply single_inv in Ha2' as (_ & ?); subst sd.
+        unfold SC.ret in Hret. inversion Hret; subst.
+        destruct (IHe1 t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
+        destruct (IHe2 t2 _ _ Ht2) as (u2 & Hu2 & Hr2).
+        destruct (single_entails t1 u1 a1 _ _ Hr1 Ha1) as (b1 & Hb1 & Hrb1).
+        destruct (single_entails t2 u2 a2 _ _ Hr2 Ha2) as (b2 & Hb2 & Hrb2).
+        exists [ljoin b1 b2]. split.
+        + rewrite assign_lexp_Ebinop.
+          eapply sec_bind_ok; [exact Hu1|].
+          eapply sec_bind_ok; [exact Hu2|].
+          eapply sec_bind_ok; [exact Hb1|].
+          eapply sec_bind_ok; [exact Hb2|reflexivity].
+        + constructor;
+            [exact (lst_entails_ljoin _ _ _ _ Hrb1 Hrb2)|constructor].
+
+      - (** Efby *)
+        intros ts1 s s1 Hrun. rewrite assign_lexp_Efby in Hrun.
+        apply sec_bind_inv in Hrun as (t1 & sa & Ht1 & Hrun).
+        apply sec_bind_inv in Hrun as (t2 & sb & Ht2 & Hj).
+        assert (s1 = sb) as Hsb by (eapply ljoin_list_pure; exact Hj).
+        subst s1.
+        destruct (assign_lexps_entails_of e0s H t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
+        destruct (assign_lexps_entails_of es H0 t2 _ _ Ht2) as (u2 & Hu2 & Hr2).
+        destruct (ljoin_list_entails t1 u1 t2 u2 ts1 _ _ Hr1 Hr2 Hj)
+          as (rs2 & Hrs2 & Hre).
+        exists rs2. split; [|exact Hre].
+        rewrite assign_lexp_Efby.
+        eapply sec_bind_ok; [exact Hu1|].
+        eapply sec_bind_ok; [exact Hu2|exact Hrs2].
+
+      - (** Earrow: the same body *)
+        intros ts1 s s1 Hrun. rewrite assign_lexp_Earrow in Hrun.
+        apply sec_bind_inv in Hrun as (t1 & sa & Ht1 & Hrun).
+        apply sec_bind_inv in Hrun as (t2 & sb & Ht2 & Hj).
+        assert (s1 = sb) as Hsb by (eapply ljoin_list_pure; exact Hj).
+        subst s1.
+        destruct (assign_lexps_entails_of e0s H t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
+        destruct (assign_lexps_entails_of es H0 t2 _ _ Ht2) as (u2 & Hu2 & Hr2).
+        destruct (ljoin_list_entails t1 u1 t2 u2 ts1 _ _ Hr1 Hr2 Hj)
+          as (rs2 & Hrs2 & Hre).
+        exists rs2. split; [|exact Hre].
+        rewrite assign_lexp_Earrow.
+        eapply sec_bind_ok; [exact Hu1|].
+        eapply sec_bind_ok; [exact Hu2|exact Hrs2].
+
+      - (** Ewhen *)
+        intros ts1 s s1 Hrun. rewrite assign_lexp_Ewhen in Hrun.
+        apply sec_bind_inv in Hrun as (t1 & sa & Ht1 & Hrun).
+        apply sec_bind_inv in Hrun as (g & sb & Hg & Hret).
+        pose proof Hg as Hg0. apply find_env_inv in Hg0 as (_ & ?); subst sb.
+        unfold SC.ret in Hret. inversion Hret; subst.
+        destruct (assign_lexps_entails_of es H t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
+        exists (List.map (fun t => ljoin t (lvar g)) u1). split.
+        + rewrite assign_lexp_Ewhen.
+          eapply sec_bind_ok; [exact Hu1|].
+          eapply sec_bind_ok; [exact Hg|reflexivity].
+        + apply Forall2_map_ljoin_r; [apply lst_entails_refl|exact Hr1].
+
+      - (** Emerge *)
+        intros ts1 s s1 Hrun. rewrite assign_lexp_Emerge in Hrun.
+        apply sec_bind_inv in Hrun as (g & sa & Hg & Hrun).
+        pose proof Hg as Hg0. apply find_env_inv in Hg0 as (_ & ?); subst sa.
+        apply sec_bind_inv in Hrun as (t1 & sb & Ht1 & Hrun).
+        apply sec_bind_inv in Hrun as (t2 & sc & Ht2 & Hj).
+        assert (s1 = sc) as Hsc by (eapply ljoin_list_pure; exact Hj).
+        subst s1.
+        destruct (assign_lexps_entails_of ets H t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
+        destruct (assign_lexps_entails_of efs H0 t2 _ _ Ht2) as (u2 & Hu2 & Hr2).
+        destruct (ljoin_list_entails
+                    (List.map (fun t => ljoin (lvar g) t) t1)
+                    (List.map (fun t => ljoin (lvar g) t) u1)
+                    t2 u2 ts1 _ _
+                    (Forall2_map_ljoin_l _ _ _ _ (lst_entails_refl (lvar g)) Hr1)
+                    Hr2 Hj)
+          as (rs2 & Hrs2 & Hre).
+        exists rs2. split; [|exact Hre].
+        rewrite assign_lexp_Emerge.
+        eapply sec_bind_ok; [exact Hg|].
+        eapply sec_bind_ok; [exact Hu1|].
+        eapply sec_bind_ok; [exact Hu2|exact Hrs2].
+
+      - (** Eite *)
+        intros ts1 s s1 Hrun. rewrite assign_lexp_Eite in Hrun.
+        apply sec_bind_inv in Hrun as (t0 & sa & Ht0 & Hrun).
+        apply sec_bind_inv in Hrun as (th & sb & Hth & Hrun).
+        pose proof Hth as Hth0. apply single_inv in Hth0 as (_ & ?); subst sb.
+        apply sec_bind_inv in Hrun as (t1 & sc & Ht1 & Hrun).
+        apply sec_bind_inv in Hrun as (t2 & sd & Ht2 & Hj).
+        assert (s1 = sd) as Hsd by (eapply ljoin_list_pure; exact Hj).
+        subst s1.
+        destruct (IHe t0 _ _ Ht0) as (u0 & Hu0 & Hr0).
+        destruct (single_entails t0 u0 th _ _ Hr0 Hth) as (vh & Hvh & Hrh).
+        destruct (assign_lexps_entails_of ets H t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
+        destruct (assign_lexps_entails_of efs H0 t2 _ _ Ht2) as (u2 & Hu2 & Hr2).
+        destruct (ljoin_list_entails
+                    (List.map (fun t => ljoin th t) t1)
+                    (List.map (fun t => ljoin vh t) u1)
+                    t2 u2 ts1 _ _
+                    (Forall2_map_ljoin_l _ _ _ _ Hrh Hr1) Hr2 Hj)
+          as (rs2 & Hrs2 & Hre).
+        exists rs2. split; [|exact Hre].
+        rewrite assign_lexp_Eite.
+        eapply sec_bind_ok; [exact Hu0|].
+        eapply sec_bind_ok; [exact Hvh|].
+        eapply sec_bind_ok; [exact Hu1|].
+        eapply sec_bind_ok; [exact Hu2|exact Hrs2].
+
+      - (** Eapp: the only case a signature is read at *)
+        intros ts1 s s1 Hrun.
+        apply assign_lexp_Eapp_inv in Hrun
+          as (sg1 & argts & rstty & ckty & outs & cs & sta & stb & stc
+              & Hargs & Hck & Hrst & Hsg1 & Houts & Hcs & Hts1).
+        (** the state is fixed by the block being state-pure *)
+        assert (s1 = stc) as Hstc.
+        { destruct (state_pure_generate_constraints sg1 (List.map fst argts)
+                      ckty (fst rstty) outs stc stc cs s1 Hcs) as (Hq & _).
+          exact Hq. }
+        subst s1.
+        (** the arguments *)
+        destruct (assign_lexps_entails_of es H0 argts _ _ Hargs)
+          as (argts2 & Hargs2 & Hra).
+        (** the reset actual, built as a run *)
+        assert (exists rstty2,
+                   (match ro with
+                    | None => SC.ret (lvar rst_ty)
+                    | Some e1 =>
+                        do t1  <- T2 e1;
+                        do a1  <- single t1;
+                        do rck <- option_to_sec
+                                    (assign_clk_type env base_ty
+                                       (hd Cbase (LSyn.clockof e1)));
+                        SC.ret (ljoin (lvar rst_ty) (ljoin a1 (rck, [])))
+                    end) sta = OK (rstty2, stb)
+                   /\ lst_entails rstty rstty2)
+          as (rstty2 & Hrst2 & Hrr).
+        { destruct ro as [e1|].
+          - destruct Hrst as (t1 & a1 & rck & stm & Ht1 & Ha1 & Hrck & Hre).
+            pose proof Ha1 as Ha1'. apply single_inv in Ha1' as (_ & ?); subst stb.
+            destruct (H t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
+            destruct (single_entails t1 u1 a1 _ _ Hr1 Ha1) as (b1 & Hb1 & Hrb1).
+            exists (ljoin (lvar rst_ty) (ljoin b1 (rck, []))). split.
+            + eapply sec_bind_ok; [exact Hu1|].
+              eapply sec_bind_ok; [exact Hb1|].
+              eapply sec_bind_ok; [rewrite Hrck; reflexivity|reflexivity].
+            + subst rstty. apply lst_entails_ljoin; [apply lst_entails_refl|].
+              apply lst_entails_ljoin; [exact Hrb1|apply lst_entails_refl].
+          - destruct Hrst as (Hre & ?); subst rstty stb.
+            exists (lvar rst_ty).
+            split; [reflexivity|apply lst_entails_refl]. }
+        (** the actuals coincide, so the two blocks are instantiated alike *)
+        pose proof (lst_entails_fst _ _ Hra) as Hfa.
+        pose proof Hrr as Hrr0. destruct Hrr0 as (Hfr & Hcr).
+        destruct (call_block_entails_G f sg1 (List.map fst argts) ckty
+                    (fst rstty) outs cs stc stc Hsg1 Hcs)
+          as (sg2 & cs2 & Hsg2 & Hg2 & Hce).
+        exists (List.map
+                  (fun o => (([o] : ST),
+                             cmerge cs2 (cmerge (carried argts2) (snd rstty2))))
+                  outs).
+        split.
+        + rewrite assign_lexp_Eapp_eq.
+          eapply sec_bind_ok; [exact Hargs2|].
+          eapply sec_bind_ok; [exact Hrst2|].
+          eapply sec_bind_ok; [rewrite Hck; reflexivity|].
+          rewrite Hsg2.
+          eapply sec_bind_ok; [exact Houts|].
+          eapply sec_bind_ok; [rewrite <- Hfa, <- Hfr; exact Hg2|reflexivity].
+        + subst ts1. apply Forall2_map_pair.
+          apply cs_entails_cmerge; [exact Hce|].
+          apply cs_entails_cmerge; [exact (carried_entails _ _ Hra)|exact Hcr].
+    Qed.
+
+    Corollary assign_lexps_entails_G :
+      forall es ts1 s s1,
+        Ts1 es s = OK (ts1, s1) ->
+        exists ts2, Ts2 es s = OK (ts2, s1) /\ Forall2 lst_entails ts1 ts2.
+    Proof.
+      intros es ts1 s s1 H.
+      eapply assign_lexps_entails_of; [|exact H].
+      apply Forall_forall. intros e _. exact (assign_lexp_type_entails_G e).
+    Qed.
+
+
+    (** * The same, for the constraint generator
+
+        [eqn_clock_type], [find_env] and [get_mappings] never look at a
+        signature, so every rule's only sensitive parts are the expression
+        runs it makes and, at a call, the block it instantiates.  Each rule
+        therefore transports the entailment by [cs_entails_app] and
+        [lconstrain_entails], and the two runs still finish in the same
+        state. *)
+
+    Variable cenv : Env.t (type * clock).
+
+    Lemma gen_lvars_cons_eq :
+      forall x xs b bs t ts,
+        generate_lvars_constraints env base_ty rst_ty cenv
+          (x :: xs) (b :: bs) (t :: ts)
+        = (do ckty <- eqn_clock_type env base_ty cenv x;
+           do rest <- generate_lvars_constraints env base_ty rst_ty cenv xs bs ts;
+           SC.ret (lconstrain (ljoin (ambient rst_ty ckty) t) b ++ rest)).
+    Proof. reflexivity. Qed.
+
+    Lemma generate_lvars_constraints_entails_G :
+      forall xs bs ts1 ts2 cs1 s s1,
+        Forall2 lst_entails ts1 ts2 ->
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts1 s
+          = OK (cs1, s1) ->
+        exists cs2,
+          generate_lvars_constraints env base_ty rst_ty cenv xs bs ts2 s
+            = OK (cs2, s1)
+          /\ cs_entails cs1 cs2.
+    Proof.
+      induction xs as [|x xs IH]; intros bs ts1 ts2 cs1 s s1 Hts H;
+        destruct bs as [|b bs]; destruct ts1 as [|t ts1];
+        simpl in H; try (unfold SC.error in H; discriminate H).
+      - inversion Hts; subst ts2. unfold SC.ret in H. inversion H; subst.
+        exists []. split; [reflexivity|apply cs_entails_refl].
+      - inversion Hts as [|t' u ts1' us Htu Htr]; subst.
+        apply sec_bind_inv in H as (ckty & sa & Hck & H).
+        apply sec_bind_inv in H as (rest & sb & Hrest & Hret).
+        unfold SC.ret in Hret. inversion Hret; subst.
+        destruct (IH bs ts1 us rest _ _ Htr Hrest) as (rest2 & Hrest2 & Hre).
+        exists (lconstrain (ljoin (ambient rst_ty ckty) u) b ++ rest2). split.
+        + rewrite gen_lvars_cons_eq.
+          eapply sec_bind_ok; [exact Hck|].
+          eapply sec_bind_ok; [exact Hrest2|reflexivity].
+        + apply cs_entails_app; [|exact Hre].
+          apply lconstrain_entails, lst_entails_ljoin;
+            [apply lst_entails_refl|exact Htu].
+    Qed.
+
+    Lemma generate_ldef_constraint_entails_G :
+      forall x e cs1 s s1,
+        generate_ldef_constraint G1 env base_ty rst_ty cenv x e s = OK (cs1, s1) ->
+        exists cs2,
+          generate_ldef_constraint G2 env base_ty rst_ty cenv x e s
+            = OK (cs2, s1)
+          /\ cs_entails cs1 cs2.
+    Proof.
+      intros x e cs1 s s1 H. unfold generate_ldef_constraint in H |- *.
+      apply sec_bind_inv in H as (ckty & sa & Hck & H).
+      apply sec_bind_inv in H as (ts & sb & Hts & H).
+      apply sec_bind_inv in H as (t & sc & Ht & H).
+      pose proof Ht as Ht'. apply single_inv in Ht' as (_ & ?); subst sc.
+      apply sec_bind_inv in H as (b & sd & Hb & Hret).
+      pose proof Hb as Hb'. apply find_env_inv in Hb' as (_ & ?); subst sd.
+      unfold SC.ret in Hret. inversion Hret; subst.
+      destruct (assign_lexp_type_entails_G e ts _ _ Hts) as (us & Hus & Hre).
+      destruct (single_entails ts us t _ _ Hre Ht) as (u & Hu & Hru).
+      exists (lconstrain (ljoin (ambient rst_ty ckty) u) b). split.
+      + eapply sec_bind_ok; [exact Hck|].
+        eapply sec_bind_ok; [exact Hus|].
+        eapply sec_bind_ok; [exact Hu|].
+        eapply sec_bind_ok; [exact Hb|reflexivity].
+      + apply lconstrain_entails, lst_entails_ljoin;
+          [apply lst_entails_refl|exact Hru].
+    Qed.
+
+    Lemma generate_lcall_constraint_entails_G :
+      forall xs f es rstty1 rstty2 cs1 s s1,
+        lst_entails rstty1 rstty2 ->
+        generate_lcall_constraint G1 env base_ty rst_ty xs f es rstty1 s
+          = OK (cs1, s1) ->
+        exists cs2,
+          generate_lcall_constraint G2 env base_ty rst_ty xs f es rstty2 s
+            = OK (cs2, s1)
+          /\ cs_entails cs1 cs2.
+    Proof.
+      intros xs f es rstty1 rstty2 cs1 s s1 Hr H.
+      unfold generate_lcall_constraint in H |- *.
+      destruct (find_signature f G1) as [sg1|] eqn:Esg1;
+        [|unfold SC.error in H; discriminate H].
+      apply sec_bind_inv in H as (ckty & sa & Hck & H).
+      pose proof Hck as Hck'.
+      apply option_to_sec_inv in Hck' as (Hckv & ?); subst sa.
+      apply sec_bind_inv in H as (argts & sb & Hargs & H).
+      apply sec_bind_inv in H as (outs & sc & Houts & H).
+      assert (Hpure : state_pure (SC.mmap (fun x => find_env x env) xs))
+        by (apply state_pure_mmap; intros; apply state_pure_find_env).
+      pose proof Houts as Houts'.
+      destruct (Hpure sb sb _ _ Houts') as (? & _); subst sc.
+      apply sec_bind_inv in H as (cs0 & sd & Hgc & Hret).
+      assert (sd = sb) as Hsd.
+      { destruct (state_pure_generate_constraints sg1 (List.map fst argts) ckty
+                    (fst rstty1) outs sb sb cs0 sd Hgc) as (Hq & _).
+        exact Hq. }
+      subst sd.
+      unfold SC.ret in Hret. inversion Hret; subst.
+      destruct (assign_lexps_entails_G es argts _ _ Hargs)
+        as (argts2 & Hargs2 & Hra).
+      pose proof (lst_entails_fst _ _ Hra) as Hfa.
+      pose proof Hr as Hr0. destruct Hr0 as (Hfr & Hcr).
+      destruct (call_block_entails_G f sg1 (List.map fst argts) ckty
+                  (fst rstty1) outs cs0 _ _ Esg1 Hgc)
+        as (sg2 & cs2 & Esg2 & Hgc2 & Hce).
+      rewrite Esg2.
+      exists (cmerge cs2 (cmerge (carried argts2) (snd rstty2))). split.
+      + eapply sec_bind_ok; [exact Hck|].
+        eapply sec_bind_ok; [exact Hargs2|].
+        eapply sec_bind_ok; [exact Houts|].
+        eapply sec_bind_ok; [rewrite <- Hfa, <- Hfr; exact Hgc2|reflexivity].
+      + apply cs_entails_cmerge; [exact Hce|].
+        apply cs_entails_cmerge; [exact (carried_entails _ _ Hra)|exact Hcr].
+    Qed.
+
+    Lemma generate_lgen_constraint_entails_G :
+      forall xs es cs1 s s1,
+        generate_lgen_constraint G1 env base_ty rst_ty cenv xs es s
+          = OK (cs1, s1) ->
+        exists cs2,
+          generate_lgen_constraint G2 env base_ty rst_ty cenv xs es s
+            = OK (cs2, s1)
+          /\ cs_entails cs1 cs2.
+    Proof.
+      intros xs es cs1 s s1 H.
+      unfold generate_lgen_constraint in H |- *.
+      apply sec_bind_inv in H as (ts & sa & Hts & H).
+      apply sec_bind_inv in H as (bs & sb & Hbs & H).
+      pose proof Hbs as Hbs'.
+      apply option_to_sec_inv in Hbs' as (_ & ?); subst sb.
+      destruct (assign_lexps_entails_G es ts _ _ Hts) as (us & Hus & Hre).
+      destruct (generate_lvars_constraints_entails_G xs bs ts us cs1 _ _ Hre H)
+        as (cs2 & Hcs2 & Hce).
+      exists cs2. split; [|exact Hce].
+      eapply sec_bind_ok; [exact Hus|].
+      eapply sec_bind_ok; [exact Hbs|exact Hcs2].
+    Qed.
+
+    Lemma generate_lone_constraint_entails_G :
+      forall ys e cs1 s s1,
+        generate_lone_constraint G1 env base_ty rst_ty cenv ys e s
+          = OK (cs1, s1) ->
+        exists cs2,
+          generate_lone_constraint G2 env base_ty rst_ty cenv ys e s
+            = OK (cs2, s1)
+          /\ cs_entails cs1 cs2.
+    Proof.
+      intros ys e cs1 s s1 H.
+      destruct e as [| | | | | | | | |f args ro a].
+      1-9: (destruct ys as [|x [|x2 xs2]];
+            [ eapply generate_lgen_constraint_entails_G; exact H
+            | eapply generate_ldef_constraint_entails_G; exact H
+            | eapply generate_lgen_constraint_entails_G; exact H ]).
+      destruct ro as [e1|]; destruct ys as [|x xs2].
+      - unfold generate_lone_constraint, SC.ret in H |- *. inversion H; subst.
+        exists []. split; [reflexivity|apply cs_entails_refl].
+      - unfold generate_lone_constraint in H |- *.
+        apply sec_bind_inv in H as (t1 & sa & Ht1 & H).
+        apply sec_bind_inv in H as (a1 & sb & Ha1 & H).
+        pose proof Ha1 as Ha1'. apply single_inv in Ha1' as (_ & ?); subst sb.
+        apply sec_bind_inv in H as (rck & sc & Hrck & H).
+        pose proof Hrck as Hrck'.
+        apply option_to_sec_inv in Hrck' as (_ & ?); subst sc.
+        destruct (assign_lexp_type_entails_G e1 t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
+        destruct (single_entails t1 u1 a1 _ _ Hr1 Ha1) as (b1 & Hb1 & Hrb1).
+        destruct (generate_lcall_constraint_entails_G (x :: xs2) f args
+                    (ljoin (lvar rst_ty) (ljoin a1 (rck, [])))
+                    (ljoin (lvar rst_ty) (ljoin b1 (rck, [])))
+                    cs1 _ _
+                    (lst_entails_ljoin _ _ _ _ (lst_entails_refl (lvar rst_ty))
+                       (lst_entails_ljoin _ _ _ _ Hrb1
+                          (lst_entails_refl (rck, []))))
+                    H)
+          as (cs2 & Hcs2 & Hce).
+        exists cs2. split; [|exact Hce].
+        eapply sec_bind_ok; [exact Hu1|].
+        eapply sec_bind_ok; [exact Hb1|].
+        eapply sec_bind_ok; [exact Hrck|exact Hcs2].
+      - unfold generate_lone_constraint, SC.ret in H |- *. inversion H; subst.
+        exists []. split; [reflexivity|apply cs_entails_refl].
+      - eapply generate_lcall_constraint_entails_G;
+          [apply lst_entails_refl|exact H].
+    Qed.
+
+    Lemma generate_lsplit_constraints_entails_G :
+      forall es xs cs1 s s1,
+        generate_lsplit_constraints G1 env base_ty rst_ty cenv xs es s
+          = OK (cs1, s1) ->
+        exists cs2,
+          generate_lsplit_constraints G2 env base_ty rst_ty cenv xs es s
+            = OK (cs2, s1)
+          /\ cs_entails cs1 cs2.
+    Proof.
+      induction es as [|e es IH]; intros xs cs1 s s1 H.
+      - rewrite gen_lsplit_nil in H. unfold SC.ret in H. inversion H; subst.
+        exists []. split;
+          [rewrite gen_lsplit_nil; reflexivity|apply cs_entails_refl].
+      - rewrite gen_lsplit_cons in H.
+        apply sec_bind_inv in H as (ch & sa & Hh & H).
+        apply sec_bind_inv in H as (ct & sb & Ht & Hret).
+        unfold SC.ret in Hret. inversion Hret; subst.
+        destruct (generate_lone_constraint_entails_G
+                    (firstn (numstreams e) xs) e ch _ _ Hh)
+          as (ch2 & Hh2 & Hceh).
+        destruct (IH (skipn (numstreams e) xs) ct _ _ Ht) as (ct2 & Ht2 & Hcet).
+        exists (ch2 ++ ct2). split.
+        + rewrite gen_lsplit_cons.
+          eapply sec_bind_ok; [exact Hh2|].
+          eapply sec_bind_ok; [exact Ht2|reflexivity].
+        + apply cs_entails_app; [exact Hceh|exact Hcet].
+    Qed.
+
+    Lemma generate_leqn_constraint_entails_G :
+      forall eq cs1 s s1,
+        generate_leqn_constraint G1 env base_ty rst_ty cenv eq s = OK (cs1, s1) ->
+        exists cs2,
+          generate_leqn_constraint G2 env base_ty rst_ty cenv eq s
+            = OK (cs2, s1)
+          /\ cs_entails cs1 cs2.
+    Proof.
+      intros (xs, es) cs1 s s1 H.
+      destruct es as [|e [|e2 es2]].
+      - eapply generate_lgen_constraint_entails_G; exact H.
+      - rewrite <- generate_lone_is_leqn in H.
+        destruct (generate_lone_constraint_entails_G xs e cs1 _ _ H)
+          as (cs2 & Hcs2 & Hce).
+        exists cs2. split; [rewrite <- generate_lone_is_leqn; exact Hcs2|exact Hce].
+      - rewrite gen_leqn_cons2 in H. rewrite gen_leqn_cons2.
+        destruct (has_lcall (e :: e2 :: es2));
+          [eapply generate_lsplit_constraints_entails_G
+          |eapply generate_lgen_constraint_entails_G]; exact H.
+    Qed.
+
+    (** The statement the program level reads: a node's raw constraints,
+        generated against the source accumulator, entail the ones generated
+        against the weaker one -- at the same valuation, and finishing in the
+        same state, so the two [simplify] windows coincide as well. *)
+    Theorem generate_leqns_constraints_entails_G :
+      forall eqs cs1 s s1,
+        generate_leqns_constraints G1 env base_ty rst_ty cenv eqs s
+          = OK (cs1, s1) ->
+        exists cs2,
+          generate_leqns_constraints G2 env base_ty rst_ty cenv eqs s
+            = OK (cs2, s1)
+          /\ cs_entails cs1 cs2.
+    Proof.
+      induction eqs as [|eq eqs IH]; intros cs1 s s1 H.
+      - apply generate_leqns_constraints_nil in H as (? & ?); subst.
+        exists []. split; [reflexivity|apply cs_entails_refl].
+      - rewrite generate_leqns_constraints_cons in H.
+        apply sec_bind_inv in H as (ch & sa & Hh & H).
+        apply sec_bind_inv in H as (ct & sb & Ht & Hret).
+        unfold SC.ret in Hret. inversion Hret; subst.
+        destruct (generate_leqn_constraint_entails_G eq ch _ _ Hh)
+          as (ch2 & Hh2 & Hceh).
+        destruct (IH ct _ _ Ht) as (ct2 & Ht2 & Hcet).
+        exists (ch2 ++ ct2). split.
+        + rewrite generate_leqns_constraints_cons.
+          eapply sec_bind_ok; [exact Hh2|].
+          eapply sec_bind_ok; [exact Ht2|reflexivity].
+        + apply cs_entails_app; [exact Hceh|exact Hcet].
+    Qed.
+  End CalleeWeakening.
+
   Section Preservation.
 
     Variable GL      : secglobal.
