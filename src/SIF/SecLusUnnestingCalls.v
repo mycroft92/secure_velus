@@ -856,6 +856,108 @@ Import UNN.Fresh.Tactics.
         eapply sec_bind_ok; [unfold option_to_sec; now rewrite Ht2|reflexivity].
     Qed.
 
+    (** * Set-equality of sources survives substitution
+
+        [subst_constraints_inp_map_augment] concludes exactly the relation
+        [listSatisfiable_same_sources] consumes, but only for the input-map
+        stage.  The satisfaction transfer needs it at the *end* of
+        [generate_constraints], so it has to survive the clock, the reset, the
+        outputs and the final lookup.
+
+        It does, and for one reason: [subst_ident_in_type] reads its argument
+        only through membership.  That is [subst_ident_in_type_In] when the
+        name occurs and [subst_ident_in_type_notIn] when it does not. *)
+
+    Lemma subst_ident_in_type_notIn :
+      forall ty x v, ~ In x ty -> SIG.subst_ident_in_type ty x v = ty.
+    Proof.
+      intros ty x v Hx. unfold SIG.subst_ident_in_type.
+      destruct (SymTypes.my_set_mem x ty) eqn:Hmem; [|reflexivity].
+      exfalso. apply Hx. now apply SymTypes.my_set_mem_correct.
+    Qed.
+
+    Lemma subst_ident_in_type_same :
+      forall ty1 ty2 x v,
+        ~ In x v ->
+        (forall z, In z ty1 <-> In z ty2) ->
+        forall z, In z (SIG.subst_ident_in_type ty1 x v)
+                  <-> In z (SIG.subst_ident_in_type ty2 x v).
+    Proof.
+      intros ty1 ty2 x v Hv Hsame z.
+      destruct (in_dec ident_eq_dec x ty1) as [Hx1|Hx1].
+      - assert (In x ty2) as Hx2 by (apply Hsame; exact Hx1).
+        rewrite (subst_ident_in_type_In ty1 x v z Hx1 Hv).
+        rewrite (subst_ident_in_type_In ty2 x v z Hx2 Hv).
+        split; (intros [(Hz & Hne)|Hz]; [left; split; [|exact Hne]|now right]);
+          [now apply Hsame|now apply Hsame].
+      - assert (~ In x ty2) as Hx2 by (intro Hc; apply Hx1, Hsame; exact Hc).
+        rewrite (subst_ident_in_type_notIn ty1 x v Hx1).
+        rewrite (subst_ident_in_type_notIn ty2 x v Hx2).
+        exact (Hsame z).
+    Qed.
+
+    (** Targets equal, sources equal as sets.  Stronger than what
+        [listSatisfiable_same_sources] needs, and what every stage preserves. *)
+    Definition cs_same_src (cs cs' : list SymTypes.constraint) : Prop :=
+      Forall2 (fun c c' => snd c' = snd c
+                           /\ (forall z, In z (fst c) <-> In z (fst c'))) cs cs'.
+
+    Lemma cs_same_src_weaken :
+      forall cs cs',
+        cs_same_src cs cs' ->
+        Forall2
+          (fun c c' =>
+             (forall z, In z (fst c) <-> In z (fst c'))
+             /\ (forall z, In z (snd c) <-> In z (snd c'))) cs cs'.
+    Proof.
+      intros cs cs' H. induction H as [|c c' l l' (Ht & Hs) Hr IH];
+        constructor; [|exact IH].
+      destruct c as (sa1 & tg1). destruct c' as (sa2 & tg2).
+      cbn [fst snd] in Ht, Hs |- *. subst tg2.
+      split; [exact Hs|intro z; reflexivity].
+    Qed.
+
+    Lemma subst_ident_in_constraints_same :
+      forall cs1 cs2 x v d1 d2 sa sa' sb sb',
+        ~ In x v ->
+        cs_same_src cs1 cs2 ->
+        SIG.subst_ident_in_constraints cs1 x v sa = OK (d1, sa') ->
+        SIG.subst_ident_in_constraints cs2 x v sb = OK (d2, sb') ->
+        cs_same_src d1 d2.
+    Proof.
+      intros cs1 cs2 x v d1 d2 sa sa' sb sb' Hv Hsame.
+      revert d1 d2 sa sa' sb sb'.
+      induction Hsame as [|c1 c2 l1 l2 (Ht & Hs) Hr IH];
+        intros d1 d2 sa sa' sb sb' H1 H2.
+      - unfold SIG.subst_ident_in_constraints in H1, H2. simpl in H1, H2.
+        unfold SC.ret in H1, H2.
+        assert (d1 = []) as ? by (inversion H1; reflexivity); subst d1.
+        assert (d2 = []) as ? by (inversion H2; reflexivity); subst d2.
+        constructor.
+      - unfold SIG.subst_ident_in_constraints in H1, H2. simpl in H1, H2.
+        apply sec_bind_inv in H1 as (h1 & p1 & Hh1 & H1).
+        apply sec_bind_inv in H1 as (r1 & q1 & Hr1 & Hret1).
+        apply sec_bind_inv in H2 as (h2 & p2 & Hh2 & H2).
+        apply sec_bind_inv in H2 as (r2 & q2 & Hr2 & Hret2).
+        unfold SC.ret in Hret1, Hret2.
+        assert (d1 = h1 :: r1) as ? by (inversion Hret1; reflexivity); subst d1.
+        assert (d2 = h2 :: r2) as ? by (inversion Hret2; reflexivity); subst d2.
+        constructor; [|exact (IH r1 r2 p1 q1 p2 q2 Hr1 Hr2)].
+        unfold SIG.subst_inp_ident_in_constraint in Hh1, Hh2.
+        destruct c1 as (ty1 & tg1). destruct c2 as (ty2 & tg2).
+        cbn [snd] in Ht. subst tg2.
+        destruct tg1 as [|x0 [|]]; try discriminate Hh1.
+        destruct (ident_eqb x x0) eqn:Ex; [discriminate Hh1|].
+        unfold SC.ret in Hh1, Hh2.
+        assert (h1 = (SIG.subst_ident_in_type ty1 x v, [x0])) as ?
+            by (inversion Hh1; reflexivity); subst h1.
+        assert (h2 = (SIG.subst_ident_in_type ty2 x v, [x0])) as ?
+            by (inversion Hh2; reflexivity); subst h2.
+        cbn [fst snd]. split; [reflexivity|].
+        cbn [fst] in Hs.
+        exact (subst_ident_in_type_same ty1 ty2 x v Hv Hs).
+    Qed.
+
     (** * The augmented instantiation can be built, not assumed
 
         Putting the four stages together: a successful [generate_constraints]
