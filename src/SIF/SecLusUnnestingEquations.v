@@ -1146,6 +1146,165 @@ Import UNN.Fresh.Tactics.
         + eapply IH; exact Ht.
     Qed.
 
+    Lemma In_firstn_any : forall (A : Type) n (l : list A) x,
+        In x (firstn n l) -> In x l.
+    Proof.
+      intros A n l x H. rewrite <- (firstn_skipn n l).
+      apply in_or_app. now left.
+    Qed.
+
+    Lemma In_skipn_any : forall (A : Type) n (l : list A) x,
+        In x (skipn n l) -> In x l.
+    Proof.
+      intros A n l x H. rewrite <- (firstn_skipn n l).
+      apply in_or_app. now right.
+    Qed.
+
+    (** * The clock environment is only consulted on defined variables
+
+        [generate_lnode_sig] runs the source equations against
+        [lnode_clock_env n] and the unnested ones against
+        [lnode_clock_env (unnest_node ...)], and the second is strictly larger:
+        [n_vars] grew.  So the node level cannot simply quote the
+        equation-level theorem, which fixes one [cenv] for both runs.
+
+        It does not have to: [cenv] reaches the generator only through
+        [eqn_clock_type], and only at the variables an equation *defines*.  Two
+        environments agreeing there give the same constraints. *)
+
+    Lemma eqn_clock_type_cenv_ext :
+      forall cenv1 cenv2 x,
+        find_clock cenv1 x = find_clock cenv2 x ->
+        forall s, eqn_clock_type env base_ty cenv1 x s
+                  = eqn_clock_type env base_ty cenv2 x s.
+    Proof.
+      intros cenv1 cenv2 x Hf s.
+      unfold eqn_clock_type, SC.bind, res_to_sec. now rewrite Hf.
+    Qed.
+
+    Lemma generate_lvars_constraints_cenv_ext :
+      forall cenv1 cenv2 xs bs ts,
+        (forall x, In x xs -> find_clock cenv1 x = find_clock cenv2 x) ->
+        forall s, generate_lvars_constraints env base_ty rst_ty cenv1 xs bs ts s
+                  = generate_lvars_constraints env base_ty rst_ty cenv2 xs bs ts s.
+    Proof.
+      intros cenv1 cenv2 xs. induction xs as [|x xs IH]; intros bs ts Hag s.
+      - destruct bs; destruct ts; reflexivity.
+      - destruct bs as [|b bs]; destruct ts as [|t ts]; try reflexivity.
+        simpl. unfold SC.bind.
+        rewrite (eqn_clock_type_cenv_ext cenv1 cenv2 x
+                   (Hag x (or_introl (@Coq.Init.Logic.eq_refl _ x))) s).
+        destruct (eqn_clock_type env base_ty cenv2 x s) as [[ckty s1]|];
+          [|reflexivity].
+        rewrite (IH bs ts (fun y Hy => Hag y (or_intror Hy)) s1).
+        reflexivity.
+    Qed.
+
+    Lemma generate_ldef_constraint_cenv_ext :
+      forall cenv1 cenv2 x e,
+        find_clock cenv1 x = find_clock cenv2 x ->
+        forall s, generate_ldef_constraint GL env base_ty rst_ty cenv1 x e s
+                  = generate_ldef_constraint GL env base_ty rst_ty cenv2 x e s.
+    Proof.
+      intros cenv1 cenv2 x e Hf s.
+      unfold generate_ldef_constraint, SC.bind.
+      rewrite (eqn_clock_type_cenv_ext cenv1 cenv2 x Hf s). reflexivity.
+    Qed.
+
+    Lemma generate_lgen_constraint_cenv_ext :
+      forall cenv1 cenv2 xs es,
+        (forall x, In x xs -> find_clock cenv1 x = find_clock cenv2 x) ->
+        forall s, generate_lgen_constraint GL env base_ty rst_ty cenv1 xs es s
+                  = generate_lgen_constraint GL env base_ty rst_ty cenv2 xs es s.
+    Proof.
+      intros cenv1 cenv2 xs es Hag s.
+      unfold generate_lgen_constraint, SC.bind.
+      destruct (assign_lexps GL env base_ty rst_ty es s) as [[ts s1]|];
+        [|reflexivity].
+      destruct (option_to_sec (get_mappings xs env) s1) as [[bs s2]|];
+        [|reflexivity].
+      exact (generate_lvars_constraints_cenv_ext cenv1 cenv2 xs bs ts Hag s2).
+    Qed.
+
+    Lemma generate_lone_constraint_cenv_ext :
+      forall cenv1 cenv2 ys e,
+        (forall x, In x ys -> find_clock cenv1 x = find_clock cenv2 x) ->
+        forall s, generate_lone_constraint GL env base_ty rst_ty cenv1 ys e s
+                  = generate_lone_constraint GL env base_ty rst_ty cenv2 ys e s.
+    Proof.
+      intros cenv1 cenv2 ys e Hag s.
+      destruct e as [| | | | | | | | |f args ro a].
+      1-9: (destruct ys as [|x [|x2 xs2]];
+            [exact (generate_lgen_constraint_cenv_ext cenv1 cenv2 _ _ Hag s)
+            |exact (generate_ldef_constraint_cenv_ext cenv1 cenv2 x _
+                      (Hag x (or_introl (@Coq.Init.Logic.eq_refl _ x))) s)
+            |exact (generate_lgen_constraint_cenv_ext cenv1 cenv2 _ _ Hag s)]).
+      (** the call cases do not consult [cenv] at all *)
+      destruct ro as [e1|]; destruct ys as [|x xs2]; reflexivity.
+    Qed.
+
+    Lemma generate_lsplit_constraints_cenv_ext :
+      forall cenv1 cenv2 es xs,
+        (forall x, In x xs -> find_clock cenv1 x = find_clock cenv2 x) ->
+        forall s,
+          generate_lsplit_constraints GL env base_ty rst_ty cenv1 xs es s
+          = generate_lsplit_constraints GL env base_ty rst_ty cenv2 xs es s.
+    Proof.
+      intros cenv1 cenv2 es. induction es as [|e es IH]; intros xs Hag s;
+        [reflexivity|].
+      rewrite !gen_lsplit_cons. unfold SC.bind.
+      rewrite (generate_lone_constraint_cenv_ext cenv1 cenv2
+                 (firstn (numstreams e) xs) e
+                 (fun x Hx => Hag x (In_firstn_any ident (numstreams e) xs x Hx))
+                 s).
+      destruct (generate_lone_constraint GL env base_ty rst_ty cenv2
+                  (firstn (numstreams e) xs) e s) as [[c s1]|];
+        [|reflexivity].
+      rewrite (IH (skipn (numstreams e) xs)
+                 (fun x Hx => Hag x (In_skipn_any ident (numstreams e) xs x Hx))
+                 s1).
+      reflexivity.
+    Qed.
+
+    Lemma generate_leqn_constraint_cenv_ext :
+      forall cenv1 cenv2 eq,
+        (forall x, In x (fst eq) ->
+                   find_clock cenv1 x = find_clock cenv2 x) ->
+        forall s, generate_leqn_constraint GL env base_ty rst_ty cenv1 eq s
+                  = generate_leqn_constraint GL env base_ty rst_ty cenv2 eq s.
+    Proof.
+      intros cenv1 cenv2 (xs, es) Hag s. cbn [fst] in Hag.
+      destruct es as [|e [|e2 es2]].
+      - exact (generate_lgen_constraint_cenv_ext cenv1 cenv2 xs [] Hag s).
+      - rewrite <- !generate_lone_is_leqn.
+        exact (generate_lone_constraint_cenv_ext cenv1 cenv2 xs e Hag s).
+      - rewrite !gen_leqn_cons2.
+        destruct (has_lcall (e :: e2 :: es2));
+          [exact (generate_lsplit_constraints_cenv_ext cenv1 cenv2
+                    (e :: e2 :: es2) xs Hag s)
+          |exact (generate_lgen_constraint_cenv_ext cenv1 cenv2 xs
+                    (e :: e2 :: es2) Hag s)].
+    Qed.
+
+    Lemma generate_leqns_constraints_cenv_ext :
+      forall cenv1 cenv2 eqs,
+        (forall x, In x (vars_defined eqs) ->
+                   find_clock cenv1 x = find_clock cenv2 x) ->
+        forall s,
+          generate_leqns_constraints GL env base_ty rst_ty cenv1 eqs s
+          = generate_leqns_constraints GL env base_ty rst_ty cenv2 eqs s.
+    Proof.
+      intros cenv1 cenv2 eqs. induction eqs as [|eq eqs IH]; intros Hag s;
+        [reflexivity|].
+      rewrite !generate_leqns_constraints_cons. unfold SC.bind.
+      rewrite (generate_leqn_constraint_cenv_ext cenv1 cenv2 eq
+                 (fun x Hx => Hag x (in_or_app _ _ _ (or_introl Hx))) s).
+      destruct (generate_leqn_constraint GL env base_ty rst_ty cenv2 eq s)
+        as [[c s1]|]; [|reflexivity].
+      rewrite (IH (fun x Hx => Hag x (in_or_app _ _ _ (or_intror Hx))) s1).
+      reflexivity.
+    Qed.
+
     (** * The dependency property over a list of equations
 
         Each equation's run is a sub-run of the list's, so the window it mints
@@ -3614,20 +3773,6 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros A n. induction n as [|n IH]; intros l;
         [simpl; lia|destruct l as [|a l]; simpl; [reflexivity|apply IH]].
-    Qed.
-
-    Lemma In_firstn_any : forall (A : Type) n (l : list A) x,
-        In x (firstn n l) -> In x l.
-    Proof.
-      intros A n l x H. rewrite <- (firstn_skipn n l).
-      apply in_or_app. now left.
-    Qed.
-
-    Lemma In_skipn_any : forall (A : Type) n (l : list A) x,
-        In x (skipn n l) -> In x l.
-    Proof.
-      intros A n l x H. rewrite <- (firstn_skipn n l).
-      apply in_or_app. now right.
     Qed.
 
     Lemma combine_for_numstreams_app :

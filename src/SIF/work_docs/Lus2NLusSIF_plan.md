@@ -1007,11 +1007,37 @@ is an aux name and `env` is injective) and the `cenv`/`vars` agreement
    streams contract is for is removing `node_carries`'s two ambient premises,
    which appear here as the equation-level entailment hypothesis.
 
-   Still open at this level: discharging that hypothesis from
-   `node_carries_preserves` (it needs the node's `wc`/`NoDup`/ambient
-   premises assembled), and the aux-lookup and elimination-disjointness
-   hypotheses, for which `unnest_node_moved_fresh_generated_aux` is the
-   template *[untested]*.  This is also where the three scoping hypotheses
+   Also done: `locals_not_interface` -- half of the elimination-disjointness
+   side condition, and the half provable at this level.  The locals' security
+   names lie outside the interface because `env` is injective and a local is
+   neither an input nor an output, which is `n_nodup`, a *field of the node
+   record*.  The other half (the minted names) is a fact about where the run
+   starts and belongs at the program level, where `st0` is chosen.
+
+   **A gap found and closed, 2026-09-26.**  `node_carries_preserves` fixes a
+   *single* `cenv` for both runs, but `generate_lnode_sig` runs the source
+   equations against `lnode_clock_env n` and the unnested ones against
+   `lnode_clock_env (unnest_node ...)`, and the second is strictly larger --
+   `n_vars` grew.  So the node level cannot simply quote the equation-level
+   theorem.
+
+   It does not have to: `cenv` reaches the generator *only* through
+   `eqn_clock_type`, and only at the variables an equation **defines**.  Two
+   environments agreeing there give the same constraints, which is
+   `generate_leqns_constraints_cenv_ext` *[verified, compiles]*, proved down
+   the whole dispatch -- `eqn_clock_type_cenv_ext`,
+   `generate_lvars_constraints_cenv_ext`,
+   `generate_ldef_constraint_cenv_ext`, `generate_lgen_constraint_cenv_ext`,
+   `generate_lone_constraint_cenv_ext`,
+   `generate_lsplit_constraints_cenv_ext`,
+   `generate_leqn_constraint_cenv_ext`.  The call rules do not consult `cenv`
+   at all, which is why that case is `reflexivity`.
+
+   Still open at this level: assembling the equation-level entailment from
+   `node_carries_preserves` (its `wc`/`NoDup`/ambient premises have to be
+   supplied for the node), and the two program-level hypotheses -- the aux
+   lookup and the minted-name disjointness, for which
+   `unnest_node_moved_fresh_generated_aux` is the template *[untested]*.  This is also where the three scoping hypotheses
    are discharged, with `stF := st1` (the state `generate_lnode_sig` ends at)
    and `scope` covering `locals ++ minted st0 st1`.  Open question to settle
    there and not before: the node-level `scope` must also contain the
