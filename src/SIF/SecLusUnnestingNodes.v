@@ -408,6 +408,102 @@ Import UNN.Fresh.Tactics.
       whole statement is a [Forall2] of [lst_entails]: equal on the left,
       entailed on the right. *)
 
+  (** The *whole* content the monotone induction needs about the two
+      accumulators: at every call site the target's signature is found and its
+      instantiated block is entailed by the source's, at the same valuation
+      and in the same state.  Nothing else about a signature global reaches
+      the generator, so this single clause is what the program level carries
+      -- one invariant instead of the six that deriving it at each call would
+      require. *)
+
+  Definition sig_call_weakens (sg1 sg2 : signature) : Prop :=
+    forall inp ck rst outs cs1 st st1,
+      generate_constraints sg1 inp ck rst outs st = OK (cs1, st1) ->
+      exists cs2,
+        generate_constraints sg2 inp ck rst outs st = OK (cs2, st)
+        /\ cs_entails cs1 cs2.
+
+  Definition call_weakens (G1 G2 : secglobal) : Prop :=
+    forall f sg1 inp ck rst outs cs1 st st1,
+      find_signature f G1 = Some sg1 ->
+      generate_constraints sg1 inp ck rst outs st = OK (cs1, st1) ->
+      exists sg2 cs2,
+        find_signature f G2 = Some sg2
+        /\ generate_constraints sg2 inp ck rst outs st = OK (cs2, st)
+        /\ cs_entails cs1 cs2.
+
+  Lemma call_weakens_nil : call_weakens [] [].
+  Proof. intros f sg1 inp ck rst outs cs1 st st1 H. discriminate H. Qed.
+
+  Lemma call_weakens_cons :
+    forall sg1 sg2 G1 G2,
+      s_name sg1 = s_name sg2 ->
+      sig_call_weakens sg1 sg2 ->
+      call_weakens G1 G2 ->
+      call_weakens (sg1 :: G1) (sg2 :: G2).
+  Proof.
+    intros sg1 sg2 G1 G2 Hname Hhead Htail
+      f sg inp ck rst outs cs1 st st1 Hf Hg.
+    simpl in Hf. simpl.
+    destruct (ident_eqb sg1.(s_name) f) eqn:Hq.
+    - inversion Hf; subst sg.
+      rewrite <- Hname, Hq.
+      destruct (Hhead inp ck rst outs cs1 st st1 Hg) as (cs2 & Hg2 & Hce).
+      exists sg2, cs2. split; [reflexivity|split; [exact Hg2|exact Hce]].
+    - rewrite <- Hname, Hq.
+      exact (Htail f sg inp ck rst outs cs1 st st1 Hf Hg).
+  Qed.
+
+  (** And how a node supplies it: the two signatures have the same interface,
+      the source's constraints entail the target's on the callee's own scope,
+      and the target is good and scoped.  The target block exists because
+      every premise of [generate_constraints_ok_from_good] transfers across
+      equal interface fields; it is entailed because an instantiated block is
+      scoped to the actuals, which is all [preserves_on_sat] needs to drop the
+      witness valuation. *)
+
+  Lemma sig_call_weakens_from_good :
+    forall sg1 sg2,
+      signature_good sg1 ->
+      NoDup (signature_scope sg1) ->
+      signature_good sg2 ->
+      signature_scoped sg2 ->
+      SIGPROOFS.signatures_preserved sg1 sg2 ->
+      (forall inp ck rst os cns sa sb,
+          generate_constraints sg1 inp ck rst os sa = OK (cns, sb) ->
+          call_subst_fresh sg1 inp ck rst os /\ NoDup os) ->
+      sig_call_weakens sg1 sg2.
+  Proof.
+    intros sg1 sg2 Hgood1 Hnd1 Hgood2 Hsc2 Hpres Hinst
+      inp ck rst outs cs1 st st1 Hg1.
+    pose proof Hpres as Hpres0. destruct Hpres0 as (Hfields & _).
+    pose proof (signature_fields_agree_scope_eq _ _ Hfields) as Hscope.
+    destruct (Hinst inp ck rst outs cs1 st st1 Hg1) as (Hfresh & Hnd).
+    destruct (SIGPROOFS.generate_constraints_lengths _ _ _ _ _ _ _ _ Hg1)
+      as (Hleni & Hleno).
+    pose proof Hfields as Hfields0.
+    destruct Hfields0 as (Hin & Hout & Hrst & Hclk).
+    destruct (SIGPROOFS.generate_constraints_ok_from_good sg2 inp ck rst outs st)
+      as (cs2 & Hg2).
+    { apply SIGPROOFS.signature_good_targets_out. exact Hgood2. }
+    { rewrite <- Hscope. exact Hnd1. }
+    { rewrite <- Hin. exact Hleni. }
+    { rewrite <- Hout. exact Hleno. }
+    { rewrite <- Hscope. destruct Hfresh as (_ & _ & _ & Ho). exact Ho. }
+    { exact Hnd. }
+    exists cs2. split; [exact Hg2|].
+    pose proof (actuals_scope_scoped inp ck rst outs) as Hsc.
+    pose proof Hsc as Hsc0.
+    destruct Hsc0 as ((Hsi & Hsc' & Hso) & Hsr).
+    eapply preserves_on_sat with (scope := actuals_scope inp ck rst outs).
+    - eapply generate_constraints_scoped;
+        [exact Hsc2|exact Hsi|exact Hsc'|exact Hsr|exact Hso|exact Hg2].
+    - eapply SIGPROOFS.signatures_preserved_equal_calls_from_good;
+        [exact Hgood1|exact Hnd1|exact Hsc2|exact Hpres
+        |exact (actuals_scope_fresh sg1 inp ck rst outs Hfresh)
+        |exact Hsc|exact Hfresh|exact Hg1|exact Hg2].
+  Qed.
+
   Section CalleeWeakening.
 
     Variable G1 G2   : secglobal.
@@ -415,42 +511,7 @@ Import UNN.Fresh.Tactics.
     Variable base_ty : ident.
     Variable rst_ty  : ident.
 
-    (** Every callee is found on both sides, with the same interface and
-        constraints the source's entail.  This is what the program-level
-        lockstep carries, and what each node's signature preservation
-        contributes to it. *)
-    Hypothesis G_entails :
-      forall f sg1,
-        find_signature f G1 = Some sg1 ->
-        exists sg2,
-          find_signature f G2 = Some sg2
-          /\ SIGPROOFS.signatures_preserved sg1 sg2.
-
-    Hypothesis sig_good1 :
-      forall f sg, find_signature f G1 = Some sg -> signature_good sg.
-    Hypothesis sig_nodup1 :
-      forall f sg, find_signature f G1 = Some sg -> NoDup (signature_scope sg).
-    Hypothesis sig_good2 :
-      forall f sg, find_signature f G2 = Some sg -> signature_good sg.
-    Hypothesis sig_scoped2 :
-      forall f sg, find_signature f G2 = Some sg -> signature_scoped sg.
-    Hypothesis sig_actuals_fresh1 :
-      forall f sg inp ck rst os cns sa sb,
-        find_signature f G1 = Some sg ->
-        generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
-        call_subst_fresh sg inp ck rst os.
-
-    (** Stated, like [sig_actuals_fresh1], as a property of the
-        instantiations the generator actually makes rather than of arbitrary
-        actuals -- which is what makes it true.  A nested call's results are
-        freshly minted, so distinct by [fresh_idents_NoDup]; an equation's are
-        the security names of the variables it defines, so distinct because
-        [env] is injective and a node defines each variable once. *)
-    Hypothesis sig_out_nodup1 :
-      forall f sg inp ck rst os cns sa sb,
-        find_signature f G1 = Some sg ->
-        generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
-        NoDup os.
+    Hypothesis call_weaken : call_weakens G1 G2.
 
     Local Notation T1  := (assign_lexp_type G1 env base_ty rst_ty).
     Local Notation T2  := (assign_lexp_type G2 env base_ty rst_ty).
@@ -470,47 +531,7 @@ Import UNN.Fresh.Tactics.
           find_signature f G2 = Some sg2
           /\ generate_constraints sg2 inp ck rst outs st = OK (cs2, st)
           /\ cs_entails cs1 cs2.
-    Proof.
-      intros f sg1 inp ck rst outs cs1 st st1 Hf1 Hg1.
-      pose proof (sig_out_nodup1 f sg1 inp ck rst outs cs1 st st1 Hf1 Hg1)
-        as Hnd.
-      destruct (G_entails f sg1 Hf1) as (sg2 & Hf2 & Hpres).
-      pose proof Hpres as Hpres0. destruct Hpres0 as (Hfields & _).
-      pose proof (signature_fields_agree_scope_eq _ _ Hfields) as Hscope.
-      pose proof (sig_actuals_fresh1 f sg1 inp ck rst outs cs1 st st1 Hf1 Hg1)
-        as Hfresh.
-      destruct (SIGPROOFS.generate_constraints_lengths _ _ _ _ _ _ _ _ Hg1)
-        as (Hleni & Hleno).
-      pose proof Hfields as Hfields0.
-      destruct Hfields0 as (Hin & Hout & Hrst & Hclk).
-      destruct (SIGPROOFS.generate_constraints_ok_from_good sg2 inp ck rst outs st)
-        as (cs2 & Hg2).
-      { apply SIGPROOFS.signature_good_targets_out. exact (sig_good2 f sg2 Hf2). }
-      { rewrite <- Hscope. exact (sig_nodup1 f sg1 Hf1). }
-      { rewrite <- Hin. exact Hleni. }
-      { rewrite <- Hout. exact Hleno. }
-      { rewrite <- Hscope.
-        destruct Hfresh as (_ & _ & _ & Ho). exact Ho. }
-      { exact Hnd. }
-      exists sg2, cs2. split; [exact Hf2|split; [exact Hg2|]].
-      pose proof (actuals_scope_scoped inp ck rst outs) as Hsc.
-      pose proof Hsc as Hsc0.
-      destruct Hsc0 as ((Hsi & Hsc' & Hso) & Hsr).
-      eapply preserves_on_sat with (scope := actuals_scope inp ck rst outs).
-      - eapply generate_constraints_scoped;
-          [exact (sig_scoped2 f sg2 Hf2)|exact Hsi|exact Hsc'|exact Hsr|exact Hso
-          |exact Hg2].
-      - eapply SIGPROOFS.signatures_preserved_equal_calls_from_good;
-          [exact (sig_good1 f sg1 Hf1)
-          |exact (sig_nodup1 f sg1 Hf1)
-          |exact (sig_scoped2 f sg2 Hf2)
-          |exact Hpres
-          |exact (actuals_scope_fresh sg1 inp ck rst outs Hfresh)
-          |exact Hsc
-          |exact Hfresh
-          |exact Hg1
-          |exact Hg2].
-    Qed.
+    Proof. exact call_weaken. Qed.
 
     Definition lexp_entails_G (e : exp) : Prop :=
       forall ts1 s s1,
@@ -1027,6 +1048,31 @@ Import UNN.Fresh.Tactics.
         + apply cs_entails_app; [exact Hceh|exact Hcet].
     Qed.
   End CalleeWeakening.
+
+  Corollary generate_leqns_constraints_weaken :
+    forall G1 G2 env base_ty rst_ty cenv eqs cs1 s s1,
+      call_weakens G1 G2 ->
+      generate_leqns_constraints G1 env base_ty rst_ty cenv eqs s
+        = OK (cs1, s1) ->
+      exists cs2,
+        generate_leqns_constraints G2 env base_ty rst_ty cenv eqs s
+          = OK (cs2, s1)
+        /\ cs_entails cs1 cs2.
+  Proof.
+    intros G1 G2 env base_ty rst_ty cenv eqs cs1 s s1 Hw H.
+    eapply generate_leqns_constraints_entails_G; [exact Hw|exact H].
+  Qed.
+
+  Lemma preserves_on_trans :
+    forall scope a b c,
+      preserves_on scope a b -> preserves_on scope b c ->
+      preserves_on scope a c.
+  Proof.
+    intros scope a b c H1 H2 dlt Hsat.
+    destruct (H1 dlt Hsat) as (d1 & Hag1 & Hs1).
+    destruct (H2 d1 Hs1) as (d2 & Hag2 & Hs2).
+    exists d2. split; [exact (agree_on_trans _ _ _ _ Hag1 Hag2)|exact Hs2].
+  Qed.
 
   Section Preservation.
 
@@ -1993,10 +2039,10 @@ Import UNN.Fresh.Tactics.
     Corollary unnest_node_sig_interface :
       forall (P : global) (n : node) (Hwl : wl_node P n)
              (Hpref : n_prefixes n = elab_prefs)
-             (G : secglobal) (aux : list node_aux_names)
+             (G G' : secglobal) (aux : list node_aux_names)
              st0 sg st1 sg' st1',
         generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
-        generate_lnode_sig G (unnest_node P n Hwl Hpref) env aux st0
+        generate_lnode_sig G' (unnest_node P n Hwl Hpref) env aux st0
           = OK (sg', st1') ->
         s_name sg' = s_name sg
         /\ s_in sg' = s_in sg
@@ -2004,7 +2050,7 @@ Import UNN.Fresh.Tactics.
         /\ s_clk sg' = s_clk sg
         /\ s_reset sg' = s_reset sg.
     Proof.
-      intros P n Hwl Hpref G aux st0 sg st1 sg' st1' H H'.
+      intros P n Hwl Hpref G G' aux st0 sg st1 sg' st1' H H'.
       apply lnode_sig_inv in H
         as (c1 & r1 & ct1 & rt1 & i1 & o1 & l1 & cs1
             & Ha1 & Hc1 & Hr1 & Hi1 & Ho1 & _ & _ & ?); subst sg.
@@ -2313,7 +2359,7 @@ Import UNN.Fresh.Tactics.
               /\ s_out sg' = s_out sg
               /\ s_clk sg' = s_clk sg
               /\ s_reset sg' = s_reset sg) as Hiface
-          by exact (unnest_node_sig_interface P n Hwl Hpref G aux st0 sg st1
+          by exact (unnest_node_sig_interface P n Hwl Hpref G G aux st0 sg st1
                       sg' st1' H H').
       destruct Hiface as (Hn & Hi & Ho & Hc & Hr).
       repeat split; try assumption.
@@ -2337,6 +2383,104 @@ Import UNN.Fresh.Tactics.
         [exact (Hwf cs1 st1 Hcs1)
         |exact (Hdisj l1 cs1 st1 Hl1 Hcs1)
         |exact (Hpres cs1 cs2 st1 st1' Hcs1 Hcs2)].
+    Qed.
+
+
+    (** * Signature preservation for one node, across two accumulators
+
+        The statement the program level actually needs.  The source node's
+        signature is generated against the accumulator of source callees, the
+        unnested node's against the accumulator of unnested ones, and the two
+        are related by [call_weakens].
+
+        The composition goes through an intermediate run -- the *source*
+        equations read against the *target* accumulator.  That run exists, and
+        finishes in the same state, because a signature's constraints reach
+        only the call blocks and those are state-pure: this is
+        [generate_leqns_constraints_weaken].  Its output is entailed by the
+        source's at the same valuation, hence [preserves_on] on any scope; and
+        it is related to the target's by the equation-level theorem, which now
+        has one accumulator on both sides.  Transitivity closes it, and
+        because the states coincide the source's [simplify] window is the same
+        one either run would name. *)
+    Theorem unnest_node_signatures_preserved_weakened :
+      forall (P : global) (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs)
+             (G1 G2 : secglobal) (aux : list node_aux_names)
+             st0 sg st1 sg' st1',
+        (** the two aux levels are the ones this section speaks about *)
+        (forall clk_id rst_id,
+            get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
+            Env.find clk_id env = Some base_ty
+            /\ Env.find rst_id env = Some rst_ty) ->
+        (** the target accumulator's callees are weaker *)
+        call_weakens G1 G2 ->
+        (** the equation-level entailment, against the target accumulator *)
+        (forall ce cet ct1 ct1',
+            generate_leqns_constraints G2 env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) st0 = OK (ce, ct1) ->
+            generate_leqns_constraints G2 env base_ty rst_ty
+              (lnode_clock_env (unnest_node P n Hwl Hpref))
+              (unnest_node P n Hwl Hpref).(n_eqs) st0 = OK (cet, ct1') ->
+            preserves_on scope ce cet) ->
+        (** the source's raw constraints are well formed *)
+        (forall ce ct1,
+            generate_leqns_constraints G1 env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) st0 = OK (ce, ct1) ->
+            wf_constraints ce) ->
+        (** and what it eliminates lies outside the interface *)
+        (forall locals cns ct1,
+            get_mappings_from_node n.(n_vars) env = Some locals ->
+            generate_leqns_constraints G1 env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) st0 = OK (cns, ct1) ->
+            forall x, In x (locals ++ minted st0 ct1) -> ~ In x scope) ->
+        generate_lnode_sig G1 n env aux st0 = OK (sg, st1) ->
+        generate_lnode_sig G2 (unnest_node P n Hwl Hpref) env aux st0
+          = OK (sg', st1') ->
+        s_name sg' = s_name sg
+        /\ s_in sg' = s_in sg
+        /\ s_out sg' = s_out sg
+        /\ s_clk sg' = s_clk sg
+        /\ s_reset sg' = s_reset sg
+        /\ preserves_on scope sg.(s_constraints) sg'.(s_constraints).
+    Proof.
+      intros P n Hwl Hpref G1 G2 aux st0 sg st1 sg' st1'
+        Haux Hacc Hpres Hwf Hdisj H H'.
+      assert (s_name sg' = s_name sg
+              /\ s_in sg' = s_in sg
+              /\ s_out sg' = s_out sg
+              /\ s_clk sg' = s_clk sg
+              /\ s_reset sg' = s_reset sg) as Hiface
+          by exact (unnest_node_sig_interface P n Hwl Hpref G1 G2 aux st0 sg st1
+                      sg' st1' H H').
+      destruct Hiface as (Hn & Hi & Ho & Hc & Hr).
+      repeat split; try assumption.
+      apply lnode_sig_inv in H
+        as (c1 & r1 & ct1 & rt1 & i1 & o1 & l1 & cs1
+            & Ha1 & Hc1 & Hr1 & _ & _ & Hl1 & Hcs1 & ?); subst sg.
+      apply lnode_sig_inv in H'
+        as (c2 & r2 & ct2 & rt2 & i2 & o2 & l2 & cs2
+            & Ha2 & Hc2 & Hr2 & _ & _ & Hl2 & Hcs2 & ?); subst sg'.
+      (** the aux lookups pin the two levels to the section's *)
+      destruct (Haux c1 r1 Ha1) as (Hb1 & Hbr1).
+      rewrite Hc1 in Hb1. apply option_Some_inj in Hb1; subst ct1.
+      rewrite Hr1 in Hbr1. apply option_Some_inj in Hbr1; subst rt1.
+      cbn [n_name unnest_node] in Ha2.
+      destruct (Haux c2 r2 Ha2) as (Hb2 & Hbr2).
+      rewrite Hc2 in Hb2. apply option_Some_inj in Hb2; subst ct2.
+      rewrite Hr2 in Hbr2. apply option_Some_inj in Hbr2; subst rt2.
+      cbn [s_constraints].
+      (** the source equations, read against the target accumulator *)
+      destruct (generate_leqns_constraints_weaken G1 G2 env base_ty rst_ty
+                  (lnode_clock_env n) n.(n_eqs) cs1 st0 st1 Hacc Hcs1)
+        as (cs1' & Hcs1' & Hce).
+      eapply preserves_on_simplify;
+        [exact (Hwf cs1 st1 Hcs1)
+        |exact (Hdisj l1 cs1 st1 Hl1 Hcs1)
+        |].
+      eapply preserves_on_trans;
+        [apply preserves_on_from_entailment; exact Hce
+        |exact (Hpres cs1' cs2 st1 st1' Hcs1' Hcs2)].
     Qed.
 
   End NodeEquations.
