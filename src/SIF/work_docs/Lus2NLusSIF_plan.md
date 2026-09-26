@@ -404,6 +404,36 @@ ambient plus this slot's clock actuals".
 
 **What is left, and both pieces are session-sized.**
 
+*(A0) The augmented run can be built* -- **done 2026-09-26**
+*[verified, compiles]*.  Nothing previously produced the augmented
+instantiation; `subst_constraints_inp_map_augment` and
+`generate_constraints_mono_sem` both take their two runs as given.
+`generate_constraints_total_inp` produces it: a successful
+`generate_constraints` with one set of actuals gives a successful one with any
+other of the same length.
+
+The reason it holds is that `findST` looks a constraint up by its *target*, so
+every stage's success depends on the targets alone, and every stage preserves
+them.  Hence `findST_targets_some`/`_none`, then
+`subst_constraints_inp_map_targets`/`_total`,
+`subst_ident_in_constraints_targets`/`_total`,
+`subst_constraints_out_map_total`, and `mmap_findST_total` for the final
+lookup.  `augment_actuals_fresh` supplies the freshness premises, so
+`subst_constraints_inp_map_augment` now has **every** premise met.
+
+*(A1) The next atom: propagating set-equality of sources through stages 2-4.*
+`subst_constraints_inp_map_augment` concludes exactly the relation
+`listSatisfiable_same_sources` consumes -- pointwise set-equality of both
+components -- but only for the *input-map* stage.  The satisfaction transfer
+needs it at the end of `generate_constraints`, so it has to survive the clock,
+reset and output substitutions and the final lookup.  It does: substituting the
+same name by the same type on set-equal sources yields set-equal sources,
+because `subst_ident_in_type` depends on its argument only through membership
+(`subst_ident_in_type_In`).  For the clock and reset stages
+`subst_ident_in_constraints_members` gives the description needed directly;
+for `subst_constraints_out_map` **there is no members lemma yet**, and writing
+one is the next task.  *[untested]*
+
 *(A) `carries_Eapp_streams`.*  Its ingredients are all present now --
 `carries_list_streams_intro` for the arguments, `call_arg_ambient` and
 `call_arg_ambient_covers` for their ambients, the augmentation with its three
