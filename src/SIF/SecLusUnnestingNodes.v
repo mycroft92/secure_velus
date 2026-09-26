@@ -986,6 +986,100 @@ Import UNN.Fresh.Tactics.
                    P n Hwl Hpref eqs' st' x Hrun Hx j) Hrstid)).
     Qed.
 
+    (** * The interface a node publishes does not move
+
+        [unnest_node] copies [n_name], [n_in] and [n_out] and only *extends*
+        [n_vars].  So of the six fields a signature has, five are computed from
+        data the pass leaves alone, and are equal on the nose -- not merely
+        related.  Only [s_constraints] can differ, which is exactly what
+        [preserves_on] speaks about.  Proving it is what makes the signature
+        comparison meaningful at all.
+
+        The projection lemma is reproved here rather than reused: the Leg A copy
+        (`l_node_sig_inv`) sits later in the build order. *)
+
+    Lemma lnode_sig_inv :
+      forall (G : secglobal) (n : node) (aux : list node_aux_names) sg st st',
+        generate_lnode_sig G n env aux st = OK (sg, st') ->
+        exists clk_id rst_id clk_type rst_type inp out locals cns,
+          get_node_aux n.(n_name) aux = Some (clk_id, rst_id)
+          /\ Env.find clk_id env = Some clk_type
+          /\ Env.find rst_id env = Some rst_type
+          /\ get_mappings_from_node n.(n_in) env = Some inp
+          /\ get_mappings_from_node n.(n_out) env = Some out
+          /\ get_mappings_from_node n.(n_vars) env = Some locals
+          /\ generate_leqns_constraints G env clk_type rst_type
+               (lnode_clock_env n) n.(n_eqs) st = OK (cns, st')
+          /\ sg = {| s_name  := n.(n_name);
+                     s_in    := inp;
+                     s_out   := out;
+                     s_reset := rst_type;
+                     s_clk   := clk_type;
+                     s_constraints := simplify cns (locals ++ minted st st') |}.
+    Proof.
+      intros G n aux sg st st' H.
+      unfold generate_lnode_sig in H.
+      match type of H with
+      | match ?X with _ => _ end = _ => destruct X as [[q stz]|er] eqn:E
+      end; [|discriminate H].
+      eapply sec_bind2_inv in E as (clk_id & rst_id & s1 & Haux & E).
+      eapply sec_bind_inv in E as (clk_type & s2 & Hclk & E).
+      eapply sec_bind_inv in E as (rst_type & s3 & Hrst & E).
+      eapply sec_bind_inv in E as (inp & s4 & Hinp & E).
+      eapply sec_bind_inv in E as (out & s5 & Hout & E).
+      eapply sec_bind_inv in E as (locals & s6 & Hloc & E).
+      eapply sec_bind_inv in E as (cns & s7 & Hcns & Eret).
+      apply option_to_sec_inv in Hclk as (Hclk & ?); subst s2.
+      apply option_to_sec_inv in Hrst as (Hrst & ?); subst s3.
+      apply option_to_sec_inv in Hinp as (Hinp & ?); subst s4.
+      apply option_to_sec_inv in Hout as (Hout & ?); subst s5.
+      apply option_to_sec_inv in Hloc as (Hloc & ?); subst s6.
+      apply option_to_sec_inv in Haux as (Haux & ?); subst s1.
+      unfold SC.ret in Eret.
+      assert (q = (inp, out, rst_type, clk_type, locals, cns) /\ stz = s7)
+        as (? & ?) by (inversion Eret; auto); subst q stz.
+      assert (sg = {| s_name := n.(n_name); s_in := inp; s_out := out;
+                      s_reset := rst_type; s_clk := clk_type;
+                      s_constraints :=
+                        simplify cns (locals ++ minted st s7) |}
+              /\ st' = s7) as (? & ?)
+          by (inversion H; auto); subst sg; subst st'.
+      exists clk_id, rst_id, clk_type, rst_type, inp, out, locals, cns.
+      repeat split; try assumption; reflexivity.
+    Qed.
+
+    Corollary unnest_node_sig_interface :
+      forall (P : global) (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs)
+             (G : secglobal) (aux : list node_aux_names)
+             st0 sg st1 sg' st1',
+        generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
+        generate_lnode_sig G (unnest_node P n Hwl Hpref) env aux st0
+          = OK (sg', st1') ->
+        s_name sg' = s_name sg
+        /\ s_in sg' = s_in sg
+        /\ s_out sg' = s_out sg
+        /\ s_clk sg' = s_clk sg
+        /\ s_reset sg' = s_reset sg.
+    Proof.
+      intros P n Hwl Hpref G aux st0 sg st1 sg' st1' H H'.
+      apply lnode_sig_inv in H
+        as (c1 & r1 & ct1 & rt1 & i1 & o1 & l1 & cs1
+            & Ha1 & Hc1 & Hr1 & Hi1 & Ho1 & _ & _ & ?); subst sg.
+      apply lnode_sig_inv in H'
+        as (c2 & r2 & ct2 & rt2 & i2 & o2 & l2 & cs2
+            & Ha2 & Hc2 & Hr2 & Hi2 & Ho2 & _ & _ & ?); subst sg'.
+      (** the pass copies the three fields the interface is read from *)
+      cbn [n_name n_in n_out unnest_node] in Ha2, Hi2, Ho2.
+      rewrite Ha1 in Ha2. inversion Ha2; subst c2 r2.
+      rewrite Hc1 in Hc2. inversion Hc2; subst ct2.
+      rewrite Hr1 in Hr2. inversion Hr2; subst rt2.
+      rewrite Hi1 in Hi2. inversion Hi2; subst i2.
+      rewrite Ho1 in Ho2. inversion Ho2; subst o2.
+      cbn [s_name s_in s_out s_clk s_reset].
+      repeat split; reflexivity.
+    Qed.
+
   End NodeEquations.
 
 End SecLusUnnestingNodes.
