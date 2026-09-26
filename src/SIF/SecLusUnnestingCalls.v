@@ -1463,6 +1463,151 @@ Import UNN.Fresh.Tactics.
         split; [exact Hyw|split; [exact Hy|exact Hz']].
     Qed.
 
+    (** The output stage's membership description, which did not exist: it
+        substitutes a formal output by an actual *name*, so what arrives is the
+        singleton [[v]]. *)
+    Lemma subst_ident_constraints_members :
+      forall cs x v d sa sa',
+        x <> v ->
+        SIG.subst_ident_constraints cs x v sa = OK (d, sa') ->
+        Forall2
+          (fun c c' =>
+             forall z,
+               In z (fst c') <->
+               ((In z (fst c) /\ z <> x) \/ (In x (fst c) /\ z = v)))
+          cs d.
+    Proof.
+      intros cs x v d sa sa' Hxv.
+      assert (~ In x [v]) as Hxv' by (intros [Hc|[]]; exact (Hxv (@Coq.Init.Logic.eq_sym _ _ _ Hc))).
+      revert d sa sa'.
+      induction cs as [|c cs IH]; intros d sa sa' H.
+      - unfold SIG.subst_ident_constraints in H. simpl in H. unfold SC.ret in H.
+        assert (d = []) as ? by (inversion H; reflexivity); subst d. constructor.
+      - unfold SIG.subst_ident_constraints in H. simpl in H.
+        apply sec_bind_inv in H as (h & p & Hh & H).
+        apply sec_bind_inv in H as (r & q & Hr & Hret).
+        unfold SC.ret in Hret.
+        assert (d = h :: r) as ? by (inversion Hret; reflexivity); subst d.
+        constructor; [|exact (IH r p q Hr)].
+        unfold SIG.subst_ident_constraint in Hh.
+        destruct (ident_eqb x v) eqn:Exv;
+          [exfalso; exact (Hxv (proj1 (ident_eqb_eq x v) Exv))|].
+        destruct c as (ty & tg).
+        destruct tg as [|x0 [|]]; try discriminate Hh;
+          destruct (ident_eqb x x0) eqn:Ex; unfold SC.ret in Hh;
+            inversion Hh; subst; cbn [fst snd];
+            (destruct (in_dec ident_eq_dec x ty) as [Hin|Hnin];
+             [intro z; rewrite (subst_ident_in_type_In ty x [v] z Hin Hxv');
+              split;
+              [intros [(Hz & Hne)|[Hz|[]]];
+                 [left; split; [exact Hz|exact Hne]
+                 |right; split; [exact Hin|now symmetry]]
+              |intros [(Hz & Hne)|(_ & Hz)];
+                 [left; split; [exact Hz|exact Hne]
+                 |right; left; now symmetry]]
+             |intro z; rewrite (subst_ident_in_type_notIn ty x [v] Hnin);
+              split;
+              [intro Hz; left; split;
+                 [exact Hz|intro; subst z; contradiction]
+              |intros [(Hz & _)|(Hz & _)]; [exact Hz|contradiction]]]).
+    Qed.
+
+    Lemma subst_ident_constraints_closed_mod :
+      forall ns cov cs x v d sa sa',
+        x <> v ->
+        (forall v0 ckv ckvty, In (v0, ckv) vars ->
+            assign_clk_type env base_ty ckv = Some ckvty -> ~ In x ckvty) ->
+        constraints_closed_mod ns cov cs ->
+        st_closed_mod ns cov [v] ->
+        SIG.subst_ident_constraints cs x v sa = OK (d, sa') ->
+        constraints_closed_mod ns cov d.
+    Proof.
+      intros ns cov cs x v d sa sa' Hxv Hxck Hcs Hv H.
+      pose proof (subst_ident_constraints_members cs x v d sa sa' Hxv H)
+        as Hm. clear H.
+      unfold constraints_closed_mod in Hcs |- *.
+      revert Hcs. induction Hm as [|c c' l l' Hs Hr IH]; intro Hcs;
+        [constructor|].
+      inversion Hcs as [|c0 l0 Hc Hl]; subst.
+      constructor; [|exact (IH Hl)].
+      intros v0 b ckv ckvty Hfv Hnm Hb Hinv Hckv.
+      assert (~ In x ckvty) as Hnx by exact (Hxck v0 ckv ckvty Hinv Hckv).
+      apply Hs in Hb. destruct Hb as [(Hb & Hbx)|(Hxc & Hbv)].
+      - intros w Hw.
+        assert (In w (merge cov (fst c))) as Hw'
+            by exact (Hc v0 b ckv ckvty Hfv Hnm Hb Hinv Hckv w Hw).
+        apply in_merge_inv in Hw' as [Hw'|Hw'];
+          [now apply in_merge_left|].
+        apply in_merge_right, Hs. left. split;
+          [exact Hw'|intro; subst w; contradiction].
+      - intros w Hw.
+        assert (In b [v]) as Hbv' by (subst b; now left).
+        assert (In w (merge cov [v])) as Hw'
+            by exact (Hv v0 b ckv ckvty Hfv Hnm Hbv' Hinv Hckv w Hw).
+        apply in_merge_inv in Hw' as [Hw'|Hw'];
+          [now apply in_merge_left|].
+        destruct Hw' as [Hw'|[]].
+        apply in_merge_right, Hs. right. split; [exact Hxc|now symmetry].
+    Qed.
+
+    Lemma subst_constraints_out_map_closed_mod :
+      forall ns cov xs vs cs d sa sa',
+        Forall2 (fun x v => x <> v) xs vs ->
+        (forall y, In y xs ->
+           forall v0 ckv ckvty, In (v0, ckv) vars ->
+             assign_clk_type env base_ty ckv = Some ckvty -> ~ In y ckvty) ->
+        Forall (fun v => st_closed_mod ns cov [v]) vs ->
+        constraints_closed_mod ns cov cs ->
+        SIG.subst_constraints_out_map cs xs vs sa = OK (d, sa') ->
+        constraints_closed_mod ns cov d.
+    Proof.
+      intros ns cov xs vs cs d sa sa' Hne.
+      revert cs d sa sa'.
+      induction Hne as [|x v xs vs Hxv Hr IH]; intros cs d sa sa' Hxck Hvs Hcs H.
+      - simpl in H. unfold SC.ret in H.
+        assert (d = cs) as ? by (inversion H; reflexivity); subst d. exact Hcs.
+      - simpl in H.
+        destruct (SymTypes.findST cs v) as [t|] eqn:Ef;
+          [exfalso; unfold SC.error in H; discriminate H|].
+        apply sec_bind_inv in H as (e & p & He & H).
+        inversion Hvs as [|v0 vs0 Hv Hvsr]; subst.
+        eapply IH; [|exact Hvsr| |exact H].
+        + intros y Hy. apply Hxck. now right.
+        + eapply subst_ident_constraints_closed_mod;
+            [exact Hxv| |exact Hcs|exact Hv|exact He].
+          intros v1 ckv ckvty Hinv Hckv.
+          exact (Hxck x (or_introl (@Coq.Init.Logic.eq_refl _ x))
+                   v1 ckv ckvty Hinv Hckv).
+    Qed.
+
+    Lemma mmap_findST_closed_mod :
+      forall ns cov (e : list SymTypes.constraint) out r sa sa',
+        constraints_closed_mod ns cov e ->
+        SC.mmap (fun x => SC.bind (option_to_sec (SymTypes.findST e x))
+                            (fun st => SC.ret (st, [x]))) out sa
+          = OK (r, sa') ->
+        constraints_closed_mod ns cov r.
+    Proof.
+      intros ns cov e out. induction out as [|x out IH];
+        intros r sa sa' Hcs H.
+      - simpl in H. unfold SC.ret in H.
+        assert (r = []) as ? by (inversion H; reflexivity); subst r. constructor.
+      - simpl in H.
+        apply sec_bind_inv in H as (h & p & Hh & H).
+        apply sec_bind_inv in H as (rr & q & Hrr & Hret).
+        unfold SC.ret in Hret.
+        assert (r = h :: rr) as ? by (inversion Hret; reflexivity); subst r.
+        cbv beta in Hh.
+        apply sec_bind_inv in Hh as (t & m & Ht & Hv).
+        apply option_to_sec_inv in Ht as (Ht & ?); subst m.
+        unfold SC.ret in Hv.
+        assert (h = (t, [x])) as ? by (inversion Hv; reflexivity); subst h.
+        constructor; [|exact (IH rr p q Hcs Hrr)].
+        apply find_correct in Ht.
+        unfold constraints_closed_mod in Hcs. rewrite Forall_forall in Hcs.
+        exact (Hcs (t, [x]) Ht).
+    Qed.
+
     (** * The call rule of rootedness
 
         Chaining the six steps.  The base name reaches every final source
