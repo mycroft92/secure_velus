@@ -4434,4 +4434,42 @@ Module SecLusUnnestingBase
       destruct Hz as [Hz|[]]. subst z. right. now exists x.
   Qed.
 
+  (** * [preserves_on] survives elimination on both sides
+
+      The node level publishes [simplify cs (locals ++ minted st0 st1)], not
+      [cs], and the two sides eliminate *different* sets -- the target has more
+      locals, and its run minted more names.  The entailment still transfers,
+      and in three moves: come back through the source's elimination, cross with
+      the equation-level theorem, then go forward through the target's.
+
+      Both directions are already available -- [simplifyRel_complete] backwards
+      and [simplify_is_correct] forwards -- so the only side condition is the
+      one that makes the backward move sound: what the source eliminates is
+      outside the scope the entailment is stated on.  That is exactly what
+      [generate_lnode_sig] arranges, since it eliminates the locals and the
+      minted names and the scope is the interface. *)
+
+  Lemma preserves_on_simplify :
+    forall scope ce cet Ds Ds',
+      wf_constraints ce ->
+      (forall x, In x Ds -> ~ In x scope) ->
+      preserves_on scope ce cet ->
+      preserves_on scope (simplify ce Ds) (simplify cet Ds').
+  Proof.
+    intros scope ce cet Ds Ds' Hwf Hdisj Hpres dlt Hsat.
+    (** back through the source's elimination *)
+    destruct (simplifyRel_complete ce Ds (simplify ce Ds) scope dlt Hwf
+                (simplify_simplifyRel Ds ce (simplify ce Ds)
+                   (@Coq.Init.Logic.eq_refl _ (simplify ce Ds)))
+                Hdisj Hsat) as (dlt1 & Hag1 & Hsat1).
+    (** across, by the equation-level theorem *)
+    destruct (Hpres dlt1 Hsat1) as (dlt2 & Hag2 & Hsat2).
+    (** and forward through the target's *)
+    exists dlt2. split.
+    - intros x Hx. rewrite (Hag1 x Hx). exact (Hag2 x Hx).
+    - exact (simplify_is_correct dlt2 cet (simplify cet Ds') Ds' Hsat2
+               (simplify_simplifyRel Ds' cet (simplify cet Ds')
+                  (@Coq.Init.Logic.eq_refl _ (simplify cet Ds')))).
+  Qed.
+
 End SecLusUnnestingBase.

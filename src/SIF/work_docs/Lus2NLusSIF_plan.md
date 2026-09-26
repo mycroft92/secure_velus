@@ -978,7 +978,40 @@ is an aux name and `env` is injective) and the `cenv`/`vars` agreement
 5. Re-establish the equation and equation-list theorems on the pointwise
    relation, which removes the two ambient premises from `node_carries`.
 6. Concrete `unnest_node`: freshness to the naming run, `simplify`,
-   `signatures_preserved`.  This is also where the three scoping hypotheses
+   `signatures_preserved`.  **Substantially done, 2026-09-26**
+   *[verified, compiles]*:
+
+     * `lnode_sig_inv` -- the projection lemma for `generate_lnode_sig`,
+       reproved in `SecLusUnnestingNodes.v` because Leg A's `l_node_sig_inv`
+       sits later in the build order;
+     * `unnest_node_sig_interface` -- **five of a signature's six fields are
+       equal on the nose**, not merely related, because `unnest_node` copies
+       `n_name`, `n_in` and `n_out` and only extends `n_vars`.  Only
+       `s_constraints` can differ, which is exactly what `preserves_on`
+       speaks about.  The plan had this recorded as verified by inspection;
+       it is now proved;
+     * `preserves_on_simplify` (`SecLusUnnestingBase.v`) -- the entailment
+       survives elimination **on both sides**, although the two sides
+       eliminate different sets: the target has more locals and its run
+       minted more names.  Three moves -- back through the source's
+       elimination by `simplifyRel_complete`, across by the equation-level
+       theorem, forward through the target's by `simplify_is_correct`.  Both
+       directions were already in `SecTypes.v`; the only side condition is
+       that what the source eliminates lies outside the scope, which is what
+       `generate_lnode_sig` arranges;
+     * `unnest_node_signatures_preserved` -- the phase's statement for one
+       node: same interface, and the published constraints entailed on it.
+
+   This runs on the **scalar** contract, whose `node_carries_preserves` was
+   already proved, so it did not wait on `carries_Eapp_streams`.  What the
+   streams contract is for is removing `node_carries`'s two ambient premises,
+   which appear here as the equation-level entailment hypothesis.
+
+   Still open at this level: discharging that hypothesis from
+   `node_carries_preserves` (it needs the node's `wc`/`NoDup`/ambient
+   premises assembled), and the aux-lookup and elimination-disjointness
+   hypotheses, for which `unnest_node_moved_fresh_generated_aux` is the
+   template *[untested]*.  This is also where the three scoping hypotheses
    are discharged, with `stF := st1` (the state `generate_lnode_sig` ends at)
    and `scope` covering `locals ++ minted st0 st1`.  Open question to settle
    there and not before: the node-level `scope` must also contain the

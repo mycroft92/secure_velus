@@ -1080,6 +1080,90 @@ Import UNN.Fresh.Tactics.
       repeat split; reflexivity.
     Qed.
 
+    (** * Signature preservation for one unnested node
+
+        The statement the phase is for: the signature [unnest_node] publishes
+        has the *same* interface as the one [n] publishes, and its constraints
+        are entailed by [n]'s on that interface.  Interface equality is
+        [unnest_node_sig_interface]; the entailment is the equation-level
+        theorem carried through both eliminations by [preserves_on_simplify].
+
+        The side condition is the one that makes the backward step through the
+        source's elimination sound: what it eliminates -- its locals and the
+        names its run minted -- lies outside the interface.  That is what
+        [unnest_node_moved_fresh_generated_aux] and the scope's definition
+        arrange. *)
+    Theorem unnest_node_signatures_preserved :
+      forall (P : global) (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs)
+             (G : secglobal) (aux : list node_aux_names)
+             st0 sg st1 sg' st1',
+        (** the two aux levels are the ones this section speaks about *)
+        (forall clk_id rst_id,
+            get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
+            Env.find clk_id env = Some base_ty
+            /\ Env.find rst_id env = Some rst_ty) ->
+        (** the equation-level entailment, for this node's two runs *)
+        (forall ce cet ct1 ct1',
+            generate_leqns_constraints G env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) st0 = OK (ce, ct1) ->
+            generate_leqns_constraints G env base_ty rst_ty
+              (lnode_clock_env (unnest_node P n Hwl Hpref))
+              (unnest_node P n Hwl Hpref).(n_eqs) st0 = OK (cet, ct1') ->
+            preserves_on scope ce cet) ->
+        (** the source's raw constraints are well formed *)
+        (forall ce ct1,
+            generate_leqns_constraints G env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) st0 = OK (ce, ct1) ->
+            wf_constraints ce) ->
+        (** and what it eliminates lies outside the interface *)
+        (forall locals cns ct1,
+            get_mappings_from_node n.(n_vars) env = Some locals ->
+            generate_leqns_constraints G env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) st0 = OK (cns, ct1) ->
+            forall x, In x (locals ++ minted st0 ct1) -> ~ In x scope) ->
+        generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
+        generate_lnode_sig G (unnest_node P n Hwl Hpref) env aux st0
+          = OK (sg', st1') ->
+        s_name sg' = s_name sg
+        /\ s_in sg' = s_in sg
+        /\ s_out sg' = s_out sg
+        /\ s_clk sg' = s_clk sg
+        /\ s_reset sg' = s_reset sg
+        /\ preserves_on scope sg.(s_constraints) sg'.(s_constraints).
+    Proof.
+      intros P n Hwl Hpref G aux st0 sg st1 sg' st1' Haux Hpres Hwf Hdisj H H'.
+      assert (s_name sg' = s_name sg
+              /\ s_in sg' = s_in sg
+              /\ s_out sg' = s_out sg
+              /\ s_clk sg' = s_clk sg
+              /\ s_reset sg' = s_reset sg) as Hiface
+          by exact (unnest_node_sig_interface P n Hwl Hpref G aux st0 sg st1
+                      sg' st1' H H').
+      destruct Hiface as (Hn & Hi & Ho & Hc & Hr).
+      repeat split; try assumption.
+      apply lnode_sig_inv in H
+        as (c1 & r1 & ct1 & rt1 & i1 & o1 & l1 & cs1
+            & Ha1 & Hc1 & Hr1 & _ & _ & Hl1 & Hcs1 & ?); subst sg.
+      apply lnode_sig_inv in H'
+        as (c2 & r2 & ct2 & rt2 & i2 & o2 & l2 & cs2
+            & Ha2 & Hc2 & Hr2 & _ & _ & Hl2 & Hcs2 & ?); subst sg'.
+      (** the aux lookups pin the two levels to the section's *)
+      destruct (Haux c1 r1 Ha1) as (Hb1 & Hbr1).
+      rewrite Hc1 in Hb1. apply option_Some_inj in Hb1; subst ct1.
+      rewrite Hr1 in Hbr1. apply option_Some_inj in Hbr1; subst rt1.
+      cbn [n_name unnest_node] in Ha2.
+      destruct (Haux c2 r2 Ha2) as (Hb2 & Hbr2).
+      rewrite Hc2 in Hb2. apply option_Some_inj in Hb2; subst ct2.
+      rewrite Hr2 in Hbr2. apply option_Some_inj in Hbr2; subst rt2.
+      cbn [s_constraints].
+      (** and the entailment goes through both eliminations *)
+      eapply preserves_on_simplify;
+        [exact (Hwf cs1 st1 Hcs1)
+        |exact (Hdisj l1 cs1 st1 Hl1 Hcs1)
+        |exact (Hpres cs1 cs2 st1 st1' Hcs1 Hcs2)].
+    Qed.
+
   End NodeEquations.
 
 End SecLusUnnestingNodes.
