@@ -1080,6 +1080,57 @@ Import UNN.Fresh.Tactics.
       repeat split; reflexivity.
     Qed.
 
+    (** * A node's locals are not its interface
+
+        Half of [unnest_node_signatures_preserved]'s disjointness side
+        condition, and the half that is provable here: what [generate_lnode_sig]
+        eliminates includes the locals' security names, and those are outside
+        the interface because [env] is injective and a local is not an input or
+        an output -- which is [n_nodup], a field of the node record.
+
+        The other half, that the minted names are outside it too, is a fact
+        about where the run *starts*: the naming pass allocates below [st0].
+        That belongs at the program level, where [st0] is chosen. *)
+    Lemma locals_not_interface :
+      forall (n : node) locals,
+        NoDupMembers (n.(n_in) ++ n.(n_vars) ++ n.(n_out)) ->
+        get_mappings_from_node n.(n_vars) env = Some locals ->
+        forall x, In x locals ->
+          ~ In x (sec_of env (List.map fst (n.(n_in) ++ n.(n_out)))).
+    Proof.
+      intros n locals Hnd Hloc x Hx Hc.
+      (** the name comes from a local *)
+      apply get_mappings_from_node_eq in Hloc.
+      destruct (get_mappings_In _ env locals x Hloc Hx) as (v & Hv & Hfv).
+      (** and, supposedly, from an input or an output *)
+      unfold sec_of in Hc. apply in_flat_map in Hc as (w & Hw & Hxw).
+      destruct (Env.find w env) as [b|] eqn:Hfw; [|contradiction].
+      destruct Hxw as [Hxw|[]]; subst b.
+      (** injectivity makes them the same variable *)
+      assert (v = w) as ?
+          by (exact (env_inj v w x x Hfv Hfw
+                       (@Coq.Init.Logic.eq_refl ident x))); subst w.
+      (** which [n_nodup] forbids: a local is neither an input nor an output *)
+      assert (InMembers v n.(n_vars)) as Hvm by (apply fst_InMembers; exact Hv).
+      apply in_map_iff in Hw as (q & Hq & Hqin).
+      apply in_app_or in Hqin.
+      assert (InMembers v n.(n_in) \/ InMembers v n.(n_out)) as Hqm.
+      { destruct Hqin as [Hqin|Hqin];
+          [left|right]; apply fst_InMembers; apply in_map_iff;
+          exists q; split; [exact Hq|exact Hqin|exact Hq|exact Hqin]. }
+      destruct Hqm as [Hqm|Hqm].
+      - (** an input: [n_in] comes before [n_vars] *)
+        apply (NoDupMembers_app_InMembers v n.(n_in)
+                 (n.(n_vars) ++ n.(n_out)) Hnd Hqm).
+        apply InMembers_app. now left.
+      - (** an output: [n_vars] comes before [n_out] *)
+        apply (NoDupMembers_app_InMembers v (n.(n_in) ++ n.(n_vars))
+                 n.(n_out));
+          [rewrite <- app_assoc; exact Hnd
+          |apply InMembers_app; now right
+          |exact Hqm].
+    Qed.
+
     (** * Signature preservation for one unnested node
 
         The statement the phase is for: the signature [unnest_node] publishes
