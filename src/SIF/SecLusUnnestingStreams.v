@@ -416,6 +416,44 @@ Section StreamAmbients.
     - apply IH. intros nck0 Hn. apply Hdef. now right.
   Qed.
 
+  Lemma call_arg_ambients_length :
+    forall sub bckty (ncks : list nclock) (ins : list (ident * clock)),
+      List.length ins = List.length ncks ->
+      List.length (call_arg_ambients sub bckty ncks ins)
+      = List.length ncks.
+  Proof.
+    intros sub bckty ncks ins Hl.
+    unfold call_arg_ambients. rewrite map_length.
+    revert ncks Hl. induction ins as [|p ins IH]; intros ncks Hl.
+    - destruct ncks; [reflexivity|discriminate].
+    - destruct ncks as [|nck ncks]; [discriminate|].
+      simpl. f_equal. apply IH. simpl in Hl; congruence.
+  Qed.
+
+  (** The argument ambients are scoped, which the contract also asks: the reset
+      name and the base clock's type are, and what the clock actuals add are
+      security names of caller variables. *)
+  Lemma call_arg_ambients_scoped :
+    forall scope sub bckty (ncks : list nclock) (ins : list (ident * clock)),
+      In rst_ty scope ->
+      st_scoped scope bckty ->
+      (forall x b, Env.find x env = Some b -> In b scope) ->
+      stream_ambients_scoped scope (call_arg_ambients sub bckty ncks ins).
+  Proof.
+    intros scope sub bckty ncks ins Hrst Hbck Hrange.
+    unfold stream_ambients_scoped, call_arg_ambients.
+    apply Forall_forall. intros a Ha.
+    apply in_map_iff in Ha as (p & Hp & _). subst a.
+    unfold CALLS.call_arg_ambient. intros z Hz.
+    apply in_merge_inv in Hz as [Hz|Hz].
+    - apply in_merge_inv in Hz as [Hz|Hz].
+      + destruct Hz as [Hz|[]]. subst z. exact Hrst.
+      + exact (Hbck z Hz).
+    - destruct (CALLS.clock_actuals_inv env sub (snd (fst p)) z Hz)
+        as (x & u & _ & _ & Hu).
+      exact (Hrange u z Hu).
+  Qed.
+
   Definition declared_ambients (xs : list ident) (ambs : list ST) : Prop :=
     Forall2
       (fun x a =>
