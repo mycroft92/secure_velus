@@ -377,6 +377,45 @@ Section StreamAmbients.
     - apply IH. intros ck0 Hck0. apply Hinst. now right.
   Qed.
 
+  (** * The ambients the streams call case hands its arguments
+
+      [carries_list_streams_intro] wants a [clocks_covered] for the argument
+      streams.  The argument at slot [i] runs on the instantiated formal clock,
+      so the ambient that covers it is the call's own joined with that slot's
+      clock actuals -- which is [CALLS.call_arg_ambient], the same set the
+      augmentation uses.  Here that is assembled into the list the contract
+      expects, one entry per argument stream. *)
+
+  Definition call_arg_ambients (sub : ident -> option ident) (bckty : ST)
+      (ncks : list nclock) (ins : list (ident * clock)) : list ST :=
+    List.map (fun p => CALLS.call_arg_ambient env rst_ty sub bckty
+                         (snd (fst p)))
+      (combine ins ncks).
+
+  Lemma clocks_covered_call_args :
+    forall bck sub (ins : list (ident * clock)) (ncks : list nclock) bckty,
+      assign_clk_type env base_ty bck = Some bckty ->
+      Forall2 (WellInstantiated bck sub) ins ncks ->
+      (forall nck, In nck ncks ->
+         exists ckty, assign_clk_type env base_ty (stripname nck) = Some ckty) ->
+      clocks_covered (List.map stripname ncks)
+        (call_arg_ambients sub bckty ncks ins).
+  Proof.
+    intros bck sub ins ncks bckty Hbk Hwi Hdef.
+    unfold call_arg_ambients, clocks_covered.
+    induction Hwi as [|p nck ins0 ncks0 Hp Hr IH]; [constructor|].
+    cbn [combine List.map].
+    constructor.
+    - (** this stream's clock is the formal's, instantiated *)
+      destruct (Hdef nck (or_introl (@Coq.Init.Logic.eq_refl _ nck)))
+        as (ckty & Hck).
+      exists ckty. split; [exact Hck|].
+      destruct Hp as (_ & Hi).
+      cbn [fst snd].
+      eapply CALLS.call_arg_ambient_covers; [exact Hi|exact Hbk|exact Hck].
+    - apply IH. intros nck0 Hn. apply Hdef. now right.
+  Qed.
+
   Definition declared_ambients (xs : list ident) (ambs : list ST) : Prop :=
     Forall2
       (fun x a =>
