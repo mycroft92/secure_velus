@@ -2214,6 +2214,40 @@ Import UNN.Fresh.Tactics.
       now rewrite (lnode_clock_env_vars_ext n m extra x Hin Hout Hvars Hx).
     Qed.
 
+    (** * A node's added variables are not the ones its equations defined
+
+        Phase-independent, and it needs nothing about *how* the variables were
+        added.  [n_defd] puts a variable the source equations define among the
+        node's own declared ones, and the *extended* node's [node_NoDup] -- a
+        consequence of a field of its record, which the pass had to prove in
+        order to build it at all -- keeps the added ones out of those.  So the
+        two clock environments agree everywhere [generate_leqns_constraints]
+        looks, whichever pass did the extending. *)
+    Lemma find_clock_node_ext_defd :
+      forall (n m : node) (extra : list (ident * (type * clock))) x,
+        m.(n_in) = n.(n_in) ->
+        m.(n_out) = n.(n_out) ->
+        m.(n_vars) = n.(n_vars) ++ extra ->
+        In x (vars_defined n.(n_eqs)) ->
+        find_clock (lnode_clock_env m) x = find_clock (lnode_clock_env n) x.
+    Proof.
+      intros n m extra x Hin Hout Hvars Hx.
+      eapply find_clock_vars_ext; [exact Hin|exact Hout|exact Hvars|].
+      assert (InMembers x (n.(n_vars) ++ n.(n_out))) as Hdecl.
+      { apply fst_InMembers. rewrite <- (n_defd n). exact Hx. }
+      pose proof (node_NoDup m) as Hnd.
+      rewrite <- fst_NoDupMembers in Hnd.
+      rewrite Hin, Hout, Hvars in Hnd.
+      intro Hc.
+      apply InMembers_app in Hdecl as [Hdecl|Hdecl].
+      - apply (NoDupMembers_app_InMembers x n.(n_vars) extra);
+          [eapply NoDupMembers_app_l; eapply NoDupMembers_app_r; exact Hnd
+          |exact Hdecl|exact Hc].
+      - apply (NoDupMembers_app_InMembers x (n.(n_vars) ++ extra) n.(n_out));
+          [eapply NoDupMembers_app_r; exact Hnd
+          |apply InMembers_app; now right|exact Hdecl].
+    Qed.
+
     (** And for the unnested node specifically: its extra variables are the
         ones the run created, so the two environments agree on every key the
         run did not create. *)
