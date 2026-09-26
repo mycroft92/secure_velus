@@ -388,12 +388,68 @@ ambient.  That is the `amb_pair` obligation in the form the streams call case
 needs, and it is what lets `generate_constraints_mono_sem` be applied with
 `amb := call_amb` inside a contract whose ambients are per-stream.
 
-**What is left**: `carries_Eapp_streams` itself.  Its ingredients are now all
-present -- `carries_list_streams_intro` for the arguments, the augmentation
-and its three obligations, `call_amb_below_result_ambients` for the results,
-`lifted_defs_streams` and `state_clocks_found` for the variables unnesting
-binds -- but the lemma is a large assembly (its siblings run 300-1500 lines
-each) and is not written *[untested]*.
+**The freshness premises, and the argument ambients** -- **done 2026-09-26**
+*[verified, compiles]*.  `augment_actuals_fresh`: the two freshness premises
+of `subst_constraints_inp_map_augment` come free for the augmented actuals,
+because every member of the augmentation is a member of *some* actual -- its
+own, or the one at the slot of the clock variable it came from -- so freshness
+transfers from the plain actuals, which `call_subst_fresh` already gives.
+
+`call_arg_ambient sub bckty ck := merge (merge [rst_ty] bckty)
+(clock_actuals sub ck)` with `call_arg_ambient_covers`: the ambient the streams
+call case hands each argument, and the proof that it covers
+`merge [rst_ty] (the instantiated clock's type)`.  It is the *same* set the
+augmentation uses, which is not a coincidence -- both are "the call's own
+ambient plus this slot's clock actuals".
+
+**What is left, and both pieces are session-sized.**
+
+*(A) `carries_Eapp_streams`.*  Its ingredients are all present now --
+`carries_list_streams_intro` for the arguments, `call_arg_ambient` and
+`call_arg_ambient_covers` for their ambients, the augmentation with its three
+obligations and both freshness premises,
+`call_amb_below_result_ambients` for the results, `lifted_defs_streams` and
+`state_clocks_found` for the variables unnesting binds.  What remains is the
+assembly, and its siblings run 300-1500 lines each; this one has arguments, a
+reset, lifted results and the signature chain at once *[untested]*.
+
+*(B) Discharging `sig_inputs_ok`, which needs the call rule of the
+constraint-level closure.*  Analysis, 2026-09-26, so the next attempt starts
+from it rather than rediscovering it:
+
+`sig_inputs_clock_closed` **is** `constraint_clock_closed` read at an input:
+for `b = env v` in a source with `In (v, ckv) vars`, `incl ckvty (fst c)`, and
+for an input `ckvty` is `[base_ty]` plus the names of its clock's variables.
+So (B) reduces to `constraints_clock_closed` of the *published* constraints,
+which is `generate_leqns_constraints_clock_closed` plus
+`simplify_clock_closed` -- both proved -- and the one missing per-equation
+case, the call rule.
+
+For that call rule, of the four types `generate_constraints` substitutes,
+**three are self-closed and only the actuals are not** *[verified against the
+generator]*:
+
+  * the clock slot is `bckty`, self-closed by
+    `assign_clk_type_clock_closed`;
+  * the reset slot is `fst rstty = merge [rst_ty] (merge (fst a1) rck)`, and
+    `rck` is the *reset expression's own clock type* -- the generator merges it
+    in deliberately -- so the closure obligation on `fst a1` is met from
+    inside the same set.  `rst_ty` itself is covered by `rst_not_var`;
+  * the output slot's names appear only as targets.
+  * the **actuals** are not: closure of an argument's type needs that
+    argument's clock type, and whether *that* is in the instantiated source is
+    exactly the content.  It is, from two facts about the callee: its own
+    `sig_inputs_clock_closed` (so the argument's clock variables' formals are
+    in the callee source, hence their actuals are substituted in) -- this is
+    the induction over the call graph -- and that every callee source mentions
+    `s_clk`, which puts `bckty` there.
+
+So (B) needs the "every source mentions `s_clk` and `s_reset`" predicate after
+all -- as a definition in an editable file entering on `GL`, since
+`SIFSignature.v` is read-only -- plus a members description for each of the
+four substitution stages (stages 1-3 have one; `subst_constraints_out_map`
+does not) and a `findST` step for the final lookup, which
+`findST_clock_closed` already models.
 
 **A near-blocker, and why it is not one, 2026-09-23.**  The augmentation
 argument needs the actual at a clock position to contribute its own security

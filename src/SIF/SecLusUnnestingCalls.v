@@ -869,6 +869,67 @@ Import UNN.Fresh.Tactics.
     Qed.
 
 
+    (** The two freshness premises of [subst_constraints_inp_map_augment], for
+        the augmented actuals.  They come free: every member of the
+        augmentation is a member of *some* actual -- its own, or the one at the
+        slot of the clock variable it came from -- so freshness transfers from
+        the plain actuals, which is what [call_subst_fresh] already gives. *)
+    Lemma augment_actuals_fresh :
+      forall (sub : ident -> option ident) (ins : list (ident * clock))
+             (argts : list LST) (ncks : list nclock) (xs : list ident),
+        List.length ins = List.length ncks ->
+        List.length ins = List.length argts ->
+        (forall i x ck nck,
+            nth_error ins i = Some (x, ck) ->
+            nth_error ncks i = Some nck -> sub x = snd nck) ->
+        (forall i nck t u g,
+            nth_error ncks i = Some nck -> nth_error argts i = Some t ->
+            snd nck = Some u -> Env.find u env = Some g -> In g (fst t)) ->
+        (forall i x ck x',
+            nth_error ins i = Some (x, ck) -> In x' (clock_vars ck) ->
+            exists ck', In (x', ck') ins) ->
+        Forall (fun v => forall y, In y xs -> ~ In y v) (List.map fst argts) ->
+        Forall (fun v => forall y, In y xs -> ~ In y v)
+          (augment_actuals sub ins argts).
+    Proof.
+      intros sub ins argts ncks xs Hl2 Hl3 Hwi Hnamed Hformal Hfr.
+      rewrite Forall_forall in Hfr |- *.
+      intros v' Hv' y Hy Hz.
+      apply In_nth_error in Hv' as (i & Hvi).
+      (** the slot this augmented actual belongs to *)
+      assert (exists x ck, nth_error ins i = Some (x, ck)) as (x & ck & Hxi).
+      { assert (i < List.length ins)%nat as Hlt.
+        { unfold augment_actuals in Hvi.
+          apply nth_error_lt_inv in Hvi. rewrite map_length in Hvi.
+          rewrite combine_length in Hvi. lia. }
+        destruct (nth_error_lt ins i Hlt) as ((x & ck) & Hxi).
+        now exists x, ck. }
+      assert (exists t, nth_error argts i = Some t) as (t & Hti)
+          by (apply nth_error_lt; rewrite <- Hl3;
+              exact (nth_error_lt_inv ins i (x, ck) Hxi)).
+      destruct (augment_actuals_nth_inv sub ins argts i x ck t v' y
+                  Hxi Hti Hvi Hz) as [Hy'|Hy'].
+      - (** its own actual *)
+        exact (Hfr (fst t)
+                 (nth_error_In _ i (map_nth_error fst i argts Hti)) y Hy Hy').
+      - (** the actual at the slot of the clock variable it came from *)
+        destruct (clock_actuals_inv sub ck y Hy')
+          as (x' & u & Hx' & Hs & Hu).
+        destruct (Hformal i x ck x' Hxi Hx') as (ck2 & Hin2).
+        apply In_nth_error in Hin2 as (j & Hxj).
+        assert (exists nck2, nth_error ncks j = Some nck2) as (nck2 & Hnj)
+            by (apply nth_error_lt; rewrite <- Hl2;
+                exact (nth_error_lt_inv ins j (x', ck2) Hxj)).
+        assert (exists t2, nth_error argts j = Some t2) as (t2 & Hwj)
+            by (apply nth_error_lt; rewrite <- Hl3;
+                exact (nth_error_lt_inv ins j (x', ck2) Hxj)).
+        assert (snd nck2 = Some u) as Hs2
+            by (rewrite <- (Hwi j x' ck2 nck2 Hxj Hnj); exact Hs).
+        exact (Hfr (fst t2)
+                 (nth_error_In _ j (map_nth_error fst j argts Hwj)) y Hy
+                 (Hnamed j nck2 t2 u y Hnj Hwj Hs2 Hu)).
+    Qed.
+
     (** * What the program level must supply about the signatures
 
         Two facts, paired because they are established together when
@@ -981,6 +1042,42 @@ Import UNN.Fresh.Tactics.
       intros x' u z Hx' Hs Hu.
       exact (clock_actuals_intro sub ck x' u z Hx' Hs Hu).
     Qed.
+
+    (** * The ambients the streams call case hands its arguments
+
+        The argument streams run on the instantiated formal clocks, so each one
+        needs an ambient covering [merge [rst_ty] (its clock's type)].  Taking
+        the call's own ambient joined with that slot's clock actuals does it --
+        which is the same set the augmentation uses, and by
+        [call_amb_covers_augmented] it covers exactly what is needed and no
+        more. *)
+    Definition call_arg_ambient (sub : ident -> option ident)
+        (bckty : ST) (ck : clock) : ST :=
+      merge (merge [rst_ty] bckty) (clock_actuals sub ck).
+
+    Lemma call_arg_ambient_covers :
+      forall bck sub bckty ck ckj ckjty,
+        instck bck sub ck = Some ckj ->
+        assign_clk_type env base_ty bck = Some bckty ->
+        assign_clk_type env base_ty ckj = Some ckjty ->
+        incl (merge [rst_ty] ckjty) (call_arg_ambient sub bckty ck).
+    Proof.
+      intros bck sub bckty ck ckj ckjty Hi Hbk Hck.
+      unfold call_arg_ambient.
+      intros z Hz.
+      assert (In z (merge (merge [rst_ty] bckty) (merge [] (clock_actuals sub ck))))
+        as Hz'.
+      { eapply call_amb_covers_augmented;
+          [exact Hi|exact Hbk|exact Hck| |].
+        - intros x' u g Hx' Hs Hu.
+          exact (clock_actuals_intro sub ck x' u g Hx' Hs Hu).
+        - apply in_merge_left. exact Hz. }
+      apply in_merge_inv in Hz' as [Hz'|Hz'];
+        [now apply in_merge_left|].
+      apply in_merge_inv in Hz' as [[]|Hz'].
+      now apply in_merge_right.
+    Qed.
+
 
 
     (** * The invariant the chain carries
