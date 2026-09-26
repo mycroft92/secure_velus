@@ -536,10 +536,40 @@ The machinery is `all_sources_have` plus one keep/intro pair per stage:
 `subst_ident_constraints_all_keeps`,
 `subst_constraints_out_map_all_keeps`, `mmap_findST_all_keeps`.
 
-So of (B) what remains is the **closure** call rule, whose only hard case is
-the actuals -- closed relative to their clock types, which reach the
-instantiated source from the callee's `sig_inputs_clock_closed` (for the clock
-variables' formals) and from rootedness (for `bckty`).  Both are now available.
+So of (B) what remains is the **closure** call rule.  Its cases, worked out
+2026-09-26 by tracing where a name in a final source can come from -- the
+callee's own names are all substituted away, since `signature_scoped` confines
+them to `signature_scope` and every part of that is a substitution slot:
+
+  * from `clk` (`= bckty`): `assign_clk_type_clock_closed` gives
+    `incl ckvty bckty`, and `bckty` reaches the final source by the rootedness
+    argument (`s_clk` is in every callee source) and survives the later stages
+    by `call_subst_fresh`;
+  * from `rst` (`= fst rstty`): self-closed, because the generator merges the
+    reset expression's *own* clock type `rck` into `rstty`, and `rst_ty` is
+    covered by `rst_not_var`.  Same survival;
+  * from an actual argument type `inp_i`: closed relative to that argument's
+    clock type `ck_i`, and `ck_i` is inside `merge bckty (clock_actuals ...)`,
+    whose second part is covered by the callee's invariant plus the named-stream
+    lemma;
+  * **from an actual output name** -- the case I had missed.  The out-map
+    substitutes output formals into sources, so a callee constraint whose source
+    mentions another output formal contributes one of the *caller's defined
+    variables*, and that variable's clock type then has to be accounted for.
+
+**Consequence, and the fix, 2026-09-26** *[verified, compiles]*.  The invariant
+has to be stated over the whole interface, not just the inputs.  That is
+sound because `simplify` eliminates `locals ++ minted` and therefore **keeps**
+the outputs, and because `wc_node` gives `wc_env (idck (n_in ++ n_out))`, so an
+output's declared clock mentions only inputs and outputs -- exactly the names
+the `keep` set retains.  No new definition was needed:
+`sig_inputs_clock_closed` instantiated at `idck (n_in ++ n_out)` *is* the
+interface version, and `sig_inputs_clock_closed_incl` restricts it back to the
+inputs for the augmentation argument, which needs only those.  `sig_inputs_ok`
+now carries the stronger form.
+
+Had this been noticed only at the node level it would have invalidated the
+`keep` set as well; the two fit together because outputs are kept.
 
 **A near-blocker, and why it is not one, 2026-09-23.**  The augmentation
 argument needs the actual at a clock position to contribute its own security

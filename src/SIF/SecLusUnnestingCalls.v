@@ -527,6 +527,22 @@ Import UNN.Fresh.Tactics.
         In (x, ck) ins -> nm x = Some y -> In y (fst c) ->
         forall x' y', In x' (clock_vars ck) -> nm x' = Some y' -> In y' (fst c).
 
+    (** The invariant is monotone in the declared list: stating it over the
+        whole interface is *stronger* than over the inputs alone, and the
+        augmentation argument only needs the inputs.  That matters because the
+        closure call rule needs the outputs too -- a callee constraint's source
+        may mention another output formal, whose actual is one of the caller's
+        defined variables, and then *its* clock type has to be accounted for. *)
+    Lemma sig_inputs_clock_closed_incl :
+      forall sg ins1 ins2 nm,
+        incl ins1 ins2 ->
+        sig_inputs_clock_closed sg ins2 nm ->
+        sig_inputs_clock_closed sg ins1 nm.
+    Proof.
+      intros sg ins1 ins2 nm Hincl H c Hc x ck y Hin Hnm Hy x' y' Hx' Hnm'.
+      exact (H c Hc x ck y (Hincl (x, ck) Hin) Hnm Hy x' y' Hx' Hnm').
+    Qed.
+
     (** The four lists of a call, matched by position, and what each one
         contributes.  [augs] is the augmented actuals; the hypothesis on it
         says only that what it adds are clock names of *its own* formal's
@@ -1807,7 +1823,9 @@ Import UNN.Fresh.Tactics.
           /\ (forall i x ck y,
                  nth_error (idck n.(n_in)) i = Some (x, ck) ->
                  nth_error (s_in sg) i = Some y -> nm x = Some y)
-          /\ sig_inputs_clock_closed sg (idck n.(n_in)) nm.
+          (** over the whole interface, not just the inputs: see
+              [sig_inputs_clock_closed_incl] *)
+          /\ sig_inputs_clock_closed sg (idck (n.(n_in) ++ n.(n_out))) nm.
 
     (** And the whole of it, on the concrete augmentation: the premise
         [subst_constraints_inp_map_augment] asks for, with nothing left
@@ -1837,9 +1855,15 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P sg n bck sub f es argts c Hok Hfn Hfs Hwce Hwi Hcov Hc.
       destruct (Hok f n sg Hfn Hfs) as (nm & Hl1 & Hnm & Hinv).
+      assert (sig_inputs_clock_closed sg (idck n.(n_in)) nm) as Hinv'.
+      { eapply sig_inputs_clock_closed_incl; [|exact Hinv].
+        unfold idck. intros p Hp. apply in_map_iff in Hp as (q & ? & Hq).
+        apply in_map_iff. exists q. split; [assumption|].
+        apply in_or_app. now left. }
       eapply (call_augment_dep_at_call sg n bck sub nm es argts
                 (augment_actuals sub (idck n.(n_in)) argts) c);
-        [exact Hl1|exact Hnm|exact Hinv|exact Hwce|exact Hwi|exact Hcov| |exact Hc].
+        [exact Hl1|exact Hnm|exact Hinv'|exact Hwce|exact Hwi|exact Hcov|
+         |exact Hc].
       (** the shape of the augmentation: it adds only clock names *)
       intros i x ck w w' z Hxi Hwi0 Hw' Hz.
       apply nth_error_map_inv in Hwi0 as (t & Hti & ?); subst w.
