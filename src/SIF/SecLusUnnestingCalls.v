@@ -1616,7 +1616,138 @@ Import UNN.Fresh.Tactics.
         level reaches it the same way through the reset slot.  Everything else
         is preservation, and the side conditions are exactly
         [call_subst_fresh] and the distinctness of the formals. *)
-    Lemma generate_constraints_rooted :
+    (** * What a slot's contribution reaches
+
+        The uniform half of discharging the cover.  Generalising the rootedness
+        proof: *every* member of the clock actual reaches every final source,
+        for the same reason the base name does -- the callee's clock formal is
+        in every callee source -- and likewise for the reset.  So the [bckty]
+        and [fst rstty] parts of the cover are inside every final source, with
+        no reference to which formals a particular constraint mentions. *)
+
+    Lemma generate_constraints_clk_reaches :
+      forall sg inp clk rst out cns sa sa' z,
+        NoDup (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)) ->
+        call_subst_fresh sg inp clk rst out ->
+        all_sources_have sg.(s_clk) sg.(s_constraints) ->
+        In z clk ->
+        generate_constraints sg inp clk rst out sa = OK (cns, sa') ->
+        all_sources_have z cns.
+    Proof.
+      intros sg inp clk rst out cns sa sa' z Hnd Hfresh Hck0 Hz H.
+      destruct Hfresh as (Hfi & Hfc & Hfr & Hfo).
+      unfold types_fresh, type_fresh, outputs_fresh in Hfi, Hfc, Hfr, Hfo.
+      assert (NoDup sg.(s_in)) as Hndin by (eapply NoDup_app_l; exact Hnd).
+      assert (~ In sg.(s_clk) sg.(s_in)) as Hclkin.
+      { intro Hc. eapply NoDup_app_In; [exact Hnd|exact Hc|now left]. }
+      assert (In sg.(s_clk) (signature_scope sg)) as Hinclk
+          by (unfold signature_scope; apply in_or_app; right;
+              apply in_or_app; right; now left).
+      assert (In sg.(s_reset) (signature_scope sg)) as Hinrst
+          by (unfold signature_scope; apply in_or_app; right;
+              apply in_or_app; right; right; now left).
+      assert (forall y, In y sg.(s_out) -> In y (signature_scope sg))
+        as Hinout
+          by (intros y Hy; unfold signature_scope; apply in_or_app; right;
+              apply in_or_app; now left).
+      assert (forall y, In y sg.(s_in) -> In y (signature_scope sg)) as Hinin
+          by (intros y Hy; unfold signature_scope; apply in_or_app; now left).
+      assert (~ In sg.(s_clk) clk) as Hnckclk
+          by (rewrite Forall_forall in Hfc; intro Hc;
+              exact (Hfc sg.(s_clk) Hc Hinclk)).
+      assert (~ In sg.(s_reset) rst) as Hnrsrst
+          by (rewrite Forall_forall in Hfr; intro Hc;
+              exact (Hfr sg.(s_reset) Hc Hinrst)).
+      assert (Forall (fun v => forall y, In y sg.(s_in) -> ~ In y v) inp)
+        as Hfiv.
+      { rewrite Forall_forall in Hfi |- *. intros v Hv y Hy Hc.
+        specialize (Hfi v Hv). unfold type_fresh in Hfi.
+        rewrite Forall_forall in Hfi. exact (Hfi y Hc (Hinin y Hy)). }
+      assert (~ In z (signature_scope sg)) as Hzfr
+          by (rewrite Forall_forall in Hfc; exact (Hfc z Hz)).
+      assert (z <> sg.(s_reset)) as Hzne
+          by (intro Hc; apply Hzfr; rewrite Hc; exact Hinrst).
+      assert (~ In z sg.(s_out)) as Hzout
+          by (intro Hc; exact (Hzfr (Hinout z Hc))).
+      unfold generate_constraints in H.
+      apply sec_bind_inv in H as (a1 & t1 & Ha1 & H).
+      apply sec_bind_inv in H as (b1 & u1 & Hb1 & H).
+      apply sec_bind_inv in H as (c1 & v1 & Hc1 & H).
+      apply sec_bind_inv in H as (e1 & w1 & He1 & Hr1).
+      eapply mmap_findST_all_keeps; [|exact Hr1].
+      eapply subst_constraints_out_map_all_keeps; [exact Hzout| |exact He1].
+      eapply subst_ident_in_constraints_all_keeps;
+        [exact Hnrsrst|exact Hzne| |exact Hc1].
+      eapply subst_ident_in_constraints_all_intro;
+        [exact Hnckclk|exact Hz| |exact Hb1].
+      eapply subst_constraints_inp_map_all_keeps;
+        [exact Hndin|exact Hfiv|exact Hclkin|exact Hck0|exact Ha1].
+    Qed.
+
+    Lemma generate_constraints_rst_reaches :
+      forall sg inp clk rst out cns sa sa' z,
+        NoDup (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)) ->
+        call_subst_fresh sg inp clk rst out ->
+        all_sources_have sg.(s_reset) sg.(s_constraints) ->
+        In z rst ->
+        generate_constraints sg inp clk rst out sa = OK (cns, sa') ->
+        all_sources_have z cns.
+    Proof.
+      intros sg inp clk rst out cns sa sa' z Hnd Hfresh Hrst0 Hz H.
+      destruct Hfresh as (Hfi & Hfc & Hfr & Hfo).
+      unfold types_fresh, type_fresh, outputs_fresh in Hfi, Hfc, Hfr, Hfo.
+      assert (NoDup sg.(s_in)) as Hndin by (eapply NoDup_app_l; exact Hnd).
+      assert (NoDup (sg.(s_clk) :: sg.(s_reset) :: sg.(s_out))) as Hnd2
+          by (eapply NoDup_app_r; exact Hnd).
+      inversion Hnd2 as [|z1 zs1 Hnclk Hnd3]; subst.
+      assert (~ In sg.(s_reset) sg.(s_in)) as Hrstin.
+      { intro Hc. eapply NoDup_app_In; [exact Hnd|exact Hc|now right; left]. }
+      assert (In sg.(s_clk) (signature_scope sg)) as Hinclk
+          by (unfold signature_scope; apply in_or_app; right;
+              apply in_or_app; right; now left).
+      assert (In sg.(s_reset) (signature_scope sg)) as Hinrst
+          by (unfold signature_scope; apply in_or_app; right;
+              apply in_or_app; right; right; now left).
+      assert (forall y, In y sg.(s_out) -> In y (signature_scope sg))
+        as Hinout
+          by (intros y Hy; unfold signature_scope; apply in_or_app; right;
+              apply in_or_app; now left).
+      assert (forall y, In y sg.(s_in) -> In y (signature_scope sg)) as Hinin
+          by (intros y Hy; unfold signature_scope; apply in_or_app; now left).
+      assert (~ In sg.(s_clk) clk) as Hnckclk
+          by (rewrite Forall_forall in Hfc; intro Hc;
+              exact (Hfc sg.(s_clk) Hc Hinclk)).
+      assert (~ In sg.(s_reset) rst) as Hnrsrst
+          by (rewrite Forall_forall in Hfr; intro Hc;
+              exact (Hfr sg.(s_reset) Hc Hinrst)).
+      assert (Forall (fun v => forall y, In y sg.(s_in) -> ~ In y v) inp)
+        as Hfiv.
+      { rewrite Forall_forall in Hfi |- *. intros v Hv y Hy Hc.
+        specialize (Hfi v Hv). unfold type_fresh in Hfi.
+        rewrite Forall_forall in Hfi. exact (Hfi y Hc (Hinin y Hy)). }
+      assert (~ In z (signature_scope sg)) as Hzfr
+          by (rewrite Forall_forall in Hfr; exact (Hfr z Hz)).
+      assert (~ In z sg.(s_out)) as Hzout
+          by (intro Hc; exact (Hzfr (Hinout z Hc))).
+      unfold generate_constraints in H.
+      apply sec_bind_inv in H as (a1 & t1 & Ha1 & H).
+      apply sec_bind_inv in H as (b1 & u1 & Hb1 & H).
+      apply sec_bind_inv in H as (c1 & v1 & Hc1 & H).
+      apply sec_bind_inv in H as (e1 & w1 & He1 & Hr1).
+      eapply mmap_findST_all_keeps; [|exact Hr1].
+      eapply subst_constraints_out_map_all_keeps; [exact Hzout| |exact He1].
+      eapply subst_ident_in_constraints_all_intro;
+        [exact Hnrsrst|exact Hz| |exact Hc1].
+      eapply subst_ident_in_constraints_all_keeps;
+        [exact Hnckclk| | |exact Hb1].
+      - intro Hc. apply Hnclk. rewrite <- Hc. now left.
+      - eapply subst_constraints_inp_map_all_keeps;
+          [exact Hndin|exact Hfiv|exact Hrstin|exact Hrst0|exact Ha1].
+    Qed.
+
+    (** And rootedness is the special case at the base name and the reset
+        level, which is how it was first proved. *)
+    Corollary generate_constraints_rooted :
       forall sg inp clk rst out cns sa sa',
         NoDup (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)) ->
         call_subst_fresh sg inp clk rst out ->
@@ -1628,86 +1759,12 @@ Import UNN.Fresh.Tactics.
         constraints_rooted base_ty rst_ty cns.
     Proof.
       intros sg inp clk rst out cns sa sa' Hnd Hfresh Hck0 Hrst0 Hb Hr H.
-      destruct Hfresh as (Hfi & Hfc & Hfr & Hfo).
-      unfold types_fresh, type_fresh, outputs_fresh in Hfi, Hfc, Hfr, Hfo.
-      (** what distinctness and freshness give, named *)
-      assert (NoDup sg.(s_in)) as Hndin by (eapply NoDup_app_l; exact Hnd).
-      assert (NoDup (sg.(s_clk) :: sg.(s_reset) :: sg.(s_out))) as Hnd2
-          by (eapply NoDup_app_r; exact Hnd).
-      inversion Hnd2 as [|z1 zs1 Hnclk Hnd3]; subst.
-      inversion Hnd3 as [|z2 zs2 Hnrst Hnd4]; subst.
-      assert (~ In sg.(s_clk) sg.(s_in)) as Hclkin.
-      { intro Hc. eapply NoDup_app_In; [exact Hnd|exact Hc|now left]. }
-      assert (~ In sg.(s_reset) sg.(s_in)) as Hrstin.
-      { intro Hc. eapply NoDup_app_In; [exact Hnd|exact Hc|now right; left]. }
-      (** membership in the callee's scope, written once *)
-      assert (In sg.(s_clk) (signature_scope sg)) as Hinclk
-          by (unfold signature_scope; apply in_or_app; right;
-              apply in_or_app; right; now left).
-      assert (In sg.(s_reset) (signature_scope sg)) as Hinrst
-          by (unfold signature_scope; apply in_or_app; right;
-              apply in_or_app; right; right; now left).
-      assert (forall z, In z sg.(s_out) -> In z (signature_scope sg))
-        as Hinout
-          by (intros z Hz; unfold signature_scope; apply in_or_app; right;
-              apply in_or_app; now left).
-      assert (forall z, In z sg.(s_in) -> In z (signature_scope sg)) as Hinin
-          by (intros z Hz; unfold signature_scope; apply in_or_app; now left).
-      assert (~ In sg.(s_clk) clk) as Hnckclk
-          by (rewrite Forall_forall in Hfc; intro Hc;
-              exact (Hfc sg.(s_clk) Hc Hinclk)).
-      assert (~ In sg.(s_reset) rst) as Hnrsrst
-          by (rewrite Forall_forall in Hfr; intro Hc;
-              exact (Hfr sg.(s_reset) Hc Hinrst)).
-      assert (forall v, In v inp -> forall z, In z sg.(s_in) -> ~ In z v)
-        as Hinpfresh.
-      { rewrite Forall_forall in Hfi. intros v Hv z Hz Hc.
-        specialize (Hfi v Hv). unfold type_fresh in Hfi.
-        rewrite Forall_forall in Hfi.
-        exact (Hfi z Hc (Hinin z Hz)). }
-      assert (Forall (fun v => forall z, In z sg.(s_in) -> ~ In z v) inp)
-        as Hfiv by (apply Forall_forall; exact Hinpfresh).
-      (** the base name and the reset level are outside the callee's scope *)
-      assert (~ In base_ty (signature_scope sg)) as Hbfr
-          by (rewrite Forall_forall in Hfc; exact (Hfc base_ty Hb)).
-      assert (~ In rst_ty (signature_scope sg)) as Hrfr
-          by (rewrite Forall_forall in Hfr; exact (Hfr rst_ty Hr)).
-      assert (base_ty <> sg.(s_reset)) as Hbne
-          by (intro Hc; apply Hbfr; rewrite Hc; exact Hinrst).
-      assert (~ In base_ty sg.(s_out)) as Hbout
-          by (intro Hc; exact (Hbfr (Hinout base_ty Hc))).
-      assert (~ In rst_ty sg.(s_out)) as Hrout
-          by (intro Hc; exact (Hrfr (Hinout rst_ty Hc))).
-      (** the four stages *)
-      unfold generate_constraints in H.
-      apply sec_bind_inv in H as (a1 & t1 & Ha1 & H).
-      apply sec_bind_inv in H as (b1 & u1 & Hb1 & H).
-      apply sec_bind_inv in H as (c1 & v1 & Hc1 & H).
-      apply sec_bind_inv in H as (e1 & w1 & He1 & Hr1).
-      (** the base name, introduced at the clock slot *)
-      assert (all_sources_have base_ty e1) as Hbe.
-      { eapply subst_constraints_out_map_all_keeps; [exact Hbout| |exact He1].
-        eapply subst_ident_in_constraints_all_keeps;
-          [exact Hnrsrst|exact Hbne| |exact Hc1].
-        eapply subst_ident_in_constraints_all_intro;
-          [exact Hnckclk|exact Hb| |exact Hb1].
-        eapply subst_constraints_inp_map_all_keeps;
-          [exact Hndin|exact Hfiv|exact Hclkin|exact Hck0|exact Ha1]. }
-      (** the reset level, introduced at the reset slot *)
-      assert (all_sources_have rst_ty e1) as Hre.
-      { eapply subst_constraints_out_map_all_keeps; [exact Hrout| |exact He1].
-        eapply subst_ident_in_constraints_all_intro;
-          [exact Hnrsrst|exact Hr| |exact Hc1].
-        eapply subst_ident_in_constraints_all_keeps;
-          [exact Hnckclk| | |exact Hb1].
-        - intro Hc. apply Hnclk. rewrite <- Hc. now left.
-        - eapply subst_constraints_inp_map_all_keeps;
-            [exact Hndin|exact Hfiv|exact Hrstin|exact Hrst0|exact Ha1]. }
-      (** and the final lookup keeps both *)
       assert (all_sources_have base_ty cns) as Hbc
-          by exact (mmap_findST_all_keeps e1 out cns w1 sa' base_ty Hbe Hr1).
+          by exact (generate_constraints_clk_reaches sg inp clk rst out cns
+                      sa sa' base_ty Hnd Hfresh Hck0 Hb H).
       assert (all_sources_have rst_ty cns) as Hrc
-          by exact (mmap_findST_all_keeps e1 out cns w1 sa' rst_ty Hre Hr1).
+          by exact (generate_constraints_rst_reaches sg inp clk rst out cns
+                      sa sa' rst_ty Hnd Hfresh Hrst0 Hr H).
       unfold constraints_rooted, all_sources_have in *.
       rewrite Forall_forall in Hbc, Hrc |- *.
       intros c Hc. split; [exact (Hbc c Hc)|exact (Hrc c Hc)].

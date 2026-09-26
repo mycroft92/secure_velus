@@ -596,8 +596,41 @@ because an output's clock type is inside `cov` too, and the callee's own names
 vacuously by `sig_scope_fresh_for_env`.  Closure modulo `cov` *is* preserved by
 substitution -- `subst_ident_in_constraints_closed_mod` and
 `subst_constraints_inp_map_closed_mod` -- and at the end `cov` is shown to be
-inside the source anyway, by the rootedness argument, which upgrades it to
-closure proper.
+inside the source anyway, which upgrades it to closure proper.
+
+**Discharging `cov` splits in two, and only one half is uniform**
+*[analysed 2026-09-26]*.
+
+*The uniform half -- done* *[verified, compiles]*.  Every member of the clock
+actual reaches **every** final source, for the same reason the base name does,
+and likewise for the reset.  `generate_constraints_clk_reaches` and
+`generate_constraints_rst_reaches` are the rootedness proof generalised from
+`base_ty`/`rst_ty` to any member of the slot, and
+`generate_constraints_rooted` is now the corollary at those two names.  So the
+`bckty` and `fst rstty` parts of the cover need no reference to which formals a
+constraint mentions.
+
+*The per-constraint half -- the remaining design decision.*  The **actuals**
+cannot be handled uniformly: an actual enters only those sources whose formal
+appears in the corresponding callee source.  So `cov` has to be **per callee
+constraint**:
+
+    cov_c := bckty ⊔ fst rstty
+             ⊔ the actuals and clock actuals of the formals occurring in fst c
+
+and then `cov_c ⊆ fst c_final` holds for every `c`, because each part's formal
+is in `fst c` by construction and the callee invariant supplies the clock
+formals.  The consequence is that the four per-slot lemmas want a `Forall2`
+over covers rather than one fixed `cov` -- the stages preserve element order, so
+the covers ride along unchanged.  The one wrinkle is the final `mmap`, which
+re-pairs by target and so permutes the correspondence; `signature_good`'s
+`Permutation (map snd s_constraints) (map (fun t => [t]) s_out)` is what relates
+them.
+
+Recorded rather than started, so the reformulation is done once: the choice is
+between indexing the per-slot lemmas by a cover list, or carrying the cover
+inside the relation as a function of the constraint.  The first is closer to
+what is already written.
 
 **A near-blocker, and why it is not one, 2026-09-23.**  The augmentation
 argument needs the actual at a clock position to contribute its own security
