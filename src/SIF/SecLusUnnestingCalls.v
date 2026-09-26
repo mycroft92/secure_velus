@@ -1143,6 +1143,167 @@ Import UNN.Fresh.Tactics.
       exact (Hinp a1 a2 t1 t2 Ha1 Ha2).
     Qed.
 
+    (** * A name present in every source, through the whole pipeline
+
+        Rootedness of an *instantiated* block is a statement of this shape: the
+        base name is in every final source because the callee's clock formal is
+        in every callee source and the base name is in the type substituted for
+        it; likewise the reset.  So two moves are needed per stage -- a name
+        already there survives, and a name in the substituted type is
+        introduced -- and then the remaining stages only have to preserve. *)
+
+    Definition all_sources_have (y : ident) (cs : list SymTypes.constraint)
+      : Prop := Forall (fun c => In y (fst c)) cs.
+
+    Lemma subst_ident_in_constraints_all_keeps :
+      forall cs x v d sa sa' y,
+        ~ In x v ->
+        y <> x ->
+        all_sources_have y cs ->
+        SIG.subst_ident_in_constraints cs x v sa = OK (d, sa') ->
+        all_sources_have y d.
+    Proof.
+      intros cs x v d sa sa' y Hxv Hyx Hall H.
+      pose proof (subst_ident_in_constraints_members cs x v d sa sa' Hxv H)
+        as Hm. clear H.
+      unfold all_sources_have in Hall |- *.
+      revert Hall. induction Hm as [|c c' l l' (_ & Hs) Hr IH]; intro Hall;
+        [constructor|].
+      inversion Hall as [|c0 l0 Hc Hl]; subst.
+      constructor; [|exact (IH Hl)].
+      apply Hs. left. split; [exact Hc|exact Hyx].
+    Qed.
+
+    Lemma subst_ident_in_constraints_all_intro :
+      forall cs x v d sa sa' y,
+        ~ In x v ->
+        In y v ->
+        all_sources_have x cs ->
+        SIG.subst_ident_in_constraints cs x v sa = OK (d, sa') ->
+        all_sources_have y d.
+    Proof.
+      intros cs x v d sa sa' y Hxv Hyv Hall H.
+      pose proof (subst_ident_in_constraints_members cs x v d sa sa' Hxv H)
+        as Hm. clear H.
+      unfold all_sources_have in Hall |- *.
+      revert Hall. induction Hm as [|c c' l l' (_ & Hs) Hr IH]; intro Hall;
+        [constructor|].
+      inversion Hall as [|c0 l0 Hc Hl]; subst.
+      constructor; [|exact (IH Hl)].
+      apply Hs. right. split; [exact Hc|exact Hyv].
+    Qed.
+
+    Lemma subst_constraints_inp_map_all_keeps :
+      forall xs vs cs d sa sa' y,
+        NoDup xs ->
+        Forall (fun v => forall z, In z xs -> ~ In z v) vs ->
+        ~ In y xs ->
+        all_sources_have y cs ->
+        SIG.subst_constraints_inp_map cs xs vs sa = OK (d, sa') ->
+        all_sources_have y d.
+    Proof.
+      intros xs vs cs d sa sa' y Hnd Hfr Hy Hall H.
+      pose proof (subst_constraints_inp_map_members xs vs cs d sa sa'
+                    Hnd Hfr H) as Hm. clear H.
+      unfold all_sources_have in Hall |- *.
+      revert Hall. induction Hm as [|c c' l l' (_ & Hs) Hr IH]; intro Hall;
+        [constructor|].
+      inversion Hall as [|c0 l0 Hc Hl]; subst.
+      constructor; [|exact (IH Hl)].
+      apply Hs. left. split; [exact Hc|exact Hy].
+    Qed.
+
+    (** The output stage substitutes a formal output by an actual name; a name
+        distinct from the formal survives it. *)
+    Lemma subst_ident_constraints_all_keeps :
+      forall cs x v d sa sa' y,
+        y <> x ->
+        all_sources_have y cs ->
+        SIG.subst_ident_constraints cs x v sa = OK (d, sa') ->
+        all_sources_have y d.
+    Proof.
+      intros cs x v d sa sa' y Hyx Hall.
+      unfold all_sources_have in Hall |- *. revert d sa sa'.
+      induction Hall as [|c l Hc Hl IH]; intros d sa sa' H.
+      - unfold SIG.subst_ident_constraints in H. simpl in H.
+        unfold SC.ret in H.
+        assert (d = []) as ? by (inversion H; reflexivity); subst d.
+        constructor.
+      - unfold SIG.subst_ident_constraints in H. simpl in H.
+        apply sec_bind_inv in H as (h & p & Hh & H).
+        apply sec_bind_inv in H as (r & q & Hr & Hret).
+        unfold SC.ret in Hret.
+        assert (d = h :: r) as ? by (inversion Hret; reflexivity); subst d.
+        constructor; [|exact (IH r p q Hr)].
+        unfold SIG.subst_ident_constraint in Hh.
+        destruct (ident_eqb x v) eqn:Exv; [discriminate Hh|].
+        destruct c as (ty & tg).
+        cbn [fst] in Hc.
+        assert (~ In x [v]) as Hxv.
+        { intros [Hc0|[]]. subst v.
+          rewrite (proj2 (ident_eqb_eq x x) (@Coq.Init.Logic.eq_refl _ x))
+            in Exv. discriminate. }
+        destruct tg as [|x0 [|]]; try discriminate Hh;
+          destruct (ident_eqb x x0) eqn:Ex; unfold SC.ret in Hh;
+            inversion Hh; subst; cbn [fst];
+            (destruct (in_dec ident_eq_dec x ty) as [Hin|Hnin];
+             [rewrite (subst_ident_in_type_In ty x [v] y Hin Hxv);
+              left; split; [exact Hc|exact Hyx]
+             |rewrite (subst_ident_in_type_notIn ty x [v] Hnin); exact Hc]).
+    Qed.
+
+    Lemma subst_constraints_out_map_all_keeps :
+      forall xs vs cs d sa sa' y,
+        ~ In y xs ->
+        all_sources_have y cs ->
+        SIG.subst_constraints_out_map cs xs vs sa = OK (d, sa') ->
+        all_sources_have y d.
+    Proof.
+      intros xs. induction xs as [|x xs IH];
+        intros vs cs d sa sa' y Hy Hall H.
+      - destruct vs; [|simpl in H; discriminate].
+        simpl in H. unfold SC.ret in H.
+        assert (d = cs) as ? by (inversion H; reflexivity); subst d.
+        exact Hall.
+      - destruct vs as [|v vs]; [simpl in H; discriminate|].
+        simpl in H.
+        destruct (SymTypes.findST cs v) as [t|] eqn:Ef;
+          [exfalso; unfold SC.error in H; discriminate H|].
+        apply sec_bind_inv in H as (e & p & He & H).
+        eapply IH; [intro Hc; apply Hy; now right| |exact H].
+        exact (subst_ident_constraints_all_keeps cs x v e sa p y
+                 (fun Hc => Hy (or_introl (@Coq.Init.Logic.eq_sym _ _ _ Hc)))
+                 Hall He).
+    Qed.
+
+    Lemma mmap_findST_all_keeps :
+      forall (e : list SymTypes.constraint) out r sa sa' y,
+        all_sources_have y e ->
+        SC.mmap (fun x => SC.bind (option_to_sec (SymTypes.findST e x))
+                            (fun st => SC.ret (st, [x]))) out sa
+          = OK (r, sa') ->
+        all_sources_have y r.
+    Proof.
+      intros e out. induction out as [|x out IH]; intros r sa sa' y Hall H.
+      - simpl in H. unfold SC.ret in H.
+        assert (r = []) as ? by (inversion H; reflexivity); subst r.
+        constructor.
+      - simpl in H.
+        apply sec_bind_inv in H as (h & p & Hh & H).
+        apply sec_bind_inv in H as (rr & q & Hrr & Hret).
+        unfold SC.ret in Hret.
+        assert (r = h :: rr) as ? by (inversion Hret; reflexivity); subst r.
+        cbv beta in Hh.
+        apply sec_bind_inv in Hh as (t & m & Ht & Hv).
+        apply option_to_sec_inv in Ht as (Ht & ?); subst m.
+        unfold SC.ret in Hv.
+        assert (h = (t, [x])) as ? by (inversion Hv; reflexivity); subst h.
+        constructor; [|exact (IH rr p q y Hall Hrr)].
+        cbn [fst]. apply find_correct in Ht.
+        unfold all_sources_have in Hall. rewrite Forall_forall in Hall.
+        exact (Hall (t, [x]) Ht).
+    Qed.
+
     (** * The augmented instantiation can be built, not assumed
 
         Putting the four stages together: a successful [generate_constraints]
