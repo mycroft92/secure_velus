@@ -421,7 +421,33 @@ them.  Hence `findST_targets_some`/`_none`, then
 lookup.  `augment_actuals_fresh` supplies the freshness premises, so
 `subst_constraints_inp_map_augment` now has **every** premise met.
 
-*(A1) The next atom: propagating set-equality of sources through stages 2-4.*
+*(A1) Propagating set-equality of sources through stages 2-4* -- **done
+2026-09-26** *[verified, compiles]*.  `generate_constraints_same_inp`: given
+that the input map's two results agree as sets, the final constraint lists do,
+which is what `listSatisfiable_same_sources` needs to carry satisfaction from
+the plain instantiation to the augmented one.
+
+It rests on one fact -- `subst_ident_in_type` reads its argument only through
+membership -- so `subst_ident_in_type_notIn` (new, covering what the existing
+`subst_ident_in_type_In` does not) plus `subst_ident_in_type_same` give it at
+the type level.  `cs_same_src` is the relation each stage preserves (targets
+equal, sources equal as sets), `cs_same_src_weaken` drops it to what the
+satisfaction lemma consumes, and the stages are
+`subst_ident_in_constraints_same` (clock and reset),
+`subst_constraints_out_map_same` via `subst_ident_constraints_same` (outputs),
+and `mmap_findST_same` via `findST_same` (the final lookup).
+
+**So the satisfaction transfer is now complete end to end**: build the
+augmented run (`generate_constraints_total_inp`), show its sources agree with
+the plain one's (`subst_constraints_inp_map_augment` with `Hdep` from
+`call_augment_dep_concrete`, propagated by
+`generate_constraints_same_inp`), carry satisfaction across
+(`listSatisfiable_same_sources`), then transport to the target with
+`generate_constraints_mono_sem` at `amb := call_amb`, whose per-slot premises
+are `call_amb_covers_augmented_concrete` for the arguments and
+`call_amb_below_result_ambients` for the results.
+
+*(A1-old) The former next atom, for the record.*
 `subst_constraints_inp_map_augment` concludes exactly the relation
 `listSatisfiable_same_sources` consumes -- pointwise set-equality of both
 components -- but only for the *input-map* stage.  The satisfaction transfer

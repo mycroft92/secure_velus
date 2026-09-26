@@ -958,6 +958,191 @@ Import UNN.Fresh.Tactics.
         exact (subst_ident_in_type_same ty1 ty2 x v Hv Hs).
     Qed.
 
+    Lemma cs_same_src_targets :
+      forall cs cs', cs_same_src cs cs' -> List.map snd cs = List.map snd cs'.
+    Proof.
+      intros cs cs' H. induction H as [|c c' l l' (Ht & _) Hr IH];
+        [reflexivity|].
+      destruct c as (sa1 & tg1). destruct c' as (sa2 & tg2).
+      cbn [snd] in Ht. subst tg2. simpl. congruence.
+    Qed.
+
+    Lemma subst_ident_constraints_same :
+      forall cs1 cs2 x v d1 d2 sa sa' sb sb',
+        cs_same_src cs1 cs2 ->
+        SIG.subst_ident_constraints cs1 x v sa = OK (d1, sa') ->
+        SIG.subst_ident_constraints cs2 x v sb = OK (d2, sb') ->
+        cs_same_src d1 d2.
+    Proof.
+      intros cs1 cs2 x v d1 d2 sa sa' sb sb' Hsame.
+      revert d1 d2 sa sa' sb sb'.
+      induction Hsame as [|c1 c2 l1 l2 (Ht & Hs) Hr IH];
+        intros d1 d2 sa sa' sb sb' H1 H2.
+      - unfold SIG.subst_ident_constraints in H1, H2. simpl in H1, H2.
+        unfold SC.ret in H1, H2.
+        assert (d1 = []) as ? by (inversion H1; reflexivity); subst d1.
+        assert (d2 = []) as ? by (inversion H2; reflexivity); subst d2.
+        constructor.
+      - unfold SIG.subst_ident_constraints in H1, H2. simpl in H1, H2.
+        apply sec_bind_inv in H1 as (h1 & p1 & Hh1 & H1).
+        apply sec_bind_inv in H1 as (r1 & q1 & Hr1 & Hret1).
+        apply sec_bind_inv in H2 as (h2 & p2 & Hh2 & H2).
+        apply sec_bind_inv in H2 as (r2 & q2 & Hr2 & Hret2).
+        unfold SC.ret in Hret1, Hret2.
+        assert (d1 = h1 :: r1) as ? by (inversion Hret1; reflexivity); subst d1.
+        assert (d2 = h2 :: r2) as ? by (inversion Hret2; reflexivity); subst d2.
+        constructor; [|exact (IH r1 r2 p1 q1 p2 q2 Hr1 Hr2)].
+        unfold SIG.subst_ident_constraint in Hh1, Hh2.
+        destruct (ident_eqb x v) eqn:Exv; [discriminate Hh1|].
+        destruct c1 as (sa1 & tg1). destruct c2 as (sa2 & tg2).
+        cbn [fst snd] in Ht, Hs. subst tg2.
+        assert (~ In x [v]) as Hxv.
+        { intros [Hc|[]]. subst v.
+          rewrite (proj2 (ident_eqb_eq x x) (@Coq.Init.Logic.eq_refl _ x))
+            in Exv. discriminate. }
+        destruct tg1 as [|x0 [|]]; try discriminate Hh1;
+          destruct (ident_eqb x x0) eqn:Ex; unfold SC.ret in Hh1, Hh2;
+            (assert (h1 = (SIG.subst_ident_in_type sa1 x [v], _)) as ?
+                 by (inversion Hh1; reflexivity); subst h1);
+            (assert (h2 = (SIG.subst_ident_in_type sa2 x [v], _)) as ?
+                 by (inversion Hh2; reflexivity); subst h2);
+            cbn [fst snd]; split;
+            [reflexivity|exact (subst_ident_in_type_same sa1 sa2 x [v] Hxv Hs)
+            |reflexivity|exact (subst_ident_in_type_same sa1 sa2 x [v] Hxv Hs)].
+    Qed.
+
+    Lemma subst_constraints_out_map_same :
+      forall xs vs cs1 cs2 d1 d2 sa sa' sb sb',
+        cs_same_src cs1 cs2 ->
+        SIG.subst_constraints_out_map cs1 xs vs sa = OK (d1, sa') ->
+        SIG.subst_constraints_out_map cs2 xs vs sb = OK (d2, sb') ->
+        cs_same_src d1 d2.
+    Proof.
+      intros xs. induction xs as [|x xs IH];
+        intros vs cs1 cs2 d1 d2 sa sa' sb sb' Hsame H1 H2.
+      - destruct vs; [|simpl in H1; discriminate].
+        simpl in H1, H2. unfold SC.ret in H1, H2.
+        assert (d1 = cs1) as ? by (inversion H1; reflexivity); subst d1.
+        assert (d2 = cs2) as ? by (inversion H2; reflexivity); subst d2.
+        exact Hsame.
+      - destruct vs as [|v vs]; [simpl in H1; discriminate|].
+        simpl in H1, H2.
+        destruct (SymTypes.findST cs1 v) as [t|] eqn:Ef1;
+          [exfalso; unfold SC.error in H1; discriminate H1|].
+        destruct (SymTypes.findST cs2 v) as [t|] eqn:Ef2;
+          [exfalso; unfold SC.error in H2; discriminate H2|].
+        apply sec_bind_inv in H1 as (e1 & p1 & He1 & H1).
+        apply sec_bind_inv in H2 as (e2 & p2 & He2 & H2).
+        eapply IH; [|exact H1|exact H2].
+        exact (subst_ident_constraints_same cs1 cs2 x v e1 e2 sa p1 sb p2
+                 Hsame He1 He2).
+    Qed.
+
+    Lemma findST_same :
+      forall e1 e2 x t1 t2,
+        cs_same_src e1 e2 ->
+        SymTypes.findST e1 x = Some t1 ->
+        SymTypes.findST e2 x = Some t2 ->
+        forall z, In z t1 <-> In z t2.
+    Proof.
+      intros e1 e2 x t1 t2 H. revert t1 t2.
+      induction H as [|c1 c2 l1 l2 (Ht & Hs) Hr IH];
+        intros t1 t2 H1 H2 z.
+      - simpl in H1. discriminate.
+      - destruct c1 as (s1 & tg1). destruct c2 as (s2 & tg2).
+        cbn [fst snd] in Ht, Hs. subst tg2.
+        simpl in H1, H2.
+        destruct tg1 as [|d [|]]; [exact (IH t1 t2 H1 H2 z)| |
+                                   exact (IH t1 t2 H1 H2 z)].
+        destruct (ident_eqb d x) eqn:E; [|exact (IH t1 t2 H1 H2 z)].
+        assert (t1 = s1) as ? by (inversion H1; reflexivity); subst t1.
+        assert (t2 = s2) as ? by (inversion H2; reflexivity); subst t2.
+        exact (Hs z).
+    Qed.
+
+    Lemma mmap_findST_same :
+      forall (e1 e2 : list SymTypes.constraint) out r1 r2 sa sa' sb sb',
+        cs_same_src e1 e2 ->
+        SC.mmap (fun x => SC.bind (option_to_sec (SymTypes.findST e1 x))
+                            (fun st => SC.ret (st, [x]))) out sa
+          = OK (r1, sa') ->
+        SC.mmap (fun x => SC.bind (option_to_sec (SymTypes.findST e2 x))
+                            (fun st => SC.ret (st, [x]))) out sb
+          = OK (r2, sb') ->
+        cs_same_src r1 r2.
+    Proof.
+      intros e1 e2 out. induction out as [|x out IH];
+        intros r1 r2 sa sa' sb sb' Hsame H1 H2.
+      - simpl in H1, H2. unfold SC.ret in H1, H2.
+        assert (r1 = []) as ? by (inversion H1; reflexivity); subst r1.
+        assert (r2 = []) as ? by (inversion H2; reflexivity); subst r2.
+        constructor.
+      - simpl in H1, H2.
+        apply sec_bind_inv in H1 as (h1 & p1 & Hh1 & H1).
+        apply sec_bind_inv in H1 as (rr1 & q1 & Hrr1 & Hret1).
+        apply sec_bind_inv in H2 as (h2 & p2 & Hh2 & H2).
+        apply sec_bind_inv in H2 as (rr2 & q2 & Hrr2 & Hret2).
+        unfold SC.ret in Hret1, Hret2.
+        assert (r1 = h1 :: rr1) as ? by (inversion Hret1; reflexivity);
+          subst r1.
+        assert (r2 = h2 :: rr2) as ? by (inversion Hret2; reflexivity);
+          subst r2.
+        cbv beta in Hh1, Hh2.
+        apply sec_bind_inv in Hh1 as (u1 & m1 & Hu1 & Hv1).
+        apply sec_bind_inv in Hh2 as (u2 & m2 & Hu2 & Hv2).
+        apply option_to_sec_inv in Hu1 as (Hu1 & ?); subst m1.
+        apply option_to_sec_inv in Hu2 as (Hu2 & ?); subst m2.
+        unfold SC.ret in Hv1, Hv2.
+        assert (h1 = (u1, [x])) as ? by (inversion Hv1; reflexivity); subst h1.
+        assert (h2 = (u2, [x])) as ? by (inversion Hv2; reflexivity); subst h2.
+        constructor;
+          [cbn [fst snd]; split;
+             [reflexivity|exact (findST_same e1 e2 x u1 u2 Hsame Hu1 Hu2)]
+          |exact (IH rr1 rr2 p1 q1 p2 q2 Hsame Hrr1 Hrr2)].
+    Qed.
+
+    (** And the whole of [generate_constraints]: given that the input map's
+        results agree as sets, the final constraint lists do, which is what
+        [listSatisfiable_same_sources] needs to carry satisfaction from the
+        plain instantiation to the augmented one. *)
+    Lemma generate_constraints_same_inp :
+      forall sig inp inp' clk rst out cns cns' sa sa' sb sb',
+        ~ In sig.(s_clk) clk ->
+        ~ In sig.(s_reset) rst ->
+        (forall a1 a2 t1 t2,
+            SIG.subst_constraints_inp_map sig.(s_constraints) sig.(s_in) inp sa
+              = OK (a1, t1) ->
+            SIG.subst_constraints_inp_map sig.(s_constraints) sig.(s_in) inp' sb
+              = OK (a2, t2) ->
+            cs_same_src a1 a2) ->
+        generate_constraints sig inp clk rst out sa = OK (cns, sa') ->
+        generate_constraints sig inp' clk rst out sb = OK (cns', sb') ->
+        Forall2
+          (fun c c' =>
+             (forall z, In z (fst c) <-> In z (fst c'))
+             /\ (forall z, In z (snd c) <-> In z (snd c'))) cns cns'.
+    Proof.
+      intros sig inp inp' clk rst out cns cns' sa sa' sb sb'
+        Hclk Hrst Hinp H1 H2.
+      unfold generate_constraints in H1, H2.
+      apply sec_bind_inv in H1 as (a1 & t1 & Ha1 & H1).
+      apply sec_bind_inv in H1 as (b1 & u1 & Hb1 & H1).
+      apply sec_bind_inv in H1 as (c1 & v1 & Hc1 & H1).
+      apply sec_bind_inv in H1 as (e1 & w1 & He1 & Hr1).
+      apply sec_bind_inv in H2 as (a2 & t2 & Ha2 & H2).
+      apply sec_bind_inv in H2 as (b2 & u2 & Hb2 & H2).
+      apply sec_bind_inv in H2 as (c2 & v2 & Hc2 & H2).
+      apply sec_bind_inv in H2 as (e2 & w2 & He2 & Hr2).
+      apply cs_same_src_weaken.
+      eapply mmap_findST_same; [|exact Hr1|exact Hr2].
+      eapply subst_constraints_out_map_same; [|exact He1|exact He2].
+      eapply subst_ident_in_constraints_same;
+        [exact Hrst| |exact Hc1|exact Hc2].
+      eapply subst_ident_in_constraints_same;
+        [exact Hclk| |exact Hb1|exact Hb2].
+      exact (Hinp a1 a2 t1 t2 Ha1 Ha2).
+    Qed.
+
     (** * The augmented instantiation can be built, not assumed
 
         Putting the four stages together: a successful [generate_constraints]
