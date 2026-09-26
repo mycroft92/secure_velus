@@ -2919,6 +2919,147 @@ Import UNN.Fresh.Tactics.
       eapply SIGPROOFS.reorder_constraints_correct; [exact Hr2|exact Hse2].
     Qed.
 
+    (** * Instantiation is monotone in the actuals, with the augmentation
+
+        The design in force, packaged: leave [generate_constraints_mono_sem]
+        untouched and feed it the *augmented* source actuals, which is what
+        makes its uniform ambient large enough for every argument.  The four
+        steps are
+
+          1. build the augmented run    [generate_constraints_total_inp];
+          2. its sources agree with the plain one's
+             [subst_constraints_inp_map_augment] propagated by
+             [generate_constraints_same_inp];
+          3. carry satisfaction across  [listSatisfiable_same_sources];
+          4. transport to the target    [generate_constraints_mono_sem].
+
+        Everything the caller has to supply is a fact about the call site. *)
+    Lemma generate_constraints_mono_sem_aug :
+      forall dlt sg (ins : list (ident * clock)) (sub : ident -> option ident)
+             (argts : list LST) (inp2 : list SymTypes.ST)
+             clk1 clk2 rst1 rst2 os bs cns1 cns2 sa sa' sb sb',
+        signature_good sg ->
+        NoDup (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)) ->
+        List.length ins = List.length argts ->
+        (** freshness, for the plain actuals and everything else *)
+        (forall y, In y (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)) ->
+           Forall (fun v => ~ In y v) (List.map fst argts)
+           /\ Forall (fun v => ~ In y v) inp2
+           /\ ~ In y clk1 /\ ~ In y clk2 /\ ~ In y rst1 /\ ~ In y rst2
+           /\ ~ In y os /\ ~ In y bs) ->
+        (** and for the augmented ones, which [augment_actuals_fresh] gives *)
+        Forall (fun v => forall y,
+                    In y (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out))
+                    -> ~ In y v)
+          (augment_actuals sub ins argts) ->
+        (** the premise the augmentation exists for: the target actual is
+            dominated by the *augmented* source actual under the call's own
+            ambient *)
+        Forall2 (fun t1 t2 => satisfiable dlt t2 (merge amb t1))
+          (augment_actuals sub ins argts) inp2 ->
+        satisfiable dlt clk2 (merge amb clk1) ->
+        satisfiable dlt rst2 (merge amb rst1) ->
+        Forall2 (amb_pair dlt) os bs ->
+        (** and that augmenting changes no source *)
+        (forall c, In c sg.(s_constraints) ->
+           forall y w', In (y, w') (combine sg.(s_in)
+                                      (augment_actuals sub ins argts)) ->
+             In y (fst c) ->
+             forall z, In z w' ->
+               exists y2 w2, In (y2, w2) (combine sg.(s_in)
+                                            (List.map fst argts))
+                             /\ In y2 (fst c) /\ In z w2) ->
+        generate_constraints sg (List.map fst argts) clk1 rst1 os sa
+          = OK (cns1, sa') ->
+        generate_constraints sg inp2 clk2 rst2 bs sb = OK (cns2, sb') ->
+        listSatisfiable dlt cns1 -> listSatisfiable dlt cns2.
+    Proof.
+      intros dlt sg ins sub argts inp2 clk1 clk2 rst1 rst2 os bs cns1 cns2
+        sa sa' sb sb' Hgood Hnd Hlen Hfresh Hfaug Hrel Hclk Hrst Hob Hdep
+        H1 H2 Hsat1.
+      assert (NoDup sg.(s_in)) as Hndin by (eapply NoDup_app_l; exact Hnd).
+      (** the plain and augmented actual lists have the same length *)
+      assert (List.length (List.map fst argts)
+              = List.length (augment_actuals sub ins argts)) as Hlaug.
+      { assert (forall (A B : Type) (l1 : list A) (l2 : list B),
+                   List.length l1 = List.length l2 ->
+                   List.length (combine l1 l2) = List.length l2) as Hcl.
+        { intros A B l1. induction l1 as [|a l1 IH]; intros l2 Hl.
+          - destruct l2; [reflexivity|discriminate].
+          - destruct l2 as [|b l2]; [discriminate|].
+            simpl. f_equal. apply IH. simpl in Hl; congruence. }
+        unfold augment_actuals. rewrite !map_length.
+        symmetry. exact (Hcl _ _ ins argts Hlen). }
+      (** 1. the augmented run exists *)
+      destruct (generate_constraints_total_inp sg (List.map fst argts)
+                  (augment_actuals sub ins argts) clk1 rst1 os cns1 sa sa' sa
+                  Hlaug H1) as (cnsa & Ha).
+      (** the freshness both stages of the augmentation argument want *)
+      assert (Forall (fun v => forall y, In y sg.(s_in) -> ~ In y v)
+                (List.map fst argts)) as Hfp.
+      { apply Forall_forall. intros v Hv y Hy Hc.
+        destruct (Hfresh y (in_or_app _ _ _ (or_introl Hy))) as (Hp & _).
+        rewrite Forall_forall in Hp. exact (Hp v Hv Hc). }
+      assert (Forall (fun v => forall y, In y sg.(s_in) -> ~ In y v)
+                (augment_actuals sub ins argts)) as Hfa.
+      { eapply Forall_impl; [|exact Hfaug].
+        intros v Hv y Hy. exact (Hv y (in_or_app _ _ _ (or_introl Hy))). }
+      (** 2. the two input-map results agree as sets *)
+      assert (forall a1 a2 t1 t2,
+                 SIG.subst_constraints_inp_map sg.(s_constraints) sg.(s_in)
+                   (List.map fst argts) sa = OK (a1, t1) ->
+                 SIG.subst_constraints_inp_map sg.(s_constraints) sg.(s_in)
+                   (augment_actuals sub ins argts) sa = OK (a2, t2) ->
+                 cs_same_src a1 a2) as Hsame.
+      { intros a1 a2 t1 t2 Hp1 Hp2.
+        assert (Forall2
+                  (fun a b =>
+                     (forall z, In z (fst a) <-> In z (fst b))
+                     /\ (forall z, In z (snd a) <-> In z (snd b))) a1 a2)
+          as Hrelset
+            by (eapply subst_constraints_inp_map_augment;
+                [exact Hndin|exact Hfp|exact Hfa
+                |exact (augment_actuals_grows sub ins argts Hlen)
+                |exact Hdep|exact Hp1|exact Hp2]).
+        assert (List.map snd a1 = List.map snd a2) as Ht.
+        { rewrite (subst_constraints_inp_map_targets sg.(s_in)
+                     sg.(s_constraints) (List.map fst argts) a1 sa t1 Hp1).
+          rewrite (subst_constraints_inp_map_targets sg.(s_in)
+                     sg.(s_constraints) (augment_actuals sub ins argts) a2
+                     sa t2 Hp2).
+          reflexivity. }
+        unfold cs_same_src.
+        clear Hp1 Hp2. revert Ht.
+        induction Hrelset as [|a b l l' (Hs & _) Hr IH]; intro Ht;
+          [constructor|].
+        simpl in Ht. injection Ht as Htc Htr.
+        constructor; [split; [now symmetry|exact Hs]|exact (IH Htr)]. }
+      (** 3. satisfaction carries to the augmented run *)
+      assert (listSatisfiable dlt cnsa) as Hsata.
+      { eapply listSatisfiable_same_sources; [|exact Hsat1].
+        eapply generate_constraints_same_inp;
+          [ |  |exact Hsame|exact H1|exact Ha].
+        - assert (In sg.(s_clk)
+                    (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)))
+            as Hin by (apply in_or_app; right; now left).
+          destruct (Hfresh sg.(s_clk) Hin) as (_ & _ & Hc & _). exact Hc.
+        - assert (In sg.(s_reset)
+                    (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)))
+            as Hin by (apply in_or_app; right; right; now left).
+          destruct (Hfresh sg.(s_reset) Hin) as (_ & _ & _ & _ & Hc & _).
+          exact Hc. }
+      (** 4. and transports to the target *)
+      eapply generate_constraints_mono_sem;
+        [exact Hgood|exact Hnd| |exact Hrel|exact Hclk|exact Hrst|exact Hob
+        |exact Ha|exact H2|exact Hsata].
+      intros y Hy. destruct (Hfresh y Hy) as (_ & Hp2 & Hc1 & Hc2 & Hr1 & Hr2
+                                              & Ho & Hb).
+      repeat split; try assumption.
+      rewrite Forall_forall in Hfaug |- *. intros v Hv.
+      exact (Hfaug v Hv y Hy).
+    Qed.
+
+
 
     (** * The no-op arguments
 
