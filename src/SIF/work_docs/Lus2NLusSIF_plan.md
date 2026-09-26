@@ -507,6 +507,40 @@ four substitution stages (stages 1-3 have one; `subst_constraints_out_map`
 does not) and a `findST` step for the final lookup, which
 `findST_clock_closed` already models.
 
+**Rootedness: done end to end, 2026-09-26** *[verified, compiles]*.  The
+predicate is `constraint_rooted` / `constraints_rooted` (the source mentions
+the base name and the reset), and it now holds of everything the generator
+produces:
+
+  * the non-call rules -- `generate_lvars_constraints_rooted`,
+    `generate_ldef_constraint_rooted`, `generate_lgen_constraint_rooted`,
+    `generate_leqn_constraint_rooted_plain`,
+    `generate_leqns_constraints_rooted` with its call-free corollary, and
+    `assign_clk_type_base` as the reason (every clock type contains the base
+    name);
+  * the **call rule** -- `generate_constraints_rooted`.  The base name reaches
+    every final source through the *clock* slot: the callee's clock formal is
+    in every callee source, and the base name is in the type substituted for
+    it.  The reset level arrives the same way through the reset slot.
+    Everything else is preservation.  The side conditions are exactly
+    `call_subst_fresh` and `NoDup (s_in ++ s_clk :: s_reset :: s_out)` -- both
+    already hypotheses of the leg;
+  * through `simplify` -- `subAll_rooted`, `simplify_rooted`, on the same
+    `keep` discipline as closure but for a simpler reason: the base name and
+    the reset are kept, and elimination only removes the eliminated name and
+    the constraint's own target.
+
+The machinery is `all_sources_have` plus one keep/intro pair per stage:
+`subst_constraints_inp_map_all_keeps`,
+`subst_ident_in_constraints_all_keeps`/`_all_intro`,
+`subst_ident_constraints_all_keeps`,
+`subst_constraints_out_map_all_keeps`, `mmap_findST_all_keeps`.
+
+So of (B) what remains is the **closure** call rule, whose only hard case is
+the actuals -- closed relative to their clock types, which reach the
+instantiated source from the callee's `sig_inputs_clock_closed` (for the clock
+variables' formals) and from rootedness (for `bckty`).  Both are now available.
+
 **A near-blocker, and why it is not one, 2026-09-23.**  The augmentation
 argument needs the actual at a clock position to contribute its own security
 name to its type.  That does *not* follow from `wc_exp`: of the Lustre forms
