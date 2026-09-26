@@ -1320,6 +1320,104 @@ Import UNN.Fresh.Tactics.
         exact (Hall (t, [x]) Ht).
     Qed.
 
+    (** * Closure, through a substitution
+
+        [subAll_clock_closed] did this for [simplify]; these do it for the four
+        slots of [generate_constraints].  The shape is the same: a name already
+        accounted for keeps its obligation provided the removal misses it, and a
+        name arriving from the substituted type is accounted for provided that
+        type is itself closed.
+
+        What makes the removals miss is that a callee's interface names are not
+        caller clock-type names.  By [assign_clk_type_members] a clock type
+        holds only the base name and security names of caller variables, so the
+        single hypothesis below suffices -- and it is a fact about the naming
+        pass, which allocates each node's environment separately. *)
+
+    Definition sig_scope_fresh_for_env (sg : signature) : Prop :=
+      ~ In base_ty (signature_scope sg)
+      /\ ~ In rst_ty (signature_scope sg)
+      /\ (forall x b, Env.find x env = Some b -> ~ In b (signature_scope sg)).
+
+    Lemma sig_scope_not_in_clock_type :
+      forall sg y ck ckty,
+        sig_scope_fresh_for_env sg ->
+        In y (signature_scope sg) ->
+        assign_clk_type env base_ty ck = Some ckty ->
+        ~ In y ckty.
+    Proof.
+      intros sg y ck ckty (Hb & _ & He) Hy Hck Hc.
+      destruct (assign_clk_type_members env base_ty ck ckty Hck y Hc)
+        as [Hz|(x & Hx)]; [subst y; exact (Hb Hy)|exact (He x y Hx Hy)].
+    Qed.
+
+    Lemma subst_ident_in_constraints_clock_closed :
+      forall ns cs x v d sa sa',
+        ~ In x v ->
+        (forall v0 ckv ckvty, In (v0, ckv) vars ->
+            assign_clk_type env base_ty ckv = Some ckvty -> ~ In x ckvty) ->
+        constraints_clock_closed env base_ty vars ns cs ->
+        st_clock_closed env base_ty vars ns v ->
+        SIG.subst_ident_in_constraints cs x v sa = OK (d, sa') ->
+        constraints_clock_closed env base_ty vars ns d.
+    Proof.
+      intros ns cs x v d sa sa' Hxv Hxck Hcs Hv H.
+      pose proof (subst_ident_in_constraints_members cs x v d sa sa' Hxv H)
+        as Hm. clear H.
+      unfold constraints_clock_closed in Hcs |- *.
+      revert Hcs. induction Hm as [|c c' l l' (_ & Hs) Hr IH]; intro Hcs;
+        [constructor|].
+      inversion Hcs as [|c0 l0 Hc Hl]; subst.
+      constructor; [|exact (IH Hl)].
+      intros v0 b ckv ckvty Hfv Hnm Hb Hinv Hckv.
+      assert (~ In x ckvty) as Hnx by exact (Hxck v0 ckv ckvty Hinv Hckv).
+      apply Hs in Hb. destruct Hb as [(Hb & Hbx)|(Hxc & Hbv)].
+      - (** already there, and the removal misses the obligation *)
+        intros w Hw. apply Hs. left. split;
+          [exact (Hc v0 b ckv ckvty Hfv Hnm Hb Hinv Hckv w Hw)
+          |intro; subst w; contradiction].
+      - (** arrived from the substituted type, which is itself closed *)
+        intros w Hw. apply Hs. right. split;
+          [exact Hxc|exact (Hv v0 b ckv ckvty Hfv Hnm Hbv Hinv Hckv w Hw)].
+    Qed.
+
+    Lemma subst_constraints_inp_map_clock_closed :
+      forall ns xs vs cs d sa sa',
+        NoDup xs ->
+        Forall (fun v => forall y, In y xs -> ~ In y v) vs ->
+        (forall y, In y xs ->
+           forall v0 ckv ckvty, In (v0, ckv) vars ->
+             assign_clk_type env base_ty ckv = Some ckvty -> ~ In y ckvty) ->
+        constraints_clock_closed env base_ty vars ns cs ->
+        (** each actual is closed *relative to* nothing extra: the call rule
+            supplies this after covering the argument's clock type *)
+        Forall (st_clock_closed env base_ty vars ns) vs ->
+        SIG.subst_constraints_inp_map cs xs vs sa = OK (d, sa') ->
+        constraints_clock_closed env base_ty vars ns d.
+    Proof.
+      intros ns xs vs cs d sa sa' Hnd Hfr Hxck Hcs Hvs H.
+      pose proof (subst_constraints_inp_map_members xs vs cs d sa sa'
+                    Hnd Hfr H) as Hm. clear H.
+      unfold constraints_clock_closed in Hcs |- *.
+      revert Hcs. induction Hm as [|c c' l l' (_ & Hs) Hr IH]; intro Hcs;
+        [constructor|].
+      inversion Hcs as [|c0 l0 Hc Hl]; subst.
+      constructor; [|exact (IH Hl)].
+      intros v0 b ckv ckvty Hfv Hnm Hb Hinv Hckv.
+      apply Hs in Hb. destruct Hb as [(Hb & Hbx)|(y & w & Hyw & Hy & Hbw)].
+      - intros z Hz. apply Hs. left. split;
+          [exact (Hc v0 b ckv ckvty Hfv Hnm Hb Hinv Hckv z Hz)|].
+        intro Hc0. exact (Hxck z Hc0 v0 ckv ckvty Hinv Hckv Hz).
+      - (** the actual at that slot is closed *)
+        assert (In w vs) as Hwvs.
+        { apply In_combine_nth_error in Hyw as (i & _ & Hwi).
+          exact (nth_error_In _ i Hwi). }
+        rewrite Forall_forall in Hvs.
+        intros z Hz. apply Hs. right. exists y, w.
+        split; [exact Hyw|split; [exact Hy|]].
+        exact (Hvs w Hwvs v0 b ckv ckvty Hfv Hnm Hbw Hinv Hckv z Hz).
+    Qed.
+
     (** * The call rule of rootedness
 
         Chaining the six steps.  The base name reaches every final source

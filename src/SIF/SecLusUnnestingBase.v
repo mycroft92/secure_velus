@@ -4414,4 +4414,24 @@ Module SecLusUnnestingBase
                 |exact Htgt|exact Hcns].
   Qed.
 
+  (** A clock type is built from the base name and the security names of the
+      clock's variables, and nothing else.  That is what makes a callee's
+      interface names absent from any caller clock type -- the fact the closure
+      call rule needs in order to know that substitution's removals never touch
+      a closure obligation. *)
+  Lemma assign_clk_type_members :
+    forall env base_ty ck ckty,
+      assign_clk_type env base_ty ck = Some ckty ->
+      forall z, In z ckty ->
+        z = base_ty \/ exists x, Env.find x env = Some z.
+  Proof.
+    intros env base_ty ck. induction ck as [|ck0 IH x b]; intros ckty H z Hz.
+    - simpl in H. apply option_Some_inj in H. subst ckty.
+      destruct Hz as [Hz|[]]. left. now symmetry.
+    - apply assign_clk_type_Con_inv in H
+        as (ckty0 & g & Hck0 & Hg & ?); subst ckty.
+      apply in_merge_inv in Hz as [Hz|Hz]; [exact (IH ckty0 Hck0 z Hz)|].
+      destruct Hz as [Hz|[]]. subst z. right. now exists x.
+  Qed.
+
 End SecLusUnnestingBase.
