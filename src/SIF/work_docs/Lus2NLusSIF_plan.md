@@ -571,6 +571,34 @@ now carries the stronger form.
 Had this been noticed only at the node level it would have invalidated the
 `keep` set as well; the two fit together because outputs are kept.
 
+**Correction, 2026-09-26: closure has to be stated modulo a cover.**  A first
+pass at the per-slot closure lemmas gave them the premise "each actual type is
+closed", i.e. `st_clock_closed ... (fst argts_i)`.  That premise is met by
+nothing: an actual's type is closed only *relative to* the clock the argument
+runs on, so demanding `incl ckvty (fst argts_i)` would force the argument's
+clock type into the argument's own type -- and since every clock type contains
+`base_ty`, it would force `base_ty` into it.  **Exactly the same shape of
+mistake as the original `source_types_scoped`**: a premise that reads
+plausibly and is satisfiable by nothing.
+
+The repair is the same in spirit as the checkmark bound -- weaken the
+statement to what is actually true and discharge the difference separately.
+`constraint_closed_mod ns cov` asks for `incl ckvty (merge cov (fst c))`, with
+`cov` a fixed set holding every clock type the call involves:
+
+    cov := bckty  joined with  the clock actuals of every argument and output
+                               formal's declared clock
+
+Every slot is then closed modulo `cov` *[verified]*: the actuals because
+`ck_i` is inside `merge bckty (clock_actuals ...)`, the clock slot because
+`incl ckvty bckty`, the reset slot because it is self-closed, the output names
+because an output's clock type is inside `cov` too, and the callee's own names
+vacuously by `sig_scope_fresh_for_env`.  Closure modulo `cov` *is* preserved by
+substitution -- `subst_ident_in_constraints_closed_mod` and
+`subst_constraints_inp_map_closed_mod` -- and at the end `cov` is shown to be
+inside the source anyway, by the rootedness argument, which upgrades it to
+closure proper.
+
 **A near-blocker, and why it is not one, 2026-09-23.**  The augmentation
 argument needs the actual at a clock position to contribute its own security
 name to its type.  That does *not* follow from `wc_exp`: of the Lustre forms

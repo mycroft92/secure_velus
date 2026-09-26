@@ -1351,20 +1351,54 @@ Import UNN.Fresh.Tactics.
         as [Hz|(x & Hx)]; [subst y; exact (Hb Hy)|exact (He x y Hx Hy)].
     Qed.
 
-    Lemma subst_ident_in_constraints_clock_closed :
-      forall ns cs x v d sa sa',
+    (** Closure *modulo a cover*.  An actual argument type is not closed by
+        itself -- an argument's type is closed only relative to the clock it
+        runs on -- so the property that survives substitution is closure up to a
+        fixed set [cov] holding every clock type the call involves.  At the end
+        [cov] is shown to be inside the source anyway, which upgrades it to
+        closure proper; that last step is the rootedness argument again.
+
+        Getting this wrong is the same mistake as the original
+        [source_types_scoped]: a premise that reads plausibly and is met by
+        nothing. *)
+
+    Definition constraint_closed_mod (ns : list ident) (cov : ST)
+        (c : SymTypes.constraint) : Prop :=
+      forall v b ckv ckvty,
+        Env.find v env = Some b ->
+        ~ In b ns ->
+        In b (fst c) ->
+        In (v, ckv) vars ->
+        assign_clk_type env base_ty ckv = Some ckvty ->
+        incl ckvty (merge cov (fst c)).
+
+    Definition constraints_closed_mod (ns : list ident) (cov : ST)
+        (cs : list SymTypes.constraint) : Prop :=
+      Forall (constraint_closed_mod ns cov) cs.
+
+    Definition st_closed_mod (ns : list ident) (cov t : ST) : Prop :=
+      forall v b ckv ckvty,
+        Env.find v env = Some b ->
+        ~ In b ns ->
+        In b t ->
+        In (v, ckv) vars ->
+        assign_clk_type env base_ty ckv = Some ckvty ->
+        incl ckvty (merge cov t).
+
+    Lemma subst_ident_in_constraints_closed_mod :
+      forall ns cov cs x v d sa sa',
         ~ In x v ->
         (forall v0 ckv ckvty, In (v0, ckv) vars ->
             assign_clk_type env base_ty ckv = Some ckvty -> ~ In x ckvty) ->
-        constraints_clock_closed env base_ty vars ns cs ->
-        st_clock_closed env base_ty vars ns v ->
+        constraints_closed_mod ns cov cs ->
+        st_closed_mod ns cov v ->
         SIG.subst_ident_in_constraints cs x v sa = OK (d, sa') ->
-        constraints_clock_closed env base_ty vars ns d.
+        constraints_closed_mod ns cov d.
     Proof.
-      intros ns cs x v d sa sa' Hxv Hxck Hcs Hv H.
+      intros ns cov cs x v d sa sa' Hxv Hxck Hcs Hv H.
       pose proof (subst_ident_in_constraints_members cs x v d sa sa' Hxv H)
         as Hm. clear H.
-      unfold constraints_clock_closed in Hcs |- *.
+      unfold constraints_closed_mod in Hcs |- *.
       revert Hcs. induction Hm as [|c c' l l' (_ & Hs) Hr IH]; intro Hcs;
         [constructor|].
       inversion Hcs as [|c0 l0 Hc Hl]; subst.
@@ -1372,50 +1406,61 @@ Import UNN.Fresh.Tactics.
       intros v0 b ckv ckvty Hfv Hnm Hb Hinv Hckv.
       assert (~ In x ckvty) as Hnx by exact (Hxck v0 ckv ckvty Hinv Hckv).
       apply Hs in Hb. destruct Hb as [(Hb & Hbx)|(Hxc & Hbv)].
-      - (** already there, and the removal misses the obligation *)
-        intros w Hw. apply Hs. left. split;
-          [exact (Hc v0 b ckv ckvty Hfv Hnm Hb Hinv Hckv w Hw)
-          |intro; subst w; contradiction].
-      - (** arrived from the substituted type, which is itself closed *)
-        intros w Hw. apply Hs. right. split;
-          [exact Hxc|exact (Hv v0 b ckv ckvty Hfv Hnm Hbv Hinv Hckv w Hw)].
+      - intros w Hw.
+        assert (In w (merge cov (fst c))) as Hw'
+            by exact (Hc v0 b ckv ckvty Hfv Hnm Hb Hinv Hckv w Hw).
+        apply in_merge_inv in Hw' as [Hw'|Hw'];
+          [now apply in_merge_left|].
+        apply in_merge_right, Hs. left. split;
+          [exact Hw'|intro; subst w; contradiction].
+      - intros w Hw.
+        assert (In w (merge cov v)) as Hw'
+            by exact (Hv v0 b ckv ckvty Hfv Hnm Hbv Hinv Hckv w Hw).
+        apply in_merge_inv in Hw' as [Hw'|Hw'];
+          [now apply in_merge_left|].
+        apply in_merge_right, Hs. right. split; [exact Hxc|exact Hw'].
     Qed.
 
-    Lemma subst_constraints_inp_map_clock_closed :
-      forall ns xs vs cs d sa sa',
+    Lemma subst_constraints_inp_map_closed_mod :
+      forall ns cov xs vs cs d sa sa',
         NoDup xs ->
         Forall (fun v => forall y, In y xs -> ~ In y v) vs ->
         (forall y, In y xs ->
            forall v0 ckv ckvty, In (v0, ckv) vars ->
              assign_clk_type env base_ty ckv = Some ckvty -> ~ In y ckvty) ->
-        constraints_clock_closed env base_ty vars ns cs ->
-        (** each actual is closed *relative to* nothing extra: the call rule
-            supplies this after covering the argument's clock type *)
-        Forall (st_clock_closed env base_ty vars ns) vs ->
+        constraints_closed_mod ns cov cs ->
+        Forall (st_closed_mod ns cov) vs ->
         SIG.subst_constraints_inp_map cs xs vs sa = OK (d, sa') ->
-        constraints_clock_closed env base_ty vars ns d.
+        constraints_closed_mod ns cov d.
     Proof.
-      intros ns xs vs cs d sa sa' Hnd Hfr Hxck Hcs Hvs H.
+      intros ns cov xs vs cs d sa sa' Hnd Hfr Hxck Hcs Hvs H.
       pose proof (subst_constraints_inp_map_members xs vs cs d sa sa'
                     Hnd Hfr H) as Hm. clear H.
-      unfold constraints_clock_closed in Hcs |- *.
+      unfold constraints_closed_mod in Hcs |- *.
       revert Hcs. induction Hm as [|c c' l l' (_ & Hs) Hr IH]; intro Hcs;
         [constructor|].
       inversion Hcs as [|c0 l0 Hc Hl]; subst.
       constructor; [|exact (IH Hl)].
       intros v0 b ckv ckvty Hfv Hnm Hb Hinv Hckv.
       apply Hs in Hb. destruct Hb as [(Hb & Hbx)|(y & w & Hyw & Hy & Hbw)].
-      - intros z Hz. apply Hs. left. split;
-          [exact (Hc v0 b ckv ckvty Hfv Hnm Hb Hinv Hckv z Hz)|].
+      - intros z Hz.
+        assert (In z (merge cov (fst c))) as Hz'
+            by exact (Hc v0 b ckv ckvty Hfv Hnm Hb Hinv Hckv z Hz).
+        apply in_merge_inv in Hz' as [Hz'|Hz'];
+          [now apply in_merge_left|].
+        apply in_merge_right, Hs. left. split; [exact Hz'|].
         intro Hc0. exact (Hxck z Hc0 v0 ckv ckvty Hinv Hckv Hz).
-      - (** the actual at that slot is closed *)
-        assert (In w vs) as Hwvs.
+      - assert (In w vs) as Hwvs.
         { apply In_combine_nth_error in Hyw as (i & _ & Hwi).
           exact (nth_error_In _ i Hwi). }
         rewrite Forall_forall in Hvs.
-        intros z Hz. apply Hs. right. exists y, w.
-        split; [exact Hyw|split; [exact Hy|]].
-        exact (Hvs w Hwvs v0 b ckv ckvty Hfv Hnm Hbw Hinv Hckv z Hz).
+        intros z Hz.
+        assert (In z (merge cov w)) as Hz'
+            by exact (Hvs w Hwvs v0 b ckv ckvty Hfv Hnm Hbw Hinv Hckv z Hz).
+        apply in_merge_inv in Hz' as [Hz'|Hz'];
+          [now apply in_merge_left|].
+        apply in_merge_right, Hs. right. exists y, w.
+        split; [exact Hyw|split; [exact Hy|exact Hz']].
     Qed.
 
     (** * The call rule of rootedness
