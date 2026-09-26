@@ -4160,4 +4160,114 @@ Module SecLusUnnestingBase
       + exact (IH ys i x y Hx Hy).
   Qed.
 
+  (** * Every generated source mentions the base and the reset
+
+      The call rule of the dependency property needs the *callee's* sources to
+      mention [s_clk] and [s_reset]: that is what puts the call's base clock
+      type and reset level into the instantiated source, and those are what an
+      argument's own clock type is covered by.  On the generating side the
+      property is immediate -- every source is
+      [merge (merge [rst_ty] ckty) (fst t)] and every clock type contains the
+      base name -- but it has to be carried up the same way closure was, and
+      through [simplify]. *)
+
+  Lemma assign_clk_type_base :
+    forall env base_ty ck ckty,
+      assign_clk_type env base_ty ck = Some ckty -> In base_ty ckty.
+  Proof.
+    intros env base_ty ck. induction ck as [|ck0 IH x b]; intros ckty H.
+    - simpl in H. apply option_Some_inj in H. subst ckty. now left.
+    - apply assign_clk_type_Con_inv in H
+        as (ckty0 & g & Hck0 & Hg & ?); subst ckty.
+      apply in_merge_left. exact (IH ckty0 Hck0).
+  Qed.
+
+  Definition constraint_rooted (base_ty rst_ty : ident) (c : constraint) : Prop :=
+    In base_ty (fst c) /\ In rst_ty (fst c).
+
+  Definition constraints_rooted
+      (base_ty rst_ty : ident) (cs : list constraint) : Prop :=
+    Forall (constraint_rooted base_ty rst_ty) cs.
+
+  Lemma constraints_rooted_cmerge :
+    forall base_ty rst_ty c1 c2,
+      constraints_rooted base_ty rst_ty (cmerge c1 c2)
+      <-> constraints_rooted base_ty rst_ty c1
+          /\ constraints_rooted base_ty rst_ty c2.
+  Proof.
+    intros base_ty rst_ty c1 c2.
+    unfold constraints_rooted. rewrite !Forall_forall. split.
+    - intros H. split; intros c Hin; apply H, cmerge_In; tauto.
+    - intros (H1 & H2) c Hin. apply cmerge_In in Hin. destruct Hin; auto.
+  Qed.
+
+  Lemma constraints_rooted_app :
+    forall base_ty rst_ty c1 c2,
+      constraints_rooted base_ty rst_ty c1 ->
+      constraints_rooted base_ty rst_ty c2 ->
+      constraints_rooted base_ty rst_ty (c1 ++ c2).
+  Proof.
+    intros base_ty rst_ty c1 c2 H1 H2.
+    unfold constraints_rooted. now apply Forall_app.
+  Qed.
+
+  Lemma constraint_rooted_head :
+    forall env base_ty rst_ty ck ckty (t : LST) (tgt : list ident),
+      assign_clk_type env base_ty ck = Some ckty ->
+      constraint_rooted base_ty rst_ty
+        (merge (merge [rst_ty] ckty) (fst t), tgt).
+  Proof.
+    intros env base_ty rst_ty ck ckty t tgt Hck.
+    split; cbn [fst].
+    - apply in_merge_left, in_merge_right.
+      exact (assign_clk_type_base env base_ty ck ckty Hck).
+    - apply in_merge_left, in_merge_left. now left.
+  Qed.
+
+  Lemma constraints_rooted_lconstrain :
+    forall env base_ty rst_ty ck ckty t b,
+      assign_clk_type env base_ty ck = Some ckty ->
+      constraints_rooted base_ty rst_ty (snd t) ->
+      constraints_rooted base_ty rst_ty
+        (lconstrain (ljoin (ljoin (lvar rst_ty) (ckty, [])) t) b).
+  Proof.
+    intros env base_ty rst_ty ck ckty t b Hck Hcar.
+    unfold lconstrain. apply constraints_rooted_cmerge. split.
+    - constructor; [|constructor].
+      rewrite !fst_ljoin, fst_lvar. cbn [fst].
+      exact (constraint_rooted_head env base_ty rst_ty ck ckty t [b] Hck).
+    - rewrite !snd_ljoin, snd_lvar. cbn [snd].
+      rewrite cmerge_nil, cmerge_nil2. exact Hcar.
+  Qed.
+
+  Lemma generate_lvars_constraints_rooted :
+    forall env base_ty rst_ty cenv xs bs ts cs s s',
+      Forall (fun t => constraints_rooted base_ty rst_ty (snd t)) ts ->
+      generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
+        = OK (cs, s') ->
+      constraints_rooted base_ty rst_ty cs.
+  Proof.
+    intros env base_ty rst_ty cenv xs.
+    induction xs as [|x xs IH]; intros bs ts cs s s' Hcar H.
+    - destruct bs as [|b bs]; destruct ts as [|t ts]; simpl in H;
+        try discriminate.
+      unfold SC.ret in H.
+      assert (cs = []) as ? by (inversion H; reflexivity); subst cs.
+      constructor.
+    - destruct bs as [|b bs]; destruct ts as [|t ts]; simpl in H;
+        try discriminate.
+      apply sec_bind_inv in H as (ckty & s1 & Hckty & H).
+      apply sec_bind_inv in H as (rest & s2 & Hrest & Hret).
+      apply eqn_clock_type_inv in Hckty as (ck & Hck & Hcka & ?); subst s1.
+      unfold SC.ret in Hret.
+      assert (cs = lconstrain (ljoin (ljoin (lvar rst_ty) (ckty, [])) t) b
+                     ++ rest) as ?
+          by (inversion Hret; reflexivity); subst cs.
+      inversion Hcar as [|t1 ts1 Hct Hcarr]; subst.
+      apply constraints_rooted_app.
+      + exact (constraints_rooted_lconstrain env base_ty rst_ty ck ckty t b
+                 Hcka Hct).
+      + eapply IH; [exact Hcarr|exact Hrest].
+  Qed.
+
 End SecLusUnnestingBase.

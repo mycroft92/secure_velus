@@ -84,6 +84,47 @@ Proof.
   exact (Forall3_length _ ambs srcs tgts Hrel).
 Qed.
 
+(** * Weakening the per-stream ambients
+
+    The streams contract is *contravariant* in its ambients: a larger ambient
+    makes the relation easier.  That is what lets the call case establish its
+    results at the call's single ambient -- which is all
+    [generate_constraints_mono_sem] produces -- and then read them off at each
+    result's own, since the call's is inside every one of them
+    ([call_amb_below_result_ambients]). *)
+
+Lemma stream_rel_amb_weaken :
+  forall dlt ambs1 ambs2 srcs tgts,
+    Forall2 (fun a1 a2 => incl a1 a2) ambs1 ambs2 ->
+    stream_rel dlt ambs1 srcs tgts ->
+    stream_rel dlt ambs2 srcs tgts.
+Proof.
+  intros dlt ambs1 ambs2 srcs tgts Hincl Hrel.
+  revert ambs2 Hincl.
+  induction Hrel as [|a src tgt as0 ss ts Hr Hrest IH];
+    intros ambs2 Hincl.
+  - inversion Hincl; subst. constructor.
+  - inversion Hincl as [|a1 a2 l1 l2 Ha Hl]; subst.
+    constructor; [|exact (IH l2 Hl)].
+    eapply satisfiable_trans; [exact Hr|].
+    apply satisfiable_of_incl. intros z Hz.
+    apply in_merge_inv in Hz as [Hz|Hz];
+      [apply in_merge_left; exact (Ha z Hz)|now apply in_merge_right].
+Qed.
+
+Corollary stream_rel_amb_weaken_all :
+  forall dlt a ambs srcs tgts,
+    Forall (fun a2 => incl a a2) ambs ->
+    List.length ambs = List.length srcs ->
+    stream_rel dlt (List.map (fun _ => a) ambs) srcs tgts ->
+    stream_rel dlt ambs srcs tgts.
+Proof.
+  intros dlt a ambs srcs tgts Hall Hlen Hrel.
+  eapply stream_rel_amb_weaken; [|exact Hrel].
+  clear Hlen Hrel. induction Hall as [|a2 ambs0 Ha Hr IH];
+    [constructor|constructor; [exact Ha|exact IH]].
+Qed.
+
 Lemma stream_rel_refl :
   forall dlt ambs ts,
     List.length ambs = List.length ts ->
