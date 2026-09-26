@@ -1185,6 +1185,55 @@ Import UNN.Fresh.Tactics.
           eapply generate_leqn_constraint_sec_le; exact Hc.
     Qed.
 
+    (** The same over a list of equations, with the same window-splitting as
+        the closure version -- except rootedness needs no window at all, since
+        it says nothing about which names are minted. *)
+    Lemma generate_leqns_constraints_rooted :
+      forall eqs cs s s',
+        Forall (fun eq =>
+                  forall c s1 s2,
+                    generate_leqn_constraint GL env base_ty rst_ty cenv eq s1
+                      = OK (c, s2) ->
+                    constraints_rooted base_ty rst_ty c) eqs ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs s
+          = OK (cs, s') ->
+        constraints_rooted base_ty rst_ty cs.
+    Proof.
+      induction eqs as [|eq eqs IH]; intros cs s s' Hall H.
+      - apply generate_leqns_constraints_nil in H as (? & ?); subst cs.
+        constructor.
+      - rewrite generate_leqns_constraints_cons in H.
+        apply sec_bind_inv in H as (c & s1 & Hc & H).
+        apply sec_bind_inv in H as (cr & s2 & Hcr & Hret).
+        unfold SC.ret in Hret.
+        assert (cs = c ++ cr) as ? by (inversion Hret; reflexivity); subst cs.
+        inversion Hall as [|eq0 eqs0 Heq Heqs]; subst.
+        apply constraints_rooted_app;
+          [exact (Heq c s s1 Hc)|exact (IH cr s1 s2 Heqs Hcr)].
+    Qed.
+
+    Corollary generate_leqns_constraints_rooted_plain :
+      forall eqs cs s s',
+        Forall (fun eq =>
+                  Forall (fun e => match e with
+                                   | Eapp _ _ _ _ => False | _ => True end)
+                    (snd eq)) eqs ->
+        Forall (fun eq =>
+                  Forall (lexp_carried_rooted GL env base_ty rst_ty) (snd eq))
+          eqs ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs s
+          = OK (cs, s') ->
+        constraints_rooted base_ty rst_ty cs.
+    Proof.
+      intros eqs cs s s' Hne Hcar H.
+      eapply generate_leqns_constraints_rooted; [|exact H].
+      rewrite Forall_forall in Hne, Hcar |- *.
+      intros (xs, es) Hin c s1 s2 Hgen.
+      specialize (Hne _ Hin). specialize (Hcar _ Hin). simpl in Hne, Hcar.
+      exact (generate_leqn_constraint_rooted_plain GL env base_ty rst_ty cenv
+               xs es c s1 s2 Hne Hcar Hgen).
+    Qed.
+
     (** And the form the node level will use: a node all of whose equations
         have a call-free right-hand side is covered outright.  [wc_equation]
         supplies exactly the two premises the equation rule needs -- the

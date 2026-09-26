@@ -4270,4 +4270,148 @@ Module SecLusUnnestingBase
       + eapply IH; [exact Hcarr|exact Hrest].
   Qed.
 
+  Definition lexp_carried_rooted
+      (G : secglobal) (env : Env.t ident) (base_ty rst_ty : ident)
+      (e : exp) : Prop :=
+    forall ts s s',
+      assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+      Forall (fun t => constraints_rooted base_ty rst_ty (snd t)) ts.
+
+  Lemma assign_lexps_carried_rooted_of :
+    forall G env base_ty rst_ty es ts s s',
+      Forall (lexp_carried_rooted G env base_ty rst_ty) es ->
+      assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+      Forall (fun t => constraints_rooted base_ty rst_ty (snd t)) ts.
+  Proof.
+    intros G env base_ty rst_ty es.
+    induction es as [|e es IH]; intros ts s s' Hall H.
+    - apply (assign_lexps_carried_nil G env base_ty rst_ty) in H
+        as (? & _ & ?); subst ts. constructor.
+    - apply assign_lexps_carried_cons in H
+        as (t & r & sa & Ht & Hr & ? & _); subst ts.
+      inversion Hall as [|e0 es0 He Her]; subst.
+      apply Forall_app. split; [exact (He t s sa Ht)|eapply IH; eauto].
+  Qed.
+
+  Lemma generate_ldef_constraint_rooted :
+    forall G env base_ty rst_ty cenv x e cs s s',
+      lexp_carried_rooted G env base_ty rst_ty e ->
+      generate_ldef_constraint G env base_ty rst_ty cenv x e s = OK (cs, s') ->
+      constraints_rooted base_ty rst_ty cs.
+  Proof.
+    intros G env base_ty rst_ty cenv x e cs s s' Hcar H.
+    apply generate_ldef_constraint_inv in H
+      as (ck & ckty & sa & rho & b & _ & Hcka & Ht & _ & ?); subst cs.
+    apply constraints_rooted_cmerge. split.
+    - constructor; [|constructor].
+      exact (constraint_rooted_head env base_ty rst_ty ck ckty (sa, rho) [b]
+               Hcka).
+    - assert (Forall (fun t => constraints_rooted base_ty rst_ty (snd t))
+                [(sa, rho)]) as Hr by exact (Hcar [(sa, rho)] s s' Ht).
+      inversion Hr as [|t0 ts0 Ht0 _]; subst. exact Ht0.
+  Qed.
+
+  Lemma generate_lgen_constraint_rooted :
+    forall G env base_ty rst_ty cenv xs es cs s s',
+      Forall (lexp_carried_rooted G env base_ty rst_ty) es ->
+      generate_lgen_constraint G env base_ty rst_ty cenv xs es s = OK (cs, s') ->
+      constraints_rooted base_ty rst_ty cs.
+  Proof.
+    intros G env base_ty rst_ty cenv xs es cs s s' Hcar H.
+    unfold generate_lgen_constraint in H.
+    apply sec_bind_inv in H as (ts & s1 & Hts & H).
+    apply sec_bind_inv in H as (bs & s2 & Hbs & Hlv).
+    apply option_to_sec_inv in Hbs as (_ & ?); subst s2.
+    eapply generate_lvars_constraints_rooted; [|exact Hlv].
+    exact (assign_lexps_carried_rooted_of G env base_ty rst_ty es ts s s1
+             Hcar Hts).
+  Qed.
+
+  Lemma generate_leqn_constraint_rooted_plain :
+    forall G env base_ty rst_ty cenv xs es cs s s',
+      Forall (fun e => match e with
+                       | Eapp _ _ _ _ => False | _ => True end) es ->
+      Forall (lexp_carried_rooted G env base_ty rst_ty) es ->
+      generate_leqn_constraint G env base_ty rst_ty cenv (xs, es) s
+        = OK (cs, s') ->
+      constraints_rooted base_ty rst_ty cs.
+  Proof.
+    intros G env base_ty rst_ty cenv xs es cs s s' Hne Hcar H.
+    destruct es as [|e [|e2 es2]].
+    - eapply generate_lgen_constraint_rooted; [exact Hcar|exact H].
+    - inversion Hne as [|e0 es0 Hnee _]; subst.
+      inversion Hcar as [|e3 es3 Hcare _]; subst.
+      rewrite <- generate_lone_is_leqn in H.
+      destruct xs as [|x [|x2 xs2]].
+      + eapply generate_lgen_constraint_rooted; [exact Hcar|].
+        destruct e; (exact H || contradiction).
+      + eapply generate_ldef_constraint_rooted; [exact Hcare|].
+        destruct e; (exact H || contradiction).
+      + eapply generate_lgen_constraint_rooted; [exact Hcar|].
+        destruct e; (exact H || contradiction).
+    - rewrite gen_leqn_cons2, (has_lcall_false _ Hne) in H.
+      eapply generate_lgen_constraint_rooted; [exact Hcar|exact H].
+  Qed.
+
+  (** And through [simplify].  The same [keep] discipline as for closure: what
+      elimination removes is never the base name or the reset, because those
+      are kept. *)
+  Lemma subAll_rooted :
+    forall base_ty rst_ty keep cns d st',
+      In base_ty keep ->
+      In rst_ty keep ->
+      ~ In d keep ->
+      (forall c, In c cns -> forall y, In y (snd c) -> ~ In y keep) ->
+      constraints_rooted base_ty rst_ty cns ->
+      constraints_rooted base_ty rst_ty (subAll cns d st').
+  Proof.
+    intros base_ty rst_ty keep cns d st' Hbk Hrk Hd Htgt Hcns.
+    induction cns as [|c cns IH]; [constructor|].
+    inversion Hcns as [|c0 cns0 Hc Hcns']; subst.
+    assert (forall c0, In c0 cns -> forall y, In y (snd c0) -> ~ In y keep)
+      as Htgt' by (intros c0 Hin; apply Htgt; now right).
+    destruct c as (st, tgt).
+    destruct tgt as [|d' [|]]; simpl; try exact (IH Htgt' Hcns').
+    destruct (ident_eqb d' d) eqn:Edd; [exact (IH Htgt' Hcns')|].
+    constructor; [|exact (IH Htgt' Hcns')].
+    assert (~ In d' keep) as Hd'
+        by (apply (Htgt (st, [d'])); [now left|now left]).
+    destruct Hc as (Hb & Hr). cbn [fst] in Hb, Hr |- *.
+    (** a kept name survives the removal of the eliminated name and of the
+        constraint's own target *)
+    assert (forall y, In y keep -> In y st ->
+                      In y (st_remove d' (SymTypes.subST st d st'))) as Hkeepin.
+    { intros y Hy Hyst. apply st_remove_preserves_other_in;
+        [intro; subst y; contradiction|].
+      destruct (subST_cases st d st') as [E|[E|E]]; rewrite E;
+        [exact Hyst
+        |apply in_merge_left; apply st_remove_preserves_other_in;
+         [intro; subst y; contradiction|exact Hyst]
+        |apply in_merge_left; apply st_remove_preserves_other_in;
+         [intro; subst y; contradiction|exact Hyst]]. }
+    split; [exact (Hkeepin base_ty Hbk Hb)|exact (Hkeepin rst_ty Hrk Hr)].
+  Qed.
+
+  Lemma simplify_rooted :
+    forall base_ty rst_ty keep ds cns,
+      In base_ty keep ->
+      In rst_ty keep ->
+      (forall d, In d ds -> ~ In d keep) ->
+      (forall c, In c cns -> forall y, In y (snd c) -> ~ In y keep) ->
+      constraints_rooted base_ty rst_ty cns ->
+      constraints_rooted base_ty rst_ty (simplify cns ds).
+  Proof.
+    intros base_ty rst_ty keep ds.
+    induction ds as [|d ds IH]; intros cns Hbk Hrk Hds Htgt Hcns;
+      [exact Hcns|].
+    simpl. destruct (SymTypes.findST cns d) as [st'|] eqn:Ef.
+    - apply IH;
+        [exact Hbk|exact Hrk|intros d0 Hd0; apply Hds; now right| |].
+      + exact (subAll_targets keep cns d st' Htgt).
+      + apply (subAll_rooted base_ty rst_ty keep cns d st' Hbk Hrk);
+          [apply Hds; now left|exact Htgt|exact Hcns].
+    - apply IH; [exact Hbk|exact Hrk|intros d0 Hd0; apply Hds; now right
+                |exact Htgt|exact Hcns].
+  Qed.
+
 End SecLusUnnestingBase.
