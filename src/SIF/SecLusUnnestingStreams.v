@@ -279,6 +279,63 @@ Section StreamAmbients.
   Definition clocks_covered (cks : list clock) (ambs : list ST) : Prop :=
     Forall2 clock_covered cks ambs.
 
+
+  (** * A call's uniform ambient sits below every result's
+
+      The streams contract gives each source stream its own ambient, but
+      [generate_constraints_mono_sem] transports satisfaction under a single
+      one.  The two are reconciled by taking that single one to be the call's
+      own -- [merge [rst_ty] bckty] -- and observing that it is below every
+      result's ambient: every output clock instantiates the *same* base clock,
+      so [bck]'s type is inside each output clock's type.
+
+      This is the [amb_pair] obligation of the design in force, in the form the
+      streams call case needs it. *)
+
+  Lemma wc_Eapp_out_instck :
+    forall (outs : list (ident * clock)) bck sub (anns : list LSyn.ann),
+      Forall2 (WellInstantiated bck sub) outs (List.map snd anns) ->
+      forall ck, In ck (List.map clock_of_nclock anns) ->
+                 exists ckf, instck bck sub ckf = Some ck.
+  Proof.
+    intros outs bck sub anns Hwi ck Hin.
+    apply in_map_iff in Hin as (ann & Hck & Hann).
+    assert (In (snd ann) (List.map snd anns)) as Hin2
+        by (apply in_map_iff; exists ann; split; [reflexivity|exact Hann]).
+    apply In_nth_error in Hin2 as (i & Hni).
+    assert (exists p, nth_error outs i = Some p) as (p & Hpi).
+    { apply nth_error_lt.
+      rewrite (Forall2_length _ _ _ Hwi).
+      exact (nth_error_lt_inv _ i (snd ann) Hni). }
+    destruct p as (x & ckf).
+    destruct (Forall2_nth_error _ outs (List.map snd anns) i (x, ckf) (snd ann)
+                Hwi Hpi Hni) as (_ & Hi).
+    exists ckf. cbn [fst snd] in Hi. rewrite Hi.
+    unfold clock_of_nclock, stripname in Hck. now rewrite Hck.
+  Qed.
+
+  Lemma call_amb_below_result_ambients :
+    forall bck sub (outcks : list clock) ambs bckty,
+      assign_clk_type env base_ty bck = Some bckty ->
+      (forall ck, In ck outcks -> exists ckf, instck bck sub ckf = Some ck) ->
+      clocks_covered outcks ambs ->
+      Forall (fun a => incl (merge [rst_ty] bckty) a) ambs.
+  Proof.
+    intros bck sub outcks ambs bckty Hbk Hinst Hcov.
+    induction Hcov as [|ck a cks ambs0 Hca Hr IH]; [constructor|].
+    constructor.
+    - destruct Hca as (ckty & Hckty & Hincl).
+      destruct (Hinst ck (or_introl (@Coq.Init.Logic.eq_refl _ ck)))
+        as (ckf & Hi).
+      assert (incl bckty ckty) as Hbi
+          by exact (assign_clk_type_instck_base_incl env base_ty bck sub ckf ck
+                      bckty ckty Hi Hbk Hckty).
+      intros z Hz. apply Hincl.
+      exact (incl_merge_mono [rst_ty] [rst_ty] bckty ckty
+               (incl_refl [rst_ty]) Hbi z Hz).
+    - apply IH. intros ck0 Hck0. apply Hinst. now right.
+  Qed.
+
   Definition declared_ambients (xs : list ident) (ambs : list ST) : Prop :=
     Forall2
       (fun x a =>

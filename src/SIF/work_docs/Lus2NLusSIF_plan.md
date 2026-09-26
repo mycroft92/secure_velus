@@ -360,11 +360,40 @@ is fixed at the program level, and it joins `sig_good`, `sig_scoped` and
 with nothing abstract left but `sig_inputs_ok`.
 `call_amb_covers_augmented_concrete` is clause 3 on the same augmentation.
 
-**What is left for `carries_Eapp`**: threading these through the existing
-`cs_chain` fold, i.e. instantiating the signature on the source side with
-`augment_actuals` and rewriting the call case's chain application to use it.
-That is editing an existing proof rather than proving anything new
-*[untested]*.
+**Correction, 2026-09-26: the scalar `carries_Eapp` is not the open case --
+it was already proved.**  `CALLS.carries_Eapp` applies
+`generate_constraints_mono_sem` directly with the plain actuals, and its
+per-argument premise is met because the *scalar* contract is handed an ambient
+by hypothesis: `carries_at` requires
+`incl (merge [rst_ty] ckty) amb` for **every** variable the emitted equations
+define, lifted arguments included.  So one ambient large enough for every
+argument is simply given there, and no augmentation is needed.
+
+The open call case is the **streams** one, `carries_Eapp_streams`, which does
+not exist yet.  That is where the gap is real: the pointwise contract gives
+each source stream *its own* ambient (`ambs`, pinned by
+`clocks_covered (clockof e) ambs`), so there is no single ambient to be handed
+the argument obligations, and the uniform one has to be constructed and
+reconciled -- which is what all the machinery above is for.  Every other
+constructor has its streams lemma (`carries_Econst_streams` through
+`carries_Earrow_streams`, including both `Emerge`/`Eite` branches); `Eapp` is
+the only one missing.
+
+**The reconciliation, proved 2026-09-26** *[verified, compiles]*.
+`wc_Eapp_out_instck` and `call_amb_below_result_ambients`
+(`SecLusUnnestingStreams.v`): every output clock instantiates the *same* base
+clock, so `bck`'s type is inside each output clock's type, and therefore the
+call's uniform ambient `merge [rst_ty] bckty` is inside every result's
+ambient.  That is the `amb_pair` obligation in the form the streams call case
+needs, and it is what lets `generate_constraints_mono_sem` be applied with
+`amb := call_amb` inside a contract whose ambients are per-stream.
+
+**What is left**: `carries_Eapp_streams` itself.  Its ingredients are now all
+present -- `carries_list_streams_intro` for the arguments, the augmentation
+and its three obligations, `call_amb_below_result_ambients` for the results,
+`lifted_defs_streams` and `state_clocks_found` for the variables unnesting
+binds -- but the lemma is a large assembly (its siblings run 300-1500 lines
+each) and is not written *[untested]*.
 
 **A near-blocker, and why it is not one, 2026-09-23.**  The augmentation
 argument needs the actual at a clock position to contribute its own security
