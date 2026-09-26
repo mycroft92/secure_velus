@@ -680,6 +680,23 @@ Import UNN.Fresh.Tactics.
         exact (mmap_cons_ok _ c2 cs2 sb c1' sb cr' sb Hc1' Hcr').
     Qed.
 
+    Lemma subst_constraints_inp_map_targets :
+      forall xs cs vs d sa sa',
+        SIG.subst_constraints_inp_map cs xs vs sa = OK (d, sa') ->
+        List.map snd d = List.map snd cs.
+    Proof.
+      intros xs. induction xs as [|x xs IH]; intros cs vs d sa sa' H.
+      - destruct vs; [|simpl in H; discriminate].
+        simpl in H. unfold SC.ret in H.
+        assert (d = cs) as ? by (inversion H; reflexivity); subst d.
+        reflexivity.
+      - destruct vs as [|v vs]; [simpl in H; discriminate|].
+        simpl in H.
+        apply sec_bind_inv in H as (d1 & s1 & Hd1 & H).
+        rewrite (IH d1 vs d s1 sa' H).
+        exact (subst_ident_in_constraints_targets cs x v d1 sa s1 Hd1).
+    Qed.
+
     Lemma subst_constraints_inp_map_total :
       forall xs cs1 cs2 vs vs' d sa sa' sb,
         List.length vs = List.length vs' ->
@@ -705,6 +722,201 @@ Import UNN.Fresh.Tactics.
         destruct (IH d1 d1' vs vs' d s1 sa' sb (f_equal Nat.pred Hl) Ht' H)
           as (d' & Hd').
         exists d'. simpl. unfold SC.bind. rewrite Hd1'. exact Hd'.
+    Qed.
+
+    (** [findST] looks a constraint up by its target, so whether it finds
+        anything depends on the targets alone. *)
+    Lemma findST_targets_some :
+      forall cs1 cs2 v,
+        List.map snd cs1 = List.map snd cs2 ->
+        (exists t1, SymTypes.findST cs1 v = Some t1) ->
+        exists t2, SymTypes.findST cs2 v = Some t2.
+    Proof.
+      induction cs1 as [|c1 cs1 IH]; intros cs2 v Ht (t1 & H1).
+      - simpl in H1. discriminate.
+      - destruct cs2 as [|c2 cs2]; [discriminate Ht|].
+        simpl in Ht. injection Ht as Htc Htr.
+        destruct c1 as (s1 & tg1). destruct c2 as (s2 & tg2).
+        cbn [snd] in Htc. subst tg2.
+        simpl in H1 |- *.
+        destruct tg1 as [|d [|]];
+          [exact (IH cs2 v Htr (ex_intro _ t1 H1))| |
+           exact (IH cs2 v Htr (ex_intro _ t1 H1))].
+        destruct (ident_eqb d v) eqn:E; [now exists s2|].
+        exact (IH cs2 v Htr (ex_intro _ t1 H1)).
+    Qed.
+
+    Lemma findST_targets_none :
+      forall cs1 cs2 v,
+        List.map snd cs1 = List.map snd cs2 ->
+        SymTypes.findST cs1 v = None -> SymTypes.findST cs2 v = None.
+    Proof.
+      induction cs1 as [|c1 cs1 IH]; intros cs2 v Ht H1.
+      - destruct cs2; [reflexivity|discriminate Ht].
+      - destruct cs2 as [|c2 cs2]; [discriminate Ht|].
+        simpl in Ht. injection Ht as Htc Htr.
+        destruct c1 as (s1 & tg1). destruct c2 as (s2 & tg2).
+        cbn [snd] in Htc. subst tg2.
+        simpl in H1 |- *.
+        destruct tg1 as [|d [|]]; [exact (IH cs2 v Htr H1)| |
+                                   exact (IH cs2 v Htr H1)].
+        destruct (ident_eqb d v) eqn:E; [discriminate H1|].
+        exact (IH cs2 v Htr H1).
+    Qed.
+
+    (** The output substitution: it rewrites targets, but identically on
+        target-equal lists, so both runs succeed together. *)
+    Lemma subst_ident_constraints_total :
+      forall cs1 cs2 x v d sa sa' sb,
+        List.map snd cs1 = List.map snd cs2 ->
+        SIG.subst_ident_constraints cs1 x v sa = OK (d, sa') ->
+        exists d', SIG.subst_ident_constraints cs2 x v sb = OK (d', sb)
+                   /\ List.map snd d' = List.map snd d.
+    Proof.
+      intros cs1. induction cs1 as [|c1 cs1 IH];
+        intros cs2 x v d sa sa' sb Ht H.
+      - destruct cs2; [|discriminate Ht].
+        unfold SIG.subst_ident_constraints in H. simpl in H.
+        unfold SC.ret in H.
+        assert (d = []) as ? by (inversion H; reflexivity); subst d.
+        exists []. split; [apply mmap_nil_ok|reflexivity].
+      - destruct cs2 as [|c2 cs2]; [discriminate Ht|].
+        simpl in Ht. injection Ht as Htc Htr.
+        unfold SIG.subst_ident_constraints in H. simpl in H.
+        apply sec_bind_inv in H as (h & s1 & Hh & H).
+        apply sec_bind_inv in H as (r & s2 & Hr & Hret).
+        unfold SC.ret in Hret.
+        assert (d = h :: r) as ? by (inversion Hret; reflexivity); subst d.
+        destruct (IH cs2 x v r s1 s2 sb Htr Hr) as (r' & Hr' & Htr').
+        assert (exists h', SIG.subst_ident_constraint c2 x v sb = OK (h', sb)
+                           /\ snd h' = snd h) as (h' & Hh' & Hht).
+        { unfold SIG.subst_ident_constraint in Hh |- *.
+          destruct (ident_eqb x v) eqn:Exv; [discriminate Hh|].
+          destruct c1 as (ty1 & tg1). destruct c2 as (ty2 & tg2).
+          cbn [snd] in Htc. subst tg2.
+          destruct tg1 as [|x0 [|]]; try discriminate Hh;
+            destruct (ident_eqb x x0) eqn:Ex; unfold SC.ret in Hh;
+              inversion Hh; subst;
+              (eexists; split; [reflexivity|reflexivity]). }
+        exists (h' :: r'). split.
+        + exact (mmap_cons_ok _ c2 cs2 sb h' sb r' sb Hh' Hr').
+        + simpl. now rewrite Hht, Htr'.
+    Qed.
+
+    Lemma subst_constraints_out_map_total :
+      forall xs vs cs1 cs2 d sa sa' sb,
+        List.map snd cs1 = List.map snd cs2 ->
+        SIG.subst_constraints_out_map cs1 xs vs sa = OK (d, sa') ->
+        exists d', SIG.subst_constraints_out_map cs2 xs vs sb = OK (d', sb)
+                   /\ List.map snd d' = List.map snd d.
+    Proof.
+      intros xs. induction xs as [|x xs IH];
+        intros vs cs1 cs2 d sa sa' sb Ht H.
+      - destruct vs; [|simpl in H; discriminate].
+        simpl in H. unfold SC.ret in H.
+        assert (d = cs1) as ? by (inversion H; reflexivity); subst d.
+        exists cs2. split; [reflexivity|now rewrite Ht].
+      - destruct vs as [|v vs]; [simpl in H; discriminate|].
+        simpl in H.
+        destruct (SymTypes.findST cs1 v) as [t|] eqn:Ef;
+          [exfalso; unfold SC.error in H; discriminate H|].
+        apply sec_bind_inv in H as (c1' & s1 & Hc1' & H).
+        destruct (subst_ident_constraints_total cs1 cs2 x v c1' sa s1 sb
+                    Ht Hc1') as (c2' & Hc2' & Ht2).
+        destruct (IH vs c1' c2' d s1 sa' sb
+                    (@Coq.Init.Logic.eq_sym _ _ _ Ht2) H) as (d' & Hd' & Htd).
+        exists d'. split; [|exact Htd].
+        simpl. rewrite (findST_targets_none cs1 cs2 v Ht Ef).
+        unfold SC.bind. rewrite Hc2'. exact Hd'.
+    Qed.
+
+    Lemma mmap_findST_total :
+      forall (e1 e2 : list SymTypes.constraint) out r sa sa' sb,
+        List.map snd e1 = List.map snd e2 ->
+        SC.mmap (fun x => SC.bind (option_to_sec (SymTypes.findST e1 x))
+                            (fun st => SC.ret (st, [x]))) out sa = OK (r, sa') ->
+        exists r',
+          SC.mmap (fun x => SC.bind (option_to_sec (SymTypes.findST e2 x))
+                              (fun st => SC.ret (st, [x]))) out sb
+          = OK (r', sb).
+    Proof.
+      intros e1 e2 out. induction out as [|x out IH]; intros r sa sa' sb Ht H.
+      - exists []. apply mmap_nil_ok.
+      - simpl in H.
+        apply sec_bind_inv in H as (h & s1 & Hh & H).
+        apply sec_bind_inv in H as (rr & s2 & Hrr & _).
+        cbv beta in Hh.
+        apply sec_bind_inv in Hh as (t & s3 & Ht3 & Hret).
+        apply option_to_sec_inv in Ht3 as (Ht3 & ?); subst s3.
+        destruct (findST_targets_some e1 e2 x Ht (ex_intro _ t Ht3))
+          as (t2 & Ht2).
+        destruct (IH rr s1 s2 sb Ht Hrr) as (rr' & Hrr').
+        exists ((t2, [x]) :: rr').
+        eapply mmap_cons_ok; [|exact Hrr'].
+        eapply sec_bind_ok; [unfold option_to_sec; now rewrite Ht2|reflexivity].
+    Qed.
+
+    (** * The augmented instantiation can be built, not assumed
+
+        Putting the four stages together: a successful [generate_constraints]
+        with one set of actuals gives a successful one with any other of the
+        same length.  This is what lets the augmented run exist, which is what
+        [subst_constraints_inp_map_augment] and then
+        [generate_constraints_mono_sem] are applied to. *)
+    Lemma generate_constraints_total_inp :
+      forall sig inp inp' clk rst out cns sa sa' sb,
+        List.length inp = List.length inp' ->
+        generate_constraints sig inp clk rst out sa = OK (cns, sa') ->
+        exists cns', generate_constraints sig inp' clk rst out sb
+                     = OK (cns', sb).
+    Proof.
+      intros sig inp inp' clk rst out cns sa sa' sb Hl H.
+      unfold generate_constraints in H |- *.
+      apply sec_bind_inv in H as (a1 & t1 & Ha1 & H).
+      apply sec_bind_inv in H as (b1 & u1 & Hb1 & H).
+      apply sec_bind_inv in H as (c1 & v1 & Hc1 & H).
+      apply sec_bind_inv in H as (e1 & w1 & He1 & Hr1).
+      (** stage 1: the input map, where the actuals differ *)
+      destruct (subst_constraints_inp_map_total sig.(s_in)
+                  sig.(s_constraints) sig.(s_constraints) inp inp' a1
+                  sa t1 sb Hl (@Coq.Init.Logic.eq_refl _ _) Ha1)
+        as (a2 & Ha2).
+      assert (List.map snd a1 = List.map snd a2) as Hta.
+      { rewrite (subst_constraints_inp_map_targets sig.(s_in)
+                   sig.(s_constraints) inp a1 sa t1 Ha1).
+        rewrite (subst_constraints_inp_map_targets sig.(s_in)
+                   sig.(s_constraints) inp' a2 sb sb Ha2).
+        reflexivity. }
+      (** stage 2: the clock, unchanged *)
+      destruct (subst_ident_in_constraints_total a1 a2 sig.(s_clk) clk clk
+                  b1 t1 u1 sb Hta Hb1) as (b2 & Hb2).
+      assert (List.map snd b1 = List.map snd b2) as Htb.
+      { rewrite (subst_ident_in_constraints_targets a1 sig.(s_clk) clk b1
+                   t1 u1 Hb1).
+        rewrite (subst_ident_in_constraints_targets a2 sig.(s_clk) clk b2
+                   sb sb Hb2).
+        exact Hta. }
+      (** stage 3: the reset, unchanged *)
+      destruct (subst_ident_in_constraints_total b1 b2 sig.(s_reset) rst rst
+                  c1 u1 v1 sb Htb Hc1) as (c2 & Hc2).
+      assert (List.map snd c1 = List.map snd c2) as Htc.
+      { rewrite (subst_ident_in_constraints_targets b1 sig.(s_reset) rst c1
+                   u1 v1 Hc1).
+        rewrite (subst_ident_in_constraints_targets b2 sig.(s_reset) rst c2
+                   sb sb Hc2).
+        exact Htb. }
+      (** stage 4: the outputs, unchanged *)
+      destruct (subst_constraints_out_map_total sig.(s_out) out c1 c2 e1
+                  v1 w1 sb Htc He1) as (e2 & He2 & Hte).
+      (** and the final lookup *)
+      destruct (mmap_findST_total e1 e2 out cns w1 sa' sb
+                  (@Coq.Init.Logic.eq_sym _ _ _ Hte) Hr1) as (cns' & Hr2).
+      exists cns'.
+      eapply sec_bind_ok; [exact Ha2|].
+      eapply sec_bind_ok; [exact Hb2|].
+      eapply sec_bind_ok; [exact Hc2|].
+      eapply sec_bind_ok; [exact He2|].
+      exact Hr2.
     Qed.
 
     Lemma subst_constraints_inp_map_augment :
