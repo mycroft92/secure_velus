@@ -1080,6 +1080,56 @@ Import UNN.Fresh.Tactics.
       repeat split; reflexivity.
     Qed.
 
+    (** * Extending a node's variables does not move its clock environment
+
+        [lnode_clock_env] is [Env.adds'] over [n_vars] on top of the inputs and
+        outputs, and [Env.adds'] is a left fold of [add], so extending [n_vars]
+        on the right only adds keys.  On a key the extension does not mention,
+        the two environments therefore agree -- which is what lets the source
+        equations be run against the unnested node's clock environment, and so
+        lets the equation-level theorem be applied with one [cenv]. *)
+    Lemma lnode_clock_env_vars_ext :
+      forall (n m : node) (extra : list (ident * (type * clock))) x,
+        m.(n_in) = n.(n_in) ->
+        m.(n_out) = n.(n_out) ->
+        m.(n_vars) = n.(n_vars) ++ extra ->
+        ~ InMembers x extra ->
+        Env.find x (lnode_clock_env m) = Env.find x (lnode_clock_env n).
+    Proof.
+      intros n m extra x Hin Hout Hvars Hx.
+      unfold lnode_clock_env. rewrite Hin, Hout, Hvars.
+      rewrite <- Env.adds'_app.
+      exact (Env.gsso' x extra _ Hx).
+    Qed.
+
+    Corollary find_clock_vars_ext :
+      forall (n m : node) (extra : list (ident * (type * clock))) x,
+        m.(n_in) = n.(n_in) ->
+        m.(n_out) = n.(n_out) ->
+        m.(n_vars) = n.(n_vars) ++ extra ->
+        ~ InMembers x extra ->
+        find_clock (lnode_clock_env m) x = find_clock (lnode_clock_env n) x.
+    Proof.
+      intros n m extra x Hin Hout Hvars Hx.
+      unfold find_clock.
+      now rewrite (lnode_clock_env_vars_ext n m extra x Hin Hout Hvars Hx).
+    Qed.
+
+    (** And for the unnested node specifically: its extra variables are the
+        ones the run created, so the two environments agree on every key the
+        run did not create. *)
+    Corollary find_clock_unnest_node_ext :
+      forall (P : global) (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs) x,
+        ~ InMembers x (st_anns (snd (unnest_equations P n.(n_eqs) init_st))) ->
+        find_clock (lnode_clock_env (unnest_node P n Hwl Hpref)) x
+        = find_clock (lnode_clock_env n) x.
+    Proof.
+      intros P n Hwl Hpref x Hx.
+      eapply find_clock_vars_ext; [reflexivity|reflexivity| |exact Hx].
+      exact (proj2 (unnest_node_fields P n Hwl Hpref)).
+    Qed.
+
     (** * A node's locals are not its interface
 
         Half of [unnest_node_signatures_preserved]'s disjointness side
