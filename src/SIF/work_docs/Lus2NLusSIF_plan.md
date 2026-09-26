@@ -1043,9 +1043,78 @@ is an aux name and `env` is injective) and the `cenv`/`vars` agreement
    there and not before: the node-level `scope` must also contain the
    interface names, which the current `simplify cs (locals ++ minted st0 st1)`
    does not by itself give.
-7. `unnest_global` by signature-global lockstep.  Leg U done.
+7. `unnest_global` by signature-global lockstep.  **The lockstep itself is
+   done, 2026-09-26** *[verified, compiles]*, and it turned out to be
+   **phase-independent** -- which means Leg I inherits it rather than
+   repeating it.  Four pieces:
+
+     * `call_weakens G1 G2` -- the *whole* content the generator needs about
+       two signature globals: at every call site the target's signature is
+       found and its instantiated block is entailed by the source's, at the
+       same valuation and in the same state.  One invariant, not the six that
+       re-deriving it at each call would need.  `call_weakens_cons` extends it
+       a node at a time; `sig_call_weakens_from_good` is where a node pays for
+       it.
+
+       **Reuse found, not rebuilt.**  `sig_call_weakens_from_good` is
+       essentially two `SIFSignature.v` theorems composed:
+       `generate_constraints_ok_from_good` supplies the target block (every
+       premise transfers across equal interface fields), and
+       `signatures_preserved_equal_calls_from_good` supplies the entailment.
+       Both were already there, hoisted out of the NLustre-to-Stc bridge.
+       The only new observation is that an instantiated block is scoped to the
+       *actuals*, so taking the scope to be the actuals' own names makes
+       `scope_fresh` and `call_subst_scoped` free and leaves `call_subst_fresh`
+       as the single real side condition.
+
+     * `generate_leqns_constraints_entails_G` -- the generator is monotone in
+       its callees, proved down the whole dispatch.  Because
+       `preserves_on` at a call site collapses to plain implication under the
+       caller's valuation, the weakening travels as a `cs_entails` between
+       constraint lists at a *fixed* valuation: no witness to move, no scope
+       to track, composing over `cmerge` and `++` by
+       `listSatisfiable_cmerge` alone.  The types and the state do not move,
+       so the statement is a `Forall2` of `lst_entails` -- equal on the left,
+       entailed on the right.
+
+     * `unnest_node_signatures_preserved_decoupled` -- one node, two
+       accumulators, **two independent states**.  The composition goes through
+       an intermediate run, the *source* equations read against the *target*
+       accumulator: it exists and ends in the same state because a signature's
+       constraints reach only the blocks and those are state-pure.
+
+     * `generate_all_lsignatures_weakens'` -- the induction along the program.
+       The node lists are related by a parameter `R`, the per-node step is a
+       hypothesis, and `call_weakens` is the invariant.  Nothing in it mentions
+       unnesting.
+
+   **The states must be decoupled, 2026-09-26.**  The two drivers cannot be
+   held at a common state.  A source node's nested call mints one security
+   name per result; the equation the pass lifts it into borrows the name of
+   the variable it defines and mints *nothing*.  So the target run falls
+   behind from the first node with a nested call, and a shared `st0` is not
+   available.
+
+   Nothing is lost, and again the lemma was already there:
+   `state_pure_generate_leqns` (`SecLusUnnestingEquations.v`) says the
+   generator is state-pure on an unnested equation list, so the target run can
+   be *restarted* at the source's state -- which is where the equation-level
+   theorem wants it.  The target's own `simplify` window needs no attention at
+   all, because `preserves_on_simplify` eliminates on each side
+   independently.
+
+   What is left at the program level is not structural: the naming-pass facts
+   (the aux lookup; `find_node_env` for the node), and `signature_good` /
+   `signature_scoped` / `NoDup (signature_scope _)` for a *generated Lustre*
+   signature.  The last three are the Lustre analogue of what
+   `SecNLusTypingCorrectness.v` proves for NLustre, and they live after
+   `SecLusUnnesting.v` in the build order, so they enter the per-node step as
+   hypotheses exactly as Leg A's `node_step_entails` leaves its own.
 8. Leg I (`normfby_global`); then prepend `normalize_global_sem` so source
-   Lustre is the entry to `lnode_noninterference_streams`.
+   Lustre is the entry to `lnode_noninterference_streams`.  Leg I now owes
+   only its per-node facts: the analogue of `unnest_node_fields`,
+   `normfby_node`'s interface equalities, and its equation-level entailment.
+   Everything from `call_weakens` upwards is shared.
 
 ### Why the passes make preservation work
 
