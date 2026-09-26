@@ -1190,6 +1190,78 @@ Import UNN.Fresh.Tactics.
       exact (find_clock_unnest_node_defd P n Hwl Hpref eqs' st' x Hrun Hx).
     Qed.
 
+    (** * The equation-level entailment, for a node
+
+        [node_carries_preserves] with everything a node supplies: its equation
+        list from [unnest_node_fields], its [NoDup] from
+        [unnest_node_equations_nodup], and the two clock environments reconciled
+        by [generate_leqns_unnest_node_cenv].
+
+        The section's [cenv] has to be the *unnested* node's, since that is the
+        one the target run uses and the theorem fixes a single environment; at
+        the program level the section is instantiated with exactly that, so the
+        hypothesis is discharged by [reflexivity].  What is left as hypotheses
+        are the ambient premises -- the [A eq] family -- which is precisely what
+        the pointwise contract exists to remove. *)
+    Corollary unnest_node_entailment :
+      forall (P : global) (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs)
+             ce cet st0 ct1 ct1',
+        cenv = lnode_clock_env (unnest_node P n Hwl Hpref) ->
+        Forall (wl_equation P) n.(n_eqs) ->
+        Forall (wc_equation P vars) n.(n_eqs) ->
+        (forall x,
+            In x (moved_by env init_st
+                    (snd (unnest_equations P n.(n_eqs) init_st))) ->
+            ~ In x scope) ->
+        (forall eq eqs1 s s',
+            In eq n.(n_eqs) -> unnest_equation P eq s = (eqs1, s') ->
+            forall x ck ckty,
+              In x (vars_defined eqs1) -> find_clock cenv x = OK ck ->
+              assign_clk_type env base_ty ck = Some ckty ->
+              incl (merge [rst_ty] ckty) (A eq)) ->
+        (forall dlt,
+            listSatisfiable dlt ce ->
+            forall eq b, In eq n.(n_eqs) -> In b (sec_of env (fst eq)) ->
+              satisfiable dlt (A eq) [b]) ->
+        constraints_scoped scope ce ->
+        sec_le ct1 stF ->
+        generate_leqns_constraints GL env base_ty rst_ty
+          (lnode_clock_env n) n.(n_eqs) st0 = OK (ce, ct1) ->
+        generate_leqns_constraints GL env base_ty rst_ty
+          (lnode_clock_env (unnest_node P n Hwl Hpref))
+          (unnest_node P n Hwl Hpref).(n_eqs) st0 = OK (cet, ct1') ->
+        preserves_on scope ce cet.
+    Proof.
+      intros P n Hwl Hpref ce cet st0 ct1 ct1' Hcenv Hwle Hwce Hmv Hamb Hbs
+        Hcesc Hbnd Hsrc Htgt.
+      (** the run, and the equation list it produced *)
+      remember (unnest_equations P n.(n_eqs) init_st) as r eqn:Hr.
+      destruct r as (eqs' & st').
+      assert ((unnest_node P n Hwl Hpref).(n_eqs) = eqs') as Heqs'.
+      { destruct (unnest_node_fields P n Hwl Hpref) as (He & _).
+        rewrite He, <- Hr. reflexivity. }
+      (** the source run, read against the section's clock environment *)
+      assert (generate_leqns_constraints GL env base_ty rst_ty cenv
+                n.(n_eqs) st0 = OK (ce, ct1)) as Hsrc'.
+      { rewrite Hcenv.
+        rewrite (generate_leqns_unnest_node_cenv P n Hwl Hpref GL eqs' st' st0
+                   (@Coq.Init.Logic.eq_sym _ _ _ Hr)).
+        exact Hsrc. }
+      (** and the target run, which already is *)
+      assert (generate_leqns_constraints GL env base_ty rst_ty cenv
+                eqs' st0 = OK (cet, ct1')) as Htgt'
+          by (rewrite Hcenv, <- Heqs'; exact Htgt).
+      eapply node_carries_preserves;
+        [exact Hwle|exact Hwce
+        |exact (unnest_node_equations_nodup P n Hwl Hpref eqs' st'
+                  (@Coq.Init.Logic.eq_sym _ _ _ Hr))
+        | |exact Hamb|exact Hbs|exact Hcesc
+        |exact (@Coq.Init.Logic.eq_sym _ _ _ Hr)
+        |exact Hsrc'|exact Htgt'|exact Hbnd].
+      intros x Hx. apply Hmv. cbn [snd]. exact Hx.
+    Qed.
+
     (** * A node's locals are not its interface
 
         Half of [unnest_node_signatures_preserved]'s disjointness side
