@@ -1110,11 +1110,94 @@ is an aux name and `env` is injective) and the `cenv`/`vars` agreement
    `SecNLusTypingCorrectness.v` proves for NLustre, and they live after
    `SecLusUnnesting.v` in the build order, so they enter the per-node step as
    hypotheses exactly as Leg A's `node_step_entails` leaves its own.
-8. Leg I (`normfby_global`); then prepend `normalize_global_sem` so source
-   Lustre is the entry to `lnode_noninterference_streams`.  Leg I now owes
-   only its per-node facts: the analogue of `unnest_node_fields`,
-   `normfby_node`'s interface equalities, and its equation-level entailment.
-   Everything from `call_weakens` upwards is shared.
+8. Leg I (`normfby_global`).  **The equation level is done, 2026-09-27**
+   *[verified, compiles]*, in `src/SIF/SecLusNormFby.v`.
+
+   Leg I is much cheaper than Leg U, and for a structural reason worth
+   recording: `fby_equation` rewrites only at the **top** of an equation and
+   carries the operands over verbatim.  There is no expression induction
+   anywhere in this leg -- only a four-way case analysis, which
+   `fby_equation_spec` supplies.
+
+     * the node skeleton -- `normfby_node_fields`,
+       `normfby_node_sig_interface` (five of six signature fields equal on the
+       nose), `generate_leqns_normfby_node_cenv`.  The last is a *quotation*:
+       `find_clock_node_ext_defd` (moved into the shared part) needs nothing
+       about which pass extended the variables, because `n_defd` puts a
+       defined variable among the node's own and the extended node's
+       `node_NoDup` -- which the pass had to prove to build the record --
+       keeps the added ones out.  That replaces Leg U's
+       `unnest_node_new_ids_fresh` and its three supporting lemmas.
+
+     * `preserves_on_fresh_names` -- the **whole semantic content of the
+       leg**, stated once: give each variable the pass created exactly the
+       level of the left-hand side of the equation it was created for.  The
+       equation that *defines* a created variable then holds because that
+       level is its own bound, and the equation that *uses* it holds because
+       the source equation already bounded that level by the variable it
+       defines.  No `NoDup` on the created names is needed, because they all
+       get the *same* level -- which also removes any need for `env`
+       injectivity here: `b <> bp` follows from `b` being in scope and `bp`
+       not.
+
+     * the three interesting shapes: `fby_cut_entails` (a constant initial
+       value, cut at an output), `fby_ite_entails`, `arrow_entails`.  The two
+       remaining shapes leave the equation alone, so the two runs are the same
+       run.
+
+     * `fby_equation_entails` -- the dispatch.  The node's data enters as one
+       hypothesis quantified over the shape, so it is vacuous precisely on the
+       shapes that need nothing.  The created variables' clocks and names come
+       off the fresh state through `init_var_for_clock_In` and
+       `fresh_ident_In`, which NormFby and Fresh already prove.
+
+   **`fby_ite_entails` is where the two-operand `fby` rule pays.**  The pass
+   turns a non-constant-initialised `fby` into an `ite` between the initial
+   value and a fresh variable carrying the delayed one.  The `ite`'s first
+   branch needs the *initial* value's level to be below the variable being
+   defined -- and it is, but only because the source constraint mentions it.
+   The NLustre rule, which legitimately types only the delayed operand, would
+   leave nothing there to appeal to.  This is the first place in the
+   development where the corrected rule is load-bearing rather than merely
+   stronger.
+
+   **What remains, and the route decided (do not re-derive it).**  The lift
+   from one equation to a node's equation list, and then the node statement.
+   The composition tool is `preserves_on_concat_list` (`SecTypes.v`), already
+   proved for the Stc leg's per-trconstr assembly.  It asks, per chunk, for an
+   `extras` set -- the target-side-only names that chunk's witness moves --
+   plus `constraints_scoped (scope ++ extras_k) tgt_k`, and globally
+   `NoDup (concat extras)` with `concat extras` disjoint from the scope.
+
+   So the three steps are:
+
+     1. give each of the three case lemmas the extra conclusion
+        `constraints_scoped (scope ++ extras) cet`, where `extras` is that
+        equation's created security names.  Each lemma already computes `cet`
+        explicitly, so this is the same membership argument it already makes,
+        run once more; it needs the `L`-names-are-visible premise the dispatch
+        already has.
+     2. carry that through `fby_equation_entails`, which then also returns the
+        equation's `extras`.
+     3. induct over `map_bind (fby_equation to_cut)`, feeding
+        `preserves_on_concat_list`.
+
+   `NoDup (concat extras)` -- all the created security names distinct -- is the
+   one genuinely global fact, and it is a **premise of the list lemma**, to be
+   discharged where the naming pass is in scope, exactly as Leg U leaves
+   `sig_good` and the minted-name disjointness.  It follows from `env`
+   injectivity and `NoDup (st_ids st_final)`, which `fby_equations_st_valid`
+   and `st_valid_NoDup` give.
+
+   The alternative -- one global witness with a per-name level function, so the
+   whole node moves at once, as Leg U's `moved_by` does -- was considered and
+   rejected: it needs an actual `ident -> ST` built by a fold over the equation
+   list, and `NoDup` comes back because the levels then differ per name.
+   `preserves_on_concat_list` is the cheaper route and it already exists.
+
+   Then prepend `normalize_global_sem` so source Lustre is the entry to
+   `lnode_noninterference_streams`.  Everything from `call_weakens` upwards is
+   shared with Leg U and needs nothing new.
 
 ### Why the passes make preservation work
 
