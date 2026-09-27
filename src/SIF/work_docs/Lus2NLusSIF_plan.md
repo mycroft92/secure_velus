@@ -1161,39 +1161,84 @@ is an aux name and `env` is injective) and the `cenv`/`vars` agreement
    development where the corrected rule is load-bearing rather than merely
    stronger.
 
-   **What remains, and the route decided (do not re-derive it).**  The lift
-   from one equation to a node's equation list, and then the node statement.
-   The composition tool is `preserves_on_concat_list` (`SecTypes.v`), already
-   proved for the Stc leg's per-trconstr assembly.  It asks, per chunk, for an
-   `extras` set -- the target-side-only names that chunk's witness moves --
-   plus `constraints_scoped (scope ++ extras_k) tgt_k`, and globally
-   `NoDup (concat extras)` with `concat extras` disjoint from the scope.
+   **Done since:** each chunk also yields its created security names and
+   `constraints_scoped (scope ++ extras) cet` *[verified, compiles]*.  The
+   shape facts moved outside the valuation, because a target chunk has to be
+   shown scoped whether or not the source is satisfiable at all.  Two premises
+   went away with it: `~ In bi L` follows from `~ In bi scope` once `L` is
+   known visible, and `b <> bi` follows from `In b scope` with it.
 
-   So the three steps are:
+   ### CORRECTION 2026-09-27: the per-chunk composition does not apply
 
-     1. give each of the three case lemmas the extra conclusion
-        `constraints_scoped (scope ++ extras) cet`, where `extras` is that
-        equation's created security names.  Each lemma already computes `cet`
-        explicitly, so this is the same membership argument it already makes,
-        run once more; it needs the `L`-names-are-visible premise the dispatch
-        already has.
-     2. carry that through `fby_equation_entails`, which then also returns the
-        equation's `extras`.
-     3. induct over `map_bind (fby_equation to_cut)`, feeding
-        `preserves_on_concat_list`.
+   The route recorded above -- assemble the chunks with
+   `preserves_on_concat_list` -- **cannot be used**, and the reason is a fact
+   about the pass, not about the proof.
 
-   `NoDup (concat extras)` -- all the created security names distinct -- is the
-   one genuinely global fact, and it is a **premise of the list lemma**, to be
-   discharged where the naming pass is in scope, exactly as Leg U leaves
-   `sig_good` and the minted-name disjointness.  It follows from `env`
-   injectivity and `NoDup (st_ids st_final)`, which `fby_equations_st_valid`
-   and `st_valid_NoDup` give.
+   `init_var_for_clock` *reuses* an initialisation flag:
 
-   The alternative -- one global witness with a per-name level function, so the
-   whole node moves at once, as Leg U's `moved_by` does -- was considered and
-   rejected: it needs an actual `ident -> ST` built by a fold over the equation
-   list, and `NoDup` comes back because the levels then differ per name.
-   `preserves_on_concat_list` is the cheaper route and it already exists.
+   ```coq
+   match find (fun '(_, ((ty, cl'), isinit)) =>
+                 isinit && (cl' ==b cl) && (ty ==b bool_type)) (st_anns st) with
+   | Some (x, _) => ((x, []), st)          (* reuse: creates nothing *)
+   | None => ... fresh_ident norm2 ((bool_type, cl), true) ...
+   end
+   ```
+
+   So two `arrow`s (or two non-constant `fby`s) on the **same clock** share one
+   flag.  The first group creates it and emits its equation; the second merely
+   mentions it.  Both groups' `extras` therefore contain that flag's security
+   name, and `NoDup (concat extras)` -- which `preserves_on_concat_list`
+   requires -- is **false**.  Nor can the flag be dropped from the second
+   group's `extras`: its constraint mentions the name, so
+   `constraints_scoped (scope ++ extras_2) tgt_2` would fail; and it cannot be
+   put into `scope`, because then the witness could not move it and the flag's
+   own equation would have nothing to make it hold.
+
+   ### The composition that does work
+
+   One application over the **whole** target list, with a level *per created
+   name* rather than one level per chunk.  The level of a created name is the
+   left-hand side of the target constraint that **defines** it:
+
+     * a flag on clock `ck` gets `merge (merge [rst_ty] ckty) sw`, the lhs of
+       its own `init` equation, with `sw` the samplers of `ck`;
+     * a `px` gets `merge (merge [rst_ty] ckty) (merge sw s1)`, the lhs of its
+       own delayed definition.
+
+   Three things make this work, and they are worth stating because they are
+   what the earlier route missed:
+
+     1. **It is uniform on the shared name.**  A flag's level depends only on
+        its clock, so every group that mentions it wants the same level.  That
+        is exactly why sharing stopped being a problem.
+     2. **`NoDup` is recovered.**  The created names are collected *once*
+        globally, not per chunk, so each appears once.  What it needs is `env`
+        injectivity and `NoDup (st_ids st_final)`, from
+        `fby_equations_st_valid` and `st_valid_NoDup`.
+     3. **The assignment is not circular.**  A created name's defining
+        constraint mentions only *visible* names -- clock samplers and the
+        delayed operand's type, never another created name -- so the levels are
+        values of the original valuation, and nothing has to be solved.
+
+   The obligations per target constraint `(lhs, [d])` are then:
+
+     * if `d` is created: `lhs` is its recorded level (and every name in `lhs`
+       is visible);
+     * otherwise: there is a source level `Lsrc` the source constraint bounds
+       by `d`, every visible name of `lhs` is in `Lsrc`, and every created name
+       `z` of `lhs` has its level inside `Lsrc`.
+
+   Both discharge exactly as the three case lemmas already do -- `sw ⊆ ckty`
+   from `add_whens_const_type`, and `s1 ⊆ s1`.
+
+   **What this costs.**  The membership arguments in `fby_cut_entails`,
+   `arrow_entails` and `fby_ite_entails` are already the per-constraint facts
+   needed; what changes is the *packaging*: each case lemma should produce a
+   `Forall` of per-constraint facts instead of a `preserves_on`, and
+   `preserves_on_created` (replacing `preserves_on_fresh_names`) applies once,
+   at the node, over the whole list.  The composition over the equation list is
+   then a plain `Forall_app` induction with no disjointness bookkeeping at all
+   -- which is why this is the cheaper route as well as the correct one.
 
    Then prepend `normalize_global_sem` so source Lustre is the entry to
    `lnode_noninterference_streams`.  Everything from `call_weakens` upwards is
