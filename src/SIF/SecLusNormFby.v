@@ -419,25 +419,66 @@ Import UNN.Fresh.Tactics.
         eapply order_trans; [exact Hzv|exact Hdb].
     Qed.
 
+    Lemma Forall_and :
+      forall {A : Type} (P Q : A -> Prop) l,
+        Forall P l -> Forall Q l -> Forall (fun x => P x /\ Q x) l.
+    Proof.
+      induction 1 as [|a l Ha Hl IH]; intros HQ; [constructor|].
+      inversion HQ as [|a0 l0 Hqa Hql]; subst.
+      constructor; [split; [exact Ha|exact Hqa]|exact (IH Hql)].
+    Qed.
+
+    (** The move, and the scopedness that comes with it.
+
+        The shape facts are stated *outside* the valuation, because the target
+        chunk has to be shown scoped whether or not the source is satisfiable
+        at all -- and it is that scopedness, together with the created names
+        being new, that [preserves_on_concat_list] asks for when the chunks are
+        assembled into a whole body. *)
     Lemma preserves_on_fresh_names :
       forall (news : list ident) L ce cet,
-        (forall z, In z news -> ~ In z L) ->
+        (forall z, In z L -> In z scope) ->
         (forall z, In z news -> ~ In z scope) ->
+        (** what each target constraint mentions, and what it bounds *)
+        Forall (fun c =>
+                  (forall z, In z (fst c) -> In z L \/ In z news)
+                  /\ exists d, snd c = [d] /\ (In d news \/ In d scope)) cet ->
+        (** and, for the ones bounding a visible name, that the source did too *)
         (forall dlt, listSatisfiable dlt ce ->
-          Forall (fun c =>
-                    (forall z, In z (fst c) -> In z L \/ In z news)
-                    /\ exists d, snd c = [d]
-                         /\ (In d news
-                             \/ (~ In d news
-                                 /\ hm_ext dlt L ⊑ hm_ext dlt [d]))) cet) ->
-        preserves_on scope ce cet.
+           Forall (fun c => forall d, snd c = [d] -> In d scope ->
+                     hm_ext dlt L ⊑ hm_ext dlt [d]) cet) ->
+        preserves_on scope ce cet
+        /\ constraints_scoped (scope ++ news) cet.
     Proof.
-      intros news L ce cet HnL Hns Hall dlt Hsat.
-      exists (upds news (List.map (fun _ : ident => hm_ext dlt L) news) dlt).
+      intros news L ce cet HLs Hns Hshape Hbound.
+      assert (HnL : forall z, In z news -> ~ In z L)
+        by (intros z Hz Hc; exact (Hns z Hz (HLs z Hc))).
       split.
-      - intros z Hz. symmetry. apply upds_const_off.
-        intro Hc. exact (Hns z Hc Hz).
-      - apply fresh_names_entail; [exact HnL|exact (Hall dlt Hsat)].
+      - intros dlt Hsat.
+        exists (upds news (List.map (fun _ : ident => hm_ext dlt L) news) dlt).
+        split.
+        + intros z Hz. symmetry. apply upds_const_off.
+          intro Hc. exact (Hns z Hc Hz).
+        + apply fresh_names_entail; [exact HnL|].
+          eapply Forall_impl; [|exact (Forall_and _ _ _ Hshape (Hbound dlt Hsat))].
+          intros c ((Hlhs & d & Hd & Hdc) & Hb).
+          split; [exact Hlhs|exists d; split; [exact Hd|]].
+          destruct Hdc as [Hdn|Hds]; [now left|].
+          right. split;
+            [intro Hc'; exact (Hns d Hc' Hds)|exact (Hb d Hd Hds)].
+      - unfold constraints_scoped, SymTypes.constraints_scoped.
+        eapply Forall_impl; [|exact Hshape].
+        intros (lhs, rhs) (Hlhs & d & Hd & Hdc).
+        cbn [fst snd] in Hlhs, Hd. subst rhs.
+        intros y Hy.
+        unfold SymTypes.constraint_scope in Hy. cbn [fst snd] in Hy.
+        apply in_app_iff in Hy as [Hy|Hy].
+        + destruct (Hlhs y Hy) as [HyL|Hyn];
+            [apply in_or_app; left; exact (HLs y HyL)
+            |apply in_or_app; now right].
+        + destruct Hy as [Hy|[]]; subst y.
+          destruct Hdc as [Hdn|Hds];
+            [apply in_or_app; now right|apply in_or_app; now left].
     Qed.
 
     (** The source equation's own constraint, and the three ways a name can
@@ -542,19 +583,22 @@ Import UNN.Fresh.Tactics.
         Env.find x' env = Some b' ->
         assign_lexp_type G env base_ty rst_ty e0 st = OK ([(s0, [])], st) ->
         assign_lexp_type G env base_ty rst_ty e  st = OK ([(s1, [])], st) ->
-        (** the created variable's security name is new *)
+        (** what the source constraint mentions is visible, and the created
+            variable's security name is not *)
+        (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                   In z scope) ->
+        In b scope ->
         ~ In b' scope ->
-        ~ In b' (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
-        b <> b' ->
         generate_leqn_constraint G env base_ty rst_ty cenv
           ([x], [Efby [e0] [e] [ann]]) st = OK (ce, u) ->
         generate_leqns_constraints G env base_ty rst_ty cenv
           [([x], [Evar x' ann]); ([x'], [Efby [e0] [e] [ann]])] st
           = OK (cet, u') ->
-        preserves_on scope ce cet.
+        preserves_on scope ce cet
+        /\ constraints_scoped (scope ++ [b']) cet.
     Proof.
       intros x x' e0 e ann ck ckty s0 s1 b b' st ce cet u u'
-        Hckx Hckx' Hckty Hb Hb' H0 H1 Hsc Hfr Hne Hsrc Htgt.
+        Hckx Hckx' Hckty Hb Hb' H0 H1 HLs Hbs Hsc Hsrc Htgt.
       pose proof (assign_lexp_Efby_pair e0 e ann s0 s1 st H0 H1) as Hfby.
       (** the source's single constraint *)
       rewrite generate_leqn_constraint_def in Hsrc by exact I.
@@ -563,71 +607,48 @@ Import UNN.Fresh.Tactics.
                  Hckx Hckty Hfby Hb) in Hsrc.
       apply OK_pair_inv in Hsrc as (? & ?); subst ce u.
       (** the target's two *)
-      rewrite generate_leqns_constraints_cons in Htgt.
-      apply sec_bind_inv in Htgt as (c1 & v1 & Hc1 & Htgt).
-      apply sec_bind_inv in Htgt as (c2 & v2 & Hc2 & Hret).
-      unfold SC.ret in Hret. inversion Hret; subst cet u'. clear Hret.
+      apply generate_leqns_cons_inv in Htgt as (c1 & v1 & c2 & Hc1 & Hc2 & Hcet).
       rewrite generate_leqn_constraint_def in Hc1 by exact I.
       rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x
                  (Evar x' ann) ck ckty ([b'] : ST) b st Hckx Hckty
                  (assign_lexp_Evar_type x' ann b' st Hb') Hb) in Hc1.
       apply OK_pair_inv in Hc1 as (? & ?); subst c1 v1.
-      rewrite generate_leqns_constraints_cons in Hc2.
-      apply sec_bind_inv in Hc2 as (d1 & w1 & Hd1 & Hc2).
-      apply sec_bind_inv in Hc2 as (d2 & w2 & Hd2 & Hret2).
-      unfold SC.ret in Hret2. inversion Hret2; subst c2 v2. clear Hret2.
+      apply generate_leqns_cons_inv in Hc2 as (d1 & w1 & d2 & Hd1 & Hd2 & Hc2e).
       rewrite generate_leqn_constraint_def in Hd1 by exact I.
       rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x'
                  (Efby [e0] [e] [ann]) ck ckty (merge s0 s1) b' st
                  Hckx' Hckty Hfby Hb') in Hd1.
       apply OK_pair_inv in Hd1 as (? & ?); subst d1 w1.
-      apply generate_leqns_constraints_nil in Hd2 as (? & ?); subst d2 w2.
-      (** and the valuation that makes both hold *)
-      intros dlt Hsat.
-      assert (Hc0 : hm_ext dlt (merge (merge [rst_ty] ckty) (merge s0 s1))
-                    ⊑ hm_ext dlt [b]).
-      { unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
-        exact (Hsat _ (in_eq _ _)). }
-      exists (upds [b']
-                [hm_ext dlt (merge (merge [rst_ty] ckty) (merge s0 s1))] dlt).
-      assert (Hnot : forall z : ident, z <> b' -> ~ In z ([b'] : list ident))
-        by (intros z Hz [Hc|[]]; exact (Hz (@Coq.Init.Logic.eq_sym _ _ _ Hc))).
-      assert (Hb'v :
-                upds [b'] [hm_ext dlt (merge (merge [rst_ty] ckty)
-                                         (merge s0 s1))] dlt b'
-                = hm_ext dlt (merge (merge [rst_ty] ckty) (merge s0 s1)))
-        by (apply upds_nth;
-            [constructor; [intros []|constructor]|reflexivity|now left]).
-      assert (Hoff : forall z, z <> b' ->
-                 upds [b'] [hm_ext dlt (merge (merge [rst_ty] ckty)
-                                          (merge s0 s1))] dlt z = dlt z)
-        by (intros z Hz; apply upds_notin; exact (Hnot z Hz)).
-      assert (Hbx : hm_ext (upds [b']
-                              [hm_ext dlt (merge (merge [rst_ty] ckty)
-                                             (merge s0 s1))] dlt) [b]
-                    = hm_ext dlt [b])
-        by (cbn [hm_ext]; rewrite (Hoff b Hne); reflexivity).
-      split.
-      - intros z Hz. symmetry. apply Hoff. intro Hc. subst z. exact (Hsc Hz).
-      - cbn [app]. constructor; [|constructor; [|constructor]].
-        + (** [x] reads the fresh variable *)
-          apply satisfiable_singleton_bound. intros z Hz. rewrite Hbx.
-          apply SymTypes.in_merge_inv in Hz as [Hz|Hz].
-          * (** an ambient name: below the source's left-hand side *)
-            assert (Hzl : In z (merge (merge [rst_ty] ckty) (merge s0 s1)))
-              by (apply in_merge_left; exact Hz).
-            rewrite Hoff by (intro Hc; subst z; exact (Hfr Hzl)).
-            eapply order_trans; [|exact Hc0]. apply hm_ext_list_in1, Hzl.
-          * (** the fresh variable itself, which is what it was chosen for *)
-            destruct Hz as [Hz|[]]; subst z. rewrite Hb'v. exact Hc0.
-        + (** and the fresh variable carries the source's right-hand side *)
-          apply satisfiable_singleton_bound. intros z Hz.
-          rewrite Hoff by (intro Hc; subst z; exact (Hfr Hz)).
-          cbn [hm_ext]. rewrite Hb'v.
-          eapply order_trans; [|apply join_bound1].
-          apply hm_ext_list_in1, Hz.
+      apply generate_leqns_constraints_nil in Hd2 as (? & _); subst d2.
+      subst c2 cet. rewrite app_nil_r.
+      (** the move *)
+      eapply preserves_on_fresh_names
+        with (news := [b'])
+             (L := merge (merge [rst_ty] ckty) (merge s0 s1)).
+      - exact HLs.
+      - intros z [Hz|[]]; subst z. exact Hsc.
+      - (** what each of the two mentions *)
+        cbn [app]. constructor; [|constructor; [|constructor]].
+        + split.
+          * cbn [fst]. intros z Hz.
+            apply SymTypes.in_merge_inv in Hz as [Hz|Hz];
+              [left; apply in_merge_left; exact Hz|right; exact Hz].
+          * exists b. split; [reflexivity|right; exact Hbs].
+        + split.
+          * cbn [fst]. intros z Hz. now left.
+          * exists b'. split; [reflexivity|left; now left].
+      - (** and what the source already bounded *)
+        intros dlt Hsat.
+        assert (Hc0 : hm_ext dlt (merge (merge [rst_ty] ckty) (merge s0 s1))
+                      ⊑ hm_ext dlt [b]).
+        { unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
+          exact (Hsat _ (in_eq _ _)). }
+        cbn [app]. constructor; [|constructor; [|constructor]].
+        + cbn [snd]. intros d Hd _.
+          inversion Hd; subst d. exact Hc0.
+        + cbn [snd]. intros d Hd Hds.
+          inversion Hd; subst d. contradiction.
     Qed.
-
 
     (** * An arrow becomes an [ite] on a fresh initialisation flag
 
@@ -645,9 +666,10 @@ Import UNN.Fresh.Tactics.
         Env.find i env = Some bi ->
         assign_lexp_type G env base_ty rst_ty e0 st = OK ([(s0, [])], st) ->
         assign_lexp_type G env base_ty rst_ty e  st = OK ([(s1, [])], st) ->
+        (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                   In z scope) ->
+        In b scope ->
         ~ In bi scope ->
-        ~ In bi (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
-        b <> bi ->
         (eqs = []
          \/ (find_clock cenv i = OK ck
              /\ eqs = [([i], [Efby [add_whens (Econst true_const) bool_type ck]
@@ -658,10 +680,11 @@ Import UNN.Fresh.Tactics.
         generate_leqns_constraints G env base_ty rst_ty cenv
           (([x], [Eite (Evar i (bool_type, (ck, Some i))) [e0] [e]
                     ([ty], (ck, name))]) :: eqs) st = OK (cet, u') ->
-        preserves_on scope ce cet.
+        preserves_on scope ce cet
+        /\ constraints_scoped (scope ++ [bi]) cet.
     Proof.
       intros x i e0 e ty ck name ckty s0 s1 b bi st ce cet u u' eqs
-        Hckx Hckty Hb Hbi H0 H1 Hsc Hfr Hne Heqs Hsrc Htgt.
+        Hckx Hckty Hb Hbi H0 H1 HLs Hbs Hsc Heqs Hsrc Htgt.
       (** the source's single constraint *)
       rewrite generate_leqn_constraint_def in Hsrc by exact I.
       rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x
@@ -671,7 +694,7 @@ Import UNN.Fresh.Tactics.
                  Hb) in Hsrc.
       apply OK_pair_inv in Hsrc as (? & ?); subst ce u.
       (** the target's [ite], and whatever the flag needed *)
-      apply generate_leqns_cons_inv in Htgt as (c1 & v1 & c2 & Hc1 & Hc2 & ?).
+      apply generate_leqns_cons_inv in Htgt as (c1 & v1 & c2 & Hc1 & Hc2 & Hcet).
       rewrite generate_leqn_constraint_def in Hc1 by exact I.
       rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x
                  (Eite (Evar i (bool_type, (ck, Some i))) [e0] [e]
@@ -680,42 +703,56 @@ Import UNN.Fresh.Tactics.
                  (assign_lexp_Eite_var i (bool_type, (ck, Some i)) e0 e
                     ([ty], (ck, name)) bi s0 s1 st Hbi H0 H1) Hb) in Hc1.
       apply OK_pair_inv in Hc1 as (? & ?); subst c1 v1.
-      (** the move *)
+      (** the flag's own equation, computed once for both halves *)
+      assert (Hinit :
+                c2 = []
+                \/ exists sw, c2 = [(merge (merge [rst_ty] ckty) sw, [bi])]
+                              /\ (forall z, In z sw -> In z ckty)).
+      { destruct Heqs as [Heqs|(Hcki & Heqs)]; subst eqs.
+        - apply generate_leqns_constraints_nil in Hc2 as (? & _); subst c2.
+          now left.
+        - apply generate_leqns_cons_inv in Hc2
+            as (d1 & w1 & d2 & Hd1 & Hd2 & Hc2e).
+          destruct (init_eq_constraint i ck ckty bi _ d1 w1 Hcki Hckty Hbi Hd1)
+            as (sw & ? & Hsw & ?); subst d1 w1.
+          apply generate_leqns_constraints_nil in Hd2 as (? & _); subst d2.
+          right. exists sw. split; [rewrite Hc2e, app_nil_r; reflexivity
+                                   |exact Hsw]. }
       subst cet.
+      (** the move *)
       eapply preserves_on_fresh_names
         with (news := [bi])
              (L := merge (merge [rst_ty] ckty) (merge s0 s1)).
-      - intros z [Hz|[]]; subst z. exact Hfr.
+      - exact HLs.
       - intros z [Hz|[]]; subst z. exact Hsc.
+      - rewrite Forall_app. split.
+        + constructor; [|constructor]. split.
+          * cbn [fst]. intros z Hz.
+            apply (ite_lhs_members ckty s0 s1 [bi] z);
+              [intros y Hy; right; apply in_merge_right, in_merge_right; exact Hy
+              |exact Hz].
+          * exists b. split; [reflexivity|right; exact Hbs].
+        + destruct Hinit as [Hc2e|(sw & Hc2e & Hsw)]; subst c2;
+            [constructor|].
+          constructor; [|constructor]. split.
+          * cbn [fst]. intros z Hz.
+            apply SymTypes.in_merge_inv in Hz as [Hz|Hz];
+              [left; apply in_merge_left; exact Hz
+              |left; apply in_merge_left, in_merge_right; exact (Hsw z Hz)].
+          * exists bi. split; [reflexivity|left; now left].
       - intros dlt Hsat.
         assert (Hc0 : hm_ext dlt (merge (merge [rst_ty] ckty) (merge s0 s1))
                       ⊑ hm_ext dlt [b]).
         { unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
           exact (Hsat _ (in_eq _ _)). }
         rewrite Forall_app. split.
-        + constructor; [|constructor]. split.
-          * cbn [fst]. intros z Hz.
-            apply (ite_lhs_members ckty s0 s1 [bi] z);
-              [intros y Hy; right; apply in_merge_right, in_merge_right; exact Hy
-              |exact Hz].
-          * exists b. split; [reflexivity|]. right. split; [|exact Hc0].
-            intros [Hc|[]]. exact (Hne (@Coq.Init.Logic.eq_sym _ _ _ Hc)).
-        + (** the flag's own equation, if there is one *)
-          destruct Heqs as [Heqs|(Hcki & Heqs)]; subst eqs.
-          * apply generate_leqns_constraints_nil in Hc2 as (? & _); subst c2.
-            constructor.
-          * apply generate_leqns_cons_inv in Hc2 as (d1 & w1 & d2 & Hd1 & Hd2 & ?).
-            destruct (init_eq_constraint i ck ckty bi _ d1 w1 Hcki Hckty Hbi Hd1)
-              as (sw & ? & Hsw & ?); subst d1 w1.
-            apply generate_leqns_constraints_nil in Hd2 as (? & _); subst d2.
-            subst c2. rewrite app_nil_r. constructor; [|constructor]. split.
-            -- cbn [fst]. intros z Hz.
-               apply SymTypes.in_merge_inv in Hz as [Hz|Hz];
-                 [left; apply in_merge_left; exact Hz
-                 |left; apply in_merge_left, in_merge_right; exact (Hsw z Hz)].
-            -- exists bi. split; [reflexivity|]. left. now left.
+        + constructor; [|constructor]. cbn [snd]. intros d Hd _.
+          inversion Hd; subst d. exact Hc0.
+        + destruct Hinit as [Hc2e|(sw & Hc2e & _)]; subst c2;
+            [constructor|].
+          constructor; [|constructor]. cbn [snd]. intros d Hd Hds.
+          inversion Hd; subst d. contradiction.
     Qed.
-
 
     (** * A delayed definition with a non-constant initial value
 
@@ -730,7 +767,8 @@ Import UNN.Fresh.Tactics.
         the variable it defines -- which it does *only* because the [fby] rule
         types both operands.  Typing just the delayed one, as the NLustre rule
         legitimately does, would leave [e0]'s level out of the source
-        constraint, and the [ite]'s first branch would have nothing to be below. *)
+        constraint, and the [ite]'s first branch would have nothing to be
+        below. *)
     Lemma fby_ite_entails :
       forall x i px e0 e ty ck name ckty s0 s1 b bi bp st ce cet u u' eqs,
         find_clock cenv x  = OK ck ->
@@ -741,11 +779,11 @@ Import UNN.Fresh.Tactics.
         Env.find px env = Some bp ->
         assign_lexp_type G env base_ty rst_ty e0 st = OK ([(s0, [])], st) ->
         assign_lexp_type G env base_ty rst_ty e  st = OK ([(s1, [])], st) ->
+        (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                   In z scope) ->
+        In b scope ->
         ~ In bi scope ->
         ~ In bp scope ->
-        ~ In bi (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
-        ~ In bp (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
-        b <> bi -> b <> bp ->
         (eqs = []
          \/ (find_clock cenv i = OK ck
              /\ eqs = [([i], [Efby [add_whens (Econst true_const) bool_type ck]
@@ -759,11 +797,11 @@ Import UNN.Fresh.Tactics.
            :: ([px], [Efby [add_whens (Econst (init_type ty)) ty ck] [e]
                         [(ty, (ck, name))]])
            :: eqs) st = OK (cet, u') ->
-        preserves_on scope ce cet.
+        preserves_on scope ce cet
+        /\ constraints_scoped (scope ++ [bp; bi]) cet.
     Proof.
       intros x i px e0 e ty ck name ckty s0 s1 b bi bp st ce cet u u' eqs
-        Hckx Hckpx Hckty Hb Hbi Hbp H0 H1 Hsci Hscp Hfri Hfrp
-        Hnei Hnep Heqs Hsrc Htgt.
+        Hckx Hckpx Hckty Hb Hbi Hbp H0 H1 HLs Hbs Hsci Hscp Heqs Hsrc Htgt.
       (** the source's single constraint *)
       rewrite generate_leqn_constraint_def in Hsrc by exact I.
       rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x
@@ -797,19 +835,30 @@ Import UNN.Fresh.Tactics.
                  (assign_lexp_Efby_pair _ e (ty, (ck, name)) sw s1 st Hw H1)
                  Hbp) in Hd1.
       apply OK_pair_inv in Hd1 as (? & ?); subst d1 w1.
-      (** the move *)
+      (** and the flag's, if the pass created one *)
+      assert (Hinit :
+                d2 = []
+                \/ exists swi, d2 = [(merge (merge [rst_ty] ckty) swi, [bi])]
+                               /\ (forall z, In z swi -> In z ckty)).
+      { destruct Heqs as [Heqs|(Hcki & Heqs)]; subst eqs.
+        - apply generate_leqns_constraints_nil in Hd2 as (? & _); subst d2.
+          now left.
+        - apply generate_leqns_cons_inv in Hd2
+            as (f1 & y1 & f2 & Hf1 & Hf2 & Hd2e).
+          destruct (init_eq_constraint i ck ckty bi _ f1 y1
+                      Hcki Hckty Hbi Hf1) as (swi & ? & Hswi & ?);
+            subst f1 y1.
+          apply generate_leqns_constraints_nil in Hf2 as (? & _); subst f2.
+          right. exists swi. split; [rewrite Hd2e, app_nil_r; reflexivity
+                                    |exact Hswi]. }
       subst c2 cet.
+      (** the move *)
       eapply preserves_on_fresh_names
         with (news := [bp; bi])
              (L := merge (merge [rst_ty] ckty) (merge s0 s1)).
-      - intros z [Hz|[Hz|[]]]; subst z; [exact Hfrp|exact Hfri].
+      - exact HLs.
       - intros z [Hz|[Hz|[]]]; subst z; [exact Hscp|exact Hsci].
-      - intros dlt Hsat.
-        assert (Hc0 : hm_ext dlt (merge (merge [rst_ty] ckty) (merge s0 s1))
-                      ⊑ hm_ext dlt [b]).
-        { unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
-          exact (Hsat _ (in_eq _ _)). }
-        rewrite Forall_app. split.
+      - rewrite Forall_app. split.
         + (** the [ite] *)
           constructor; [|constructor]. split.
           * cbn [fst]. intros z Hz.
@@ -820,10 +869,7 @@ Import UNN.Fresh.Tactics.
                  [destruct Hz as [Hz|[]]; subst z; right; right; now left
                  |left; apply in_merge_right, in_merge_left; exact Hz].
             -- destruct Hz as [Hz|[]]; subst z. right. now left.
-          * exists b. split; [reflexivity|]. right. split; [|exact Hc0].
-            intros [Hc|[Hc|[]]];
-              [exact (Hnep (@Coq.Init.Logic.eq_sym _ _ _ Hc))
-              |exact (Hnei (@Coq.Init.Logic.eq_sym _ _ _ Hc))].
+          * exists b. split; [reflexivity|right; exact Hbs].
         + rewrite Forall_app. split.
           * (** the fresh variable's own equation *)
             constructor; [|constructor]. split.
@@ -833,25 +879,31 @@ Import UNN.Fresh.Tactics.
                apply SymTypes.in_merge_inv in Hz as [Hz|Hz];
                  [apply in_merge_left, in_merge_right; exact (Hsw z Hz)
                  |apply in_merge_right, in_merge_right; exact Hz].
-            -- exists bp. split; [reflexivity|]. left. now left.
-          * (** and the flag's, if the pass created one *)
-            destruct Heqs as [Heqs|(Hcki & Heqs)]; subst eqs.
-            -- apply generate_leqns_constraints_nil in Hd2 as (? & _); subst d2.
-               constructor.
-            -- apply generate_leqns_cons_inv in Hd2
-                 as (f1 & y1 & f2 & Hf1 & Hf2 & ?).
-               destruct (init_eq_constraint i ck ckty bi _ f1 y1
-                           Hcki Hckty Hbi Hf1) as (swi & ? & Hswi & ?);
-                 subst f1 y1.
-               apply generate_leqns_constraints_nil in Hf2 as (? & _); subst f2.
-               subst d2. rewrite app_nil_r. constructor; [|constructor]. split.
-               ++ cbn [fst]. intros z Hz. left.
-                  apply SymTypes.in_merge_inv in Hz as [Hz|Hz];
-                    [apply in_merge_left; exact Hz
-                    |apply in_merge_left, in_merge_right; exact (Hswi z Hz)].
-               ++ exists bi. split; [reflexivity|]. left. right. now left.
+            -- exists bp. split; [reflexivity|left; now left].
+          * destruct Hinit as [Hd2e|(swi & Hd2e & Hswi)]; subst d2;
+              [constructor|].
+            constructor; [|constructor]. split.
+            -- cbn [fst]. intros z Hz. left.
+               apply SymTypes.in_merge_inv in Hz as [Hz|Hz];
+                 [apply in_merge_left; exact Hz
+                 |apply in_merge_left, in_merge_right; exact (Hswi z Hz)].
+            -- exists bi. split; [reflexivity|left; right; now left].
+      - intros dlt Hsat.
+        assert (Hc0 : hm_ext dlt (merge (merge [rst_ty] ckty) (merge s0 s1))
+                      ⊑ hm_ext dlt [b]).
+        { unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
+          exact (Hsat _ (in_eq _ _)). }
+        rewrite Forall_app. split.
+        + constructor; [|constructor]. cbn [snd]. intros d Hd _.
+          inversion Hd; subst d. exact Hc0.
+        + rewrite Forall_app. split.
+          * constructor; [|constructor]. cbn [snd]. intros d Hd Hds.
+            inversion Hd; subst d. contradiction.
+          * destruct Hinit as [Hd2e|(swi & Hd2e & _)]; subst d2;
+              [constructor|].
+            constructor; [|constructor]. cbn [snd]. intros d Hd Hds.
+            inversion Hd; subst d. contradiction.
     Qed.
-
 
     (** * What the pass creates, and where it records it
 
@@ -937,7 +989,11 @@ Import UNN.Fresh.Tactics.
         and names off the fresh state.
 
         The node's data enters as one hypothesis, quantified over the shape, so
-        it is vacuous exactly on the shapes that need nothing. *)
+        it is vacuous exactly on the shapes that need nothing.  What comes back
+        is the chunk's own [extras] -- the created security names, which are the
+        only ones its witness moves -- together with the chunk's scopedness to
+        them.  That is exactly the package [preserves_on_concat_list] consumes
+        when the chunks are assembled into a body. *)
     Theorem fby_equation_entails :
       forall to_cut xs es eqs' st st' ce cet s u u',
         fby_equation to_cut (xs, es) st = (eqs', st') ->
@@ -959,21 +1015,33 @@ Import UNN.Fresh.Tactics.
         (forall y a, In (y, a) (st_anns st') ->
             find_clock cenv y = OK (snd (fst a))
             /\ exists c, Env.find y env = Some c /\ ~ In c scope) ->
+        (** the source's own constraints are visible *)
+        constraints_scoped scope ce ->
         generate_leqn_constraint G env base_ty rst_ty cenv (xs, es) s
           = OK (ce, u) ->
         generate_leqns_constraints G env base_ty rst_ty cenv eqs' s
           = OK (cet, u') ->
-        preserves_on scope ce cet.
+        exists extras,
+          (forall y, In y extras -> ~ In y scope)
+          /\ preserves_on scope ce cet
+          /\ constraints_scoped (scope ++ extras) cet.
     Proof.
-      intros to_cut xs es eqs' st st' ce cet s u u' Hrun Hdata Hnew Hsrc Htgt.
+      intros to_cut xs es eqs' st st' ce cet s u u'
+        Hrun Hdata Hnew Hcesc Hsrc Htgt.
       (** the shapes the pass leaves alone: one run, read twice *)
-      assert (Hsame : eqs' = [(xs, es)] -> preserves_on scope ce cet).
+      assert (Hsame : eqs' = [(xs, es)] ->
+                exists extras,
+                  (forall y, In y extras -> ~ In y scope)
+                  /\ preserves_on scope ce cet
+                  /\ constraints_scoped (scope ++ extras) cet).
       { intro He. subst eqs'.
         apply generate_leqns_cons_inv in Htgt
           as (c1 & v1 & c2 & Hc1 & Hc2 & Hce).
         rewrite Hsrc in Hc1. apply OK_pair_inv in Hc1 as (? & ?); subst c1 v1.
         apply generate_leqns_constraints_nil in Hc2 as (? & _); subst c2.
-        subst cet. rewrite app_nil_r. apply preserves_on_refl. }
+        subst cet. rewrite app_nil_r.
+        exists []. split; [intros y []|].
+        split; [apply preserves_on_refl|rewrite app_nil_r; exact Hcesc]. }
       destruct (fby_equation_spec to_cut xs es)
         as [(x & e0 & e & ann & Hxs & Hes & Hconst & Heq)
            |[(x & e0 & e & ann & Hxs & Hes & Hconst & Heq)
@@ -993,12 +1061,10 @@ Import UNN.Fresh.Tactics.
                       (fresh_ident_In norm2 ((ty, ck), false) x' _ _ Ex))
             as (Hckx' & c & Hc & Hcs).
           cbn [fst snd] in Hckx'.
+          exists [c]. split; [intros y [Hy|[]]; subst y; exact Hcs|].
           eapply fby_cut_entails;
             [exact Hckx|exact Hckx'|exact Hckty|exact Hb|exact Hc|exact H0
-            |exact H1|exact Hcs
-            |intro Hz; exact (Hcs (HL c Hz))
-            |intro Hq; subst c; exact (Hcs Hbs)
-            |exact Hsrc|exact Htgt].
+            |exact H1|exact HL|exact Hbs|exact Hcs|exact Hsrc|exact Htgt].
         + rewrite ret_spec in Hrun. inversion Hrun; subst eqs' st'.
           apply Hsame. reflexivity.
       - (** a non-constant initial value: the [ite] *)
@@ -1016,13 +1082,11 @@ Import UNN.Fresh.Tactics.
         destruct (Hnew px ((ty, ck), false) Hpx) as (Hckpx & bp & Hbp & Hbps).
         cbn [fst snd] in Hcki, Hckpx.
         subst fby eqsa.
+        exists [bp; bi].
+        split; [intros y [Hy|[Hy|[]]]; subst y; [exact Hbps|exact Hbis]|].
         eapply fby_ite_entails;
           [exact Hckx|exact Hckpx|exact Hckty|exact Hb|exact Hbi|exact Hbp
-          |exact H0|exact H1|exact Hbis|exact Hbps
-          |intro Hz; exact (Hbis (HL bi Hz))
-          |intro Hz; exact (Hbps (HL bp Hz))
-          |intro Hq; subst bi; exact (Hbis Hbs)
-          |intro Hq; subst bp; exact (Hbps Hbs)
+          |exact H0|exact H1|exact HL|exact Hbs|exact Hbis|exact Hbps
           | |exact Hsrc|exact Htgt].
         destruct Heqsi as [Heqsi|Heqsi];
           [now left|right; split; [exact Hcki|exact Heqsi]].
@@ -1040,11 +1104,10 @@ Import UNN.Fresh.Tactics.
         destruct (Hnew i ((bool_type, ck), true) Hi) as (Hcki & bi & Hbi & Hbis).
         cbn [fst snd] in Hcki.
         subst ite.
+        exists [bi]. split; [intros y [Hy|[]]; subst y; exact Hbis|].
         eapply arrow_entails;
           [exact Hckx|exact Hckty|exact Hb|exact Hbi|exact H0|exact H1
-          |exact Hbis
-          |intro Hz; exact (Hbis (HL bi Hz))
-          |intro Hq; subst bi; exact (Hbis Hbs)
+          |exact HL|exact Hbs|exact Hbis
           | |exact Hsrc|exact Htgt].
         destruct Heqsi as [Heqsi|Heqsi];
           [now left|right; split; [exact Hcki|exact Heqsi]].
