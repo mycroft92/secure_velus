@@ -85,6 +85,8 @@ Module NODES := SecLusUnnestingNodes Ids Op OpAux Lat SecT SLT SC LSyn LClo CESy
 Include NODES.
 
 Import SECMONADNotations.
+Import UNN.Fresh.Facts.
+Import UNN.Fresh.Tactics.
 
   (** * The node lists the two drivers walk
 
@@ -360,16 +362,20 @@ Import SECMONADNotations.
         source equation already bounded by it.  So all of them hold, and this
         is the only semantic content of the leg. *)
 
+    (** All the created names are given the *same* level, so a duplicate in
+        the list is harmless and no [NoDup] is needed -- which is what spares
+        the caller from having to show that the pass's two fresh identifiers are
+        distinct. *)
     Lemma upds_const_val :
       forall (news : list ident) (v : Lat.t) dlt b,
-        NoDup news -> In b news ->
+        In b news ->
         upds news (List.map (fun _ : ident => v) news) dlt b = v.
     Proof.
-      intros news v dlt b Hnd Hb. apply upds_nth; [exact Hnd| |].
-      - now rewrite map_length.
-      - clear Hnd. induction news as [|z news IH]; [contradiction|].
-        cbn [List.map combine In]. destruct Hb as [Hz|Hb];
-          [subst z; now left|right; exact (IH Hb)].
+      induction news as [|z news IH]; intros v dlt b Hb; [contradiction|].
+      cbn [List.map upds]. unfold upd.
+      destruct (ident_eq_dec b z) as [?|Hne]; [reflexivity|].
+      apply IH. destruct Hb as [Hz|Hb];
+        [subst z; now elim Hne|exact Hb]. 
     Qed.
 
     Lemma upds_const_off :
@@ -380,7 +386,6 @@ Import SECMONADNotations.
 
     Lemma fresh_names_entail :
       forall dlt (news : list ident) L cs,
-        NoDup news ->
         (forall z, In z news -> ~ In z L) ->
         Forall (fun c =>
                   (forall z, In z (fst c) -> In z L \/ In z news)
@@ -391,7 +396,7 @@ Import SECMONADNotations.
         listSatisfiable
           (upds news (List.map (fun _ : ident => hm_ext dlt L) news) dlt) cs.
     Proof.
-      intros dlt news L cs Hnd HnL Hall.
+      intros dlt news L cs HnL Hall.
       unfold listSatisfiable. eapply Forall_impl; [|exact Hall].
       intros (lhs, rhs) (Hlhs & d & Hrhs & Hd).
       cbn [fst snd] in Hlhs, Hrhs. subst rhs.
@@ -401,12 +406,12 @@ Import SECMONADNotations.
       { destruct (Hlhs z Hz) as [HzL|Hzn];
           [ rewrite upds_const_off by (intro Hc; exact (HnL z Hc HzL));
             exact (hm_ext_list_in1 dlt L z HzL)
-          | rewrite (upds_const_val news (hm_ext dlt L) dlt z Hnd Hzn);
+          | rewrite (upds_const_val news (hm_ext dlt L) dlt z Hzn);
             exact (order_refl _ _ (Lat.eq_refl _)) ]. }
       destruct Hd as [Hdn|(Hdn & Hdb)].
       - (** the target is a created name, which holds exactly that level *)
         cbn [hm_ext].
-        rewrite (upds_const_val news (hm_ext dlt L) dlt d Hnd Hdn).
+        rewrite (upds_const_val news (hm_ext dlt L) dlt d Hdn).
         eapply order_trans; [exact Hzv|apply join_bound1].
       - (** or the source equation already bounded that level by it *)
         cbn [hm_ext].
@@ -416,7 +421,6 @@ Import SECMONADNotations.
 
     Lemma preserves_on_fresh_names :
       forall (news : list ident) L ce cet,
-        NoDup news ->
         (forall z, In z news -> ~ In z L) ->
         (forall z, In z news -> ~ In z scope) ->
         (forall dlt, listSatisfiable dlt ce ->
@@ -428,12 +432,12 @@ Import SECMONADNotations.
                                  /\ hm_ext dlt L ⊑ hm_ext dlt [d]))) cet) ->
         preserves_on scope ce cet.
     Proof.
-      intros news L ce cet Hnd HnL Hns Hall dlt Hsat.
+      intros news L ce cet HnL Hns Hall dlt Hsat.
       exists (upds news (List.map (fun _ : ident => hm_ext dlt L) news) dlt).
       split.
       - intros z Hz. symmetry. apply upds_const_off.
         intro Hc. exact (Hns z Hc Hz).
-      - apply fresh_names_entail; [exact Hnd|exact HnL|exact (Hall dlt Hsat)].
+      - apply fresh_names_entail; [exact HnL|exact (Hall dlt Hsat)].
     Qed.
 
     (** The source equation's own constraint, and the three ways a name can
@@ -681,7 +685,6 @@ Import SECMONADNotations.
       eapply preserves_on_fresh_names
         with (news := [bi])
              (L := merge (merge [rst_ty] ckty) (merge s0 s1)).
-      - constructor; [intros []|constructor].
       - intros z [Hz|[]]; subst z. exact Hfr.
       - intros z [Hz|[]]; subst z. exact Hsc.
       - intros dlt Hsat.
@@ -742,7 +745,7 @@ Import SECMONADNotations.
         ~ In bp scope ->
         ~ In bi (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
         ~ In bp (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
-        b <> bi -> b <> bp -> bp <> bi ->
+        b <> bi -> b <> bp ->
         (eqs = []
          \/ (find_clock cenv i = OK ck
              /\ eqs = [([i], [Efby [add_whens (Econst true_const) bool_type ck]
@@ -760,7 +763,7 @@ Import SECMONADNotations.
     Proof.
       intros x i px e0 e ty ck name ckty s0 s1 b bi bp st ce cet u u' eqs
         Hckx Hckpx Hckty Hb Hbi Hbp H0 H1 Hsci Hscp Hfri Hfrp
-        Hnei Hnep Hpi Heqs Hsrc Htgt.
+        Hnei Hnep Heqs Hsrc Htgt.
       (** the source's single constraint *)
       rewrite generate_leqn_constraint_def in Hsrc by exact I.
       rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x
@@ -799,8 +802,6 @@ Import SECMONADNotations.
       eapply preserves_on_fresh_names
         with (news := [bp; bi])
              (L := merge (merge [rst_ty] ckty) (merge s0 s1)).
-      - constructor; [intros [Hc|[]]; exact (Hpi (@Coq.Init.Logic.eq_sym _ _ _ Hc))
-                     |constructor; [intros []|constructor]].
       - intros z [Hz|[Hz|[]]]; subst z; [exact Hfrp|exact Hfri].
       - intros z [Hz|[Hz|[]]]; subst z; [exact Hscp|exact Hsci].
       - intros dlt Hsat.
@@ -849,6 +850,208 @@ Import SECMONADNotations.
                     [apply in_merge_left; exact Hz
                     |apply in_merge_left, in_merge_right; exact (Hswi z Hz)].
                ++ exists bi. split; [reflexivity|]. left. right. now left.
+    Qed.
+
+
+    (** * What the pass creates, and where it records it
+
+        Every identifier [fby_equation] invents is recorded in the fresh state
+        with the annotation it was given, and the clock in that annotation is
+        the clock of the equation it was invented for.  That is what lets the
+        node level say what its declared clock is: the node the pass builds has
+        [idty (st_anns _)] among its variables. *)
+
+    Lemma init_var_for_clock_eqs :
+      forall ck i eqsi st st',
+        init_var_for_clock ck st = (i, eqsi, st') ->
+        eqsi = []
+        \/ eqsi = [([i], [Efby [add_whens (Econst true_const) bool_type ck]
+                               [add_whens (Econst false_const) bool_type ck]
+                               [(bool_type, (ck, None))]])].
+    Proof.
+      intros ck i eqsi st st' H. unfold init_var_for_clock in H.
+      destruct (find (fun '(_, (ty, cl', isinit)) =>
+                        isinit && (cl' ==b ck) && (ty ==b bool_type))
+                  (st_anns st)) as [(y & a)|].
+      - inversion H; subst. now left.
+      - destruct (fresh_ident norm2 ((bool_type, ck), true) st) as (y, sty).
+        inversion H; subst. now right.
+    Qed.
+
+    Lemma fby_iteexp_created :
+      forall e0 e ty ck name e' eqs' st st',
+        fby_iteexp e0 e (ty, (ck, name)) st = (e', eqs', st') ->
+        exists i px eqsi,
+          In (i, ((bool_type, ck), true)) (st_anns st')
+          /\ In (px, ((ty, ck), false)) (st_anns st')
+          /\ e' = Eite (Evar i (bool_type, (ck, Some i))) [e0]
+                    [Evar px (ty, (ck, Some px))] ([ty], (ck, name))
+          /\ eqs' = ([px], [Efby [add_whens (Econst (init_type ty)) ty ck] [e]
+                              [(ty, (ck, name))]]) :: eqsi
+          /\ (eqsi = []
+              \/ eqsi = [([i], [Efby [add_whens (Econst true_const) bool_type ck]
+                                     [add_whens (Econst false_const) bool_type ck]
+                                     [(bool_type, (ck, None))]])]).
+    Proof.
+      intros e0 e ty ck name e' eqs' st st' H.
+      unfold fby_iteexp in H.
+      apply bind2_spec in H as (i & eqsi & s1 & Ei & H).
+      apply bind_spec in H as (px & s2 & Ep & H).
+      rewrite ret_spec in H. inversion H; subst e' eqs' st'.
+      exists i, px, eqsi.
+      split; [|split; [|split; [reflexivity|split; [reflexivity|]]]].
+      - apply (st_follows_incl s1 s2 (fresh_ident_st_follows _ _ _ _ _ Ep)).
+        eapply init_var_for_clock_In; exact Ei.
+      - eapply fresh_ident_In; exact Ep.
+      - eapply init_var_for_clock_eqs; exact Ei.
+    Qed.
+
+    Lemma arrow_iteexp_created :
+      forall e0 e ty ck name e' eqs' st st',
+        arrow_iteexp e0 e (ty, (ck, name)) st = (e', eqs', st') ->
+        exists i,
+          In (i, ((bool_type, ck), true)) (st_anns st')
+          /\ e' = Eite (Evar i (bool_type, (ck, Some i))) [e0] [e]
+                    ([ty], (ck, name))
+          /\ (eqs' = []
+              \/ eqs' = [([i], [Efby [add_whens (Econst true_const) bool_type ck]
+                                     [add_whens (Econst false_const) bool_type ck]
+                                     [(bool_type, (ck, None))]])]).
+    Proof.
+      intros e0 e ty ck name e' eqs' st st' H.
+      unfold arrow_iteexp in H.
+      apply bind2_spec in H as (i & eqsi & s1 & Ei & H).
+      rewrite ret_spec in H. inversion H; subst e' eqs' st'.
+      exists i. split; [|split; [reflexivity|]].
+      - eapply init_var_for_clock_In; exact Ei.
+      - eapply init_var_for_clock_eqs; exact Ei.
+    Qed.
+
+
+    (** * One equation, whatever shape it has
+
+        [fby_equation_spec] splits the pass into its four shapes; two of them
+        return the equation unchanged, so the two runs are the same run and
+        [preserves_on_refl] closes them.  The other two are the case lemmas
+        above, and all that is left is to read the created variables' clocks
+        and names off the fresh state.
+
+        The node's data enters as one hypothesis, quantified over the shape, so
+        it is vacuous exactly on the shapes that need nothing. *)
+    Theorem fby_equation_entails :
+      forall to_cut xs es eqs' st st' ce cet s u u',
+        fby_equation to_cut (xs, es) st = (eqs', st') ->
+        (** what the node says about this equation *)
+        (forall x e0 e ty ck name,
+            xs = [x] ->
+            (es = [Efby [e0] [e] [(ty, (ck, name))]]
+             \/ es = [Earrow [e0] [e] [(ty, (ck, name))]]) ->
+            exists ckty s0 s1 b,
+              find_clock cenv x = OK ck
+              /\ assign_clk_type env base_ty ck = Some ckty
+              /\ Env.find x env = Some b
+              /\ In b scope
+              /\ assign_lexp_type G env base_ty rst_ty e0 s = OK ([(s0, [])], s)
+              /\ assign_lexp_type G env base_ty rst_ty e  s = OK ([(s1, [])], s)
+              /\ (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                            In z scope)) ->
+        (** and about the variables the pass created *)
+        (forall y a, In (y, a) (st_anns st') ->
+            find_clock cenv y = OK (snd (fst a))
+            /\ exists c, Env.find y env = Some c /\ ~ In c scope) ->
+        generate_leqn_constraint G env base_ty rst_ty cenv (xs, es) s
+          = OK (ce, u) ->
+        generate_leqns_constraints G env base_ty rst_ty cenv eqs' s
+          = OK (cet, u') ->
+        preserves_on scope ce cet.
+    Proof.
+      intros to_cut xs es eqs' st st' ce cet s u u' Hrun Hdata Hnew Hsrc Htgt.
+      (** the shapes the pass leaves alone: one run, read twice *)
+      assert (Hsame : eqs' = [(xs, es)] -> preserves_on scope ce cet).
+      { intro He. subst eqs'.
+        apply generate_leqns_cons_inv in Htgt
+          as (c1 & v1 & c2 & Hc1 & Hc2 & Hce).
+        rewrite Hsrc in Hc1. apply OK_pair_inv in Hc1 as (? & ?); subst c1 v1.
+        apply generate_leqns_constraints_nil in Hc2 as (? & _); subst c2.
+        subst cet. rewrite app_nil_r. apply preserves_on_refl. }
+      destruct (fby_equation_spec to_cut xs es)
+        as [(x & e0 & e & ann & Hxs & Hes & Hconst & Heq)
+           |[(x & e0 & e & ann & Hxs & Hes & Hconst & Heq)
+            |[(x & e0 & e & ann & Hxs & Hes & Heq)
+             |Heq]]].
+      - (** a constant initial value: cut at an output, or left alone *)
+        subst xs es. destruct ann as (ty, (ck, name)).
+        rewrite Heq in Hrun. cbv beta iota in Hrun.
+        destruct (PS.mem x to_cut).
+        + apply bind_spec in Hrun as (x' & s2 & Ex & Hrun).
+          rewrite ret_spec in Hrun. inversion Hrun; subst eqs' st'.
+          destruct (Hdata x e0 e ty ck name
+                      (@Coq.Init.Logic.eq_refl _ _)
+                      (or_introl (@Coq.Init.Logic.eq_refl _ _)))
+            as (ckty & s0 & s1 & b & Hckx & Hckty & Hb & Hbs & H0 & H1 & HL).
+          destruct (Hnew x' ((ty, ck), false)
+                      (fresh_ident_In norm2 ((ty, ck), false) x' _ _ Ex))
+            as (Hckx' & c & Hc & Hcs).
+          cbn [fst snd] in Hckx'.
+          eapply fby_cut_entails;
+            [exact Hckx|exact Hckx'|exact Hckty|exact Hb|exact Hc|exact H0
+            |exact H1|exact Hcs
+            |intro Hz; exact (Hcs (HL c Hz))
+            |intro Hq; subst c; exact (Hcs Hbs)
+            |exact Hsrc|exact Htgt].
+        + rewrite ret_spec in Hrun. inversion Hrun; subst eqs' st'.
+          apply Hsame. reflexivity.
+      - (** a non-constant initial value: the [ite] *)
+        subst xs es. destruct ann as (ty, (ck, name)).
+        rewrite Heq in Hrun.
+        apply bind2_spec in Hrun as (fby & eqsa & s1 & Hfby & Hrun).
+        rewrite ret_spec in Hrun. inversion Hrun; subst eqs' st'.
+        destruct (fby_iteexp_created e0 e ty ck name fby eqsa st s1 Hfby)
+          as (i & px & eqsi & Hi & Hpx & Hfbye & Heqsa & Heqsi).
+        destruct (Hdata x e0 e ty ck name
+                    (@Coq.Init.Logic.eq_refl _ _)
+                    (or_introl (@Coq.Init.Logic.eq_refl _ _)))
+          as (ckty & s0 & s1' & b & Hckx & Hckty & Hb & Hbs & H0 & H1 & HL).
+        destruct (Hnew i ((bool_type, ck), true) Hi) as (Hcki & bi & Hbi & Hbis).
+        destruct (Hnew px ((ty, ck), false) Hpx) as (Hckpx & bp & Hbp & Hbps).
+        cbn [fst snd] in Hcki, Hckpx.
+        subst fby eqsa.
+        eapply fby_ite_entails;
+          [exact Hckx|exact Hckpx|exact Hckty|exact Hb|exact Hbi|exact Hbp
+          |exact H0|exact H1|exact Hbis|exact Hbps
+          |intro Hz; exact (Hbis (HL bi Hz))
+          |intro Hz; exact (Hbps (HL bp Hz))
+          |intro Hq; subst bi; exact (Hbis Hbs)
+          |intro Hq; subst bp; exact (Hbps Hbs)
+          | |exact Hsrc|exact Htgt].
+        destruct Heqsi as [Heqsi|Heqsi];
+          [now left|right; split; [exact Hcki|exact Heqsi]].
+      - (** an arrow *)
+        subst xs es. destruct ann as (ty, (ck, name)).
+        rewrite Heq in Hrun.
+        apply bind2_spec in Hrun as (ite & eqsa & s1 & Hite & Hrun).
+        rewrite ret_spec in Hrun. inversion Hrun; subst eqs' st'.
+        destruct (arrow_iteexp_created e0 e ty ck name ite eqsa st s1 Hite)
+          as (i & Hi & Hite' & Heqsi).
+        destruct (Hdata x e0 e ty ck name
+                    (@Coq.Init.Logic.eq_refl _ _)
+                    (or_intror (@Coq.Init.Logic.eq_refl _ _)))
+          as (ckty & s0 & s1' & b & Hckx & Hckty & Hb & Hbs & H0 & H1 & HL).
+        destruct (Hnew i ((bool_type, ck), true) Hi) as (Hcki & bi & Hbi & Hbis).
+        cbn [fst snd] in Hcki.
+        subst ite.
+        eapply arrow_entails;
+          [exact Hckx|exact Hckty|exact Hb|exact Hbi|exact H0|exact H1
+          |exact Hbis
+          |intro Hz; exact (Hbis (HL bi Hz))
+          |intro Hq; subst bi; exact (Hbis Hbs)
+          | |exact Hsrc|exact Htgt].
+        destruct Heqsi as [Heqsi|Heqsi];
+          [now left|right; split; [exact Hcki|exact Heqsi]].
+      - (** anything else, untouched *)
+        rewrite Heq in Hrun. rewrite ret_spec in Hrun.
+        inversion Hrun; subst eqs' st'.
+        apply Hsame. reflexivity.
     Qed.
 
   End NormFbyNode.
