@@ -84,6 +84,42 @@ Proof.
   exact (Forall3_length _ ambs srcs tgts Hrel).
 Qed.
 
+  (** * What the no-op pass records about the variable it lifts
+
+      [unnest_noops_exp_inv] says an argument is either kept or bound to a
+      fresh variable, but not what clock that variable was given.  The
+      pointwise contract needs it: the lifted variable's ambient has to be the
+      one covering its *own* slot, and [state_clocks_found] reads a variable's
+      clock off the state.  The pass stores the head of the argument's
+      annotation, so the clock is the argument's own. *)
+  Lemma unnest_noops_exp_inv_anns :
+    forall cki e e' eqs st st',
+      unnest_noops_exp cki e st = ((e', eqs), st') ->
+      (e' = e /\ eqs = [] /\ st' = st)
+      \/ (exists x ty cko o,
+             hd (bool_type, (Cbase, None)) (annot e) = (ty, (cko, o))
+             /\ e' = Evar x (ty, (cko, o))
+             /\ eqs = [([x], [e])]
+             /\ In (x, (ty, cko)) (st_anns st')
+             /\ Permutation (x :: st_ids st) (st_ids st')).
+  Proof.
+    intros cki e e' eqs st st' H.
+    unfold unnest_noops_exp in H.
+    destruct (hd (bool_type, (Cbase, None)) (annot e))
+      as (ty, (cko, o)) eqn:Han.
+    destruct (is_noops_exp cki e) eqn:Enoop;
+      repeat UNN.Fresh.Tactics.inv_bind.
+    - now left.
+    - match goal with
+      | H : fresh_ident norm1 (ty, cko) st = _ |- _ => rename H into Ex
+      end.
+      right. exists x, ty, cko, o.
+      split; [reflexivity|]. split; [reflexivity|]. split; [reflexivity|].
+      split.
+      + exact (UNN.Fresh.Facts.fresh_ident_In _ _ _ _ _ Ex).
+      + exact (UNN.Fresh.Facts.fresh_ident_vars_perm _ _ _ _ _ Ex).
+  Qed.
+
 (** * The call's results, read at their own ambients
 
     The last step of the streams call case, and the one place the pointwise
