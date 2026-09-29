@@ -455,6 +455,73 @@ Section StreamAmbients.
     - apply IH. intros nck0 Hn. apply Hdef. now right.
   Qed.
 
+    (** * From the per-slot ambients to the augmented actuals
+
+        The identity the augmentation design was for, read in the direction the
+        streams call case needs it.  The contract delivers each argument at its
+        own ambient,
+
+          [merge (merge amb_call (clock_actuals sub ck_i)) (fst t_i)],
+
+        and [generate_constraints_mono_sem_aug] asks for it at the call's own
+        ambient over the *augmented* actual,
+
+          [merge amb_call (merge (fst t_i) (clock_actuals sub ck_i))].
+
+        Those name the same set, so one is the other; that is the whole content
+        of the augmentation, and it is why the arguments never have to be
+        weakened to a common ambient -- which they could not be, since the
+        slots' clocks differ. *)
+
+    Lemma call_arg_ambients_cons :
+      forall sub bckty p ncks nck ins,
+        call_arg_ambients sub bckty (nck :: ncks) (p :: ins)
+        = CALLS.call_arg_ambient env rst_ty sub bckty (snd p)
+          :: call_arg_ambients sub bckty ncks ins.
+    Proof. reflexivity. Qed.
+
+    Lemma satisfiable_reassoc :
+      forall dlt x A B C,
+        satisfiable dlt x (merge (merge A B) C) ->
+        satisfiable dlt x (merge A (merge C B)).
+    Proof.
+      intros dlt x A B C H.
+      eapply order_trans; [exact H|].
+      apply hm_ext_incl. intros z Hz.
+      apply SymTypes.in_merge_inv in Hz as [Hz|Hz].
+      - apply SymTypes.in_merge_inv in Hz as [Hz|Hz];
+          [apply in_merge_left; exact Hz
+          |apply in_merge_right, in_merge_right; exact Hz].
+      - apply in_merge_right, in_merge_left; exact Hz.
+    Qed.
+
+    Lemma call_args_augmented :
+      forall dlt sub bckty (ins : list (ident * clock)) (ncks : list nclock)
+             (argts argt : list LST),
+        stream_rel dlt (call_arg_ambients sub bckty ncks ins) argts argt ->
+        Forall2 (fun t1 t2 =>
+                   satisfiable dlt t2 (merge (merge [rst_ty] bckty) t1))
+          (CALLS.augment_actuals env sub ins argts) (List.map fst argt).
+    Proof.
+      intros dlt sub bckty ins.
+      induction ins as [|p ins IH]; intros ncks argts argt Hrel.
+      - (** no slots left, so no argument streams either *)
+        unfold call_arg_ambients in Hrel.
+        destruct ncks as [|nck ncks]; cbn [combine List.map] in Hrel;
+          inversion Hrel; subst; constructor.
+      - destruct ncks as [|nck ncks].
+        + unfold call_arg_ambients in Hrel. cbn [combine List.map] in Hrel.
+          inversion Hrel; subst. constructor.
+        + rewrite call_arg_ambients_cons in Hrel.
+          inversion Hrel as [|a t tg ambs0 argts0 argt0 Hhd Htl]; subst.
+          rewrite (CALLS.augment_actuals_cons env). cbn [List.map].
+          constructor.
+          * unfold CALLS.call_arg_ambient in Hhd.
+            exact (satisfiable_reassoc dlt (fst tg) (merge [rst_ty] bckty)
+                     (CALLS.clock_actuals env sub (snd p)) (fst t) Hhd).
+          * exact (IH ncks argts0 argt0 Htl).
+    Qed.
+
   Lemma call_arg_ambients_length :
     forall sub bckty (ncks : list nclock) (ins : list (ident * clock)),
       List.length ins = List.length ncks ->
