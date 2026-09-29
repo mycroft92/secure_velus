@@ -2339,6 +2339,107 @@ Import UNN.Fresh.Tactics.
                stS stT GSout GTout Hsrc Htgt).
     Qed.
 
+
+    (** ** Unnesting, at the program level
+
+        The mirror of [normfby_global_signatures_weaken], and equally direct:
+        the shared lockstep instantiated at the relation [unnest_global]
+        establishes. *)
+    Corollary unnest_global_signatures_weaken :
+      forall (P : global) Hwl Hprefs (envs : node_scoped_env)
+             (aux : list node_aux_names) stS stT GSout GTout,
+        (forall accS accT nS nT sgS stS0 stS1 sgT stT0 stT1,
+            (exists Pt (Hw : wl_node Pt nS)
+                       (Hp : n_prefixes nS = elab_prefs),
+                nT = unnest_node Pt nS Hw Hp) ->
+            call_weakens accS accT ->
+            generate_lnode_sig_scoped_env accS nS envs aux stS0
+              = OK (sgS, stS1) ->
+            generate_lnode_sig_scoped_env accT nT envs aux stT0
+              = OK (sgT, stT1) ->
+            sig_head_weakens sgS sgT) ->
+        generate_all_lsignatures_scoped_env (rev P) envs aux stS = OK GSout ->
+        generate_all_lsignatures_scoped_env
+          (rev (unnest_global P Hwl Hprefs)) envs aux stT = OK GTout ->
+        call_weakens GSout GTout.
+    Proof.
+      intros P Hwl Hprefs envs aux stS stT GSout GTout Hstep Hsrc Htgt.
+      eapply generate_all_lsignatures_weakens;
+        [apply unnested_nodes_rev;
+         exact (unnest_global_unnested_nodes P Hwl Hprefs)
+        |exact Hstep|exact Hsrc|exact Htgt].
+    Qed.
+
+    (** ** The two legs composed
+
+        [call_weakens] is transitive, so the two phases compose with nothing
+        new.  This is preservation across normalisation as the pipeline performs
+        it: [normalize_global] is exactly [normfby_global] after
+        [unnest_global], with a causality check between them that does not touch
+        the program.
+
+        The middle signature global is named once and used on both sides, which
+        is what makes the two legs meet.  It is generated from the unnested
+        program, so the state it starts at is immaterial -- that program is
+        unnested, hence the generator is state-pure on it -- but nothing here
+        needs that, since the caller supplies the one run. *)
+    Lemma call_weakens_trans :
+      forall G1 G2 G3,
+        call_weakens G1 G2 -> call_weakens G2 G3 -> call_weakens G1 G3.
+    Proof.
+      intros G1 G2 G3 H12 H23 f sg1 inp ck rst outs cs1 st st1 Hf1 Hg1.
+      destruct (H12 f sg1 inp ck rst outs cs1 st st1 Hf1 Hg1)
+        as (sg2 & cs2 & Hf2 & Hg2 & Hce12).
+      destruct (H23 f sg2 inp ck rst outs cs2 st st Hf2 Hg2)
+        as (sg3 & cs3 & Hf3 & Hg3 & Hce23).
+      exists sg3, cs3. split; [exact Hf3|split; [exact Hg3|]].
+      exact (cs_entails_trans _ _ _ Hce12 Hce23).
+    Qed.
+
+    Theorem normalize_signatures_weaken :
+      forall (P : global) Hwl Hprefs Hunt Hprefs'
+             (envs : node_scoped_env) (aux : list node_aux_names)
+             stS stM stT GS GM GT,
+        (** the unnesting step, node by node *)
+        (forall accS accT nS nT sgS stS0 stS1 sgT stT0 stT1,
+            (exists Pt (Hw : wl_node Pt nS)
+                       (Hp : n_prefixes nS = elab_prefs),
+                nT = unnest_node Pt nS Hw Hp) ->
+            call_weakens accS accT ->
+            generate_lnode_sig_scoped_env accS nS envs aux stS0
+              = OK (sgS, stS1) ->
+            generate_lnode_sig_scoped_env accT nT envs aux stT0
+              = OK (sgT, stT1) ->
+            sig_head_weakens sgS sgT) ->
+        (** and the [fby] step *)
+        (forall accS accT nS nT sgS stS0 stS1 sgT stT0 stT1,
+            (exists Q c (Hu : unnested_node Q nS)
+                       (Hp : n_prefixes nS = norm1_prefs),
+                nT = normfby_node Q c nS Hu Hp) ->
+            call_weakens accS accT ->
+            generate_lnode_sig_scoped_env accS nS envs aux stS0
+              = OK (sgS, stS1) ->
+            generate_lnode_sig_scoped_env accT nT envs aux stT0
+              = OK (sgT, stT1) ->
+            sig_head_weakens sgS sgT) ->
+        generate_all_lsignatures_scoped_env (rev P) envs aux stS = OK GS ->
+        generate_all_lsignatures_scoped_env
+          (rev (unnest_global P Hwl Hprefs)) envs aux stM = OK GM ->
+        generate_all_lsignatures_scoped_env
+          (rev (normfby_global (unnest_global P Hwl Hprefs) Hunt Hprefs'))
+          envs aux stT = OK GT ->
+        call_weakens GS GT.
+    Proof.
+      intros P Hwl Hprefs Hunt Hprefs' envs aux stS stM stT GS GM GT
+        Hstepu Hstepn Hsrc Hmid Htgt.
+      eapply call_weakens_trans.
+      - exact (unnest_global_signatures_weaken P Hwl Hprefs envs aux stS stM
+                 GS GM Hstepu Hsrc Hmid).
+      - exact (normfby_global_signatures_weaken
+                 (unnest_global P Hwl Hprefs) Hunt Hprefs' envs aux stM stT
+                 GM GT Hstepn Hmid Htgt).
+    Qed.
+
   End NormFbyNode.
 
 End SecLusNormFby.
