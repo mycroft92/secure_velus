@@ -1192,29 +1192,38 @@ Import UNN.Fresh.Tactics.
 
     (** ** The move, once, for a whole body *)
 
+    (** The update does not need the created names to be pairwise distinct; it
+        needs the assignment to be *functional*.  That distinction matters:
+        when each equation contributes the entries for the variables it created,
+        an initialisation flag shared between two equations on the same clock
+        contributes twice -- at the same level both times, since a flag's level
+        is its clock's ambient.  [NoDup] would reject that; functionality
+        accepts it, and is all [upds] needs. *)
+    Definition levels_functional (pairs : list (ident * ST)) : Prop :=
+      forall y L1 L2, In (y, L1) pairs -> In (y, L2) pairs -> L1 = L2.
+
     Lemma upds_pairs_val :
       forall (pairs : list (ident * ST)) dlt y L,
-        NoDup (List.map fst pairs) ->
+        levels_functional pairs ->
         In (y, L) pairs ->
         upds (List.map fst pairs)
              (List.map (fun p => hm_ext dlt (snd p)) pairs) dlt y
         = hm_ext dlt L.
     Proof.
-      intros pairs dlt y L Hnd Hin.
-      apply (upds_nth (List.map fst pairs)
-               (List.map (fun p => hm_ext dlt (snd p)) pairs)
-               dlt y (hm_ext dlt L)).
-      - exact Hnd.
-      - now rewrite !List.map_length.
-      - assert (Hcombine :
-            combine (List.map fst pairs)
-              (List.map (fun p => hm_ext dlt (snd p)) pairs)
-            = List.map (fun p => (fst p, hm_ext dlt (snd p))) pairs).
-        { clear Hnd Hin y L.
-          induction pairs as [|[x T] pairs IH]; simpl;
-            [reflexivity|now rewrite IH]. }
-        rewrite Hcombine. apply in_map_iff.
-        exists (y, L). split; [reflexivity|exact Hin].
+      intros pairs dlt y L Hfun Hin.
+      induction pairs as [|(z, M) pairs IH]; [contradiction|].
+      cbn [List.map upds]. unfold upd. cbn [fst snd].
+      destruct (ident_eq_dec y z) as [Hyz|Hyz].
+      - (** the first entry for [y]: functionality says it is the right one *)
+        subst z.
+        assert (HLM : L = M) by (eapply Hfun; [exact Hin|now left]).
+        rewrite HLM. reflexivity.
+      - (** not this one, so [y] is further down *)
+        apply IH.
+        + intros w L1 L2 H1 H2.
+          exact (Hfun w L1 L2 (or_intror H1) (or_intror H2)).
+        + destruct Hin as [Hin|Hin]; [|exact Hin].
+          inversion Hin; subst. now elim Hyz.
     Qed.
 
     Lemma upds_pairs_off :
@@ -1238,7 +1247,7 @@ Import UNN.Fresh.Tactics.
         node -- not per equation. *)
     Lemma preserves_on_created :
       forall (pairs : list (ident * ST)) (roles : list target_role) ce cet,
-        NoDup (List.map fst pairs) ->
+        levels_functional pairs ->
         created_hidden pairs ->
         levels_visible pairs ->
         Forall2 (role_shape pairs) cet roles ->
@@ -2070,7 +2079,7 @@ Import UNN.Fresh.Tactics.
              (Hpref : n_prefixes n = norm1_prefs)
              pairs st0 ce cet ct1 ct1',
         cenv = lnode_clock_env (normfby_node Q c n Hunt Hpref) ->
-        NoDup (List.map fst pairs) ->
+        levels_functional pairs ->
         created_hidden pairs ->
         levels_visible pairs ->
         (** the per-equation and per-created-variable data, for this node's run;
