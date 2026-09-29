@@ -2785,6 +2785,452 @@ Import UNN.Fresh.Tactics.
           * exact (Hflags i cki ckti bi Hi Hckti Hbi).
     Qed.
 
+
+    (** ** The delayed variables' entries
+
+        One per equation that created one, at the ambient of its clock joined
+        with its own delayed operand's type.  Unlike a flag, a delayed variable
+        belongs to exactly one equation, so these are built by walking the run.
+
+        Functionality is where the walk earns its keep: the head's variable is
+        among the annotations that step added, the tail's among those the later
+        steps added, and [NoDup] of the whole separates them.  [env] injective
+        then separates the names. *)
+
+    Lemma fby_eqn_data_mono :
+      forall pairs pairs' eq eqk,
+        (forall p, In p pairs -> In p pairs') ->
+        fby_eqn_data pairs eq eqk -> fby_eqn_data pairs' eq eqk.
+    Proof.
+      intros pairs pairs' eq eqk Hincl Hd x e0 e ty ck name Hshape.
+      destruct (Hd x e0 e ty ck name Hshape)
+        as (ckty & s0 & s1 & b & Hck & Hckty & Hb & Hbs & H0 & H1 & HL & Hcr).
+      exists ckty, s0, s1, b.
+      split; [exact Hck|]. split; [exact Hckty|]. split; [exact Hb|].
+      split; [exact Hbs|]. split; [exact H0|]. split; [exact H1|].
+      split; [exact HL|].
+      intro Hfby. destruct (Hcr Hfby) as (Hc1 & Hc2). split.
+      - intros x' ann bp Ho Hbp. exact (Hincl _ (Hc1 x' ann bp Ho Hbp)).
+      - intros i px eqsi bp Ho Hbp. exact (Hincl _ (Hc2 i px eqsi bp Ho Hbp)).
+    Qed.
+
+    Lemma Forall2_impl' :
+      forall {A B : Type} (P Q : A -> B -> Prop) l l',
+        (forall a b, P a b -> Q a b) ->
+        Forall2 P l l' -> Forall2 Q l l'.
+    Proof.
+      intros A B P Q l l' Himp HF.
+      induction HF as [|a b l1 l2 Hab Hr IH]; constructor;
+        [exact (Himp a b Hab)|exact IH].
+    Qed.
+
+    Lemma delayed_pairs_exists :
+      forall to_cut eqs eqs' q qf,
+        map_bind (fby_equation to_cut) eqs q = (eqs', qf) ->
+        (forall v a, In (v, a) (st_anns qf) ->
+            exists b, Env.find v env = Some b /\ ~ In b scope) ->
+        env_injective env ->
+        NoDup (st_ids qf) ->
+        (forall x e0 e ty ck name,
+            In ([x], [Efby [e0] [e] [(ty, (ck, name))]]) eqs
+            \/ In ([x], [Earrow [e0] [e] [(ty, (ck, name))]]) eqs ->
+            exists ckty s0 s1 b,
+              find_clock cenv x = OK ck
+              /\ assign_clk_type env base_ty ck = Some ckty
+              /\ Env.find x env = Some b
+              /\ In b scope
+              /\ (forall r, assign_lexp_type G env base_ty rst_ty e0 r
+                            = OK ([(s0, [])], r))
+              /\ (forall r, assign_lexp_type G env base_ty rst_ty e r
+                            = OK ([(s1, [])], r))
+              /\ (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                            In z scope)) ->
+        exists dp new,
+          st_anns qf = new ++ st_anns q
+          /\ (forall y L, In (y, L) dp ->
+                 exists v a, Env.find v env = Some y
+                             /\ In (v, a) (st_anns qf)
+                             /\ snd a = false
+                             /\ In v (List.map fst new))
+          /\ created_hidden dp
+          /\ levels_visible dp
+          /\ levels_functional dp
+          /\ Forall2 (fby_eqn_data dp) eqs eqs'.
+    Proof.
+      intros to_cut eqs. induction eqs as [|eq eqs IH];
+        intros eqs' q qf Hrun Hnames Hinj Hnd Hdata.
+      - change (ret ([] : list (list equation)) q = (eqs', qf)) in Hrun.
+        rewrite ret_spec in Hrun. inversion Hrun; subst eqs' qf.
+        exists [], []. split; [reflexivity|].
+        split; [intros y L []|].
+        split; [intros y L []|].
+        split; [intros y L z []|].
+        split; [intros y L1 L2 []|constructor].
+      - change
+          (bind (fby_equation to_cut eq)
+             (fun e1 =>
+                bind (map_bind (fby_equation to_cut) eqs)
+                  (fun er => ret (e1 :: er))) q = (eqs', qf))
+          in Hrun.
+        apply bind_spec in Hrun as (eq1 & q1 & Hrun1 & Hrun).
+        apply bind_spec in Hrun as (eqsr & q2 & Hrunr & Hret).
+        rewrite ret_spec in Hret. inversion Hret; subst eqs' qf.
+        destruct (fby_equation_anns to_cut eq eq1 q q1 Hrun1)
+          as (new1 & Hanns1 & Hcut1 & Hite1).
+        destruct (IH eqsr q1 q2 Hrunr Hnames Hinj Hnd
+                    (fun x e0 e ty ck name Hin =>
+                       Hdata x e0 e ty ck name
+                         match Hin with
+                         | or_introl h => or_introl (or_intror h)
+                         | or_intror h => or_intror (or_intror h)
+                         end))
+          as (dp & newt & Hannst & Hfrom & Hhid & Hvis & Hfun & Hforall).
+        assert (Hall : st_anns q2 = (newt ++ new1) ++ st_anns q)
+          by (rewrite <- app_assoc, <- Hanns1; exact Hannst).
+        (** the head's variables and the tail's are disjoint *)
+        assert (Hdisj : forall v, In v (List.map fst newt) ->
+                        ~ In v (List.map fst new1)).
+        { intros v Hvt Hv1.
+          unfold st_ids in Hnd. rewrite Hall, <- app_assoc in Hnd.
+          rewrite !List.map_app in Hnd.
+          eapply NoDup_app_In; [exact Hnd|exact Hvt|].
+          apply in_or_app. now left. }
+        (** a name already used by the tail is not a fresh head variable *)
+        assert (Hfresh : forall v b, Env.find v env = Some b ->
+                    In v (List.map fst new1) -> forall L, ~ In (b, L) dp).
+        { intros v b Hb Hv1 L Hc.
+          destruct (Hfrom b L Hc) as (w & aw & Hw & _ & _ & Hwt).
+          assert (v = w) as ?
+              by (exact (Hinj v w b b Hb Hw
+                           (@Coq.Init.Logic.eq_refl ident b))); subst w.
+          exact (Hdisj v Hwt Hv1). }
+        destruct eq as (xs, es).
+        destruct (fby_equation_spec to_cut xs es)
+          as [(x & e0 & e & ann & Hxs & Hes & Hconst & Heq)
+             |[(x & e0 & e & ann & Hxs & Hes & Hconst & Heq)
+              |[(x & e0 & e & ann & Hxs & Hes & Heq)
+               |Heq]]].
+        + (** a constant initial value *)
+          subst xs es. destruct ann as (ty, (ck, name)).
+          rewrite Heq in Hrun1. cbv beta iota in Hrun1.
+          destruct (Hdata x e0 e ty ck name
+                      (or_introl (in_eq _ _)))
+            as (ckty & s0 & s1 & b & Hck & Hckty & Hb & Hbs & H0 & H1 & HL).
+          destruct (PS.mem x to_cut).
+          * apply bind_spec in Hrun1 as (x' & s2 & Ex & Hrun1).
+            rewrite ret_spec in Hrun1. inversion Hrun1; subst eq1 q1.
+            assert (Hin2 : In (x', ((ty, ck), false)) (st_anns q2)).
+            { rewrite Hannst. apply in_or_app. right.
+              exact (fresh_ident_In _ _ _ _ _ Ex). }
+            destruct (Hnames x' ((ty, ck), false) Hin2) as (b' & Hb' & Hb's).
+            assert (Hx'1 : In x' (List.map fst new1))
+              by (eapply Hcut1; reflexivity).
+            exists ((b', merge (merge [rst_ty] ckty) (merge s0 s1)) :: dp),
+                   (newt ++ new1).
+            split; [exact Hall|].
+            split.
+            { intros y L [Hy|Hy].
+              - apply pair_inv in Hy as (? & ?); subst y L.
+                exists x', ((ty, ck), false).
+                split; [exact Hb'|]. split; [exact Hin2|].
+                split; [reflexivity|].
+                rewrite List.map_app. apply in_or_app. now right.
+              - destruct (Hfrom y L Hy) as (w & aw & Hw & Hwin & Haw & Hwt).
+                exists w, aw. split; [exact Hw|]. split; [exact Hwin|].
+                split; [exact Haw|].
+                rewrite List.map_app. apply in_or_app. now left. }
+            split.
+            { intros y L [Hy|Hy];
+                [apply pair_inv in Hy as (? & ?); subst y L; exact Hb's
+                |exact (Hhid y L Hy)]. }
+            split.
+            { intros y L z [Hy|Hy] Hz;
+                [|exact (Hvis y L z Hy Hz)].
+              apply pair_inv in Hy as (? & ?); subst y L. exact (HL z Hz). }
+            split.
+            { intros y L1 L2 [K1|K1] [K2|K2].
+              - apply pair_inv in K1 as (? & ?);
+                  apply pair_inv in K2 as (? & ?); subst; reflexivity.
+              - apply pair_inv in K1 as (? & ?); subst y L1.
+                now elim (Hfresh x' b' Hb' Hx'1 L2).
+              - apply pair_inv in K2 as (? & ?); subst y L2.
+                now elim (Hfresh x' b' Hb' Hx'1 L1).
+              - exact (Hfun y L1 L2 K1 K2). }
+            constructor.
+            -- intros z f0 f tq ckq nameq Hshape.
+               assert (Hz : z = x /\ f0 = e0 /\ f = e /\ tq = ty
+                            /\ ckq = ck /\ nameq = name).
+               { destruct Hshape as [Hs|Hs]; inversion Hs; subst;
+                   repeat split; reflexivity. }
+               destruct Hz as (? & ? & ? & ? & ? & ?); subst.
+               exists ckty, s0, s1, b.
+               split; [exact Hck|]. split; [exact Hckty|]. split; [exact Hb|].
+               split; [exact Hbs|]. split; [exact H0|]. split; [exact H1|].
+               split; [exact HL|].
+               intros _. split.
+               ++ intros y annq bp Ho Hbp.
+                  inversion Ho; subst y annq.
+                  rewrite Hb' in Hbp. apply option_Some_inj in Hbp; subst bp.
+                  now left.
+               ++ intros j py eqsj bp Ho Hbp. inversion Ho.
+            -- eapply Forall2_impl'; [|exact Hforall].
+               intros a1 a2 Ha. eapply fby_eqn_data_mono; [|exact Ha].
+               intros pq Hpq. now right.
+          * rewrite ret_spec in Hrun1. inversion Hrun1; subst eq1 q1.
+            exists dp, (newt ++ new1).
+            split; [exact Hall|].
+            split.
+            { intros y L Hy.
+              destruct (Hfrom y L Hy) as (w & aw & Hw & Hwin & Haw & Hwt).
+              exists w, aw. split; [exact Hw|]. split; [exact Hwin|].
+              split; [exact Haw|].
+              rewrite List.map_app. apply in_or_app. now left. }
+            split; [exact Hhid|]. split; [exact Hvis|]. split; [exact Hfun|].
+            constructor.
+            -- intros z f0 f tq ckq nameq Hshape.
+               assert (Hz : z = x /\ f0 = e0 /\ f = e /\ tq = ty
+                            /\ ckq = ck /\ nameq = name).
+               { destruct Hshape as [Hs|Hs]; inversion Hs; subst;
+                   repeat split; reflexivity. }
+               destruct Hz as (? & ? & ? & ? & ? & ?); subst.
+               exists ckty, s0, s1, b.
+               split; [exact Hck|]. split; [exact Hckty|]. split; [exact Hb|].
+               split; [exact Hbs|]. split; [exact H0|]. split; [exact H1|].
+               split; [exact HL|].
+               intros _. split;
+                 [intros y annq bp Ho Hbp; inversion Ho
+                 |intros j py eqsj bp Ho Hbp; inversion Ho].
+            -- exact Hforall.
+        + (** a non-constant initial value *)
+          subst xs es. destruct ann as (ty, (ck, name)).
+          rewrite Heq in Hrun1.
+          apply bind2_spec in Hrun1 as (fby & eqsa & s1' & Hfby & Hrun1).
+          rewrite ret_spec in Hrun1. inversion Hrun1; subst eq1 q1.
+          destruct (fby_iteexp_created e0 e ty ck name fby eqsa q s1' Hfby)
+            as (i & px & eqsi & Hi & Hpx & Hfbye & Heqsa & Heqsi).
+          subst fby eqsa.
+          destruct (Hdata x e0 e ty ck name (or_introl (in_eq _ _)))
+            as (ckty & s0 & s1 & b & Hck & Hckty & Hb & Hbs & H0 & H1 & HL).
+          assert (Hin2 : In (px, ((ty, ck), false)) (st_anns q2)).
+          { rewrite Hannst. apply in_or_app. now right. }
+          destruct (Hnames px ((ty, ck), false) Hin2) as (bp & Hbp & Hbps).
+          assert (Hpx1 : In px (List.map fst new1))
+            by (eapply Hite1; [reflexivity|reflexivity]).
+          exists ((bp, merge (merge [rst_ty] ckty) s1) :: dp), (newt ++ new1).
+          split; [exact Hall|].
+          split.
+          { intros y L [Hy|Hy].
+            - apply pair_inv in Hy as (? & ?); subst y L.
+              exists px, ((ty, ck), false).
+              split; [exact Hbp|]. split; [exact Hin2|].
+              split; [reflexivity|].
+              rewrite List.map_app. apply in_or_app. now right.
+            - destruct (Hfrom y L Hy) as (w & aw & Hw & Hwin & Haw & Hwt).
+              exists w, aw. split; [exact Hw|]. split; [exact Hwin|].
+              split; [exact Haw|].
+              rewrite List.map_app. apply in_or_app. now left. }
+          split.
+          { intros y L [Hy|Hy];
+              [apply pair_inv in Hy as (? & ?); subst y L; exact Hbps
+              |exact (Hhid y L Hy)]. }
+          split.
+          { intros y L z [Hy|Hy] Hz; [|exact (Hvis y L z Hy Hz)].
+            apply pair_inv in Hy as (? & ?); subst y L.
+            apply HL. eapply merge_incl_mono;
+              [intros w Hw; exact Hw
+              |intros w Hw; apply in_merge_right; exact Hw
+              |exact Hz]. }
+          split.
+          { intros y L1 L2 [K1|K1] [K2|K2].
+            - apply pair_inv in K1 as (? & ?);
+                apply pair_inv in K2 as (? & ?); subst; reflexivity.
+            - apply pair_inv in K1 as (? & ?); subst y L1.
+              now elim (Hfresh px bp Hbp Hpx1 L2).
+            - apply pair_inv in K2 as (? & ?); subst y L2.
+              now elim (Hfresh px bp Hbp Hpx1 L1).
+            - exact (Hfun y L1 L2 K1 K2). }
+          constructor.
+          -- intros z f0 f tq ckq nameq Hshape.
+             assert (Hz : z = x /\ f0 = e0 /\ f = e /\ tq = ty
+                          /\ ckq = ck /\ nameq = name).
+             { destruct Hshape as [Hs|Hs]; inversion Hs; subst;
+                 repeat split; reflexivity. }
+             destruct Hz as (? & ? & ? & ? & ? & ?); subst.
+             exists ckty, s0, s1, b.
+             split; [exact Hck|]. split; [exact Hckty|]. split; [exact Hb|].
+             split; [exact Hbs|]. split; [exact H0|]. split; [exact H1|].
+             split; [exact HL|].
+             intros _. split.
+             ++ intros y annq bq Ho Hbq. inversion Ho.
+             ++ intros j py eqsj bq Ho Hbq.
+                inversion Ho; subst j py eqsj.
+                rewrite Hbp in Hbq. apply option_Some_inj in Hbq; subst bq.
+                now left.
+          -- eapply Forall2_impl'; [|exact Hforall].
+             intros a1 a2 Ha. eapply fby_eqn_data_mono; [|exact Ha].
+             intros pq Hpq. now right.
+        + (** an arrow: no delayed variable is created *)
+          subst xs es. destruct ann as (ty, (ck, name)).
+          rewrite Heq in Hrun1.
+          apply bind2_spec in Hrun1 as (ite & eqsa & s1' & Hite & Hrun1).
+          rewrite ret_spec in Hrun1. inversion Hrun1; subst eq1 q1.
+          destruct (Hdata x e0 e ty ck name (or_intror (in_eq _ _)))
+            as (ckty & s0 & s1 & b & Hck & Hckty & Hb & Hbs & H0 & H1 & HL).
+          exists dp, (newt ++ new1).
+          split; [exact Hall|].
+          split.
+          { intros y L Hy.
+            destruct (Hfrom y L Hy) as (w & aw & Hw & Hwin & Haw & Hwt).
+            exists w, aw. split; [exact Hw|]. split; [exact Hwin|].
+            split; [exact Haw|].
+            rewrite List.map_app. apply in_or_app. now left. }
+          split; [exact Hhid|]. split; [exact Hvis|]. split; [exact Hfun|].
+          constructor.
+          -- intros z f0 f tq ckq nameq Hshape.
+             assert (Hz : z = x /\ f0 = e0 /\ f = e /\ tq = ty
+                          /\ ckq = ck /\ nameq = name).
+             { destruct Hshape as [Hs|Hs]; inversion Hs; subst;
+                 repeat split; reflexivity. }
+             destruct Hz as (? & ? & ? & ? & ? & ?); subst.
+             exists ckty, s0, s1, b.
+             split; [exact Hck|]. split; [exact Hckty|]. split; [exact Hb|].
+             split; [exact Hbs|]. split; [exact H0|]. split; [exact H1|].
+             split; [exact HL|].
+             intro Hfby. inversion Hfby.
+          -- exact Hforall.
+        + (** anything else, untouched *)
+          rewrite Heq in Hrun1. rewrite ret_spec in Hrun1.
+          inversion Hrun1; subst eq1 q1.
+          exists dp, (newt ++ new1).
+          split; [exact Hall|].
+          split.
+          { intros y L Hy.
+            destruct (Hfrom y L Hy) as (w & aw & Hw & Hwin & Haw & Hwt).
+            exists w, aw. split; [exact Hw|]. split; [exact Hwin|].
+            split; [exact Haw|].
+            rewrite List.map_app. apply in_or_app. now left. }
+          split; [exact Hhid|]. split; [exact Hvis|]. split; [exact Hfun|].
+          constructor.
+          -- intros z f0 f tq ckq nameq Hshape.
+             destruct (Hdata z f0 f tq ckq nameq
+                         match Hshape with
+                         | or_introl h => or_introl (or_introl h)
+                         | or_intror h => or_intror (or_introl h)
+                         end)
+               as (ckty & s0 & s1 & b & Hck & Hckty & Hb & Hbs & H0 & H1 & HL).
+             exists ckty, s0, s1, b.
+             split; [exact Hck|]. split; [exact Hckty|]. split; [exact Hb|].
+             split; [exact Hbs|]. split; [exact H0|]. split; [exact H1|].
+             split; [exact HL|].
+             intros _. split;
+               [intros y annq bp Ho Hbp; inversion Ho
+               |intros j py eqsj bp Ho Hbp; inversion Ho].
+          -- exact Hforall.
+    Qed.
+
+
+    Lemma nodup_fst_unique :
+      forall {A : Type} (l : list (ident * A)) y v w,
+        NoDup (List.map fst l) -> In (y, v) l -> In (y, w) l -> v = w.
+    Proof.
+      induction l as [|(z, a) l IH]; intros y v w Hnd Hv Hw; [contradiction|].
+      cbn [List.map] in Hnd. inversion Hnd as [|z0 l0 Hz Hnd']; subst.
+      destruct Hv as [Hv|Hv]; destruct Hw as [Hw|Hw].
+      - apply pair_inv in Hv as (? & ?); apply pair_inv in Hw as (? & ?);
+          subst; reflexivity.
+      - apply pair_inv in Hv as (? & ?); subst y v. exfalso. apply Hz.
+        apply in_map_iff. exists (z, w). split; [reflexivity|exact Hw].
+      - apply pair_inv in Hw as (? & ?); subst y w. exfalso. apply Hz.
+        apply in_map_iff. exists (z, v). split; [reflexivity|exact Hv].
+      - exact (IH y v w Hnd' Hv Hw).
+    Qed.
+
+    (** ** The assignment, assembled
+
+        The flags' entries and the delayed variables' entries, concatenated.
+        Functionality across the two is the only thing left to see, and the
+        state settles it: a name shared between them would be one variable, by
+        [env] injectivity, recorded once, by [NoDup] of the identifiers -- and a
+        flag's record carries [true] where a delayed variable's carries
+        [false]. *)
+    Lemma node_pairs_exists :
+      forall to_cut (eqs : list equation) eqs' stf,
+        map_bind (fby_equation to_cut) eqs init_st = (eqs', stf) ->
+        (forall v a, In (v, a) (st_anns stf) ->
+            exists b, Env.find v env = Some b /\ ~ In b scope) ->
+        env_injective env ->
+        NoDup (st_ids stf) ->
+        In rst_ty scope ->
+        (forall v a, In (v, a) (st_anns stf) ->
+            exists ckty, assign_clk_type env base_ty (snd (fst a)) = Some ckty
+                         /\ (forall z, In z ckty -> In z scope)) ->
+        (forall x e0 e ty ck name,
+            In ([x], [Efby [e0] [e] [(ty, (ck, name))]]) eqs
+            \/ In ([x], [Earrow [e0] [e] [(ty, (ck, name))]]) eqs ->
+            exists ckty s0 s1 b,
+              find_clock cenv x = OK ck
+              /\ assign_clk_type env base_ty ck = Some ckty
+              /\ Env.find x env = Some b
+              /\ In b scope
+              /\ (forall r, assign_lexp_type G env base_ty rst_ty e0 r
+                            = OK ([(s0, [])], r))
+              /\ (forall r, assign_lexp_type G env base_ty rst_ty e r
+                            = OK ([(s1, [])], r))
+              /\ (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                            In z scope)) ->
+        exists pairs,
+          levels_functional pairs
+          /\ created_hidden pairs
+          /\ levels_visible pairs
+          /\ Forall2 (fby_eqn_data pairs) eqs eqs'
+          /\ (forall i cki ckti bi,
+                 In (i, ((bool_type, cki), true)) (st_anns stf) ->
+                 assign_clk_type env base_ty cki = Some ckti ->
+                 Env.find i env = Some bi ->
+                 In (bi, merge [rst_ty] ckti) pairs).
+    Proof.
+      intros to_cut eqs eqs' stf Hrun Hnames Hinj Hnd Hrst Hclocks Hdata.
+      unfold st_ids in Hnd.
+      destruct (flag_pairs_exists (st_anns stf) Hnd Hinj Hrst Hnames Hclocks)
+        as (fp & Hfhid & Hfvis & Hffun & Hffrom & Hflags).
+      destruct (delayed_pairs_exists to_cut eqs eqs' init_st stf
+                  Hrun Hnames Hinj Hnd Hdata)
+        as (dp & new & Hanns & Hfrom & Hdhid & Hdvis & Hdfun & Hforall).
+      exists (fp ++ dp).
+      (** a flag and a delayed variable are never the same name *)
+      assert (Hsep : forall y L1 L2, In (y, L1) fp -> In (y, L2) dp -> False).
+      { intros y L1 L2 H1 H2.
+        destruct (Hffrom y L1 H1) as (v & a & Hvin & Hv & Hva).
+        destruct (Hfrom y L2 H2) as (w & b & Hw & Hwin & Hwb & _).
+        assert (v = w) as ?
+            by (exact (Hinj v w y y Hv Hw
+                         (@Coq.Init.Logic.eq_refl ident y))); subst w.
+        assert (a = b) as ?
+            by (exact (nodup_fst_unique (st_anns stf) v a b Hnd Hvin Hwin));
+          subst b.
+        rewrite Hva in Hwb. discriminate Hwb. }
+      split.
+      - intros y L1 L2 H1 H2.
+        apply in_app_or in H1 as [H1|H1]; apply in_app_or in H2 as [H2|H2].
+        + exact (Hffun y L1 L2 H1 H2).
+        + exfalso. exact (Hsep y L1 L2 H1 H2).
+        + exfalso. exact (Hsep y L2 L1 H2 H1).
+        + exact (Hdfun y L1 L2 H1 H2).
+      - split.
+        { intros y L Hy. apply in_app_or in Hy as [Hy|Hy];
+            [exact (Hfhid y L Hy)|exact (Hdhid y L Hy)]. }
+        split.
+        { intros y L z Hy Hz. apply in_app_or in Hy as [Hy|Hy];
+            [exact (Hfvis y L z Hy Hz)|exact (Hdvis y L z Hy Hz)]. }
+        split.
+        + eapply Forall2_impl'; [|exact Hforall].
+          intros a1 a2 Ha. eapply fby_eqn_data_mono; [|exact Ha].
+          intros pq Hpq. apply in_or_app. now right.
+        + intros i cki ckti bi Hi Hckti Hbi.
+          apply in_or_app. left.
+          exact (Hflags i cki ckti bi Hi Hckti Hbi).
+    Qed.
+
   End NormFbyNode.
 
 End SecLusNormFby.
