@@ -1708,6 +1708,67 @@ Section StreamAmbients.
         + exact Hamb.
     Qed.
 
+    (** * The call's arguments, at the ambients the call hands them
+
+        The argument at a given slot runs on the formal's clock instantiated
+        at the call's base, so the ambient that covers it is the call's own
+        joined with that slot's clock actuals -- [call_arg_ambient], the same
+        set the augmentation uses.  [clocks_covered_call_args] assembles those
+        into the list the contract wants, and this wires it to
+        [carries_list_streams_intro] so the call case can quote one lemma
+        instead of redoing the plumbing.
+
+        The length side condition is [call_arg_ambients_length] together with
+        the source types having one entry per argument stream. *)
+    Lemma call_args_streams :
+      forall P es (ins : list (ident * clock)) bck sub bckty
+             ic es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt,
+        Forall (carries_streams P) es ->
+        assign_clk_type env base_ty bck = Some bckty ->
+        Forall2 (WellInstantiated bck sub) ins (nclocksof es) ->
+        (forall nck, In nck (nclocksof es) ->
+           exists ckty, assign_clk_type env base_ty (stripname nck)
+                        = Some ckty) ->
+        Forall (wl_exp P) es ->
+        Forall (wc_exp P vars) es ->
+        NoDup (vars_defined (List.concat eqs) ++ st_ids st) ->
+        (forall x, In x (CALLS.moved_by env st st') -> ~ In x scope) ->
+        constraints_scoped scope (carried ts) ->
+        Forall (fun t => st_scoped scope (fst t)) ts ->
+        stream_ambients_scoped scope
+          (call_arg_ambients sub bckty (nclocksof es) ins) ->
+        List.length ts = List.length (nclocksof es) ->
+        state_clocks_found st' ->
+        map_bind2 (unnest_exp P ic) es st = ((es', eqs), st') ->
+        assign_lexps GL env base_ty rst_ty es sst = OK (ts, sst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv
+          (List.concat eqs) xst = OK (ce, xst') ->
+        assign_lexps GL env base_ty rst_ty (List.concat es') yst
+          = OK (ts'', yst') ->
+        listSatisfiable dlt (carried ts) ->
+        exists dlt',
+          carries_result_streams scope (CALLS.moved_by env st st')
+            (call_arg_ambients sub bckty (nclocksof es) ins) ts ts'' ce dlt dlt'.
+    Proof.
+      intros P es ins bck sub bckty ic es' eqs st st' ts sst sst'
+        ce xst xst' ts'' yst yst' dlt
+        Hall Hbk Hwi Hdef Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hlen Hfound
+        Hun Has Hgen Has' Hsat.
+      eapply (carries_list_streams_intro P es Hall ic
+                (call_arg_ambients sub bckty (nclocksof es) ins));
+        [exact Hwl|exact Hwc|exact Hnd|exact Hmv|exact Hcsc|exact Htsc
+        |exact Hambsc| | |exact Hfound|exact Hun|exact Has|exact Hgen
+        |exact Has'|exact Hsat].
+      - (** the arguments' clocks are the instantiated formals' *)
+        rewrite clocksof_nclocksof.
+        exact (clocks_covered_call_args bck sub ins (nclocksof es) bckty
+                 Hbk Hwi Hdef).
+      - (** one ambient per argument stream *)
+        rewrite (call_arg_ambients_length sub bckty (nclocksof es) ins
+                   (Forall2_length _ _ _ Hwi)).
+        exact (@Coq.Init.Logic.eq_sym _ _ _ Hlen).
+    Qed.
+
     Lemma carries_Ewhen_streams :
       forall P es x b a,
         Forall (carries_streams P) es ->
