@@ -2441,121 +2441,6 @@ Import UNN.Fresh.Tactics.
     Qed.
 
 
-    (** * Leg I's per-node step
-
-        The counterpart of Leg U's, assembled the same way:
-        [normfby_node_entailment] supplies the entailment,
-        [normfby_node_signatures_preserved_decoupled] the interface equality and
-        the transport through [simplify], and [sig_call_weakens_from_good]
-        converts the pair into [sig_head_weakens].  The target accumulator is
-        the section's [G], since that is the one [normfby_node_entailment]
-        speaks about.
-
-        The level assignment enters as a hypothesis -- that a good one exists
-        for this node's run -- because that is the one thing Leg I still owes;
-        it is [node_pairs_exists] in work_docs/Next_remaining.v.  Everything
-        else here is the program-level facts, which are not phase-specific. *)
-    Corollary normfby_node_step :
-      forall Q c (n : node) (Hunt : unnested_node Q n)
-             (Hpref : n_prefixes n = norm1_prefs) (Q' : global)
-             (envs : node_scoped_env) (aux : list node_aux_names)
-             accS sgS stS0 stS1 sgT stT0 stT1,
-        find_node_env n.(n_name) envs = Some env ->
-        (forall clk_id rst_id,
-            get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
-            Env.find clk_id env = Some base_ty
-            /\ Env.find rst_id env = Some rst_ty) ->
-        cenv = lnode_clock_env (normfby_node Q c n Hunt Hpref) ->
-        Forall (unnested_equation Q')
-          (normfby_node Q c n Hunt Hpref).(n_eqs) ->
-        (** a good level assignment exists for this node's run *)
-        (forall eqs' stf,
-            map_bind (fby_equation
-                        (PS.union c (ps_from_list (List.map fst (n_out n)))))
-              n.(n_eqs) init_st = (eqs', stf) ->
-            exists pairs,
-              levels_functional pairs
-              /\ created_hidden pairs
-              /\ levels_visible pairs
-              /\ Forall2 (fby_eqn_data pairs) n.(n_eqs) eqs'
-              /\ (forall y a, In (y, a) (st_anns stf) ->
-                     find_clock cenv y = OK (snd (fst a))
-                     /\ exists d, Env.find y env = Some d /\ ~ In d scope)
-              /\ (forall i cki ckti bi,
-                     In (i, ((bool_type, cki), true)) (st_anns stf) ->
-                     assign_clk_type env base_ty cki = Some ckti ->
-                     Env.find i env = Some bi ->
-                     In (bi, merge [rst_ty] ckti) pairs)) ->
-        (** the run against the target accumulator is scoped *)
-        (forall ce ct1,
-            generate_leqns_constraints G env base_ty rst_ty
-              (lnode_clock_env n) n.(n_eqs) stS0 = OK (ce, ct1) ->
-            constraints_scoped scope ce) ->
-        (** and the source run's own hygiene *)
-        (forall ce ct1,
-            generate_leqns_constraints accS env base_ty rst_ty
-              (lnode_clock_env n) n.(n_eqs) stS0 = OK (ce, ct1) ->
-            wf_constraints ce) ->
-        (forall locals cns ct1,
-            get_mappings_from_node n.(n_vars) env = Some locals ->
-            generate_leqns_constraints accS env base_ty rst_ty
-              (lnode_clock_env n) n.(n_eqs) stS0 = OK (cns, ct1) ->
-            forall y, In y (locals ++ minted stS0 ct1) -> ~ In y scope) ->
-        (** the program-level facts about the published pair *)
-        signature_good sgS ->
-        NoDup (signature_scope sgS) ->
-        signature_good sgT ->
-        signature_scoped sgT ->
-        (forall z, In z (signature_scope sgS) -> In z scope) ->
-        (forall inp ck rst os cns sa sb,
-            generate_constraints sgS inp ck rst os sa = OK (cns, sb) ->
-            call_subst_fresh sgS inp ck rst os /\ NoDup os) ->
-        call_weakens accS G ->
-        generate_lnode_sig_scoped_env accS n envs aux stS0 = OK (sgS, stS1) ->
-        generate_lnode_sig_scoped_env G (normfby_node Q c n Hunt Hpref)
-          envs aux stT0 = OK (sgT, stT1) ->
-        sig_head_weakens sgS sgT.
-    Proof.
-      intros Q c n Hunt Hpref Q' envs aux accS sgS stS0 stS1 sgT stT0 stT1
-        Hfind Haux Hcenv Hun Hpairs Htgtsc Hwf Hdisj
-        Hgood1 Hnd1 Hgood2 Hsc2 Hincl Hinst Hw HS HT.
-      unfold generate_lnode_sig_scoped_env in HS, HT.
-      rewrite Hfind in HS.
-      cbn [n_name normfby_node] in HT. rewrite Hfind in HT.
-      destruct (normfby_node_signatures_preserved_decoupled Q c n Hunt Hpref
-                  Q' accS G aux stS0 stT0 sgS stS1 sgT stT1
-                  Haux Hun Hw)
-        as (Hn & Hi & Ho & Hc & Hr & Hpres).
-      - intros ce cet ct1 ct1' Hsrc Htgt.
-        remember (map_bind
-                    (fby_equation
-                      (PS.union c (ps_from_list (List.map fst (n_out n)))))
-                    n.(n_eqs) init_st) as run eqn:Hrun.
-        destruct run as [eqs' stf].
-        destruct (Hpairs eqs' stf
-                    (@Coq.Init.Logic.eq_refl _ (eqs', stf)))
-          as (pairs & Hfun & Hhid & Hvis & Hdata & Hnew & Hflags).
-        eapply normfby_node_entailment;
-          [exact Hcenv|exact Hfun|exact Hhid|exact Hvis
-          | |exact (Htgtsc ce ct1 Hsrc)|exact Hsrc|exact Htgt].
-        intros eqs'' stf' Hrun'.
-        rewrite <- Hrun in Hrun'. inversion Hrun'; subst.
-        exact (conj Hdata (conj Hnew Hflags)).
-      - exact Hwf.
-      - exact Hdisj.
-      - exact HS.
-      - exact HT.
-      - split; [exact (@Coq.Init.Logic.eq_sym _ _ _ Hn)|].
-        eapply sig_call_weakens_from_good;
-          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2| |exact Hinst].
-        split.
-        + repeat split;
-            [exact (@Coq.Init.Logic.eq_sym _ _ _ Hi)
-            |exact (@Coq.Init.Logic.eq_sym _ _ _ Ho)
-            |exact (@Coq.Init.Logic.eq_sym _ _ _ Hr)
-            |exact (@Coq.Init.Logic.eq_sym _ _ _ Hc)].
-        + eapply preserves_on_weaken; [exact Hincl|exact Hpres].
-    Qed.
 
 
     (** * The assignment a node's run needs, built
@@ -3231,6 +3116,168 @@ Import UNN.Fresh.Tactics.
           exact (Hflags i cki ckti bi Hi Hckti Hbi).
     Qed.
 
+
+    (** * Leg I's per-node step
+
+        The counterpart of Leg U's, assembled the same way:
+        [normfby_node_entailment] supplies the entailment,
+        [normfby_node_signatures_preserved_decoupled] the interface equality and
+        the transport through [simplify], and [sig_call_weakens_from_good]
+        converts the pair into [sig_head_weakens].  The target accumulator is
+        the section's [G], since that is the one [normfby_node_entailment]
+        speaks about.
+
+        The level assignment enters as a hypothesis -- that a good one exists
+        for this node's run -- because that is the one thing Leg I still owes;
+        it is [node_pairs_exists] in work_docs/Next_remaining.v.  Everything
+        else here is the program-level facts, which are not phase-specific. *)
+    Corollary normfby_node_step :
+      forall Q c (n : node) (Hunt : unnested_node Q n)
+             (Hpref : n_prefixes n = norm1_prefs) (Q' : global)
+             (envs : node_scoped_env) (aux : list node_aux_names)
+             accS sgS stS0 stS1 sgT stT0 stT1,
+        find_node_env n.(n_name) envs = Some env ->
+        (forall clk_id rst_id,
+            get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
+            Env.find clk_id env = Some base_ty
+            /\ Env.find rst_id env = Some rst_ty) ->
+        cenv = lnode_clock_env (normfby_node Q c n Hunt Hpref) ->
+        Forall (unnested_equation Q')
+          (normfby_node Q c n Hunt Hpref).(n_eqs) ->
+        (** what the run created, as the node records it; [node_pairs_exists]
+            turns this into the level assignment *)
+        env_injective env ->
+        In rst_ty scope ->
+        (forall eqs' stf,
+            map_bind (fby_equation
+                        (PS.union c (ps_from_list (List.map fst (n_out n)))))
+              n.(n_eqs) init_st = (eqs', stf) ->
+            (forall y a, In (y, a) (st_anns stf) ->
+                find_clock cenv y = OK (snd (fst a))
+                /\ exists d, Env.find y env = Some d /\ ~ In d scope)
+            /\ NoDup (st_ids stf)
+            /\ (forall v a, In (v, a) (st_anns stf) ->
+                   exists ckty,
+                     assign_clk_type env base_ty (snd (fst a)) = Some ckty
+                     /\ (forall z, In z ckty -> In z scope))) ->
+        (** and what it says about each delayed equation *)
+        (forall x e0 e ty ck name,
+            In ([x], [Efby [e0] [e] [(ty, (ck, name))]]) n.(n_eqs)
+            \/ In ([x], [Earrow [e0] [e] [(ty, (ck, name))]]) n.(n_eqs) ->
+            exists ckty s0 s1 b,
+              find_clock cenv x = OK ck
+              /\ assign_clk_type env base_ty ck = Some ckty
+              /\ Env.find x env = Some b
+              /\ In b scope
+              /\ (forall r, assign_lexp_type G env base_ty rst_ty e0 r
+                            = OK ([(s0, [])], r))
+              /\ (forall r, assign_lexp_type G env base_ty rst_ty e r
+                            = OK ([(s1, [])], r))
+              /\ (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                            In z scope)) ->
+        (** the run against the target accumulator is scoped *)
+        (forall ce ct1,
+            generate_leqns_constraints G env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) stS0 = OK (ce, ct1) ->
+            constraints_scoped scope ce) ->
+        (** and the source run's own hygiene *)
+        (forall ce ct1,
+            generate_leqns_constraints accS env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) stS0 = OK (ce, ct1) ->
+            wf_constraints ce) ->
+        (forall locals cns ct1,
+            get_mappings_from_node n.(n_vars) env = Some locals ->
+            generate_leqns_constraints accS env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) stS0 = OK (cns, ct1) ->
+            forall y, In y (locals ++ minted stS0 ct1) -> ~ In y scope) ->
+        (** the program-level facts about the published pair *)
+        signature_good sgS ->
+        NoDup (signature_scope sgS) ->
+        signature_good sgT ->
+        signature_scoped sgT ->
+        (forall z, In z (signature_scope sgS) -> In z scope) ->
+        (forall inp ck rst os cns sa sb,
+            generate_constraints sgS inp ck rst os sa = OK (cns, sb) ->
+            call_subst_fresh sgS inp ck rst os /\ NoDup os) ->
+        call_weakens accS G ->
+        generate_lnode_sig_scoped_env accS n envs aux stS0 = OK (sgS, stS1) ->
+        generate_lnode_sig_scoped_env G (normfby_node Q c n Hunt Hpref)
+          envs aux stT0 = OK (sgT, stT1) ->
+        sig_head_weakens sgS sgT.
+    Proof.
+      intros Q c n Hunt Hpref Q' envs aux accS sgS stS0 stS1 sgT stT0 stT1
+        Hfind Haux Hcenv Hun Hinj Hrst Hstate Heqdat Htgtsc Hwf Hdisj
+        Hgood1 Hnd1 Hgood2 Hsc2 Hincl Hinst Hw HS HT.
+      (** the assignment, from the run *)
+      assert (Hpairs : forall eqs' stf,
+                 map_bind (fby_equation
+                             (PS.union c
+                                (ps_from_list (List.map fst (n_out n)))))
+                   n.(n_eqs) init_st = (eqs', stf) ->
+                 exists pairs,
+                   levels_functional pairs
+                   /\ created_hidden pairs
+                   /\ levels_visible pairs
+                   /\ Forall2 (fby_eqn_data pairs) n.(n_eqs) eqs'
+                   /\ (forall y a, In (y, a) (st_anns stf) ->
+                          find_clock cenv y = OK (snd (fst a))
+                          /\ exists d, Env.find y env = Some d
+                                       /\ ~ In d scope)
+                   /\ (forall i cki ckti bi,
+                          In (i, ((bool_type, cki), true)) (st_anns stf) ->
+                          assign_clk_type env base_ty cki = Some ckti ->
+                          Env.find i env = Some bi ->
+                          In (bi, merge [rst_ty] ckti) pairs)).
+      { intros eqs' stf Hrun.
+        destruct (Hstate eqs' stf Hrun) as (Hnew & Hndst & Hclocks).
+        destruct (node_pairs_exists
+                    (PS.union c (ps_from_list (List.map fst (n_out n))))
+                    n.(n_eqs) eqs' stf Hrun
+                    (fun v a Hva => match Hnew v a Hva with
+                                    | conj _ h => h
+                                    end)
+                    Hinj Hndst Hrst Hclocks Heqdat)
+          as (pairs & Hfun & Hhid & Hvis & Hforall & Hflags).
+        exists pairs.
+        split; [exact Hfun|]. split; [exact Hhid|]. split; [exact Hvis|].
+        split; [exact Hforall|]. split; [exact Hnew|exact Hflags]. }
+      unfold generate_lnode_sig_scoped_env in HS, HT.
+      rewrite Hfind in HS.
+      cbn [n_name normfby_node] in HT. rewrite Hfind in HT.
+      destruct (normfby_node_signatures_preserved_decoupled Q c n Hunt Hpref
+                  Q' accS G aux stS0 stT0 sgS stS1 sgT stT1
+                  Haux Hun Hw)
+        as (Hn & Hi & Ho & Hc & Hr & Hpres).
+      - intros ce cet ct1 ct1' Hsrc Htgt.
+        remember (map_bind
+                    (fby_equation
+                      (PS.union c (ps_from_list (List.map fst (n_out n)))))
+                    n.(n_eqs) init_st) as run eqn:Hrun.
+        destruct run as [eqs' stf].
+        destruct (Hpairs eqs' stf
+                    (@Coq.Init.Logic.eq_refl _ (eqs', stf)))
+          as (pairs & Hfun & Hhid & Hvis & Hdata & Hnew & Hflags).
+        eapply normfby_node_entailment;
+          [exact Hcenv|exact Hfun|exact Hhid|exact Hvis
+          | |exact (Htgtsc ce ct1 Hsrc)|exact Hsrc|exact Htgt].
+        intros eqs'' stf' Hrun'.
+        rewrite <- Hrun in Hrun'. inversion Hrun'; subst.
+        exact (conj Hdata (conj Hnew Hflags)).
+      - exact Hwf.
+      - exact Hdisj.
+      - exact HS.
+      - exact HT.
+      - split; [exact (@Coq.Init.Logic.eq_sym _ _ _ Hn)|].
+        eapply sig_call_weakens_from_good;
+          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2| |exact Hinst].
+        split.
+        + repeat split;
+            [exact (@Coq.Init.Logic.eq_sym _ _ _ Hi)
+            |exact (@Coq.Init.Logic.eq_sym _ _ _ Ho)
+            |exact (@Coq.Init.Logic.eq_sym _ _ _ Hr)
+            |exact (@Coq.Init.Logic.eq_sym _ _ _ Hc)].
+        + eapply preserves_on_weaken; [exact Hincl|exact Hpres].
+    Qed.
   End NormFbyNode.
 
 End SecLusNormFby.
