@@ -1244,6 +1244,62 @@ is an aux name and `env` is injective) and the `cenv`/`vars` agreement
    `lnode_noninterference_streams`.  Everything from `call_weakens` upwards is
    shared with Leg U and needs nothing new.
 
+### Leg I complete, and what the remaining two items cost, 2026-09-29
+
+Leg I is closed.  `normfby_node_step` asks for nothing pass-specific: the
+naming pass's two lookups, that the run's state records each identifier once
+with a clock whose type is visible, and that a generated Lustre signature is
+good and scoped.  `node_pairs_exists` discharged the level assignment, built
+from two constructions -- flags once from the state at a level that is a
+function of their clock, delayed variables by walking the run -- with
+functionality following from `NoDup (st_ids stf)` and `env` injectivity.
+
+`normalize_signatures_weaken` therefore reduces preservation across
+normalisation to exactly two families of hypothesis, and **neither is a
+blocker**.  Concretely:
+
+**(A) The `A eq` ambients.**  Every piece of infrastructure exists:
+`carries_at_streams` is defined and *every* constructor but `Eapp` has its
+`_streams` lemma (`Econst`, `Evar`, `Eunop`, `Ebinop`, `Ewhen`, `Emerge`
+control and lift, `Eite` control and lift, `Efby`, `Earrow`), and every
+call-case helper is proved -- `stream_rel_amb_weaken`, `wc_Eapp_out_instck`,
+`call_amb_below_result_ambients`, `call_arg_ambients`,
+`clocks_covered_call_args`, `call_arg_ambients_length`,
+`call_arg_ambients_scoped`.  What is left is `carries_Eapp_streams` (the
+scalar `carries_Eapp` is 622 lines and is the template), the expression
+induction, and re-establishing the equation/equation-list/node chain on the
+pointwise relation.
+
+**There is no shortcut, and this is worth recording before someone tries
+it.**  The obvious cheap route is to pick `A eq` to be the equation's own
+ambient, `merge [rst_ty] ckty`, and discharge the second premise from the
+source constraints -- which are available, since `eqns_carries_amb` already
+has `listSatisfiable dlt ce`.  That works for a single-variable equation.  It
+**fails for a multi-output equation whose outputs are on different clocks**:
+the second premise forces `A eq` *below* every output's ambient, the first
+forces it *above* every lifted variable's ambient, and those are incompatible
+once the clocks differ -- which `wc_equation` permits (a call's outputs need
+not share a clock).  Replacing one `A eq` by a per-stream ambient is exactly
+what the pointwise contract is for, so it is required, not merely convenient.
+
+**(B) The program-level facts about a generated Lustre signature.**  The
+NLustre analogue is `SecNLusTypingCorrectness.v`, 3022 lines, and it is the
+template: `generate_node_sig_good_from_local_env`,
+`generate_node_sig_scope_nodup_from_local_env`,
+`generate_node_sig_scoped_env_scoped`,
+`generate_all_source_signatures_good_scoped_env`.  The one Lustre-specific
+difference is that the generator mints, so `simplify` eliminates
+`locals ++ minted st0 st1` where NLustre eliminates only the locals; that
+machinery is already in Leg U (`minted_spec`, `fresh_idents_NoDup`,
+`unnest_node_moved_fresh_*`).
+
+The one thing that *could* have blocked this is whether a callee's formal
+names leak into the caller's published constraints through the call rule.
+They do not: `generate_constraints_scoped` (`SIFSignature.v`) says an
+instantiated block is scoped to the actuals, and Leg U already relies on it.
+
+So: no blockers, and (A) is the larger of the two.
+
 ### Why the passes make preservation work
 
 Checked 2026-09-23, and worth recording because it is what makes the
