@@ -2557,6 +2557,193 @@ Import UNN.Fresh.Tactics.
         + eapply preserves_on_weaken; [exact Hincl|exact Hpres].
     Qed.
 
+
+    (** * The assignment a node's run needs, built
+
+        The last thing Leg I owes.  [normfby_node_entailment] takes the level
+        assignment as a parameter; what follows is that a good one exists for
+        the run [normfby_node] performs.
+
+        Two constructions, because the two kinds of created variable are
+        different in exactly the way that matters.  A *flag* is shared -- two
+        equations on the same clock use one -- so its entry is built once, from
+        the state, at a level that is a function of its clock, which is why
+        sharing costs nothing.  A *delayed variable* is private to the equation
+        that created it, and its level mentions that equation's delayed
+        operand, so its entry is built by walking the run. *)
+
+    (** ** How the state grows
+
+        [fresh_ident] prepends, and nothing else touches the annotations, so a
+        step only ever extends them on the left.  That is what makes the ids
+        created by two different steps disjoint, given [NoDup] of the whole. *)
+
+    Lemma init_var_for_clock_anns :
+      forall ck i eqsi q q',
+        init_var_for_clock ck q = (i, eqsi, q') ->
+        st_anns q' = st_anns q
+        \/ st_anns q' = (i, ((bool_type, ck), true)) :: st_anns q.
+    Proof.
+      intros ck i eqsi q q' H. unfold init_var_for_clock in H.
+      destruct (find (fun '(_, (ty, cl', isinit)) =>
+                        isinit && (cl' ==b ck) && (ty ==b bool_type))
+                  (st_anns q)) as [(y & a)|].
+      - inversion H; subst. now left.
+      - destruct (fresh_ident norm2 ((bool_type, ck), true) q) as (y, sy) eqn:Ey.
+        inversion H; subst. right.
+        exact (fresh_ident_anns _ _ _ _ _ Ey).
+    Qed.
+
+    Lemma fby_equation_anns :
+      forall to_cut eq out q q',
+        fby_equation to_cut eq q = (out, q') ->
+        exists new, st_anns q' = new ++ st_anns q.
+    Proof.
+      intros to_cut (xs, es) out q q' H.
+      destruct (fby_equation_spec to_cut xs es)
+        as [(x & e0 & e & ann & Hxs & Hes & Hconst & Heq)
+           |[(x & e0 & e & ann & Hxs & Hes & Hconst & Heq)
+            |[(x & e0 & e & ann & Hxs & Hes & Heq)
+             |Heq]]].
+      - subst xs es. destruct ann as (ty, (ck, name)).
+        rewrite Heq in H. cbv beta iota in H.
+        destruct (PS.mem x to_cut).
+        + apply bind_spec in H as (x' & s2 & Ex & H).
+          rewrite ret_spec in H. inversion H; subst out q'.
+          exists [(x', ((ty, ck), false))].
+          exact (fresh_ident_anns _ _ _ _ _ Ex).
+        + rewrite ret_spec in H. inversion H; subst out q'.
+          exists []. reflexivity.
+      - subst xs es. destruct ann as (ty, (ck, name)).
+        rewrite Heq in H.
+        apply bind2_spec in H as (fby & eqsa & s1 & Hfby & H).
+        rewrite ret_spec in H. inversion H; subst out q'.
+        unfold fby_iteexp in Hfby.
+        apply bind2_spec in Hfby as (i & eqsi & s2 & Ei & Hfby).
+        apply bind_spec in Hfby as (px & s3 & Ep & Hfby).
+        rewrite ret_spec in Hfby. inversion Hfby; subst fby eqsa s1.
+        destruct (init_var_for_clock_anns ck i eqsi q s2 Ei) as [Ha|Ha].
+        + exists [(px, ((ty, ck), false))].
+          rewrite (fresh_ident_anns _ _ _ _ _ Ep), Ha.
+          reflexivity.
+        + exists [(px, ((ty, ck), false)); (i, ((bool_type, ck), true))].
+          rewrite (fresh_ident_anns _ _ _ _ _ Ep), Ha.
+          reflexivity.
+      - subst xs es. destruct ann as (ty, (ck, name)).
+        rewrite Heq in H.
+        apply bind2_spec in H as (ite & eqsa & s1 & Hite & H).
+        rewrite ret_spec in H. inversion H; subst out q'.
+        unfold arrow_iteexp in Hite.
+        apply bind2_spec in Hite as (i & eqsi & s2 & Ei & Hite).
+        rewrite ret_spec in Hite. inversion Hite; subst ite eqsa s1.
+        destruct (init_var_for_clock_anns ck i eqsi q s2 Ei) as [Ha|Ha].
+        + exists []. exact Ha.
+        + exists [(i, ((bool_type, ck), true))]. exact Ha.
+      - rewrite Heq in H. rewrite ret_spec in H.
+        inversion H; subst out q'.
+        exists []. reflexivity.
+    Qed.
+
+    (** [inversion] on a pair equation simplifies [merge] into its inner [fix],
+        as it does on an [OK] equation; project through abstract components. *)
+    Lemma pair_inv :
+      forall {A B : Type} (a a' : A) (b b' : B),
+        (a, b) = (a', b') -> a' = a /\ b' = b.
+    Proof. intros A B a a' b b' H. inversion H. split; reflexivity. Qed.
+
+    (** ** The flags' entries
+
+        One per flag the run created, at its clock's ambient.  Functional
+        because the level is a function of the flag: the same security name is
+        the same variable ([env] injective), hence the same entry of the state
+        ([NoDup] of its identifiers), hence the same clock. *)
+    Lemma flag_pairs_exists :
+      forall (l : list (ident * ((type * clock) * bool))),
+        NoDup (List.map fst l) ->
+        env_injective env ->
+        In rst_ty scope ->
+        (forall v a, In (v, a) l ->
+            exists b, Env.find v env = Some b /\ ~ In b scope) ->
+        (forall v a, In (v, a) l ->
+            exists ckty, assign_clk_type env base_ty (snd (fst a)) = Some ckty
+                         /\ (forall z, In z ckty -> In z scope)) ->
+        exists fp,
+          created_hidden fp
+          /\ levels_visible fp
+          /\ levels_functional fp
+          /\ (forall y L, In (y, L) fp ->
+                 exists v a, In (v, a) l /\ Env.find v env = Some y
+                             /\ snd a = true)
+          /\ (forall i cki ckti bi,
+                 In (i, ((bool_type, cki), true)) l ->
+                 assign_clk_type env base_ty cki = Some ckti ->
+                 Env.find i env = Some bi ->
+                 In (bi, merge [rst_ty] ckti) fp).
+    Proof.
+      induction l as [|(v, a) l IH];
+        intros Hnd Hinj Hrst Hnames Hclocks.
+      - exists []. repeat split;
+          [intros y L []|intros y L z []|intros y L1 L2 []
+          |intros y L []|intros i cki ckti bi []].
+      - cbn [List.map] in Hnd.
+        inversion Hnd as [|z0 l0 Hvnot Hndl]; subst.
+        destruct (IH Hndl Hinj Hrst
+                    (fun w b Hw => Hnames w b (or_intror Hw))
+                    (fun w b Hw => Hclocks w b (or_intror Hw)))
+          as (fp & Hhid & Hvis & Hfun & Hfrom & Hflags).
+        destruct (snd a) eqn:Ea.
+        + (** a flag: it gets its clock's ambient *)
+          destruct (Hnames v a (or_introl (@Coq.Init.Logic.eq_refl _ _)))
+            as (b & Hb & Hbs).
+          destruct (Hclocks v a (or_introl (@Coq.Init.Logic.eq_refl _ _)))
+            as (ckty & Hckty & Hcks).
+          exists ((b, merge [rst_ty] ckty) :: fp).
+          (** the new name is not one of the old ones *)
+          assert (Hnew : forall L, ~ In (b, L) fp).
+          { intros L Hc.
+            destruct (Hfrom b L Hc) as (w & aw & Hw & Hfw & _).
+            assert (v = w) as ?
+                by (exact (Hinj v w b b Hb Hfw
+                             (@Coq.Init.Logic.eq_refl ident b))); subst w.
+            apply Hvnot. apply in_map_iff. exists (v, aw).
+            split; [reflexivity|exact Hw]. }
+          repeat split.
+          * intros y L [Hy|Hy];
+              [inversion Hy; subst y L; exact Hbs|exact (Hhid y L Hy)].
+          * intros y L z [Hy|Hy] Hz;
+              [|exact (Hvis y L z Hy Hz)].
+            apply pair_inv in Hy as (? & ?); subst y L.
+            apply SymTypes.in_merge_inv in Hz as [Hz|Hz];
+              [destruct Hz as [Hz|[]]; subst z; exact Hrst
+              |exact (Hcks z Hz)].
+          * intros y L1 L2 [H1|H1] [H2|H2].
+            -- inversion H1; inversion H2; subst; reflexivity.
+            -- inversion H1; subst y L1. now elim (Hnew L2).
+            -- inversion H2; subst y L2. now elim (Hnew L1).
+            -- exact (Hfun y L1 L2 H1 H2).
+          * intros y L [Hy|Hy].
+            -- inversion Hy; subst y L.
+               exists v, a. split; [now left|split; [exact Hb|exact Ea]].
+            -- destruct (Hfrom y L Hy) as (w & aw & Hw & Hfw & Haw).
+               exists w, aw. split; [now right|split; [exact Hfw|exact Haw]].
+          * intros i cki ckti bi [Hi|Hi] Hckti Hbi.
+            -- inversion Hi; subst i a.
+               cbn [fst snd] in Hckty. rewrite Hckty in Hckti.
+               apply option_Some_inj in Hckti; subst ckti.
+               rewrite Hb in Hbi. apply option_Some_inj in Hbi; subst bi.
+               now left.
+            -- right. exact (Hflags i cki ckti bi Hi Hckti Hbi).
+        + (** not a flag: nothing to add *)
+          exists fp. repeat split;
+            [exact Hhid|exact Hvis|exact Hfun
+            |intros y L Hy; destruct (Hfrom y L Hy) as (w & aw & Hw & Hfw & Haw);
+             exists w, aw; split; [now right|split; [exact Hfw|exact Haw]]
+            |].
+          intros i cki ckti bi [Hi|Hi] Hckti Hbi.
+          * inversion Hi; subst i a. cbn [snd] in Ea. discriminate Ea.
+          * exact (Hflags i cki ckti bi Hi Hckti Hbi).
+    Qed.
+
   End NormFbyNode.
 
 End SecLusNormFby.
