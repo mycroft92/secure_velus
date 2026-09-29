@@ -84,6 +84,45 @@ Proof.
   exact (Forall3_length _ ambs srcs tgts Hrel).
 Qed.
 
+(** * The call's results, read at their own ambients
+
+    The last step of the streams call case, and the one place the pointwise
+    contract differs from the scalar one at the end of the proof.  The
+    instantiated block relates each result to the call's *single* ambient --
+    that is all [generate_constraints_mono_sem] produces -- and the pointwise
+    conclusion asks for the relation at each result's own.  It goes through
+    because the call's ambient is inside every one of them
+    ([call_amb_below_result_ambients]) and [satisfiable] only gets easier as
+    its right-hand side grows. *)
+
+Lemma call_results_stream_rel :
+  forall dlt amb_call (ambs : list ST) (outs outt : list ident)
+         (ts'' : list LST) (held : list constraint),
+    Forall (fun a => incl amb_call a) ambs ->
+    Forall2 (fun o b => satisfiable dlt [b] (merge amb_call [o])) outs outt ->
+    Forall2 (fun b t => t = lvar b) outt ts'' ->
+    List.length ambs = List.length outs ->
+    stream_rel dlt ambs
+      (List.map (fun o => (([o] : ST), held)) outs) ts''.
+Proof.
+  intros dlt amb_call ambs outs outt ts'' held Hbelow Hpairs Hevars Hlen.
+  revert ambs ts'' Hbelow Hevars Hlen.
+  induction Hpairs as [|o b outs0 outt0 Hob Hr IH];
+    intros ambs ts'' Hbelow Hevars Hlen.
+  - inversion Hevars; subst ts''.
+    destruct ambs as [|a ambs]; [|cbn in Hlen; discriminate].
+    cbn [List.map]. constructor.
+  - inversion Hevars as [|b0 t0 outt1 ts1 Ht0 Htr]; subst.
+    destruct ambs as [|a ambs]; [cbn in Hlen; discriminate|].
+    inversion Hbelow as [|a0 ambs0 Ha Habr]; subst.
+    cbn [List.map]. constructor.
+    + cbn [fst]. subst. rewrite fst_lvar.
+      eapply order_trans; [exact Hob|].
+      apply hm_ext_incl.
+      exact (incl_merge_mono amb_call a [o] [o] Ha (incl_refl [o])).
+    + apply IH; [exact Habr|exact Htr|cbn in Hlen; now inversion Hlen].
+Qed.
+
 (** * Weakening the per-stream ambients
 
     The streams contract is *contravariant* in its ambients: a larger ambient
