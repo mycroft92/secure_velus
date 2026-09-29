@@ -1117,6 +1117,1247 @@ Import UNN.Fresh.Tactics.
         apply Hsame. reflexivity.
     Qed.
 
+    (** ** What one target constraint does *)
+
+    Inductive target_role : Type :=
+    (** it defines a name the pass created *)
+    | Defines (d : ident)
+    (** it bounds a visible name, and [M] is the source level bounding it *)
+    | Bounds (d : ident) (M : ST)
+    (** it is an unchanged constraint whose entire scope is visible *)
+    | Keeps.
+
+    (** A created name's level has to be big enough for every constraint that
+        defines it, and small enough for every constraint that uses it.  Hence
+        containment in both clauses rather than equality: the flag's canonical
+        level is its clock's ambient, which *contains* the left-hand side of
+        its own equation (a constant under [when]s adds only samplers) and is
+        *contained* in the ambient of every equation that mentions it. *)
+    Definition role_shape (pairs : list (ident * ST))
+      (c : constraint) (r : target_role) : Prop :=
+      match r with
+      | Defines d =>
+          snd c = [d]
+          /\ exists L, In (d, L) pairs /\ (forall z, In z (fst c) -> In z L)
+      | Bounds d M =>
+          snd c = [d]
+          /\ In d scope
+          /\ (forall z, In z M -> In z scope)
+          /\ (forall z, In z (fst c) ->
+                In z M
+                \/ exists L, In (z, L) pairs /\ (forall w, In w L -> In w M))
+      | Keeps => constraint_scoped scope c
+      end.
+
+    Definition role_bound (dlt : ident -> Lat.t)
+      (c : constraint) (r : target_role) : Prop :=
+      match r with
+      | Defines _ => True
+      | Bounds d M => hm_ext dlt M ⊑ hm_ext dlt [d]
+      | Keeps => constraintSatisfiable dlt c
+      end.
+
+    Definition created_hidden (pairs : list (ident * ST)) : Prop :=
+      forall y L, In (y, L) pairs -> ~ In y scope.
+
+    Definition levels_visible (pairs : list (ident * ST)) : Prop :=
+      forall y L z, In (y, L) pairs -> In z L -> In z scope.
+
+    (** The non-uniform created variables are tied to the run that creates
+        them.  A cut variable gets the whole source right-hand side; the [px]
+        of a non-constant [fby] gets only the clock ambient and delayed
+        operand.  Referring to the creating run avoids accidentally assigning
+        every earlier variable with the same type and clock to this equation's
+        level. *)
+    Definition fby_created_pairs
+      (pairs : list (ident * ST)) (to_cut : PS.t)
+      (x : ident) (e0 e : exp) (ty : type) (ck : clock)
+      (name : option ident) (ckty s0 s1 : ST) : Prop :=
+      (forall q x' q' bp,
+          is_constant e0 = true ->
+          PS.mem x to_cut = true ->
+          fresh_ident norm2 ((ty, ck), false) q = (x', q') ->
+          Env.find x' env = Some bp ->
+          In (bp, merge (merge [rst_ty] ckty) (merge s0 s1)) pairs)
+      /\
+      (forall q q' i px eqsi bp,
+          fby_iteexp e0 e (ty, (ck, name)) q =
+            (Eite (Evar i (bool_type, (ck, Some i))) [e0]
+               [Evar px (ty, (ck, Some px))] ([ty], (ck, name)),
+             ([px], [Efby [add_whens (Econst (init_type ty)) ty ck] [e]
+                        [(ty, (ck, name))]]) :: eqsi,
+             q') ->
+          Env.find px env = Some bp ->
+          In (bp, merge (merge [rst_ty] ckty) s1) pairs).
+
+    (** ** The move, once, for a whole body *)
+
+    Lemma upds_pairs_val :
+      forall (pairs : list (ident * ST)) dlt y L,
+        NoDup (List.map fst pairs) ->
+        In (y, L) pairs ->
+        upds (List.map fst pairs)
+             (List.map (fun p => hm_ext dlt (snd p)) pairs) dlt y
+        = hm_ext dlt L.
+    Proof.
+      intros pairs dlt y L Hnd Hin.
+      apply (upds_nth (List.map fst pairs)
+               (List.map (fun p => hm_ext dlt (snd p)) pairs)
+               dlt y (hm_ext dlt L)).
+      - exact Hnd.
+      - now rewrite !List.map_length.
+      - assert (Hcombine :
+            combine (List.map fst pairs)
+              (List.map (fun p => hm_ext dlt (snd p)) pairs)
+            = List.map (fun p => (fst p, hm_ext dlt (snd p))) pairs).
+        { clear Hnd Hin y L.
+          induction pairs as [|[x T] pairs IH]; simpl;
+            [reflexivity|now rewrite IH]. }
+        rewrite Hcombine. apply in_map_iff.
+        exists (y, L). split; [reflexivity|exact Hin].
+    Qed.
+
+    Lemma upds_pairs_off :
+      forall (pairs : list (ident * ST)) dlt z,
+        ~ In z (List.map fst pairs) ->
+        upds (List.map fst pairs)
+             (List.map (fun p => hm_ext dlt (snd p)) pairs) dlt z
+        = dlt z.
+    Proof.
+      intros pairs dlt z Hz.
+      apply (upds_notin (List.map fst pairs)
+               (List.map (fun p => hm_ext dlt (snd p)) pairs) dlt z).
+      exact Hz.
+    Qed.
+
+    (** The witness is [upds (map fst pairs) (map (hm_ext dlt o snd) pairs) dlt].
+        [levels_visible] is what makes that well defined: a level mentions no
+        created name, so its value is the same before and after the update.
+
+        This replaces [preserves_on_fresh_names], and is applied ONCE, at the
+        node -- not per equation. *)
+    Lemma preserves_on_created :
+      forall (pairs : list (ident * ST)) (roles : list target_role) ce cet,
+        NoDup (List.map fst pairs) ->
+        created_hidden pairs ->
+        levels_visible pairs ->
+        Forall2 (role_shape pairs) cet roles ->
+        (forall dlt, listSatisfiable dlt ce ->
+           Forall2 (role_bound dlt) cet roles) ->
+        preserves_on scope ce cet
+        /\ constraints_scoped (scope ++ List.map fst pairs) cet.
+    Proof.
+      intros pairs roles ce cet Hnd Hhidden Hvisible Hshape Hbound.
+      split.
+      - intros dlt Hsat.
+        set (dlt' :=
+          upds (List.map fst pairs)
+            (List.map (fun p => hm_ext dlt (snd p)) pairs) dlt).
+        assert (Hoff_scope :
+            forall z, In z scope -> dlt' z = dlt z).
+        { intros z Hz.
+          unfold dlt'. apply (upds_pairs_off pairs dlt z).
+          intro Hkey. apply in_map_iff in Hkey as ([y L] & Hy & Hin).
+          cbn [fst] in Hy. subst y.
+          exact (Hhidden z L Hin Hz). }
+        assert (Hoff_type :
+            forall T, (forall z, In z T -> In z scope) ->
+              hm_ext dlt' T = hm_ext dlt T).
+        { intros T HT. unfold dlt'.
+          apply (hm_ext_upds T (List.map fst pairs)
+                   (List.map (fun p => hm_ext dlt (snd p)) pairs) dlt).
+          intros z Hz Hkey.
+          apply in_map_iff in Hkey as ([y L] & Hy & Hin).
+          cbn [fst] in Hy. subst y.
+          exact (Hhidden z L Hin (HT z Hz)). }
+        exists dlt'. split.
+        + intros z Hz. symmetry. exact (Hoff_scope z Hz).
+        + unfold listSatisfiable.
+          specialize (Hbound dlt Hsat).
+          induction Hshape as [|c r cet roles Hcr Hshape IH];
+            inversion Hbound as [|c0 r0 cet0 roles0 Hbr Hbounds]; subst.
+          * constructor.
+          * constructor; [|exact (IH Hbounds)].
+            destruct c as [lhs rhs]. destruct r as [d|d M|].
+            -- cbn [role_shape fst snd] in Hcr.
+               destruct Hcr as (Hrhs & L & Hin & Hlhs). subst rhs.
+               apply (satisfiable_singleton_bound dlt' lhs d).
+               intros z Hz.
+               rewrite (Hoff_scope z (Hvisible d L z Hin (Hlhs z Hz))).
+               apply order_trans with (y := hm_ext dlt L).
+               ++ apply (hm_ext_list_in1 dlt L z (Hlhs z Hz)).
+               ++ cbn [hm_ext].
+                  unfold dlt'.
+                  rewrite (upds_pairs_val pairs dlt d L Hnd Hin).
+                  apply join_bound1.
+            -- cbn [role_shape fst snd] in Hcr.
+               destruct Hcr as (Hrhs & Hd & HM & Hlhs). subst rhs.
+               cbn [role_bound] in Hbr.
+               apply (satisfiable_singleton_bound dlt' lhs d).
+               intros z Hz. rewrite (Hoff_type [d]);
+                 [|intros w [Hw|[]]; subst w; exact Hd].
+               destruct (Hlhs z Hz) as [HzM|(L & Hin & HLM)].
+               ++ rewrite (Hoff_scope z (HM z HzM)).
+                  apply order_trans with (y := hm_ext dlt M).
+                  ** apply (hm_ext_list_in1 dlt M z HzM).
+                  ** exact Hbr.
+               ++ unfold dlt'.
+                  rewrite (upds_pairs_val pairs dlt z L Hnd Hin).
+                  apply order_trans with (y := hm_ext dlt M).
+                  ** apply (hm_ext_incl dlt L M HLM).
+                  ** exact Hbr.
+            -- cbn [role_shape] in Hcr. cbn [role_bound] in Hbr.
+               apply (constraintSatisfiable_ext (lhs, rhs) scope dlt dlt').
+               ++ exact Hcr.
+               ++ intros z Hz. symmetry. exact (Hoff_scope z Hz).
+               ++ exact Hbr.
+      - unfold constraints_scoped, SymTypes.constraints_scoped.
+        clear Hbound ce.
+        induction Hshape as [|c r cet roles Hcr Hshape IH].
+        + constructor.
+        + constructor; [|exact IH].
+          destruct c as [lhs rhs]. destruct r as [d|d M|].
+          * cbn [role_shape fst snd] in Hcr.
+            destruct Hcr as (Hrhs & L & Hin & Hlhs). subst rhs.
+            intros z Hz. unfold SymTypes.constraint_scope in Hz.
+            cbn [fst snd] in Hz. apply in_app_iff in Hz as [Hz|[Hz|[]]].
+            -- apply in_or_app. left.
+               exact (Hvisible d L z Hin (Hlhs z Hz)).
+            -- subst z. apply in_or_app. right.
+               apply in_map_iff. exists (d, L). split; [reflexivity|exact Hin].
+          * cbn [role_shape fst snd] in Hcr.
+            destruct Hcr as (Hrhs & Hd & HM & Hlhs). subst rhs.
+            intros z Hz. unfold SymTypes.constraint_scope in Hz.
+            cbn [fst snd] in Hz. apply in_app_iff in Hz as [Hz|[Hz|[]]].
+            -- destruct (Hlhs z Hz) as [HzM|(L & Hin & HLM)].
+               ++ apply in_or_app. left. exact (HM z HzM).
+               ++ apply in_or_app. right. apply in_map_iff.
+                  exists (z, L). split; [reflexivity|exact Hin].
+            -- subst z. apply in_or_app. left. exact Hd.
+          * cbn [role_shape] in Hcr.
+            apply (constraint_scoped_incl scope
+                     (scope ++ List.map fst pairs) (lhs, rhs)).
+            -- intros z Hz. apply in_or_app. left. exact Hz.
+            -- exact Hcr.
+    Qed.
+
+    (** ** The three shapes, repackaged
+
+        Each keeps the premises of the corresponding [_entails] lemma and adds
+        one membership fact per created name: its entry in the global
+        assignment.  The proofs are the existing ones with the final
+        [eapply preserves_on_fresh_names] replaced by an [exists roles]. *)
+
+    Lemma fby_cut_roles :
+      forall pairs x x' e0 e ann ck ckty s0 s1 b b' st ce cet u u',
+        find_clock cenv x  = OK ck ->
+        find_clock cenv x' = OK ck ->
+        assign_clk_type env base_ty ck = Some ckty ->
+        Env.find x  env = Some b ->
+        Env.find x' env = Some b' ->
+        assign_lexp_type G env base_ty rst_ty e0 st = OK ([(s0, [])], st) ->
+        assign_lexp_type G env base_ty rst_ty e  st = OK ([(s1, [])], st) ->
+        (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                   In z scope) ->
+        In b scope ->
+        (** the cut variable carries the source equation's own right-hand side,
+            which is exactly what its new equation bounds *)
+        In (b', merge (merge [rst_ty] ckty) (merge s0 s1)) pairs ->
+        generate_leqn_constraint G env base_ty rst_ty cenv
+          ([x], [Efby [e0] [e] [ann]]) st = OK (ce, u) ->
+        generate_leqns_constraints G env base_ty rst_ty cenv
+          [([x], [Evar x' ann]); ([x'], [Efby [e0] [e] [ann]])] st
+          = OK (cet, u') ->
+        exists roles,
+          Forall2 (role_shape pairs) cet roles
+          /\ (forall dlt, listSatisfiable dlt ce ->
+                Forall2 (role_bound dlt) cet roles)
+          /\ u' = u.
+    Proof.
+      intros pairs x x' e0 e ann ck ckty s0 s1 b b' st ce cet u u'
+        Hckx Hckx' Hckty Hb Hb' H0 H1 HLs Hbs Hpair Hsrc Htgt.
+      pose proof (assign_lexp_Efby_pair e0 e ann s0 s1 st H0 H1) as Hfby.
+      rewrite generate_leqn_constraint_def in Hsrc by exact I.
+      rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x
+                 (Efby [e0] [e] [ann]) ck ckty (merge s0 s1) b st
+                 Hckx Hckty Hfby Hb) in Hsrc.
+      apply OK_pair_inv in Hsrc as (? & ?); subst ce u.
+      apply generate_leqns_cons_inv in Htgt
+        as (c1 & v1 & c2 & Hc1 & Hc2 & Hcet).
+      rewrite generate_leqn_constraint_def in Hc1 by exact I.
+      rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x
+                 (Evar x' ann) ck ckty ([b'] : ST) b st Hckx Hckty
+                 (assign_lexp_Evar_type x' ann b' st Hb') Hb) in Hc1.
+      apply OK_pair_inv in Hc1 as (? & ?); subst c1 v1.
+      apply generate_leqns_cons_inv in Hc2
+        as (d1 & w1 & d2 & Hd1 & Hd2 & Hc2e).
+      rewrite generate_leqn_constraint_def in Hd1 by exact I.
+      rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x'
+                 (Efby [e0] [e] [ann]) ck ckty (merge s0 s1) b' st
+                 Hckx' Hckty Hfby Hb') in Hd1.
+      apply OK_pair_inv in Hd1 as (? & ?); subst d1 w1.
+      apply generate_leqns_constraints_nil in Hd2 as (? & ?); subst d2 u'.
+      subst c2 cet. rewrite app_nil_r.
+      set (L := merge (merge [rst_ty] ckty) (merge s0 s1)).
+      exists [Bounds b L; Defines b']. split.
+      - constructor.
+        + cbn [role_shape fst snd]. repeat split.
+          * exact Hbs.
+          * exact HLs.
+          * intros z Hz. apply SymTypes.in_merge_inv in Hz as [Hz|Hz].
+            -- left. unfold L. apply in_merge_left. exact Hz.
+            -- right. exists L. split; [|intros w Hw; exact Hw].
+               destruct Hz as [Hz|[]]. subst z. exact Hpair.
+        + constructor.
+          * cbn [role_shape fst snd]. split; [reflexivity|].
+            exists L. split; [exact Hpair|intros z Hz; exact Hz].
+          * constructor.
+      - split.
+        + intros dlt Hsat.
+          assert (Hc0 : hm_ext dlt L ⊑ hm_ext dlt [b]).
+          { unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
+            exact (Hsat _ (in_eq _ _)). }
+          constructor; [exact Hc0|constructor; [exact I|constructor]].
+        + reflexivity.
+    Qed.
+
+    Lemma arrow_roles :
+      forall pairs x i e0 e ty ck name ckty s0 s1 b bi st ce cet u u' eqs,
+        find_clock cenv x = OK ck ->
+        assign_clk_type env base_ty ck = Some ckty ->
+        Env.find x env = Some b ->
+        Env.find i env = Some bi ->
+        assign_lexp_type G env base_ty rst_ty e0 st = OK ([(s0, [])], st) ->
+        assign_lexp_type G env base_ty rst_ty e  st = OK ([(s1, [])], st) ->
+        (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                   In z scope) ->
+        In b scope ->
+        (** the flag's entry is its clock's ambient -- the same whichever
+            equation created it, which is what makes sharing harmless *)
+        In (bi, merge [rst_ty] ckty) pairs ->
+        (eqs = []
+         \/ (find_clock cenv i = OK ck
+             /\ eqs = [([i], [Efby [add_whens (Econst true_const) bool_type ck]
+                                   [add_whens (Econst false_const) bool_type ck]
+                                   [(bool_type, (ck, None))]])])) ->
+        generate_leqn_constraint G env base_ty rst_ty cenv
+          ([x], [Earrow [e0] [e] [(ty, (ck, name))]]) st = OK (ce, u) ->
+        generate_leqns_constraints G env base_ty rst_ty cenv
+          (([x], [Eite (Evar i (bool_type, (ck, Some i))) [e0] [e]
+                    ([ty], (ck, name))]) :: eqs) st = OK (cet, u') ->
+        exists roles,
+          Forall2 (role_shape pairs) cet roles
+          /\ (forall dlt, listSatisfiable dlt ce ->
+                Forall2 (role_bound dlt) cet roles)
+          /\ u' = u.
+    Proof.
+      intros pairs x i e0 e ty ck name ckty s0 s1 b bi st ce cet u u' eqs
+        Hckx Hckty Hb Hbi H0 H1 HLs Hbs Hpair Heqs Hsrc Htgt.
+      rewrite generate_leqn_constraint_def in Hsrc by exact I.
+      rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x
+                 (Earrow [e0] [e] [(ty, (ck, name))]) ck ckty
+                 (merge s0 s1) b st Hckx Hckty
+                 (assign_lexp_Earrow_pair e0 e (ty, (ck, name)) s0 s1 st H0 H1)
+                 Hb) in Hsrc.
+      apply OK_pair_inv in Hsrc as (? & ?); subst ce u.
+      apply generate_leqns_cons_inv in Htgt
+        as (c1 & v1 & c2 & Hc1 & Hc2 & Hcet).
+      rewrite generate_leqn_constraint_def in Hc1 by exact I.
+      rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x
+                 (Eite (Evar i (bool_type, (ck, Some i))) [e0] [e]
+                    ([ty], (ck, name)))
+                 ck ckty (merge (merge [bi] s0) s1) b st Hckx Hckty
+                 (assign_lexp_Eite_var i (bool_type, (ck, Some i)) e0 e
+                    ([ty], (ck, name)) bi s0 s1 st Hbi H0 H1) Hb) in Hc1.
+      apply OK_pair_inv in Hc1 as (? & ?); subst c1 v1.
+      assert (Hinit :
+                (c2 = [] /\ u' = st)
+                \/ exists sw, c2 = [(merge (merge [rst_ty] ckty) sw, [bi])]
+                              /\ (forall z, In z sw -> In z ckty)
+                              /\ u' = st).
+      { destruct Heqs as [Heqs|(Hcki & Heqs)]; subst eqs.
+        - apply generate_leqns_constraints_nil in Hc2
+            as (Hnil & Hstate); subst c2.
+          left. split; [reflexivity|exact Hstate].
+        - apply generate_leqns_cons_inv in Hc2
+            as (d1 & w1 & d2 & Hd1 & Hd2 & Hc2e).
+          destruct (init_eq_constraint i ck ckty bi st d1 w1
+                      Hcki Hckty Hbi Hd1) as (sw & Hd1' & Hsw & Hw1).
+          subst d1 w1.
+          apply generate_leqns_constraints_nil in Hd2
+            as (Hnil & Hstate); subst d2.
+          right. exists sw. repeat split.
+          + rewrite Hc2e, app_nil_r. reflexivity.
+          + exact Hsw.
+          + exact Hstate. }
+      subst cet.
+      set (L := merge (merge [rst_ty] ckty) (merge s0 s1)).
+      set (Li := merge [rst_ty] ckty).
+      destruct Hinit as [(Hnil & Hu')|(sw & Hswc & Hsw & Hu')];
+        subst c2 u'.
+      - rewrite app_nil_r. exists [Bounds b L]. split.
+        + constructor; [|constructor].
+          cbn [role_shape fst snd]. repeat split.
+          * exact Hbs.
+          * exact HLs.
+          * intros z Hz.
+            assert (Hz' : In z L \/ In z [bi]).
+            { unfold L. apply (ite_lhs_members ckty s0 s1 [bi] z).
+              - intros y Hy. right.
+                apply in_merge_right, in_merge_right. exact Hy.
+              - exact Hz. }
+            destruct Hz' as [HzL|Hzbi]; [left; exact HzL|].
+            right. exists Li. split; [|].
+            -- destruct Hzbi as [Hzbi|[]]. subst z. exact Hpair.
+            -- intros w Hw. unfold Li in Hw. unfold L.
+               apply in_merge_left. exact Hw.
+        + split.
+          * intros dlt Hsat.
+            assert (Hc0 : hm_ext dlt L ⊑ hm_ext dlt [b]).
+            { unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
+              exact (Hsat _ (in_eq _ _)). }
+            constructor; [exact Hc0|constructor].
+          * reflexivity.
+      - exists [Bounds b L; Defines bi]. split.
+        + constructor.
+          * cbn [role_shape fst snd]. repeat split.
+            -- exact Hbs.
+            -- exact HLs.
+            -- intros z Hz.
+               assert (Hz' : In z L \/ In z [bi]).
+               { unfold L. apply (ite_lhs_members ckty s0 s1 [bi] z).
+                 - intros y Hy. right.
+                   apply in_merge_right, in_merge_right. exact Hy.
+                 - exact Hz. }
+               destruct Hz' as [HzL|Hzbi]; [left; exact HzL|].
+               right. exists Li. split; [|].
+               ++ destruct Hzbi as [Hzbi|[]]. subst z. exact Hpair.
+               ++ intros w Hw. unfold Li in Hw. unfold L.
+                  apply in_merge_left. exact Hw.
+          * constructor.
+            -- cbn [role_shape fst snd]. split; [reflexivity|].
+               exists Li. split; [exact Hpair|].
+               intros z Hz. apply SymTypes.in_merge_inv in Hz as [Hz|Hz].
+               ++ exact Hz.
+               ++ unfold Li. apply in_merge_right. exact (Hsw z Hz).
+            -- constructor.
+        + split.
+          * intros dlt Hsat.
+            assert (Hc0 : hm_ext dlt L ⊑ hm_ext dlt [b]).
+            { unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
+              exact (Hsat _ (in_eq _ _)). }
+            constructor; [exact Hc0|constructor; [exact I|constructor]].
+          * reflexivity.
+    Qed.
+
+    Lemma fby_ite_roles :
+      forall pairs x i px e0 e ty ck name ckty s0 s1 b bi bp st ce cet u u' eqs,
+        find_clock cenv x  = OK ck ->
+        find_clock cenv px = OK ck ->
+        assign_clk_type env base_ty ck = Some ckty ->
+        Env.find x  env = Some b ->
+        Env.find i  env = Some bi ->
+        Env.find px env = Some bp ->
+        assign_lexp_type G env base_ty rst_ty e0 st = OK ([(s0, [])], st) ->
+        assign_lexp_type G env base_ty rst_ty e  st = OK ([(s1, [])], st) ->
+        (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                   In z scope) ->
+        In b scope ->
+        In (bi, merge [rst_ty] ckty) pairs ->
+        (** [px] carries the ambient joined with the *delayed* operand's type:
+            enough for its own equation, and inside the ambient of the [ite]
+            that uses it -- the latter only because the source [fby] rule types
+            both operands *)
+        In (bp, merge (merge [rst_ty] ckty) s1) pairs ->
+        (eqs = []
+         \/ (find_clock cenv i = OK ck
+             /\ eqs = [([i], [Efby [add_whens (Econst true_const) bool_type ck]
+                                   [add_whens (Econst false_const) bool_type ck]
+                                   [(bool_type, (ck, None))]])])) ->
+        generate_leqn_constraint G env base_ty rst_ty cenv
+          ([x], [Efby [e0] [e] [(ty, (ck, name))]]) st = OK (ce, u) ->
+        generate_leqns_constraints G env base_ty rst_ty cenv
+          (([x], [Eite (Evar i (bool_type, (ck, Some i))) [e0]
+                    [Evar px (ty, (ck, Some px))] ([ty], (ck, name))])
+           :: ([px], [Efby [add_whens (Econst (init_type ty)) ty ck] [e]
+                        [(ty, (ck, name))]])
+           :: eqs) st = OK (cet, u') ->
+        exists roles,
+          Forall2 (role_shape pairs) cet roles
+          /\ (forall dlt, listSatisfiable dlt ce ->
+                Forall2 (role_bound dlt) cet roles)
+          /\ u' = u.
+    Proof.
+      intros pairs x i px e0 e ty ck name ckty s0 s1 b bi bp st ce cet u u' eqs
+        Hckx Hckpx Hckty Hb Hbi Hbp H0 H1 HLs Hbs Hpairi Hpairp Heqs
+        Hsrc Htgt.
+      rewrite generate_leqn_constraint_def in Hsrc by exact I.
+      rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x
+                 (Efby [e0] [e] [(ty, (ck, name))]) ck ckty
+                 (merge s0 s1) b st Hckx Hckty
+                 (assign_lexp_Efby_pair e0 e (ty, (ck, name)) s0 s1 st H0 H1)
+                 Hb) in Hsrc.
+      apply OK_pair_inv in Hsrc as (? & ?); subst ce u.
+      apply generate_leqns_cons_inv in Htgt
+        as (c1 & v1 & c2 & Hc1 & Hc2 & Hcet).
+      rewrite generate_leqn_constraint_def in Hc1 by exact I.
+      rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv x
+                 (Eite (Evar i (bool_type, (ck, Some i))) [e0]
+                    [Evar px (ty, (ck, Some px))] ([ty], (ck, name)))
+                 ck ckty (merge (merge [bi] s0) [bp]) b st Hckx Hckty
+                 (assign_lexp_Eite_var i (bool_type, (ck, Some i)) e0
+                    (Evar px (ty, (ck, Some px))) ([ty], (ck, name)) bi s0
+                    ([bp] : ST) st Hbi H0
+                    (assign_lexp_Evar_type px (ty, (ck, Some px)) bp st Hbp))
+                 Hb) in Hc1.
+      apply OK_pair_inv in Hc1 as (? & ?); subst c1 v1.
+      apply generate_leqns_cons_inv in Hc2
+        as (d1 & w1 & d2 & Hd1 & Hd2 & Hc2e).
+      destruct (add_whens_const_type (init_type ty) ty ck ckty st Hckty)
+        as (sw & Hw & Hsw).
+      rewrite generate_leqn_constraint_def in Hd1 by exact I.
+      rewrite (generate_ldef_constraint_eq G env base_ty rst_ty cenv px
+                 (Efby [add_whens (Econst (init_type ty)) ty ck] [e]
+                    [(ty, (ck, name))])
+                 ck ckty (merge sw s1) bp st Hckpx Hckty
+                 (assign_lexp_Efby_pair
+                    (add_whens (Econst (init_type ty)) ty ck) e
+                    (ty, (ck, name)) sw s1 st Hw H1) Hbp) in Hd1.
+      apply OK_pair_inv in Hd1 as (? & ?); subst d1 w1.
+      assert (Hinit :
+                (d2 = [] /\ u' = st)
+                \/ exists swi, d2 = [(merge (merge [rst_ty] ckty) swi, [bi])]
+                               /\ (forall z, In z swi -> In z ckty)
+                               /\ u' = st).
+      { destruct Heqs as [Heqs|(Hcki & Heqs)]; subst eqs.
+        - apply generate_leqns_constraints_nil in Hd2
+            as (Hnil & Hstate); subst d2.
+          left. split; [reflexivity|exact Hstate].
+        - apply generate_leqns_cons_inv in Hd2
+            as (f1 & y1 & f2 & Hf1 & Hf2 & Hd2e).
+          destruct (init_eq_constraint i ck ckty bi st f1 y1
+                      Hcki Hckty Hbi Hf1) as (swi & Hf1' & Hswi & Hy1).
+          subst f1 y1.
+          apply generate_leqns_constraints_nil in Hf2
+            as (Hnil & Hstate); subst f2.
+          right. exists swi. repeat split.
+          + rewrite Hd2e, app_nil_r. reflexivity.
+          + exact Hswi.
+          + exact Hstate. }
+      subst c2 cet.
+      set (L := merge (merge [rst_ty] ckty) (merge s0 s1)).
+      set (Li := merge [rst_ty] ckty).
+      set (Lp := merge (merge [rst_ty] ckty) s1).
+      assert (Hite_shape :
+          role_shape pairs
+            (merge (merge [rst_ty] ckty) (merge (merge [bi] s0) [bp]), [b])
+            (Bounds b L)).
+      { cbn [role_shape fst snd]. repeat split.
+        - exact Hbs.
+        - exact HLs.
+        - intros z Hz. apply SymTypes.in_merge_inv in Hz as [Hz|Hz].
+          + left. unfold L. apply in_merge_left. exact Hz.
+          + apply SymTypes.in_merge_inv in Hz as [Hz|Hz].
+            * apply SymTypes.in_merge_inv in Hz as [Hz|Hz].
+              -- destruct Hz as [Hz|[]]. subst z. right. exists Li.
+                 split; [exact Hpairi|]. intros w Hwin. unfold Li in Hwin.
+                 unfold L. apply in_merge_left. exact Hwin.
+              -- left. unfold L. apply in_merge_right, in_merge_left. exact Hz.
+            * destruct Hz as [Hz|[]]. subst z. right. exists Lp.
+              split; [exact Hpairp|]. intros w Hwin. unfold Lp in Hwin.
+              apply SymTypes.in_merge_inv in Hwin as [Hwin|Hwin].
+              -- unfold L. apply in_merge_left. exact Hwin.
+              -- unfold L. apply in_merge_right, in_merge_right. exact Hwin. }
+      assert (Hpx_shape :
+          role_shape pairs
+            (merge (merge [rst_ty] ckty) (merge sw s1), [bp])
+            (Defines bp)).
+      { cbn [role_shape fst snd]. split; [reflexivity|].
+        exists Lp. split; [exact Hpairp|]. intros z Hz.
+        apply SymTypes.in_merge_inv in Hz as [Hz|Hz].
+        - unfold Lp. apply in_merge_left. exact Hz.
+        - apply SymTypes.in_merge_inv in Hz as [Hz|Hz].
+          + unfold Lp. apply in_merge_left, in_merge_right. exact (Hsw z Hz).
+          + unfold Lp. apply in_merge_right. exact Hz. }
+      destruct Hinit as [(Hnil & Hu')|(swi & Hswic & Hswi & Hu')];
+        subst d2 u'.
+      - rewrite !app_nil_r. exists [Bounds b L; Defines bp]. split.
+        + constructor; [exact Hite_shape|constructor; [exact Hpx_shape|constructor]].
+        + split.
+          * intros dlt Hsat.
+            assert (Hc0 : hm_ext dlt L ⊑ hm_ext dlt [b]).
+            { unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
+              exact (Hsat _ (in_eq _ _)). }
+            constructor; [exact Hc0|constructor; [exact I|constructor]].
+          * reflexivity.
+      - exists [Bounds b L; Defines bp; Defines bi]. split.
+        + constructor; [exact Hite_shape|]. constructor; [exact Hpx_shape|].
+          constructor.
+          * cbn [role_shape fst snd]. split; [reflexivity|].
+            exists Li. split; [exact Hpairi|]. intros z Hz.
+            apply SymTypes.in_merge_inv in Hz as [Hz|Hz].
+            -- exact Hz.
+            -- unfold Li. apply in_merge_right. exact (Hswi z Hz).
+          * constructor.
+        + split.
+          * intros dlt Hsat.
+            assert (Hc0 : hm_ext dlt L ⊑ hm_ext dlt [b]).
+            { unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
+              exact (Hsat _ (in_eq _ _)). }
+            constructor; [exact Hc0|]. constructor; [exact I|].
+            constructor; [exact I|constructor].
+          * reflexivity.
+    Qed.
+
+    (** ** One equation, whatever shape it has
+
+        The dispatch, as [fby_equation_entails] already does it: split with
+        [fby_equation_spec], read the created variables off the fresh state with
+        [fby_iteexp_created] / [arrow_iteexp_created], and quote the case
+        lemma.  On the two shapes the pass leaves alone the two runs are the
+        same run, and every constraint takes a [Bounds] role with [M] its own
+        left-hand side. *)
+    Theorem fby_equation_roles :
+      forall pairs to_cut xs es eqs' st st' ce cet s u u',
+        fby_equation to_cut (xs, es) st = (eqs', st') ->
+        (** what the node says about this equation, and the entry its [px]
+            needs; vacuous on the shapes that create nothing *)
+        (forall x e0 e ty ck name,
+            xs = [x] ->
+            (es = [Efby [e0] [e] [(ty, (ck, name))]]
+             \/ es = [Earrow [e0] [e] [(ty, (ck, name))]]) ->
+            exists ckty s0 s1 b,
+              find_clock cenv x = OK ck
+              /\ assign_clk_type env base_ty ck = Some ckty
+              /\ Env.find x env = Some b
+              /\ In b scope
+              /\ assign_lexp_type G env base_ty rst_ty e0 s = OK ([(s0, [])], s)
+              /\ assign_lexp_type G env base_ty rst_ty e  s = OK ([(s1, [])], s)
+              /\ (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                            In z scope)
+              /\ (es = [Efby [e0] [e] [(ty, (ck, name))]] ->
+                    fby_created_pairs pairs to_cut x e0 e ty ck name
+                      ckty s0 s1)) ->
+        (** and about every flag: its clock, its name, and its entry *)
+        (forall y a, In (y, a) (st_anns st') ->
+            find_clock cenv y = OK (snd (fst a))
+            /\ exists c, Env.find y env = Some c /\ ~ In c scope) ->
+        (forall i cki ckti bi,
+            In (i, ((bool_type, cki), true)) (st_anns st') ->
+            assign_clk_type env base_ty cki = Some ckti ->
+            Env.find i env = Some bi ->
+            In (bi, merge [rst_ty] ckti) pairs) ->
+        (** the source's own constraints are visible, for the unchanged shapes *)
+        constraints_scoped scope ce ->
+        generate_leqn_constraint G env base_ty rst_ty cenv (xs, es) s
+          = OK (ce, u) ->
+        generate_leqns_constraints G env base_ty rst_ty cenv eqs' s
+          = OK (cet, u') ->
+        exists roles,
+          Forall2 (role_shape pairs) cet roles
+          /\ (forall dlt, listSatisfiable dlt ce ->
+                Forall2 (role_bound dlt) cet roles)
+          /\ u' = u.
+    Proof.
+      intros pairs to_cut xs es eqs' st st' ce cet s u u'
+        Hrun Hdata Hnew Hflags Hcesc Hsrc Htgt.
+      assert (Hsame : eqs' = [(xs, es)] ->
+          exists roles,
+            Forall2 (role_shape pairs) cet roles
+            /\ (forall dlt, listSatisfiable dlt ce ->
+                  Forall2 (role_bound dlt) cet roles)
+            /\ u' = u).
+      { intro He. subst eqs'.
+        apply generate_leqns_cons_inv in Htgt
+          as (c1 & v1 & c2 & Hc1 & Hc2 & Hce).
+        rewrite Hsrc in Hc1. apply OK_pair_inv in Hc1 as (? & ?); subst c1 v1.
+        apply generate_leqns_constraints_nil in Hc2 as (? & ?); subst c2 u'.
+        subst cet. rewrite app_nil_r.
+        clear Hsrc.
+        exists (List.map (fun _ => Keeps) ce). split.
+        - induction Hcesc as [|c ce Hc Hcs IH]; simpl.
+          + constructor.
+          + constructor; [exact Hc|exact IH].
+        - split.
+          + clear Hcesc. intros dlt Hsat. unfold listSatisfiable in Hsat.
+            induction Hsat as [|c ce Hc Hcs IH]; simpl.
+            * constructor.
+            * constructor; [exact Hc|exact IH].
+          + reflexivity. }
+      destruct (fby_equation_spec to_cut xs es)
+        as [(x & e0 & e & ann & Hxs & Hes & Hconst & Heq)
+           |[(x & e0 & e & ann & Hxs & Hes & Hconst & Heq)
+            |[(x & e0 & e & ann & Hxs & Hes & Heq)
+             |Heq]]].
+      - subst xs es. destruct ann as (ty, (ck, name)).
+        rewrite Heq in Hrun. cbv beta iota in Hrun.
+        destruct (PS.mem x to_cut) eqn:Hmem.
+        + apply bind_spec in Hrun as (x' & s2 & Ex & Hrun).
+          rewrite ret_spec in Hrun. inversion Hrun; subst eqs' st'.
+          destruct (Hdata x e0 e ty ck name
+                      (@Coq.Init.Logic.eq_refl _ [x])
+                      (or_introl (@Coq.Init.Logic.eq_refl _
+                        [Efby [e0] [e] [(ty, (ck, name))]])))
+            as (ckty & s0 & s1 & b & Hckx & Hckty & Hb & Hbs & H0 & H1
+                & HL & Hcreated).
+          pose proof (fresh_ident_In norm2 ((ty, ck), false) x' st s2 Ex)
+            as Hx'in.
+          destruct (Hnew x' ((ty, ck), false) Hx'in)
+            as (Hckx' & b' & Hb' & Hfresh).
+          cbn [fst snd] in Hckx'.
+          apply (fby_cut_roles pairs x x' e0 e (ty, (ck, name)) ck ckty
+                   s0 s1 b b' s ce cet u u').
+          * exact Hckx.
+          * exact Hckx'.
+          * exact Hckty.
+          * exact Hb.
+          * exact Hb'.
+          * exact H0.
+          * exact H1.
+          * exact HL.
+          * exact Hbs.
+          * destruct (Hcreated (@Coq.Init.Logic.eq_refl _
+                         [Efby [e0] [e] [(ty, (ck, name))]]))
+              as (Hcut & Hpxdata).
+            exact (Hcut st x' s2 b' Hconst Hmem Ex Hb').
+          * exact Hsrc.
+          * exact Htgt.
+        + rewrite ret_spec in Hrun. inversion Hrun; subst eqs' st'.
+          apply Hsame. reflexivity.
+      - subst xs es. destruct ann as (ty, (ck, name)).
+        rewrite Heq in Hrun.
+        apply bind2_spec in Hrun as (fby & eqsa & s2 & Hfby & Hrun).
+        rewrite ret_spec in Hrun. inversion Hrun; subst eqs' st'.
+        destruct (fby_iteexp_created e0 e ty ck name fby eqsa st s2 Hfby)
+          as (i & px & eqsi & Hi & Hpx & Hfbye & Heqsa & Heqsi).
+        destruct (Hdata x e0 e ty ck name
+                    (@Coq.Init.Logic.eq_refl _ [x])
+                    (or_introl (@Coq.Init.Logic.eq_refl _
+                      [Efby [e0] [e] [(ty, (ck, name))]])))
+          as (ckty & s0 & s1 & b & Hckx & Hckty & Hb & Hbs & H0 & H1
+              & HL & Hcreated).
+        destruct (Hnew i ((bool_type, ck), true) Hi)
+          as (Hcki & bi & Hbi & Hfreshi).
+        destruct (Hnew px ((ty, ck), false) Hpx)
+          as (Hckpx & bp & Hbp & Hfreshp).
+        cbn [fst snd] in Hcki, Hckpx.
+        subst fby eqsa.
+        destruct (Hcreated (@Coq.Init.Logic.eq_refl _
+                       [Efby [e0] [e] [(ty, (ck, name))]]))
+          as (Hcutdata & Hpxdata).
+        apply (fby_ite_roles pairs x i px e0 e ty ck name ckty s0 s1 b bi bp
+                 s ce cet u u' eqsi).
+        + exact Hckx.
+        + exact Hckpx.
+        + exact Hckty.
+        + exact Hb.
+        + exact Hbi.
+        + exact Hbp.
+        + exact H0.
+        + exact H1.
+        + exact HL.
+        + exact Hbs.
+        + exact (Hflags i ck ckty bi Hi Hckty Hbi).
+        + exact (Hpxdata st s2 i px eqsi bp Hfby Hbp).
+        + destruct Heqsi as [Heqsi|Heqsi].
+          * left. exact Heqsi.
+          * right. split; [exact Hcki|exact Heqsi].
+        + exact Hsrc.
+        + exact Htgt.
+      - subst xs es. destruct ann as (ty, (ck, name)).
+        rewrite Heq in Hrun.
+        apply bind2_spec in Hrun as (ite & eqsa & s2 & Hite & Hrun).
+        rewrite ret_spec in Hrun. inversion Hrun; subst eqs' st'.
+        destruct (arrow_iteexp_created e0 e ty ck name ite eqsa st s2 Hite)
+          as (i & Hi & Hite' & Heqsi).
+        destruct (Hdata x e0 e ty ck name
+                    (@Coq.Init.Logic.eq_refl _ [x])
+                    (or_intror (@Coq.Init.Logic.eq_refl _
+                      [Earrow [e0] [e] [(ty, (ck, name))]])))
+          as (ckty & s0 & s1 & b & Hckx & Hckty & Hb & Hbs & H0 & H1
+              & HL & Hcreated).
+        destruct (Hnew i ((bool_type, ck), true) Hi)
+          as (Hcki & bi & Hbi & Hfreshi).
+        cbn [fst snd] in Hcki.
+        subst ite.
+        apply (arrow_roles pairs x i e0 e ty ck name ckty s0 s1 b bi
+                 s ce cet u u' eqsa).
+        + exact Hckx.
+        + exact Hckty.
+        + exact Hb.
+        + exact Hbi.
+        + exact H0.
+        + exact H1.
+        + exact HL.
+        + exact Hbs.
+        + exact (Hflags i ck ckty bi Hi Hckty Hbi).
+        + destruct Heqsi as [Heqsi|Heqsi].
+          * left. exact Heqsi.
+          * right. split; [exact Hcki|exact Heqsi].
+        + exact Hsrc.
+        + exact Htgt.
+      - rewrite Heq in Hrun. rewrite ret_spec in Hrun.
+        inversion Hrun; subst eqs' st'.
+        apply Hsame. reflexivity.
+    Qed.
+
+    (** ** A node's equation list
+
+        Induction on [eqs].  The two [Forall2]s compose with [Forall2_app], and
+        the source's satisfaction splits with [Forall_app], so there is no
+        disjointness bookkeeping at all -- that is the payoff of moving the
+        composition out of the chunks.
+
+        The operand types are given at *any* state because the operands are
+        normalized, so [assign_lexp_normalized_pure] makes their runs
+        restartable; that is what keeps the induction from having to track the
+        states.  [map_bind_st_follows] weakens the [st_anns st'] premises from
+        the whole run to each step. *)
+    Theorem fby_equations_roles :
+      forall pairs to_cut eqs eqs' st st' ce cet s u u',
+        map_bind (fby_equation to_cut) eqs st = (eqs', st') ->
+        (forall x e0 e ty ck name,
+            In ([x], [Efby [e0] [e] [(ty, (ck, name))]]) eqs
+            \/ In ([x], [Earrow [e0] [e] [(ty, (ck, name))]]) eqs ->
+            exists ckty s0 s1 b,
+              find_clock cenv x = OK ck
+              /\ assign_clk_type env base_ty ck = Some ckty
+              /\ Env.find x env = Some b
+              /\ In b scope
+              /\ (forall q, assign_lexp_type G env base_ty rst_ty e0 q
+                            = OK ([(s0, [])], q))
+              /\ (forall q, assign_lexp_type G env base_ty rst_ty e q
+                            = OK ([(s1, [])], q))
+              /\ (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                            In z scope)
+              /\ (In ([x], [Efby [e0] [e] [(ty, (ck, name))]]) eqs ->
+                    fby_created_pairs pairs to_cut x e0 e ty ck name
+                      ckty s0 s1)) ->
+        (forall y a, In (y, a) (st_anns st') ->
+            find_clock cenv y = OK (snd (fst a))
+            /\ exists c, Env.find y env = Some c /\ ~ In c scope) ->
+        (forall i cki ckti bi,
+            In (i, ((bool_type, cki), true)) (st_anns st') ->
+            assign_clk_type env base_ty cki = Some ckti ->
+            Env.find i env = Some bi ->
+            In (bi, merge [rst_ty] ckti) pairs) ->
+        constraints_scoped scope ce ->
+        generate_leqns_constraints G env base_ty rst_ty cenv eqs s = OK (ce, u) ->
+        generate_leqns_constraints G env base_ty rst_ty cenv (List.concat eqs') s
+          = OK (cet, u') ->
+        exists roles,
+          Forall2 (role_shape pairs) cet roles
+          /\ (forall dlt, listSatisfiable dlt ce ->
+                Forall2 (role_bound dlt) cet roles).
+    Proof.
+      intros pairs to_cut eqs.
+      induction eqs as [|[xs es] eqs IH];
+        intros eqs' st st' ce cet s u u' Hrun Hdata Hnew Hflags
+          Hscoped Hsrc Htgt.
+      - change (ret [] st = (eqs', st')) in Hrun.
+        rewrite ret_spec in Hrun. inversion Hrun; subst eqs' st'.
+        apply generate_leqns_constraints_nil in Hsrc as (? & ?); subst ce u.
+        cbn [List.concat] in Htgt.
+        apply generate_leqns_constraints_nil in Htgt as (? & ?); subst cet u'.
+        exists []. split; [constructor|].
+        intros dlt Hsat. constructor.
+      - change
+          (bind (fby_equation to_cut (xs, es))
+             (fun eq1 =>
+                bind (map_bind (fby_equation to_cut) eqs)
+                  (fun eqsr => ret (eq1 :: eqsr))) st = (eqs', st'))
+          in Hrun.
+        apply bind_spec in Hrun as (eq1 & fst1 & Hrun1 & Hrun).
+        apply bind_spec in Hrun as (eqsr & fst2 & Hrunr & Hret).
+        rewrite ret_spec in Hret. inversion Hret; subst eqs' st'.
+        apply generate_leqns_cons_inv in Hsrc
+          as (ce1 & sv1 & ce2 & Hsrc1 & Hsrc2 & Hce).
+        subst ce.
+        cbn [List.concat] in Htgt.
+        apply generate_leqns_constraints_app in Htgt
+          as (cet1 & cet2 & tv1 & Htgt1 & Htgt2 & Hcet).
+        subst cet.
+        apply Forall_app in Hscoped as (Hsc1 & Hsc2).
+        assert (Hfollow : st_follows fst1 fst2).
+        { apply (@map_bind_st_follows equation (list equation)
+                   (type * clock * bool) (fby_equation to_cut)
+                   eqs eqsr fst1 fst2 Hrunr).
+          rewrite Forall_forall. intros eq Hin out q q' Hq.
+          exact (fby_equation_st_follows to_cut eq out q q' Hq). }
+        destruct (fby_equation_roles pairs to_cut xs es eq1 st fst1
+                    ce1 cet1 s sv1 tv1 Hrun1)
+          as (roles1 & Hroles1 & Hbounds1 & Hstate1).
+        + intros x e0 e ty ck name Hxs Hshape.
+          assert (Hin :
+              In ([x], [Efby [e0] [e] [(ty, (ck, name))]])
+                    ((xs, es) :: eqs)
+              \/ In ([x], [Earrow [e0] [e] [(ty, (ck, name))]])
+                    ((xs, es) :: eqs)).
+          { destruct Hshape as [Hfby|Harrow].
+            - left. left. rewrite Hxs, Hfby. reflexivity.
+            - right. left. rewrite Hxs, Harrow. reflexivity. }
+          destruct (Hdata x e0 e ty ck name Hin)
+            as (ckty & s0 & s1 & b & Hck & Hckty & Hb & Hbs
+                & H0 & H1 & HL & Hcreated).
+          exists ckty, s0, s1, b.
+          split; [exact Hck|].
+          split; [exact Hckty|].
+          split; [exact Hb|].
+          split; [exact Hbs|].
+          split; [exact (H0 s)|].
+          split; [exact (H1 s)|].
+          split; [exact HL|].
+          intro Hes. apply Hcreated.
+          subst xs es. exact (in_eq _ _).
+        + intros y a Hy.
+          apply Hnew.
+          exact (st_follows_incl fst1 fst2 Hfollow (y, a) Hy).
+        + intros i cki ckti bi Hi Hckti Hbi.
+          apply (Hflags i cki ckti bi).
+          * exact (st_follows_incl fst1 fst2 Hfollow
+                     (i, ((bool_type, cki), true)) Hi).
+          * exact Hckti.
+          * exact Hbi.
+        + exact Hsc1.
+        + exact Hsrc1.
+        + exact Htgt1.
+        + subst tv1.
+          destruct (IH eqsr fst1 fst2 ce2 cet2 sv1 u u' Hrunr)
+            as (roles2 & Hroles2 & Hbounds2).
+          * intros x e0 e ty ck name Hin.
+            assert (HinFull :
+                In ([x], [Efby [e0] [e] [(ty, (ck, name))]])
+                      ((xs, es) :: eqs)
+                \/ In ([x], [Earrow [e0] [e] [(ty, (ck, name))]])
+                      ((xs, es) :: eqs)).
+            { destruct Hin as [Hin|Hin].
+              - left. right. exact Hin.
+              - right. right. exact Hin. }
+            destruct (Hdata x e0 e ty ck name HinFull)
+              as (ckty & s0 & s1 & b & Hck & Hckty & Hb & Hbs
+                  & H0 & H1 & HL & Hcreated).
+            exists ckty, s0, s1, b.
+            split; [exact Hck|].
+            split; [exact Hckty|].
+            split; [exact Hb|].
+            split; [exact Hbs|].
+            split; [exact H0|].
+            split; [exact H1|].
+            split; [exact HL|].
+            intro Hfby. apply Hcreated. right. exact Hfby.
+          * exact Hnew.
+          * exact Hflags.
+          * exact Hsc2.
+          * exact Hsrc2.
+          * exact Htgt2.
+          * exists (roles1 ++ roles2). split.
+            -- apply Forall2_app; [exact Hroles1|exact Hroles2].
+            -- intros dlt Hsat. unfold listSatisfiable in Hsat.
+               apply Forall_app in Hsat as (Hsat1 & Hsat2).
+               apply Forall2_app.
+               ++ exact (Hbounds1 dlt Hsat1).
+               ++ exact (Hbounds2 dlt Hsat2).
+    Qed.
+
+    (** ** The equation-level entailment, for a node
+
+        [fby_equations_roles] followed by [preserves_on_created], with
+        [normfby_node_fields] to identify the target equation list with
+        [concat eqs'] and [generate_leqns_normfby_node_cenv] to read the source
+        equations against the target's clock environment. *)
+    Corollary normfby_node_entailment :
+      forall Q c (n : node) (Hunt : unnested_node Q n)
+             (Hpref : n_prefixes n = norm1_prefs)
+             pairs st0 ce cet ct1 ct1',
+        cenv = lnode_clock_env (normfby_node Q c n Hunt Hpref) ->
+        NoDup (List.map fst pairs) ->
+        created_hidden pairs ->
+        levels_visible pairs ->
+        (** the per-equation and per-created-variable data, for this node's run;
+            same two hypotheses as [fby_equations_roles], with [eqs := n_eqs n]
+            and the run being the one [normfby_node] performs *)
+        (forall eqs' stf,
+            map_bind (fby_equation
+                        (PS.union c (ps_from_list (List.map fst (n_out n)))))
+              n.(n_eqs) init_st = (eqs', stf) ->
+            (forall x e0 e ty ck name,
+                In ([x], [Efby [e0] [e] [(ty, (ck, name))]]) n.(n_eqs)
+                \/ In ([x], [Earrow [e0] [e] [(ty, (ck, name))]]) n.(n_eqs) ->
+                exists ckty s0 s1 b,
+                  find_clock cenv x = OK ck
+                  /\ assign_clk_type env base_ty ck = Some ckty
+                  /\ Env.find x env = Some b
+                  /\ In b scope
+                  /\ (forall q, assign_lexp_type G env base_ty rst_ty e0 q
+                                = OK ([(s0, [])], q))
+                  /\ (forall q, assign_lexp_type G env base_ty rst_ty e q
+                                = OK ([(s1, [])], q))
+                  /\ (forall z,
+                         In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                         In z scope)
+                  /\ (In ([x], [Efby [e0] [e] [(ty, (ck, name))]]) n.(n_eqs) ->
+                        fby_created_pairs pairs
+                          (PS.union c
+                            (ps_from_list (List.map fst (n_out n))))
+                          x e0 e ty ck name ckty s0 s1))
+            /\ (forall y a, In (y, a) (st_anns stf) ->
+                   find_clock cenv y = OK (snd (fst a))
+                   /\ exists d, Env.find y env = Some d /\ ~ In d scope)
+            /\ (forall i cki ckti bi,
+                   In (i, ((bool_type, cki), true)) (st_anns stf) ->
+                   assign_clk_type env base_ty cki = Some ckti ->
+                   Env.find i env = Some bi ->
+                   In (bi, merge [rst_ty] ckti) pairs)) ->
+        constraints_scoped scope ce ->
+        generate_leqns_constraints G env base_ty rst_ty
+          (lnode_clock_env n) n.(n_eqs) st0 = OK (ce, ct1) ->
+        generate_leqns_constraints G env base_ty rst_ty
+          (lnode_clock_env (normfby_node Q c n Hunt Hpref))
+          (normfby_node Q c n Hunt Hpref).(n_eqs) st0 = OK (cet, ct1') ->
+        preserves_on scope ce cet.
+    Proof.
+      intros Q c n Hunt Hpref pairs st0 ce cet ct1 ct1' Hcenv Hnd Hhidden
+        Hvisible Hdata Hscoped Hsrc Htgt.
+      remember (map_bind
+                  (fby_equation
+                    (PS.union c (ps_from_list (List.map fst (n_out n)))))
+                  n.(n_eqs) init_st) as run eqn:Hrun.
+      destruct run as [eqs' stf].
+      assert (Hrun' :
+          map_bind
+            (fby_equation
+              (PS.union c (ps_from_list (List.map fst (n_out n)))))
+            n.(n_eqs) init_st = (eqs', stf)).
+      { symmetry. exact Hrun. }
+      assert (Heqs :
+          (normfby_node Q c n Hunt Hpref).(n_eqs) = List.concat eqs').
+      { destruct (normfby_node_fields Q c n Hunt Hpref)
+          as (He & _ & _ & _ & _).
+        rewrite He.
+        assert (Hfbys :
+            fby_equations
+              (PS.union c (ps_from_list (List.map fst (n_out n))))
+              n.(n_eqs) init_st = (List.concat eqs', stf)).
+        { unfold fby_equations. apply bind_spec.
+          exists eqs', stf. split; [exact Hrun'|apply ret_spec]. }
+        rewrite Hfbys. reflexivity. }
+      assert (Hsrc' :
+          generate_leqns_constraints G env base_ty rst_ty cenv n.(n_eqs) st0
+            = OK (ce, ct1)).
+      { rewrite Hcenv.
+        rewrite (generate_leqns_normfby_node_cenv Q c n Hunt Hpref G st0).
+        exact Hsrc. }
+      assert (Htgt' :
+          generate_leqns_constraints G env base_ty rst_ty cenv
+            (List.concat eqs') st0 = OK (cet, ct1')).
+      { rewrite Hcenv, <- Heqs. exact Htgt. }
+      destruct (Hdata eqs' stf
+                  (@Coq.Init.Logic.eq_refl _ (eqs', stf)))
+        as (Heqdata & Hnew & Hflags).
+      destruct (fby_equations_roles pairs
+                  (PS.union c (ps_from_list (List.map fst (n_out n))))
+                  n.(n_eqs) eqs' init_st stf ce cet st0 ct1 ct1'
+                  Hrun' Heqdata Hnew Hflags Hscoped Hsrc' Htgt')
+        as (roles & Hroles & Hbounds).
+      exact (proj1
+        (preserves_on_created pairs roles ce cet Hnd Hhidden Hvisible
+           Hroles Hbounds)).
+    Qed.
+
+    (** ** Signature preservation for one node, two accumulators, two states
+
+        A near-copy of Leg U's [unnest_node_signatures_preserved_decoupled]:
+        [normfby_node_sig_interface] for the five interface fields,
+        [generate_leqns_constraints_weaken] for the intermediate run against the
+        target accumulator, [state_pure_generate_leqns] to restart the target
+        run at the source's state, and [preserves_on_simplify] through both
+        eliminations. *)
+    Theorem normfby_node_signatures_preserved_decoupled :
+      forall Q c (n : node) (Hunt : unnested_node Q n)
+             (Hpref : n_prefixes n = norm1_prefs)
+             (Q' : global) (G1 G2 : secglobal) (aux : list node_aux_names)
+             stS stT sg stS1 sg' stT1,
+        (forall clk_id rst_id,
+            get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
+            Env.find clk_id env = Some base_ty
+            /\ Env.find rst_id env = Some rst_ty) ->
+        (** the pass's output is unnested, which is what makes it state-pure *)
+        Forall (unnested_equation Q')
+          (normfby_node Q c n Hunt Hpref).(n_eqs) ->
+        call_weakens G1 G2 ->
+        (forall ce cet ct1 ct1',
+            generate_leqns_constraints G2 env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) stS = OK (ce, ct1) ->
+            generate_leqns_constraints G2 env base_ty rst_ty
+              (lnode_clock_env (normfby_node Q c n Hunt Hpref))
+              (normfby_node Q c n Hunt Hpref).(n_eqs) stS = OK (cet, ct1') ->
+            preserves_on scope ce cet) ->
+        (forall ce ct1,
+            generate_leqns_constraints G1 env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) stS = OK (ce, ct1) ->
+            wf_constraints ce) ->
+        (forall locals cns ct1,
+            get_mappings_from_node n.(n_vars) env = Some locals ->
+            generate_leqns_constraints G1 env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) stS = OK (cns, ct1) ->
+            forall x, In x (locals ++ minted stS ct1) -> ~ In x scope) ->
+        generate_lnode_sig G1 n env aux stS = OK (sg, stS1) ->
+        generate_lnode_sig G2 (normfby_node Q c n Hunt Hpref) env aux stT
+          = OK (sg', stT1) ->
+        s_name sg' = s_name sg
+        /\ s_in sg' = s_in sg
+        /\ s_out sg' = s_out sg
+        /\ s_clk sg' = s_clk sg
+        /\ s_reset sg' = s_reset sg
+        /\ preserves_on scope sg.(s_constraints) sg'.(s_constraints).
+    Proof.
+      intros Q c n Hunt Hpref Q' G1 G2 aux stS stT sg stS1 sg' stT1
+        Haux Hun Hweak Hpres Hwf Hdisj HgenS HgenT.
+      assert (Hiface :
+          s_name sg' = s_name sg
+          /\ s_in sg' = s_in sg
+          /\ s_out sg' = s_out sg
+          /\ s_clk sg' = s_clk sg
+          /\ s_reset sg' = s_reset sg).
+      { exact (normfby_node_sig_interface Q c n Hunt Hpref G1 G2 aux
+                 stS stT sg stS1 sg' stT1 HgenS HgenT). }
+      destruct Hiface as (Hn & Hi & Ho & Hc & Hr).
+      repeat split; try assumption.
+      apply (lnode_sig_inv env) in HgenS
+        as (c1 & r1 & ct1 & rt1 & i1 & o1 & l1 & cs1
+            & Ha1 & Hc1 & Hr1 & _ & _ & Hl1 & Hcs1 & ?); subst sg.
+      apply (lnode_sig_inv env) in HgenT
+        as (c2 & r2 & ct2 & rt2 & i2 & o2 & l2 & cs2
+            & Ha2 & Hc2 & Hr2 & _ & _ & Hl2 & Hcs2 & ?); subst sg'.
+      destruct (Haux c1 r1 Ha1) as (Hb1 & Hbr1).
+      rewrite Hc1 in Hb1. apply option_Some_inj in Hb1; subst ct1.
+      rewrite Hr1 in Hbr1. apply option_Some_inj in Hbr1; subst rt1.
+      cbn [n_name normfby_node] in Ha2.
+      destruct (Haux c2 r2 Ha2) as (Hb2 & Hbr2).
+      rewrite Hc2 in Hb2. apply option_Some_inj in Hb2; subst ct2.
+      rewrite Hr2 in Hbr2. apply option_Some_inj in Hbr2; subst rt2.
+      cbn [s_constraints].
+      destruct (state_pure_generate_leqns G2 env base_ty rst_ty
+                  (lnode_clock_env (normfby_node Q c n Hunt Hpref)) Q'
+                  (normfby_node Q c n Hunt Hpref).(n_eqs) Hun
+                  stT stS cs2 stT1 Hcs2) as (_ & Hcs2s).
+      destruct (generate_leqns_constraints_weaken G1 G2 env base_ty rst_ty
+                  (lnode_clock_env n) n.(n_eqs) cs1 stS stS1 Hweak Hcs1)
+        as (cs1' & Hcs1' & Hentails).
+      apply (preserves_on_simplify scope cs1 cs2
+               (l1 ++ minted stS stS1) (l2 ++ minted stT stT1)).
+      - exact (Hwf cs1 stS1 Hcs1).
+      - exact (Hdisj l1 cs1 stS1 Hl1 Hcs1).
+      - apply (preserves_on_trans scope cs1 cs1' cs2).
+        + apply (preserves_on_from_entailment scope cs1 cs1').
+          exact Hentails.
+        + exact (Hpres cs1' cs2 stS1 stS Hcs1' Hcs2s).
+    Qed.
+
+    (** ** The per-node step the shared lockstep consumes
+
+        [sig_call_weakens_from_good] turns the interface equality and the
+        entailment into [sig_call_weakens].  The goodness and scopedness of the
+        two *published* signatures are the Lustre analogue of what
+        [SecNLusTypingCorrectness.v] proves for NLustre; they live after
+        [SecLusUnnesting.v] in the build order, so they enter here as
+        hypotheses, exactly as Leg A's [node_step_entails] leaves its own. *)
+    Corollary normfby_node_step_weakens :
+      forall Q c (n : node) (Hunt : unnested_node Q n)
+             (Hpref : n_prefixes n = norm1_prefs)
+             (envs : node_scoped_env) (aux : list node_aux_names)
+             accS accT sgS stS0 stS1 sgT stT0 stT1,
+        find_node_env n.(n_name) envs = Some env ->
+        call_weakens accS accT ->
+        (** what this node's two runs give, from the theorem above *)
+        (s_name sgT = s_name sgS
+         /\ s_in sgT = s_in sgS
+         /\ s_out sgT = s_out sgS
+         /\ s_clk sgT = s_clk sgS
+         /\ s_reset sgT = s_reset sgS
+         /\ preserves_on scope sgS.(s_constraints) sgT.(s_constraints)) ->
+        (** and what the program level knows about the published pair *)
+        signature_good sgS ->
+        NoDup (signature_scope sgS) ->
+        signature_good sgT ->
+        signature_scoped sgT ->
+        (forall z, In z (signature_scope sgS) -> In z scope) ->
+        (forall inp ck rst os cns sa sb,
+            generate_constraints sgS inp ck rst os sa = OK (cns, sb) ->
+            call_subst_fresh sgS inp ck rst os /\ NoDup os) ->
+        generate_lnode_sig_scoped_env accS n envs aux stS0 = OK (sgS, stS1) ->
+        generate_lnode_sig_scoped_env accT (normfby_node Q c n Hunt Hpref)
+          envs aux stT0 = OK (sgT, stT1) ->
+        sig_head_weakens sgS sgT.
+    Proof.
+      intros Q c n Hunt Hpref envs aux accS accT sgS stS0 stS1 sgT stT0 stT1
+        Henv Hacc Hfields HgoodS HndS HgoodT HscT Hscope Hfresh HrunS HrunT.
+      clear Henv Hacc HrunS HrunT.
+      destruct Hfields as
+        (Hname & Hin & Hout & Hclk & Hreset & Hpres).
+      split.
+      - symmetry. exact Hname.
+      - apply (sig_call_weakens_from_good sgS sgT HgoodS HndS HgoodT HscT).
+        + split.
+          * repeat split; symmetry; assumption.
+          * intros dlt Hsat.
+            destruct (Hpres dlt Hsat) as (dlt' & Hagree & Hsat').
+            exists dlt'. split; [|exact Hsat'].
+            intros z Hz. apply Hagree. exact (Hscope z Hz).
+        + exact Hfresh.
+    Qed.
+
+    (** ** The whole program
+
+        This one should follow directly, with nothing new:
+        [generate_all_lsignatures_weakens] instantiated at
+        [R := fun n m => exists Q c Hunt Hpref, m = normfby_node Q c n Hunt Hpref],
+        with [normfby_global_normfbyed_nodes] and [normfbyed_nodes_rev] for the
+        node lists and [normfby_node_step_weakens] for the step. *)
+    Corollary normfby_global_signatures_weaken :
+      forall (P : global) Hunt Hprefs (envs : node_scoped_env)
+             (aux : list node_aux_names) stS stT GSout GTout,
+        (forall accS accT nS nT sgS stS0 stS1 sgT stT0 stT1,
+            (exists Q c (Hu : unnested_node Q nS)
+                      (Hp : n_prefixes nS = norm1_prefs),
+                nT = normfby_node Q c nS Hu Hp) ->
+            call_weakens accS accT ->
+            generate_lnode_sig_scoped_env accS nS envs aux stS0
+              = OK (sgS, stS1) ->
+            generate_lnode_sig_scoped_env accT nT envs aux stT0
+              = OK (sgT, stT1) ->
+            sig_head_weakens sgS sgT) ->
+        generate_all_lsignatures_scoped_env (rev P) envs aux stS = OK GSout ->
+        generate_all_lsignatures_scoped_env
+          (rev (normfby_global P Hunt Hprefs)) envs aux stT = OK GTout ->
+        call_weakens GSout GTout.
+    Proof.
+      intros P Hunt Hprefs envs aux stS stT GSout GTout Hstep Hsrc Htgt.
+      set (R := fun n m =>
+        exists Q c (Hu : unnested_node Q n)
+               (Hp : n_prefixes n = norm1_prefs),
+          m = normfby_node Q c n Hu Hp).
+      assert (HR : Forall2 R (rev P) (rev (normfby_global P Hunt Hprefs))).
+      { unfold R. apply normfbyed_nodes_rev.
+        apply (normfby_global_normfbyed_nodes P Hunt Hprefs). }
+      assert (HS :
+        forall accS accT nS nT sgS stS0 stS1 sgT stT0 stT1,
+          R nS nT ->
+          call_weakens accS accT ->
+          generate_lnode_sig_scoped_env accS nS envs aux stS0
+            = OK (sgS, stS1) ->
+          generate_lnode_sig_scoped_env accT nT envs aux stT0
+            = OK (sgT, stT1) ->
+          sig_head_weakens sgS sgT).
+      { intros accS accT nS nT sgS stS0 stS1 sgT stT0 stT1
+          Hnodes Hweak HgenS HgenT.
+        exact (Hstep accS accT nS nT sgS stS0 stS1 sgT stT0 stT1
+                 Hnodes Hweak HgenS HgenT). }
+      exact (generate_all_lsignatures_weakens R envs aux
+               (rev P) (rev (normfby_global P Hunt Hprefs)) HR HS
+               stS stT GSout GTout Hsrc Htgt).
+    Qed.
+
   End NormFbyNode.
 
 End SecLusNormFby.
