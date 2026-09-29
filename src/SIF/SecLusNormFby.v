@@ -2572,6 +2572,13 @@ Import UNN.Fresh.Tactics.
         that created it, and its level mentions that equation's delayed
         operand, so its entry is built by walking the run. *)
 
+    (** [inversion] on a pair equation simplifies [merge] into its inner [fix],
+        as it does on an [OK] equation; project through abstract components. *)
+    Lemma pair_inv :
+      forall {A B : Type} (a a' : A) (b b' : B),
+        (a, b) = (a', b') -> a' = a /\ b' = b.
+    Proof. intros A B a a' b b' H. inversion H. split; reflexivity. Qed.
+
     (** ** How the state grows
 
         [fresh_ident] prepends, and nothing else touches the annotations, so a
@@ -2597,7 +2604,26 @@ Import UNN.Fresh.Tactics.
     Lemma fby_equation_anns :
       forall to_cut eq out q q',
         fby_equation to_cut eq q = (out, q') ->
-        exists new, st_anns q' = new ++ st_anns q.
+        exists new,
+          st_anns q' = new ++ st_anns q
+          (** and the delayed variable the output defines, when there is one,
+              is among what this step added.  Both clauses are guarded by the
+              equation being a delayed definition, exactly as
+              [fby_eqn_data]'s is: on an arrow the pass creates no delayed
+              variable, and the [ite] pattern could otherwise be matched by the
+              flag's own equation. *)
+          /\ (forall x x' ann e0 e,
+                 eq = ([x], [Efby [e0] [e] [ann]]) ->
+                 out = [([x], [Evar x' ann]); ([x'], [Efby [e0] [e] [ann]])] ->
+                 In x' (List.map fst new))
+          /\ (forall x i px eqsi e0 e ty ck name ann,
+                 eq = ([x], [Efby [e0] [e] [ann]]) ->
+                 out = ([x], [Eite (Evar i (bool_type, (ck, Some i))) [e0]
+                                [Evar px (ty, (ck, Some px))]
+                                ([ty], (ck, name))])
+                       :: ([px], [Efby [add_whens (Econst (init_type ty)) ty ck]
+                                    [e] [(ty, (ck, name))]]) :: eqsi ->
+                 In px (List.map fst new)).
     Proof.
       intros to_cut (xs, es) out q q' H.
       destruct (fby_equation_spec to_cut xs es)
@@ -2611,9 +2637,17 @@ Import UNN.Fresh.Tactics.
         + apply bind_spec in H as (x' & s2 & Ex & H).
           rewrite ret_spec in H. inversion H; subst out q'.
           exists [(x', ((ty, ck), false))].
-          exact (fresh_ident_anns _ _ _ _ _ Ex).
+          split; [exact (fresh_ident_anns _ _ _ _ _ Ex)|].
+          split.
+          * intros z z' annq f0 f Heqq Houtq.
+            inversion Houtq; subst. cbn [List.map fst]. now left.
+          * intros z j px eqsj f0 f tq ckq nameq annq Heqq Houtq.
+            inversion Houtq.
         + rewrite ret_spec in H. inversion H; subst out q'.
-          exists []. reflexivity.
+          exists []. split; [reflexivity|].
+          split; [intros z z' annq f0 f Heqq Houtq; inversion Houtq
+                 |intros z j px eqsj f0 f tq ckq nameq annq Heqq Houtq;
+                  inversion Houtq].
       - subst xs es. destruct ann as (ty, (ck, name)).
         rewrite Heq in H.
         apply bind2_spec in H as (fby & eqsa & s1 & Hfby & H).
@@ -2624,11 +2658,19 @@ Import UNN.Fresh.Tactics.
         rewrite ret_spec in Hfby. inversion Hfby; subst fby eqsa s1.
         destruct (init_var_for_clock_anns ck i eqsi q s2 Ei) as [Ha|Ha].
         + exists [(px, ((ty, ck), false))].
-          rewrite (fresh_ident_anns _ _ _ _ _ Ep), Ha.
-          reflexivity.
+          split;
+            [rewrite (fresh_ident_anns _ _ _ _ _ Ep), Ha; reflexivity|].
+          split.
+          * intros z z' annq f0 f Heqq Houtq. inversion Houtq.
+          * intros z j py eqsj f0 f tq ckq nameq annq Heqq Houtq.
+            inversion Houtq; subst. cbn [List.map fst]. now left.
         + exists [(px, ((ty, ck), false)); (i, ((bool_type, ck), true))].
-          rewrite (fresh_ident_anns _ _ _ _ _ Ep), Ha.
-          reflexivity.
+          split;
+            [rewrite (fresh_ident_anns _ _ _ _ _ Ep), Ha; reflexivity|].
+          split.
+          * intros z z' annq f0 f Heqq Houtq. inversion Houtq.
+          * intros z j py eqsj f0 f tq ckq nameq annq Heqq Houtq.
+            inversion Houtq; subst. cbn [List.map fst]. now left.
       - subst xs es. destruct ann as (ty, (ck, name)).
         rewrite Heq in H.
         apply bind2_spec in H as (ite & eqsa & s1 & Hite & H).
@@ -2637,19 +2679,18 @@ Import UNN.Fresh.Tactics.
         apply bind2_spec in Hite as (i & eqsi & s2 & Ei & Hite).
         rewrite ret_spec in Hite. inversion Hite; subst ite eqsa s1.
         destruct (init_var_for_clock_anns ck i eqsi q s2 Ei) as [Ha|Ha].
-        + exists []. exact Ha.
-        + exists [(i, ((bool_type, ck), true))]. exact Ha.
+        + exists []. split; [exact Ha|].
+          split; intros; discriminate.
+        + exists [(i, ((bool_type, ck), true))]. split; [exact Ha|].
+          split; intros; discriminate.
       - rewrite Heq in H. rewrite ret_spec in H.
         inversion H; subst out q'.
-        exists []. reflexivity.
+        exists []. split; [reflexivity|].
+        split.
+        + intros z z' annq f0 f Heqq Houtq. subst. inversion Houtq.
+        + intros z j py eqsj f0 f tq ckq nameq annq Heqq Houtq.
+          subst. inversion Houtq.
     Qed.
-
-    (** [inversion] on a pair equation simplifies [merge] into its inner [fix],
-        as it does on an [OK] equation; project through abstract components. *)
-    Lemma pair_inv :
-      forall {A B : Type} (a a' : A) (b b' : B),
-        (a, b) = (a', b') -> a' = a /\ b' = b.
-    Proof. intros A B a a' b b' H. inversion H. split; reflexivity. Qed.
 
     (** ** The flags' entries
 
