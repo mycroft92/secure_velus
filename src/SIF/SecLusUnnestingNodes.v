@@ -2733,6 +2733,117 @@ Import UNN.Fresh.Tactics.
         |exact (Hpres cs1' cs2 stS1 stS Hcs1' Hcs2s)].
     Qed.
 
+
+    (** * Leg U's per-node step
+
+        What [unnest_global_signatures_weaken] consumes, assembled:
+        [unnest_node_entailment] supplies the entailment,
+        [unnest_node_signatures_preserved_decoupled] the interface equality and
+        the transport through [simplify], and [sig_call_weakens_from_good]
+        converts the pair into [sig_head_weakens].
+
+        The target accumulator is the section's [GL], because that is the one
+        [unnest_node_entailment] speaks about; at the program level the section
+        is instantiated per node with exactly that accumulator.
+
+        Two families of hypothesis remain, and neither is phase-specific: the
+        [A eq] ambients, which the pointwise contract exists to remove; and the
+        program-level facts about the published pair, which live after
+        [SecLusUnnesting.v] in the build order. *)
+    Corollary unnest_node_step :
+      forall (P Q : global) (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs)
+             (envs : node_scoped_env) (aux : list node_aux_names)
+             accS sgS stS0 stS1 sgT stT0 stT1,
+        find_node_env n.(n_name) envs = Some env ->
+        (forall clk_id rst_id,
+            get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
+            Env.find clk_id env = Some base_ty
+            /\ Env.find rst_id env = Some rst_ty) ->
+        cenv = lnode_clock_env (unnest_node P n Hwl Hpref) ->
+        Forall (unnested_equation Q) (unnest_node P n Hwl Hpref).(n_eqs) ->
+        Forall (wl_equation P) n.(n_eqs) ->
+        Forall (wc_equation P vars) n.(n_eqs) ->
+        (forall y,
+            In y (moved_by env init_st
+                    (snd (unnest_equations P n.(n_eqs) init_st))) ->
+            ~ In y scope) ->
+        (** the ambient premises: what the streams contract removes *)
+        (forall eq eqs1 q q',
+            In eq n.(n_eqs) -> unnest_equation P eq q = (eqs1, q') ->
+            forall y ck ckty,
+              In y (vars_defined eqs1) -> find_clock cenv y = OK ck ->
+              assign_clk_type env base_ty ck = Some ckty ->
+              incl (merge [rst_ty] ckty) (A eq)) ->
+        (forall ce dlt,
+            listSatisfiable dlt ce ->
+            forall eq b, In eq n.(n_eqs) -> In b (sec_of env (fst eq)) ->
+              satisfiable dlt (A eq) [b]) ->
+        (** the runs against the target accumulator are scoped and bounded *)
+        (forall ce ct1,
+            generate_leqns_constraints GL env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) stS0 = OK (ce, ct1) ->
+            constraints_scoped scope ce /\ sec_le ct1 stF) ->
+        (** and the source run's own hygiene *)
+        (forall ce ct1,
+            generate_leqns_constraints accS env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) stS0 = OK (ce, ct1) ->
+            wf_constraints ce) ->
+        (forall locals cns ct1,
+            get_mappings_from_node n.(n_vars) env = Some locals ->
+            generate_leqns_constraints accS env base_ty rst_ty
+              (lnode_clock_env n) n.(n_eqs) stS0 = OK (cns, ct1) ->
+            forall y, In y (locals ++ minted stS0 ct1) -> ~ In y scope) ->
+        (** the program-level facts about the published pair *)
+        signature_good sgS ->
+        NoDup (signature_scope sgS) ->
+        signature_good sgT ->
+        signature_scoped sgT ->
+        (forall z, In z (signature_scope sgS) -> In z scope) ->
+        (forall inp ck rst os cns sa sb,
+            generate_constraints sgS inp ck rst os sa = OK (cns, sb) ->
+            call_subst_fresh sgS inp ck rst os /\ NoDup os) ->
+        call_weakens accS GL ->
+        generate_lnode_sig_scoped_env accS n envs aux stS0 = OK (sgS, stS1) ->
+        generate_lnode_sig_scoped_env GL (unnest_node P n Hwl Hpref)
+          envs aux stT0 = OK (sgT, stT1) ->
+        sig_head_weakens sgS sgT.
+    Proof.
+      intros P Q n Hwl Hpref envs aux accS sgS stS0 stS1 sgT stT0 stT1
+        Hfind Haux Hcenv Hunt Hwle Hwce Hmv Hamb Hbs Htgtok Hwf Hdisj
+        Hgood1 Hnd1 Hgood2 Hsc2 Hincl Hinst Hw HS HT.
+      (** both drivers read the same node-local environment *)
+      unfold generate_lnode_sig_scoped_env in HS, HT.
+      rewrite Hfind in HS.
+      cbn [n_name unnest_node] in HT. rewrite Hfind in HT.
+      (** the node theorem, with the entailment supplied *)
+      destruct (unnest_node_signatures_preserved_decoupled P Q n Hwl Hpref
+                  accS GL aux stS0 stT0 sgS stS1 sgT stT1
+                  Haux Hunt Hw)
+        as (Hn & Hi & Ho & Hc & Hr & Hpres).
+      - intros ce cet ct1 ct1' Hsrc Htgt.
+        destruct (Htgtok ce ct1 Hsrc) as (Hcesc & Hbnd).
+        eapply unnest_node_entailment;
+          [exact Hcenv|exact Hwle|exact Hwce|exact Hmv|exact Hamb
+          |intros dlt Hsat; exact (Hbs ce dlt Hsat)
+          |exact Hcesc|exact Hbnd|exact Hsrc|exact Htgt].
+      - exact Hwf.
+      - exact Hdisj.
+      - exact HS.
+      - exact HT.
+      - (** and the pair, packaged *)
+        split; [exact (@Coq.Init.Logic.eq_sym _ _ _ Hn)|].
+        eapply sig_call_weakens_from_good;
+          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2| |exact Hinst].
+        split.
+        + repeat split;
+            [exact (@Coq.Init.Logic.eq_sym _ _ _ Hi)
+            |exact (@Coq.Init.Logic.eq_sym _ _ _ Ho)
+            |exact (@Coq.Init.Logic.eq_sym _ _ _ Hr)
+            |exact (@Coq.Init.Logic.eq_sym _ _ _ Hc)].
+        + eapply preserves_on_weaken; [exact Hincl|exact Hpres].
+    Qed.
+
   End NodeEquations.
 
 End SecLusUnnestingNodes.
