@@ -1169,24 +1169,32 @@ Import UNN.Fresh.Tactics.
         operand.  Referring to the creating run avoids accidentally assigning
         every earlier variable with the same type and clock to this equation's
         level. *)
+    (** The entries the variables THIS RUN created need.
+
+        Keyed on the run's actual output, which is the whole point: keyed
+        instead on a *description* of what the pass might produce -- a recorded
+        annotation, or a run at an arbitrary state -- it speaks about
+        identifiers the pass never created, and demands this equation's level
+        for another equation's variable.  See
+        work_docs/LegI_audit_2026_09_29.v.
+
+        The two clauses are mutually exclusive by shape: a cut output binds
+        through an [Evar], an [ite] output begins with an [Eite].  So no guard
+        on [is_constant] is needed either. *)
     Definition fby_created_pairs
-      (pairs : list (ident * ST)) (to_cut : PS.t)
+      (pairs : list (ident * ST)) (eqs' : list equation)
       (x : ident) (e0 e : exp) (ty : type) (ck : clock)
       (name : option ident) (ckty s0 s1 : ST) : Prop :=
-      (forall q x' q' bp,
-          is_constant e0 = true ->
-          PS.mem x to_cut = true ->
-          fresh_ident norm2 ((ty, ck), false) q = (x', q') ->
+      (forall x' ann bp,
+          eqs' = [([x], [Evar x' ann]); ([x'], [Efby [e0] [e] [ann]])] ->
           Env.find x' env = Some bp ->
           In (bp, merge (merge [rst_ty] ckty) (merge s0 s1)) pairs)
       /\
-      (forall q q' i px eqsi bp,
-          fby_iteexp e0 e (ty, (ck, name)) q =
-            (Eite (Evar i (bool_type, (ck, Some i))) [e0]
-               [Evar px (ty, (ck, Some px))] ([ty], (ck, name)),
-             ([px], [Efby [add_whens (Econst (init_type ty)) ty ck] [e]
-                        [(ty, (ck, name))]]) :: eqsi,
-             q') ->
+      (forall i px eqsi bp,
+          eqs' = ([x], [Eite (Evar i (bool_type, (ck, Some i))) [e0]
+                          [Evar px (ty, (ck, Some px))] ([ty], (ck, name))])
+                 :: ([px], [Efby [add_whens (Econst (init_type ty)) ty ck] [e]
+                              [(ty, (ck, name))]]) :: eqsi ->
           Env.find px env = Some bp ->
           In (bp, merge (merge [rst_ty] ckty) s1) pairs).
 
@@ -1745,7 +1753,7 @@ Import UNN.Fresh.Tactics.
               /\ (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
                             In z scope)
               /\ (es = [Efby [e0] [e] [(ty, (ck, name))]] ->
-                    fby_created_pairs pairs to_cut x e0 e ty ck name
+                    fby_created_pairs pairs eqs' x e0 e ty ck name
                       ckty s0 s1)) ->
         (** and about every flag: its clock, its name, and its entry *)
         (forall y a, In (y, a) (st_anns st') ->
@@ -1828,7 +1836,7 @@ Import UNN.Fresh.Tactics.
           * destruct (Hcreated (@Coq.Init.Logic.eq_refl _
                          [Efby [e0] [e] [(ty, (ck, name))]]))
               as (Hcut & Hpxdata).
-            exact (Hcut st x' s2 b' Hconst Hmem Ex Hb').
+            eapply Hcut; [reflexivity|exact Hb'].
           * exact Hsrc.
           * exact Htgt.
         + rewrite ret_spec in Hrun. inversion Hrun; subst eqs' st'.
@@ -1867,7 +1875,7 @@ Import UNN.Fresh.Tactics.
         + exact HL.
         + exact Hbs.
         + exact (Hflags i ck ckty bi Hi Hckty Hbi).
-        + exact (Hpxdata st s2 i px eqsi bp Hfby Hbp).
+        + eapply Hpxdata; [reflexivity|exact Hbp].
         + destruct Heqsi as [Heqsi|Heqsi].
           * left. exact Heqsi.
           * right. split; [exact Hcki|exact Heqsi].
@@ -1912,36 +1920,43 @@ Import UNN.Fresh.Tactics.
 
     (** ** A node's equation list
 
-        Induction on [eqs].  The two [Forall2]s compose with [Forall2_app], and
-        the source's satisfaction splits with [Forall_app], so there is no
-        disjointness bookkeeping at all -- that is the payoff of moving the
-        composition out of the chunks.
+        The per-equation data is a [Forall2] against the run's OWN output, one
+        chunk per equation.  That is what pins each created variable to the
+        equation that created it -- keyed instead on a description of the
+        equation (its annotation, or its run at an arbitrary state) the premise
+        demands this equation's level for another equation's variable, and is
+        then unsatisfiable; see work_docs/LegI_audit_2026_09_29.v.
 
-        The operand types are given at *any* state because the operands are
-        normalized, so [assign_lexp_normalized_pure] makes their runs
-        restartable; that is what keeps the induction from having to track the
-        states.  [map_bind_st_follows] weakens the [st_anns st'] premises from
-        the whole run to each step. *)
+        With that, the induction needs no disjointness bookkeeping at all: the
+        two [Forall2]s compose with [Forall2_app] and the source's satisfaction
+        splits with [Forall_app].  The operand types are given at *any* state,
+        which [assign_lexp_normalized_pure] supplies for normalized operands,
+        so the induction never has to track them; [map_bind_st_follows] weakens
+        the [st_anns st'] premises from the whole run to each step. *)
+
+    Definition fby_eqn_data (pairs : list (ident * ST))
+      (eq : equation) (eqk : list equation) : Prop :=
+      forall x e0 e ty ck name,
+        eq = ([x], [Efby [e0] [e] [(ty, (ck, name))]])
+        \/ eq = ([x], [Earrow [e0] [e] [(ty, (ck, name))]]) ->
+        exists ckty s0 s1 b,
+          find_clock cenv x = OK ck
+          /\ assign_clk_type env base_ty ck = Some ckty
+          /\ Env.find x env = Some b
+          /\ In b scope
+          /\ (forall q, assign_lexp_type G env base_ty rst_ty e0 q
+                        = OK ([(s0, [])], q))
+          /\ (forall q, assign_lexp_type G env base_ty rst_ty e q
+                        = OK ([(s1, [])], q))
+          /\ (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
+                        In z scope)
+          /\ (eq = ([x], [Efby [e0] [e] [(ty, (ck, name))]]) ->
+                fby_created_pairs pairs eqk x e0 e ty ck name ckty s0 s1).
+
     Theorem fby_equations_roles :
       forall pairs to_cut eqs eqs' st st' ce cet s u u',
         map_bind (fby_equation to_cut) eqs st = (eqs', st') ->
-        (forall x e0 e ty ck name,
-            In ([x], [Efby [e0] [e] [(ty, (ck, name))]]) eqs
-            \/ In ([x], [Earrow [e0] [e] [(ty, (ck, name))]]) eqs ->
-            exists ckty s0 s1 b,
-              find_clock cenv x = OK ck
-              /\ assign_clk_type env base_ty ck = Some ckty
-              /\ Env.find x env = Some b
-              /\ In b scope
-              /\ (forall q, assign_lexp_type G env base_ty rst_ty e0 q
-                            = OK ([(s0, [])], q))
-              /\ (forall q, assign_lexp_type G env base_ty rst_ty e q
-                            = OK ([(s1, [])], q))
-              /\ (forall z, In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
-                            In z scope)
-              /\ (In ([x], [Efby [e0] [e] [(ty, (ck, name))]]) eqs ->
-                    fby_created_pairs pairs to_cut x e0 e ty ck name
-                      ckty s0 s1)) ->
+        Forall2 (fby_eqn_data pairs) eqs eqs' ->
         (forall y a, In (y, a) (st_anns st') ->
             find_clock cenv y = OK (snd (fst a))
             /\ exists c, Env.find y env = Some c /\ ~ In c scope) ->
@@ -1979,6 +1994,8 @@ Import UNN.Fresh.Tactics.
         apply bind_spec in Hrun as (eq1 & fst1 & Hrun1 & Hrun).
         apply bind_spec in Hrun as (eqsr & fst2 & Hrunr & Hret).
         rewrite ret_spec in Hret. inversion Hret; subst eqs' st'.
+        (** the data splits with the run *)
+        inversion Hdata as [|eqh eqkh eqt eqkt Hd1 Hdr]; subst.
         apply generate_leqns_cons_inv in Hsrc
           as (ce1 & sv1 & ce2 & Hsrc1 & Hsrc2 & Hce).
         subst ce.
@@ -1997,15 +2014,13 @@ Import UNN.Fresh.Tactics.
                     ce1 cet1 s sv1 tv1 Hrun1)
           as (roles1 & Hroles1 & Hbounds1 & Hstate1).
         + intros x e0 e ty ck name Hxs Hshape.
-          assert (Hin :
-              In ([x], [Efby [e0] [e] [(ty, (ck, name))]])
-                    ((xs, es) :: eqs)
-              \/ In ([x], [Earrow [e0] [e] [(ty, (ck, name))]])
-                    ((xs, es) :: eqs)).
-          { destruct Hshape as [Hfby|Harrow].
-            - left. left. rewrite Hxs, Hfby. reflexivity.
-            - right. left. rewrite Hxs, Harrow. reflexivity. }
-          destruct (Hdata x e0 e ty ck name Hin)
+          assert (Hshape' :
+              (xs, es) = ([x], [Efby [e0] [e] [(ty, (ck, name))]])
+              \/ (xs, es) = ([x], [Earrow [e0] [e] [(ty, (ck, name))]])).
+          { destruct Hshape as [Hfby|Harrow];
+              [left|right]; rewrite Hxs; [rewrite Hfby|rewrite Harrow];
+              reflexivity. }
+          destruct (Hd1 x e0 e ty ck name Hshape')
             as (ckty & s0 & s1 & b & Hck & Hckty & Hb & Hbs
                 & H0 & H1 & HL & Hcreated).
           exists ckty, s0, s1, b.
@@ -2017,7 +2032,7 @@ Import UNN.Fresh.Tactics.
           split; [exact (H1 s)|].
           split; [exact HL|].
           intro Hes. apply Hcreated.
-          subst xs es. exact (in_eq _ _).
+          rewrite Hxs, Hes. reflexivity.
         + intros y a Hy.
           apply Hnew.
           exact (st_follows_incl fst1 fst2 Hfollow (y, a) Hy).
@@ -2031,41 +2046,16 @@ Import UNN.Fresh.Tactics.
         + exact Hsrc1.
         + exact Htgt1.
         + subst tv1.
-          destruct (IH eqsr fst1 fst2 ce2 cet2 sv1 u u' Hrunr)
+          destruct (IH eqsr fst1 fst2 ce2 cet2 sv1 u u' Hrunr Hdr
+                      Hnew Hflags Hsc2 Hsrc2 Htgt2)
             as (roles2 & Hroles2 & Hbounds2).
-          * intros x e0 e ty ck name Hin.
-            assert (HinFull :
-                In ([x], [Efby [e0] [e] [(ty, (ck, name))]])
-                      ((xs, es) :: eqs)
-                \/ In ([x], [Earrow [e0] [e] [(ty, (ck, name))]])
-                      ((xs, es) :: eqs)).
-            { destruct Hin as [Hin|Hin].
-              - left. right. exact Hin.
-              - right. right. exact Hin. }
-            destruct (Hdata x e0 e ty ck name HinFull)
-              as (ckty & s0 & s1 & b & Hck & Hckty & Hb & Hbs
-                  & H0 & H1 & HL & Hcreated).
-            exists ckty, s0, s1, b.
-            split; [exact Hck|].
-            split; [exact Hckty|].
-            split; [exact Hb|].
-            split; [exact Hbs|].
-            split; [exact H0|].
-            split; [exact H1|].
-            split; [exact HL|].
-            intro Hfby. apply Hcreated. right. exact Hfby.
-          * exact Hnew.
-          * exact Hflags.
-          * exact Hsc2.
-          * exact Hsrc2.
-          * exact Htgt2.
-          * exists (roles1 ++ roles2). split.
-            -- apply Forall2_app; [exact Hroles1|exact Hroles2].
-            -- intros dlt Hsat. unfold listSatisfiable in Hsat.
-               apply Forall_app in Hsat as (Hsat1 & Hsat2).
-               apply Forall2_app.
-               ++ exact (Hbounds1 dlt Hsat1).
-               ++ exact (Hbounds2 dlt Hsat2).
+          exists (roles1 ++ roles2). split.
+          * apply Forall2_app; [exact Hroles1|exact Hroles2].
+          * intros dlt Hsat. unfold listSatisfiable in Hsat.
+            apply Forall_app in Hsat as (Hsat1 & Hsat2).
+            apply Forall2_app.
+            -- exact (Hbounds1 dlt Hsat1).
+            -- exact (Hbounds2 dlt Hsat2).
     Qed.
 
     (** ** The equation-level entailment, for a node
@@ -2082,33 +2072,15 @@ Import UNN.Fresh.Tactics.
         levels_functional pairs ->
         created_hidden pairs ->
         levels_visible pairs ->
-        (** the per-equation and per-created-variable data, for this node's run;
-            same two hypotheses as [fby_equations_roles], with [eqs := n_eqs n]
-            and the run being the one [normfby_node] performs *)
+        (** the per-equation and per-created-variable data, for this node's run.
+            The data is paired with the run's own output, which is what ties each
+            created variable to the equation that created it; [map_bind] is
+            deterministic, so quantifying over the run names the actual one. *)
         (forall eqs' stf,
             map_bind (fby_equation
                         (PS.union c (ps_from_list (List.map fst (n_out n)))))
               n.(n_eqs) init_st = (eqs', stf) ->
-            (forall x e0 e ty ck name,
-                In ([x], [Efby [e0] [e] [(ty, (ck, name))]]) n.(n_eqs)
-                \/ In ([x], [Earrow [e0] [e] [(ty, (ck, name))]]) n.(n_eqs) ->
-                exists ckty s0 s1 b,
-                  find_clock cenv x = OK ck
-                  /\ assign_clk_type env base_ty ck = Some ckty
-                  /\ Env.find x env = Some b
-                  /\ In b scope
-                  /\ (forall q, assign_lexp_type G env base_ty rst_ty e0 q
-                                = OK ([(s0, [])], q))
-                  /\ (forall q, assign_lexp_type G env base_ty rst_ty e q
-                                = OK ([(s1, [])], q))
-                  /\ (forall z,
-                         In z (merge (merge [rst_ty] ckty) (merge s0 s1)) ->
-                         In z scope)
-                  /\ (In ([x], [Efby [e0] [e] [(ty, (ck, name))]]) n.(n_eqs) ->
-                        fby_created_pairs pairs
-                          (PS.union c
-                            (ps_from_list (List.map fst (n_out n))))
-                          x e0 e ty ck name ckty s0 s1))
+            Forall2 (fby_eqn_data pairs) n.(n_eqs) eqs'
             /\ (forall y a, In (y, a) (st_anns stf) ->
                    find_clock cenv y = OK (snd (fst a))
                    /\ exists d, Env.find y env = Some d /\ ~ In d scope)
