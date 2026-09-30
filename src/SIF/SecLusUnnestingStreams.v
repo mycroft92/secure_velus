@@ -7496,6 +7496,51 @@ Section StreamAmbients.
         apply in_or_app. right. now apply Houttmv0.
     Qed.
 
+
+    (** * The expression level, closed on the pointwise relation
+
+        The same induction as the scalar [carries_exp], on the contract that
+        gives each source stream its own clock ambient.  Only the call case
+        reads the two program-level facts, and only the merge and the
+        conditional split on [is_control]. *)
+
+    Theorem carries_exp_streams :
+      forall P,
+        wc_global P ->
+        CALLS.sig_inputs_ok GL P ->
+        forall e, carries_streams P e.
+    Proof.
+      intros P Hwcg Hsigin e. induction e using exp_ind2; intros ic.
+      - apply carries_Econst_streams.
+      - apply carries_Evar_streams.
+      - apply carries_Eunop_streams; assumption.
+      - apply carries_Ebinop_streams; assumption.
+      - apply carries_Efby_streams; assumption.
+      - apply carries_Earrow_streams; assumption.
+      - apply carries_Ewhen_streams; assumption.
+      - destruct a as (tys & cl). destruct ic;
+          [apply carries_Emerge_control_streams
+          |apply carries_Emerge_lift_streams]; assumption.
+      - destruct a as (tys & cl). destruct ic;
+          [apply carries_Eite_control_streams
+          |apply carries_Eite_lift_streams]; assumption.
+      - apply carries_Eapp_streams;
+          [exact Hwcg|exact Hsigin|assumption|].
+        intros e1 Her. subst ro. assumption.
+    Qed.
+
+    Corollary carries_exps_streams :
+      forall P,
+        wc_global P ->
+        CALLS.sig_inputs_ok GL P ->
+        forall es, carries_list_streams P es.
+    Proof.
+      intros P Hwcg Hsigin es.
+      apply carries_list_streams_intro.
+      apply Forall_forall. intros e _.
+      exact (carries_exp_streams P Hwcg Hsigin e).
+    Qed.
+
   End ExpressionContract.
 
 End StreamAmbients.
