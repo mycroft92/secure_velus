@@ -31,10 +31,52 @@ distinction is the point, not decoration.
   * `unnest_node_fields`, `unnest_node_equations_nodup`, and the moved-name
     freshness corollaries
 
-*Pointwise contract* (`carries_at_streams`, one ambient per stream) -- every
-form but the call: `Econst`, `Evar`, `Eunop`, `Ebinop`, the list fold,
-`Ewhen`, `Emerge` and `Eite` in both their control and lifting forms,
-`Efby`, `Earrow`.
+*Pointwise contract* (`carries_at_streams`, one ambient per stream) -- **the
+expression level is closed** (2026-09-30):
+
+  * every constructor: `Econst`, `Evar`, `Eunop`, `Ebinop`, the list fold
+    (`carries_list_streams_intro`), `Ewhen`, `Emerge` and `Eite` in both
+    their control and lifting forms, `Efby`, `Earrow`, and now
+    `carries_Eapp_streams`;
+  * `carries_exp_streams` and `carries_exps_streams` -- the induction, with
+    `wc_global P` and `CALLS.sig_inputs_ok GL P` as its only two premises.
+
+What the call case needed that the scalar one did not:
+
+  * `reset_step_streams`.  The scalar `reset_step` **cannot** be reused: its
+    ambient premise is a containment for *every* variable the reset's
+    unnesting lifts, which is exactly the premise the pointwise contract
+    exists to avoid.  In its place go the two facts the rest of the streams
+    development uses -- the reset expression has one stream, so one ambient
+    covers it (`clocks_covered`), and the variable `unnest_reset` binds it
+    to carries that same stream's clock, which `state_clocks_found` reads
+    back.  Run at `merge (merge [rst_ty] ckty) rck`, its conclusion
+    collapses into what the transfer wants, because the source reset type
+    already contains `rck`.  *That ambient is forced*: anything larger is
+    not below `merge amb_call (fst rstty)`, so a "big enough" ambient is not
+    an option here.
+  * `stream_rel_compose` -- the scalar `amb_trans`/`Forall2_amb_compose`,
+    transposed.  The arguments cross two passes and each relates its own
+    pair of type lists.
+  * the augmented instantiation, `generate_constraints_mono_sem_aug`, rather
+    than the plain `generate_constraints_mono_sem` the scalar call uses.
+    This is what lets each argument keep its own slot's ambient instead of
+    being weakened to a common one -- which it could not be, since the
+    slots' clocks differ.  Its two remaining obligations are
+    `CALLS.augment_actuals_fresh` and `CALLS.call_augment_dep_concrete`,
+    both of which were prepared for exactly this.
+
+And the four premises it added, each a node-level fact and none new in kind:
+
+  * on the lemma: `wc_global P` (for `wc_exp_Eapp_base_clock`, which is what
+    makes the call's base clock the common parent of its arguments') and
+    `CALLS.sig_inputs_ok GL P`;
+  * in `Section ExpressionContract`: `clk_types_defined` -- every clock of a
+    well-clocked expression has a type, the totality fact the argument
+    ambients are built from -- and `call_anon_not_env_key`, which is the
+    premise `assign_lexp_named_covered` documents as
+    `call_arg_fresh_not_env_key` and which `SecLNamingTotality.v` already
+    proves at the program level.
 
 *Groundwork for the call* (`SecLusUnnestingBase.v`):
 
@@ -130,9 +172,22 @@ The three scoping hypotheses on the source generator --
 are *satisfiable*; see the section below.  They are still undischarged, and
 the discharge is the node level's job.
 
-`node_carries` also still carries the two ambient premises that the
-per-equation statement cannot discharge; removing them is what the pointwise
-contract is for.
+`node_carries` -- and with it `unnest_node_step` -- still carries the two
+ambient premises that the per-equation statement cannot discharge; removing
+them is what the pointwise contract is for.  As of 2026-09-30 the pointwise
+expression level is closed, so what stands between the two is the
+right-hand-side and equation chain on the pointwise relation: the streams
+analogues of `rhs_carries_exp`, `rhs_carries_list_intro`,
+`eqn_carries_plain`, `eqn_carries_call`, `eqn_carries_one`,
+`eqn_carries_split` and `eqn_carries_all`.  The scalar chain is
+`SecLusUnnestingEquations.v` lines 228--4367.
+
+Note the premises are not merely inconvenient, they are **jointly
+unsatisfiable** for a multi-output equation whose outputs sit on differing
+clocks: the first forces `A eq` to contain every lifted variable's clock
+type, the second forces it below every left-hand variable's level.  So this
+is not an optimisation; the node theorem is vacuous on exactly the equations
+that matter until the chain is redone pointwise.
 
 ### RESOLVED 2026-09-25: `source_types_scoped` was unsatisfiable for programs with calls
 
