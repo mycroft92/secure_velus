@@ -1798,7 +1798,8 @@ Import UNN.Fresh.Tactics.
             clocks_covered env base_ty rst_ty (clocksof (snd eq)) (As eq)
             /\ List.length (As eq) = List.length (fst eq)) ->
         state_clocks_found cenv st' ->
-        (forall eq, In eq eqs -> eqn_bounds env dlt (As eq) (fst eq)) ->
+        (forall eq, In eq eqs ->
+            eqn_ambients env base_ty rst_ty cenv (fst eq) (As eq)) ->
         constraints_scoped scope ce ->
         map_bind (unnest_equation P) eqs st = (eqss, st') ->
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs xst
@@ -1928,26 +1929,7 @@ Import UNN.Fresh.Tactics.
           exact (Hmv y (moved_by_suffix env st st1 st' Hf1 y Hy)). }
         { intros eq' Hin. exact (Hamb eq' (or_intror Hin)). }
         { exact Hfound. }
-        { (** the tail's bounds, carried to the head's witness *)
-          intros eq' Hin.
-          unfold eqn_bounds in Hbs0 |- *.
-          eapply Forall2_impl_In; [|exact (Hbs0 eq' (or_intror Hin))].
-          intros a x Ha Hx Hax b Hb.
-          assert (In b scope) as Hbsc by exact (env_range_scoped x b Hb).
-          assert (forall y, In y a -> ~ In y (moved_by env st st1)) as Haoff.
-          { intros y Hy Hin'.
-            assert (In y scope) as Hys.
-            { pose proof (As_scoped eq') as Hsc'.
-              unfold stream_ambients_scoped in Hsc'.
-              rewrite Forall_forall in Hsc'. exact (Hsc' a Ha y Hy). }
-            exact (Hmv y (moved_by_prefix env st st1 st' Hf2 y Hin') Hys). }
-          assert (forall y, In y [b] -> ~ In y (moved_by env st st1))
-            as Hboff.
-          { intros y Hy Hin'. destruct Hy as [Hy|[]]. subst y.
-            exact (Hmv b (moved_by_prefix env st st1 st' Hf2 b Hin')
-                     Hbsc). }
-          exact (satisfiable_off a [b] (moved_by env st st1) dlt dlt1
-                   Hoff1 Haoff Hboff (Hax b Hb)). }
+        { intros eq' Hin. exact (Hbs0 eq' (or_intror Hin)). }
         { exact Hcesc2. }
         { exact Hunr. }
         { exact Hgen2. }
@@ -2115,7 +2097,8 @@ Import UNN.Fresh.Tactics.
             clocks_covered env base_ty rst_ty (clocksof (snd eq)) (As eq)
             /\ List.length (As eq) = List.length (fst eq)) ->
         state_clocks_found cenv st' ->
-        (forall eq, In eq eqs -> eqn_bounds env dlt (As eq) (fst eq)) ->
+        (forall eq, In eq eqs ->
+            eqn_ambients env base_ty rst_ty cenv (fst eq) (As eq)) ->
         constraints_scoped scope ce ->
         unnest_equations P eqs init_st = (eqs', st') ->
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs xst
@@ -2157,9 +2140,8 @@ Import UNN.Fresh.Tactics.
             clocks_covered env base_ty rst_ty (clocksof (snd eq)) (As eq)
             /\ List.length (As eq) = List.length (fst eq)) ->
         state_clocks_found cenv st' ->
-        (forall dlt,
-            listSatisfiable dlt ce ->
-            forall eq, In eq eqs -> eqn_bounds env dlt (As eq) (fst eq)) ->
+        (forall eq, In eq eqs ->
+            eqn_ambients env base_ty rst_ty cenv (fst eq) (As eq)) ->
         constraints_scoped scope ce ->
         unnest_equations P eqs init_st = (eqs', st') ->
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs xst
@@ -2174,7 +2156,7 @@ Import UNN.Fresh.Tactics.
         Hbnd dlt Hsat.
       destruct
         (node_carries_streams P eqs eqs' st' ce xst xst' cet yst yst' dlt
-           Hwcg Hsigin Hwl Hwc Hnd Hmv Hamb Hfound (Hbs0 dlt Hsat) Hcesc
+           Hwcg Hsigin Hwl Hwc Hnd Hmv Hamb Hfound Hbs0 Hcesc
            Hun Hgen Hgent Hsat Hbnd)
         as (dlt' & Hoff & Hsat' & Hscoped).
       exists dlt'. split.
@@ -2745,10 +2727,8 @@ Import UNN.Fresh.Tactics.
             /\ List.length (As eq) = List.length (fst eq)) ->
         state_clocks_found cenv
           (snd (unnest_equations P n.(n_eqs) init_st)) ->
-        (forall dlt,
-            listSatisfiable dlt ce ->
-            forall eq, In eq n.(n_eqs) ->
-              eqn_bounds env dlt (As eq) (fst eq)) ->
+        (forall eq, In eq n.(n_eqs) ->
+            eqn_ambients env base_ty rst_ty cenv (fst eq) (As eq)) ->
         constraints_scoped scope ce ->
         sec_le ct1 stF ->
         generate_leqns_constraints GL env base_ty rst_ty
@@ -3274,10 +3254,8 @@ Import UNN.Fresh.Tactics.
             /\ List.length (As eq) = List.length (fst eq)) ->
         state_clocks_found cenv
           (snd (unnest_equations P n.(n_eqs) init_st)) ->
-        (forall ce dlt,
-            listSatisfiable dlt ce ->
-            forall eq, In eq n.(n_eqs) ->
-              eqn_bounds env dlt (As eq) (fst eq)) ->
+        (forall eq, In eq n.(n_eqs) ->
+            eqn_ambients env base_ty rst_ty cenv (fst eq) (As eq)) ->
         (** the runs against the target accumulator are scoped and bounded *)
         (forall ce ct1,
             generate_leqns_constraints GL env base_ty rst_ty
@@ -3322,8 +3300,7 @@ Import UNN.Fresh.Tactics.
         destruct (Htgtok ce ct1 Hsrc) as (Hcesc & Hbnd).
         eapply unnest_node_entailment_streams;
           [exact Hwcg|exact Hsigin|exact Hcenv|exact Hwle|exact Hwce
-          |exact Hmv|exact Hamb|exact Hfound
-          |intros dlt Hsat; exact (Hbs ce dlt Hsat)
+          |exact Hmv|exact Hamb|exact Hfound|exact Hbs
           |exact Hcesc|exact Hbnd|exact Hsrc|exact Htgt].
       - exact Hwf.
       - exact Hdisj.

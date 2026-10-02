@@ -2364,6 +2364,51 @@ Import UNN.Fresh.Tactics.
                Hrelr Hbsr Hctr Hr1 Hr2 Hsatr).
     Qed.
 
+    (** * The general rule already says the ambient is below each variable
+
+        The other half of the bound the equation level used to be given.  For a
+        non-call equation the source's own constraint is
+        [ambient ckty_i ⊔ t_i ⊑ b_i]; dropping the right operand leaves exactly
+        [merge [rst_ty] ckty_i ⊑ b_i].  So the bound is not an assumption about
+        the valuation either -- it is what satisfying the source equation
+        means. *)
+
+    Lemma generate_lvars_constraints_bounds :
+      forall dlt xs bs ts c s s',
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
+          = OK (c, s') ->
+        listSatisfiable dlt c ->
+        Forall2 (fun x b =>
+                   exists ck ckty,
+                     find_clock cenv x = OK ck
+                     /\ assign_clk_type env base_ty ck = Some ckty
+                     /\ satisfiable dlt (merge [rst_ty] ckty) [b]) xs bs.
+    Proof.
+      intros dlt xs. induction xs as [|x xs IH];
+        intros bs ts c s s' H Hsat.
+      - destruct bs as [|b bs]; [constructor|].
+        destruct ts; simpl in H; discriminate H.
+      - destruct bs as [|b bs];
+          [destruct ts; simpl in H; discriminate H|].
+        destruct ts as [|t ts]; [simpl in H; discriminate H|].
+        simpl in H.
+        apply sec_bind_inv in H as (ckty0 & s1 & Hck0 & H).
+        apply sec_bind_inv in H as (rest & s2 & Hr & Hret).
+        unfold SC.ret in Hret. inversion Hret; subst.
+        apply listSatisfiable_app in Hsat as (Hsath & Hsatr).
+        destruct (eqn_clock_type_inv env base_ty cenv x ckty0 s s1 Hck0)
+          as (ck & Hfc & Hac & ?); subst s1.
+        constructor; [|exact (IH bs ts rest s s' Hr Hsatr)].
+        exists ck, ckty0. split; [exact Hfc|split; [exact Hac|]].
+        apply lconstrain_sound in Hsath as (_ & Hle).
+        apply order_iff_satisfiable in Hle.
+        unfold lst_interp in Hle. rewrite fst_ljoin in Hle.
+        unfold ambient in Hle. rewrite fst_ljoin, fst_lvar in Hle.
+        cbn [fst] in Hle.
+        exact (satisfiable_through_merge_l dlt (merge [rst_ty] ckty0)
+                 (fst t) [b] Hle).
+    Qed.
+
     (** The property the split needs of what a right-hand side comes back
         as: single-stream, not a call, and one type whatever state it is
         typed from.  The split cuts the right-hand side into one equation per
@@ -3706,23 +3751,36 @@ Import UNN.Fresh.Tactics.
         because a single ambient would have to contain every output's clock
         and sit below every output at once. *)
 
-    Definition eqn_bounds (dlt : ident -> Lat.t) (ambs : list ST)
-        (xs : list ident) : Prop :=
-      Forall2 (fun a x => forall b, Env.find x env = Some b ->
-                                    satisfiable dlt a [b]) ambs xs.
+    Definition eqn_ambients (xs : list ident) (ambs : list ST) : Prop :=
+      Forall2 (fun x a =>
+                 forall ck ckty,
+                   find_clock cenv x = OK ck ->
+                   assign_clk_type env base_ty ck = Some ckty ->
+                   a = merge [rst_ty] ckty) xs ambs.
 
-    Lemma eqn_bounds_stream_bounds :
-      forall dlt ambs xs bs,
-        eqn_bounds dlt ambs xs ->
-        Forall2 (fun x b => Env.find x env = Some b) xs bs ->
+    (** And the bound, read off the equation's own constraint rather than
+        assumed.  This is where [generate_lvars_constraints_bounds] is spent:
+        the premise that survives at the node level is now [eqn_ambients],
+        which mentions no valuation at all. *)
+    Lemma eqn_ambients_stream_bounds :
+      forall dlt xs bs ts ambs c s s',
+        eqn_ambients xs ambs ->
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
+          = OK (c, s') ->
+        listSatisfiable dlt c ->
         stream_bounds dlt ambs bs.
     Proof.
-      intros dlt ambs xs bs Hb. revert bs.
-      unfold eqn_bounds, stream_bounds in *.
-      induction Hb as [|a x ambs0 xs0 Ha Hr IH]; intros bs Hbs.
-      - inversion Hbs; subst. constructor.
-      - inversion Hbs as [|x0 b xs1 bs0 Hxb Hbsr]; subst.
-        constructor; [exact (Ha b Hxb)|exact (IH bs0 Hbsr)].
+      intros dlt xs bs ts ambs c s s' Hamb Hlv Hsat.
+      pose proof (generate_lvars_constraints_bounds dlt xs bs ts c s s'
+                    Hlv Hsat) as Hb1.
+      unfold eqn_ambients in Hamb. unfold stream_bounds.
+      clear - Hamb Hb1. revert ambs Hamb.
+      induction Hb1 as [|x b xs0 bs0 (ck & ckty & Hfc & Hac & Hsb) Hr IH];
+        intros ambs Hamb.
+      - inversion Hamb; subst. constructor.
+      - inversion Hamb as [|x0 a xs1 ambs0 Ha Har]; subst.
+        constructor; [|exact (IH ambs0 Har)].
+        rewrite (Ha ck ckty Hfc Hac). exact Hsb.
     Qed.
 
     Lemma eqn_carries_plain_streams :
@@ -3742,7 +3800,7 @@ Import UNN.Fresh.Tactics.
         clocks_covered_local (clocksof es) ambs ->
         List.length ambs = List.length xs ->
         state_clocks_found_local st' ->
-        eqn_bounds dlt ambs xs ->
+        eqn_ambients xs ambs ->
         constraints_scoped scope ce ->
         unnest_equation P (xs, es) st = (eqs', st') ->
         generate_leqn_constraint GL env base_ty rst_ty cenv (xs, es) xst
@@ -3844,7 +3902,8 @@ Import UNN.Fresh.Tactics.
 
       assert (stream_bounds dlt' ambs bs) as Hbs'.
       { assert (stream_bounds dlt ambs bs) as Hbs0
-            by exact (eqn_bounds_stream_bounds dlt ambs xs bs Hbnds Hbsf).
+            by exact (eqn_ambients_stream_bounds dlt xs bs ts ambs ce si xst'
+                        Hbnds Hlv Hsat).
         unfold stream_bounds in Hbs0 |- *.
         eapply Forall2_impl_In; [|exact Hbs0].
         intros a b Ha Hb Hab.
@@ -5793,7 +5852,7 @@ Import UNN.Fresh.Tactics.
         clocks_covered_local (clockof e) ambs ->
         List.length ambs = List.length ys ->
         state_clocks_found_local st' ->
-        eqn_bounds dlt ambs ys ->
+        eqn_ambients ys ambs ->
         constraints_scoped scope ce ->
         unnest_equation P (ys, [e]) st = (eqs', st') ->
         generate_leqn_constraint GL env base_ty rst_ty cenv (ys, [e]) xst
@@ -6305,7 +6364,7 @@ Import UNN.Fresh.Tactics.
         clocks_covered_local (clocksof es) ambs ->
         List.length ambs = List.length xs ->
         state_clocks_found_local st' ->
-        eqn_bounds dlt ambs xs ->
+        eqn_ambients xs ambs ->
         constraints_scoped scope ce ->
         unnest_equation P (xs, es) st = (eqs', st') ->
         generate_lsplit_constraints GL env base_ty rst_ty cenv xs es xst
@@ -6386,17 +6445,20 @@ Import UNN.Fresh.Tactics.
           as Hambs2len.
         { rewrite skipn_length_any.
           rewrite app_length, Hambs1len in Hlenamb. lia. }
-        assert (eqn_bounds dlt ambs1 (firstn (numstreams e) xs)
-                /\ eqn_bounds dlt ambs2 (skipn (numstreams e) xs))
+        assert (eqn_ambients (firstn (numstreams e) xs) ambs1
+                /\ eqn_ambients (skipn (numstreams e) xs) ambs2)
           as (Hbnds1 & Hbnds2).
-        { unfold eqn_bounds in Hbnds |- *.
+        { unfold eqn_ambients in Hbnds |- *.
           rewrite <- (firstn_skipn (numstreams e) xs) in Hbnds.
           apply (Forall2_app_split
-                   (fun a x => forall b, Env.find x env = Some b ->
-                                         satisfiable dlt a [b])
-                   ambs1 (firstn (numstreams e) xs)
-                   ambs2 (skipn (numstreams e) xs) Hbnds).
-          transitivity (numstreams e); [exact Hambs1len|symmetry; exact HlenH]. }
+                   (fun x a => forall ck ckty,
+                        find_clock cenv x = OK ck ->
+                        assign_clk_type env base_ty ck = Some ckty ->
+                        a = merge [rst_ty] ckty)
+                   (firstn (numstreams e) xs) ambs1
+                   (skipn (numstreams e) xs) ambs2 Hbnds).
+          transitivity (numstreams e);
+            [exact HlenH|symmetry; exact Hambs1len]. }
 
         (** the head chunk is an equation in its own right *)
         assert (unnest_equation P (firstn (numstreams e) xs, [e]) st
@@ -6648,21 +6710,7 @@ Import UNN.Fresh.Tactics.
         { exact Hcovered2. }
         { exact Hambs2len. }
         { exact Hfound. }
-        { (** the tail's bounds, carried to the head's witness *)
-          unfold eqn_bounds in Hbnds2 |- *.
-          eapply Forall2_impl_In; [|exact Hbnds2].
-          intros a x Ha Hx Hax b Hb.
-          assert (In b scope) as Hbsc by exact (env_range_scoped x b Hb).
-          assert (forall y, In y a -> ~ In y (moved_by st s1)) as Haoff.
-          { intros y Hy Hin.
-            rewrite Forall_forall in Hambsc2.
-            exact (Hmv y (eq_moved_by_prefix st s1 st' Hf2 y Hin)
-                     (Hambsc2 a Ha y Hy)). }
-          assert (forall y, In y [b] -> ~ In y (moved_by st s1)) as Hboff.
-          { intros y Hy Hin. destruct Hy as [Hy|[]]. subst y.
-            exact (Hmv b (eq_moved_by_prefix st s1 st' Hf2 b Hin) Hbsc). }
-          exact (satisfiable_off a [b] (moved_by st s1) dlt dlt1
-                   Hoff1 Haoff Hboff (Hax b Hb)). }
+        { exact Hbnds2. }
         { exact Hcescr. }
         { exact Hunr'. }
         { exact Hgenr. }
@@ -6768,7 +6816,7 @@ Import UNN.Fresh.Tactics.
         clocks_covered_local (clocksof (snd eq)) ambs ->
         List.length ambs = List.length (fst eq) ->
         state_clocks_found_local st' ->
-        eqn_bounds dlt ambs (fst eq) ->
+        eqn_ambients (fst eq) ambs ->
         constraints_scoped scope ce ->
         unnest_equation P eq st = (eqs', st') ->
         generate_leqn_constraint GL env base_ty rst_ty cenv eq xst
