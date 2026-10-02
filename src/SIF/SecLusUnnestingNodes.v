@@ -3320,4 +3320,101 @@ Import UNN.Fresh.Tactics.
 
   End NodeEquations.
 
+  (** * The canonical ambient assignment
+
+      Neither [eqn_ambients] nor the scoping of the ambients has to be
+      assumed: taking each defined variable's own clock ambient satisfies both
+      by construction.  Whoever instantiates [Section NodeEquations] discharges
+      [As_scoped] and the [eqn_ambients] premise with these two lemmas, which
+      leaves exactly one ambient fact at the node level -- that an equation's
+      stream clocks are the declared clocks of the variables it defines, which
+      is [wc_equation] read through the agreement between the target node's
+      clock environment and the source node's declared variables. *)
+
+  Definition canonical_ambient (env : Env.t ident) (base_ty rst_ty : ident)
+      (cenv : Env.t (type * clock)) (x : ident) : ST :=
+    match find_clock cenv x with
+    | OK ck =>
+        match assign_clk_type env base_ty ck with
+        | Some ckty => merge [rst_ty] ckty
+        | None => []
+        end
+    | Error _ => []
+    end.
+
+  Definition canonical_ambients (env : Env.t ident) (base_ty rst_ty : ident)
+      (cenv : Env.t (type * clock)) (eq : equation) : list ST :=
+    List.map (canonical_ambient env base_ty rst_ty cenv) (fst eq).
+
+  Lemma canonical_ambients_spec :
+    forall env base_ty rst_ty cenv eq,
+      eqn_ambients env base_ty rst_ty cenv (fst eq)
+        (canonical_ambients env base_ty rst_ty cenv eq).
+  Proof.
+    intros env base_ty rst_ty cenv (xs, es).
+    unfold eqn_ambients, canonical_ambients. cbn [fst].
+    induction xs as [|x xs IH]; [constructor|].
+    cbn [List.map]. constructor; [|exact IH].
+    intros ck ckty Hfc Hac. unfold canonical_ambient.
+    rewrite Hfc, Hac. reflexivity.
+  Qed.
+
+  Lemma canonical_ambients_length :
+    forall env base_ty rst_ty cenv eq,
+      List.length (canonical_ambients env base_ty rst_ty cenv eq)
+      = List.length (fst eq).
+  Proof.
+    intros env base_ty rst_ty cenv eq.
+    unfold canonical_ambients. apply map_length.
+  Qed.
+
+  Lemma canonical_ambients_scoped :
+    forall env base_ty rst_ty cenv scope,
+      In rst_ty scope ->
+      (forall ck ckty,
+          assign_clk_type env base_ty ck = Some ckty -> st_scoped scope ckty) ->
+      forall eq,
+        stream_ambients_scoped scope
+          (canonical_ambients env base_ty rst_ty cenv eq).
+  Proof.
+    intros env base_ty rst_ty cenv scope Hrst Hclk eq.
+    unfold stream_ambients_scoped, canonical_ambients.
+    apply Forall_forall. intros a Ha.
+    apply in_map_iff in Ha as (x & Ha & _). subst a.
+    unfold canonical_ambient.
+    destruct (find_clock cenv x) as [ck|e]; [|intros z Hz; contradiction].
+    destruct (assign_clk_type env base_ty ck) as [ckty|] eqn:Ea;
+      [|intros z Hz; contradiction].
+    intros z Hz. apply in_merge_inv in Hz as [Hz|Hz].
+    - destruct Hz as [Hz|[]]; subst z. exact Hrst.
+    - exact (Hclk ck ckty Ea z Hz).
+  Qed.
+
+  (** And the one that is left, in the form the node lemmas want it: the
+      ambient of each defined variable's clock covers that variable's own
+      stream, provided the two clock environments agree on the source node's
+      declared variables.  [wc_equation]'s third component is what pins the
+      stream clock to the declared one. *)
+  Lemma canonical_ambients_cover :
+    forall env base_ty rst_ty cenv vars (eq : equation),
+      (forall x ck, In (x, ck) vars -> find_clock cenv x = OK ck) ->
+      (forall ck, In ck (clocksof (snd eq)) ->
+                  exists ckty, assign_clk_type env base_ty ck = Some ckty) ->
+      Forall2 (fun x ck => In (x, ck) vars) (fst eq) (clocksof (snd eq)) ->
+      clocks_covered env base_ty rst_ty (clocksof (snd eq))
+        (canonical_ambients env base_ty rst_ty cenv eq).
+  Proof.
+    intros env base_ty rst_ty cenv vars eq Hagree Hdef Hwc.
+    unfold clocks_covered, canonical_ambients.
+    revert Hdef. induction Hwc as [|x ck xs cks Hin Hr IH]; intros Hdef.
+    - constructor.
+    - cbn [List.map]. constructor.
+      + destruct (Hdef ck (or_introl (@Coq.Init.Logic.eq_refl _ ck)))
+          as (ckty & Hac).
+        exists ckty. split; [exact Hac|].
+        unfold canonical_ambient. rewrite (Hagree x ck Hin), Hac.
+        apply incl_refl.
+      + apply IH. intros ck0 Hck0. apply Hdef. now right.
+  Qed.
+
 End SecLusUnnestingNodes.
