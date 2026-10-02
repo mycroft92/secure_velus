@@ -242,14 +242,43 @@ but the call it is the equation's own generated constraint, read off
 For a call equation it is *not* the call's own constraint: the source call
 rule passes the **base** clock's type to `generate_constraints`, so the block
 gives `merge [rst_ty] bckty ⊑ b_i` and no more, while an output on
-`bck on c` needs `typeof c ⊑ b_i` as well.  That is available, but only
-through the callee: inside the callee the output sits on `Con Cbase c` with
-`c` an input, so the callee's own general rule put `level(c) ⊑ level(out)`
-into its signature, and instantiation substitutes `c`'s actual into the input
-position.  **So the discharge goes through `sig_inputs_clock_closed`, which
-`sig_inputs_ok` already supplies** -- it is a lemma about
-`generate_constraints`, not a new assumption.  Writing it is the next piece
-of Leg U.  *[untested]*
+`bck on c` needs `typeof c ⊑ b_i` as well.
+
+Where that comes from, and a correction.  My first reading was that
+`sig_inputs_clock_closed` -- which `sig_inputs_ok` already supplies --
+would do it.  **It does not** *[verified against the definition]*.  That
+invariant propagates clock names from a source *already present* in a
+constraint:
+
+    In (x, ck) ins -> nm x = Some y -> In y (fst c) ->
+      forall x' y', In x' (clock_vars ck) -> nm x' = Some y' -> In y' (fst c)
+
+and an output's own name is the constraint's *target*, not one of its
+sources, so the hypothesis never fires for it.
+
+What is needed is a sibling invariant about outputs, say
+
+    sig_outputs_clock_closed sg outs nm :=
+      forall c o cko y,
+        In c (s_constraints sg) -> snd c = [y] ->
+        In (o, cko) outs -> nm o = Some y ->
+        forall x' y', In x' (clock_vars cko) -> nm x' = Some y' ->
+          In y' (fst c)
+
+"the constraint that targets an output holds the names of that output's own
+declared clock".  It is true of generated signatures for the same reason the
+non-call case is immediate: inside the callee the output is defined by a
+general-rule equation on its declared clock, and that rule emits
+`ambient ckty ⊔ t ⊑ o`, whose sources are exactly `rst_ty`, `ckty` and the
+defining stream's type.  And the constraint exists: `signature_good` already
+says the targets of a signature's constraints are a permutation of
+`map (fun ty => [ty]) s_out`, so each output is targeted exactly once.
+
+So the remaining step is: state `sig_outputs_clock_closed`, carry it beside
+`sig_inputs_ok` at the program level, and prove from it (plus
+`assign_clk_type_instck_incl`, which splits an instantiated clock's type into
+the base's plus the formal's clock variables' actuals) that a call equation's
+outputs dominate their own clock ambients.  *[untested]*
 
 The other outstanding item is unchanged: the program level, which discharges
 the fourteen section hypotheses (the twelve the scalar chain had, plus
