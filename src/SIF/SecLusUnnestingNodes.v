@@ -1541,6 +1541,15 @@ Import UNN.Fresh.Tactics.
         forall w g, In (Some w) (List.map stream_name anns) ->
                     Env.find w env <> Some g.
 
+    (** Every signature's clock and reset formals are sources of all of its
+        constraints -- what makes a satisfied instantiation bound the call's
+        outputs, so the call rule derives that bound instead of assuming it. *)
+    Hypothesis sig_rooted :
+      forall f sg,
+        find_signature f GL = Some sg ->
+        CALLS.all_sources_have sg.(s_clk) sg.(s_constraints)
+        /\ CALLS.all_sources_have sg.(s_reset) sg.(s_constraints).
+
     (** The ambient of an equation, as a function of the equation.  Its two
         properties are the ones a single ambient had: it names only program
         variables, and it covers the ambient of every variable the
@@ -1888,7 +1897,7 @@ Import UNN.Fresh.Tactics.
              source_lexps_scoped rst_ty_scoped clk_types_scoped
              env_range_scoped source_lexps_carried_scoped sig_scoped
              sig_actuals_fresh clk_types_defined call_anon_not_env_key
-             P eq Hwcg Hsigin
+             sig_rooted P eq Hwcg Hsigin
              (As eq) eq1 st st1 c1 xst xst1 ct1 yst ystm dlt)
           as (dlt1 & Hoff1 & Hce1 & Hscope1).
         { exact Hwl1. }

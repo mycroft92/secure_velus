@@ -136,6 +136,17 @@ Import UNN.Fresh.Tactics.
         forall w g, In (Some w) (List.map stream_name anns) ->
                     Env.find w env <> Some g.
 
+    (** Every signature's clock and reset formals are sources of all of its
+        constraints.  True of generated signatures because every equation's
+        rule emits [ambient ckty] on the left; it is what turns a satisfied
+        instantiation into a bound on the call's outputs, so the call rule no
+        longer has to be *given* that bound. *)
+    Hypothesis sig_rooted :
+      forall f sg,
+        find_signature f GL = Some sg ->
+        CALLS.all_sources_have sg.(s_clk) sg.(s_constraints)
+        /\ CALLS.all_sources_have sg.(s_reset) sg.(s_constraints).
+
     Local Notation sec_of := (CALLS.sec_of env).
     Local Notation moved_by := (CALLS.moved_by env).
     Local Notation carries_at :=
@@ -4684,7 +4695,7 @@ Import UNN.Fresh.Tactics.
 
     Lemma eqn_carries_call_streams :
       forall (P : global) (xs : list ident) f args er anns
-             ambs eqs' st st' ce xst xst' cet yst yst' dlt,
+             eqs' st st' ce xst xst' cet yst yst' dlt,
         wc_global P ->
         CALLS.sig_inputs_ok GL P ->
         wl_exp P (Eapp f args er anns) ->
@@ -4692,11 +4703,7 @@ Import UNN.Fresh.Tactics.
         List.length xs = List.length anns ->
         NoDup (vars_defined eqs' ++ st_ids st) ->
         (forall x, In x (moved_by st st') -> ~ In x scope) ->
-        stream_ambients_scoped scope ambs ->
-        clocks_covered_local (clockof (Eapp f args er anns)) ambs ->
-        List.length ambs = List.length xs ->
         state_clocks_found_local st' ->
-        eqn_bounds dlt ambs xs ->
         constraints_scoped scope ce ->
         unnest_equation P (xs, [Eapp f args er anns]) st = (eqs', st') ->
         generate_leqn_constraint GL env base_ty rst_ty cenv
@@ -4710,9 +4717,9 @@ Import UNN.Fresh.Tactics.
           /\ listSatisfiable dlt' cet
           /\ constraints_scoped (scope ++ moved_by st st') cet.
     Proof.
-      intros P xs f args er anns ambs eqs' st st' ce xst xst' cet yst yst' dlt
-        Hwcg Hsigin Hwl Hwc Hlen Hnd Hmv Hambsc Hcovered Hlenamb Hfound
-        Hbnds Hcesc Hun Hgen Hgent Hsat Hbnd.
+      intros P xs f args er anns eqs' st st' ce xst xst' cet yst yst' dlt
+        Hwcg Hsigin Hwl Hwc Hlen Hnd Hmv Hfound Hcesc Hun Hgen Hgent
+        Hsat Hbnd.
       pose proof Hwl as Hwl0. pose proof Hwc as Hwc0.
       assert (anns <> []) as Hanne.
       { intro Hc. subst anns. inv Hwl0;
@@ -4847,13 +4854,6 @@ Import UNN.Fresh.Tactics.
             by exact (wc_exp_Eapp_base_clock P nd f args bck sub
                         Hwcg Hfn Hwi).
         rewrite <- Hfbase. exact Hck. }
-      assert (Forall (fun a => incl (merge [rst_ty] ckty) a) ambs) as Hbelow.
-      { eapply call_amb_below_result_ambients;
-          [exact Hbckty
-          |intros ck0 Hck0;
-           exact (wc_Eapp_out_instck (idck nd.(n_out)) bck sub anns Hwo
-                    ck0 Hck0)
-          |exact Hcovered]. }
       assert (st_scoped scope ckty) as Hambcsc'
           by exact (clk_types_scoped _ _ Hbckty).
       assert (st_scoped scope (merge [rst_ty] ckty)) as Hambcsc.
@@ -5298,23 +5298,37 @@ Import UNN.Fresh.Tactics.
                  (fun b => In b scope) (x0 :: xs0) outs Houtsf
                  (fun x b Hx Hf => env_range_scoped x b Hf)). }
 
-      (** the one bound the outputs need: the call's own ambient, which the
-          per-stream bounds already give because it sits inside each of them *)
+      (** the one bound the outputs need: the call's own ambient.  It is not
+          assumed -- the source block has one constraint per output and the
+          clock and reset levels reach every constraint, so satisfying the
+          block already puts them below each output. *)
+      assert (In rst_ty (fst rstty)) as Hrstin.
+      { destruct Hrsh as [(_ & Hr1 & _)|(e1 & a1 & rck & _ & _ & _ & Hr1)];
+          rewrite Hr1.
+        - rewrite fst_lvar. now left.
+        - rewrite !fst_ljoin, !fst_lvar. cbn [fst].
+          apply in_merge_left. now left. }
       assert (Forall (fun b => satisfiable dlt3 (merge [rst_ty] ckty) [b]) outs)
         as Hamb2.
-      { assert (stream_bounds dlt ambs outs) as Hsb
-            by exact (eqn_bounds_stream_bounds dlt ambs (x0 :: xs0) outs
-                        Hbnds Houtsf).
-        unfold stream_bounds in Hsb.
-        assert (Forall (fun b =>
+      { assert (Forall (fun b =>
                   satisfiable dlt (merge [rst_ty] ckty) [b]) outs) as Hsb0.
-        { clear - Hsb Hbelow.
-          induction Hsb as [|a b ambs0 outs0 Hab Hr IH];
-            [constructor|].
-          inversion Hbelow as [|a0 ambs1 Ha Hbr]; subst.
-          constructor; [|exact (IH Hbr)].
-          eapply satisfiable_trans; [|exact Hab].
-          apply satisfiable_of_incl. exact Ha. }
+        { apply Forall_forall. intros b Hb.
+          assert (satisfiable dlt (merge (fst rstty) ckty) [b]) as Hb0
+              by exact (CALLS.generate_constraints_amb_below_out sg
+                          (List.map fst argts) ckty (fst rstty) outs cs
+                          sti xst' dlt
+                          (sig_nodup_pipeline_local f sg Esg)
+                          (sig_actuals_fresh f sg (List.map fst argts) ckty
+                             (fst rstty) outs cs sti xst' Esg Hcs)
+                          (proj1 (sig_rooted f sg Esg))
+                          (proj2 (sig_rooted f sg Esg))
+                          Hcs Hcs1 b Hb).
+          eapply satisfiable_trans; [|exact Hb0].
+          apply satisfiable_of_incl. intros z Hz.
+          apply in_merge_inv in Hz as [Hz|Hz].
+          - apply in_merge_left. destruct Hz as [Hz|[]]; subst z.
+            exact Hrstin.
+          - now apply in_merge_right. }
         eapply Forall_impl_In; [|exact Hsb0].
         intros b Hb Hsat0.
         assert (In b scope) as Hbsc
@@ -5824,10 +5838,9 @@ Import UNN.Fresh.Tactics.
         try (apply Hplain; exact I).
       assert (List.length ys = List.length anns) as Hlencall
           by (simpl in Hlen; exact Hlen).
-      exact (eqn_carries_call_streams P ys f args er anns ambs eqs' st st' ce
+      exact (eqn_carries_call_streams P ys f args er anns eqs' st st' ce
                xst xst' cet yst yst' dlt Hwcg Hsigin Hwl Hwc Hlencall Hnd Hmv
-               Hambsc Hcovered Hlenamb Hfound Hbnds Hcesc Hun Hgen Hgent
-               Hsat Hbnd).
+               Hfound Hcesc Hun Hgen Hgent Hsat Hbnd).
     Qed.
 
     Lemma eqn_carries_split :
@@ -6798,10 +6811,9 @@ Import UNN.Fresh.Tactics.
           as Hcovapp
             by (unfold clocksof in Hcovered; simpl in Hcovered;
                 rewrite app_nil_r in Hcovered; exact Hcovered).
-        exact (eqn_carries_call_streams P xs f args er anns ambs eqs' st st' ce
+        exact (eqn_carries_call_streams P xs f args er anns eqs' st st' ce
                  xst xst' cet yst yst' dlt Hwcg Hsigin Hwlapp Hwcapp Hlen'
-                 Hnd Hmv Hambsc Hcovapp Hlenamb Hfound Hbnds Hcesc
-                 Hun Hgen Hgent Hsat Hbnd).
+                 Hnd Hmv Hfound Hcesc Hun Hgen Hgent Hsat Hbnd).
     Qed.
 
     Theorem eqn_carries_all_streams :

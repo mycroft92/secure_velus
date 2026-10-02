@@ -1770,6 +1770,130 @@ Import UNN.Fresh.Tactics.
       intros c Hc. split; [exact (Hbc c Hc)|exact (Hrc c Hc)].
     Qed.
 
+    (** * A call's outputs sit above the call's own ambient
+
+        The last ambient fact Leg U needs, and -- unlike the premise it
+        replaces -- a property of the *instantiation* rather than an
+        assumption about the valuation.  Two things make it go through:
+
+          [generate_constraints_shape], which says the generated block has
+          exactly one constraint per output, so each output is a target;
+
+          [generate_constraints_clk_reaches] and
+          [generate_constraints_rst_reaches], which say the clock and reset
+          levels reach *every* constraint of the block.
+
+        Satisfying the block therefore puts the clock and reset levels below
+        each output, which is exactly the bound the equation-level call rule
+        was previously handed. *)
+
+
+    (** The block's targets are its outputs, in order.  This is the [map snd]
+        half of [generate_constraints_shape] without its [NoDup out] premise:
+        that premise is there for the [wf_constraints] half, and the equation
+        level has no [NoDup] on a source equation's variables to offer. *)
+
+    Lemma mmap_findST_targets_eq :
+      forall (e : list SymTypes.constraint) out r sa sa',
+        SC.mmap (fun x => SC.bind (option_to_sec (SymTypes.findST e x))
+                            (fun st => SC.ret (st, [x]))) out sa
+          = OK (r, sa') ->
+        List.map snd r = List.map (fun ty => [ty]) out.
+    Proof.
+      intros e out. induction out as [|x out IH]; intros r sa sa' H.
+      - simpl in H. unfold SC.ret in H.
+        assert (r = []) as ? by (inversion H; reflexivity); subst r.
+        reflexivity.
+      - simpl in H.
+        apply sec_bind_inv in H as (h & p & Hh & H).
+        apply sec_bind_inv in H as (rr & q & Hrr & Hret).
+        unfold SC.ret in Hret.
+        assert (r = h :: rr) as ? by (inversion Hret; reflexivity); subst r.
+        apply sec_bind_inv in Hh as (st0 & p0 & Hfind & Hreth).
+        apply option_to_sec_inv in Hfind as (_ & ?); subst p0.
+        unfold SC.ret in Hreth.
+        assert (h = (st0, [x])) as ? by (inversion Hreth; reflexivity);
+          subst h.
+        cbn [List.map snd]. f_equal. exact (IH rr p q Hrr).
+    Qed.
+
+    Lemma generate_constraints_targets :
+      forall sg inp clk rst out cns sa sa',
+        generate_constraints sg inp clk rst out sa = OK (cns, sa') ->
+        List.map snd cns = List.map (fun ty => [ty]) out.
+    Proof.
+      intros sg inp clk rst out cns sa sa' Hgen.
+      unfold generate_constraints in Hgen.
+      apply sec_bind_inv in Hgen as (c1 & t1 & _ & Hgen).
+      apply sec_bind_inv in Hgen as (c2 & t2 & _ & Hgen).
+      apply sec_bind_inv in Hgen as (c3 & t3 & _ & Hgen).
+      apply sec_bind_inv in Hgen as (c4 & t4 & _ & Hmap).
+      exact (mmap_findST_targets_eq c4 out cns t4 sa' Hmap).
+    Qed.
+
+    Lemma generate_constraints_target_In :
+      forall sg inp clk rst out cns sa sa' b,
+        generate_constraints sg inp clk rst out sa = OK (cns, sa') ->
+        In b out ->
+        exists t, In (t, [b]) cns.
+    Proof.
+      intros sg inp clk rst out cns sa sa' b Hgen Hb.
+      pose proof (generate_constraints_targets sg inp clk rst out cns
+                    sa sa' Hgen) as Hsnd.
+      assert (In [b] (List.map snd cns)) as Hin.
+      { rewrite Hsnd. apply in_map_iff. exists b.
+        split; [reflexivity|exact Hb]. }
+      apply in_map_iff in Hin as (c & Hr & Hc).
+      destruct c as (t & rhs). cbn [snd] in Hr. subst rhs.
+      now exists t.
+    Qed.
+
+    Lemma all_sources_below_target :
+      forall dlt cns a t b,
+        listSatisfiable dlt cns ->
+        In (t, [b]) cns ->
+        (forall z, In z a -> In z t) ->
+        satisfiable dlt a [b].
+    Proof.
+      intros dlt cns a t b Hsat Hin Hincl.
+      assert (constraintSatisfiable dlt (t, [b])) as Hc.
+      { unfold listSatisfiable in Hsat. rewrite Forall_forall in Hsat.
+        exact (Hsat _ Hin). }
+      eapply satisfiable_trans; [|exact Hc].
+      apply satisfiable_of_members. exact Hincl.
+    Qed.
+
+    Lemma generate_constraints_amb_below_out :
+      forall sg inp clk rst out cns sa sa' dlt,
+        NoDup (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)) ->
+        call_subst_fresh sg inp clk rst out ->
+        all_sources_have sg.(s_clk) sg.(s_constraints) ->
+        all_sources_have sg.(s_reset) sg.(s_constraints) ->
+        generate_constraints sg inp clk rst out sa = OK (cns, sa') ->
+        listSatisfiable dlt cns ->
+        forall b, In b out -> satisfiable dlt (merge rst clk) [b].
+    Proof.
+      intros sg inp clk rst out cns sa sa' dlt
+        Hnd Hfresh Hck0 Hrst0 Hgen Hsat b Hb.
+      destruct (generate_constraints_target_In sg inp clk rst out cns sa sa' b
+                  Hgen Hb) as (t & Hin).
+      apply satisfiable_merge_intro.
+      - eapply all_sources_below_target; [exact Hsat|exact Hin|].
+        intros z Hz.
+        assert (all_sources_have z cns) as Hz'
+            by exact (generate_constraints_rst_reaches sg inp clk rst out cns
+                        sa sa' z Hnd Hfresh Hrst0 Hz Hgen).
+        unfold all_sources_have in Hz'. rewrite Forall_forall in Hz'.
+        exact (Hz' _ Hin).
+      - eapply all_sources_below_target; [exact Hsat|exact Hin|].
+        intros z Hz.
+        assert (all_sources_have z cns) as Hz'
+            by exact (generate_constraints_clk_reaches sg inp clk rst out cns
+                        sa sa' z Hnd Hfresh Hck0 Hz Hgen).
+        unfold all_sources_have in Hz'. rewrite Forall_forall in Hz'.
+        exact (Hz' _ Hin).
+    Qed.
+
     (** * The augmented instantiation can be built, not assumed
 
         Putting the four stages together: a successful [generate_constraints]
