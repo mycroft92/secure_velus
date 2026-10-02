@@ -432,7 +432,41 @@ of `env` on the node's variables.
   the one place where the restriction is visible in a hypothesis rather than
   in an `OK`.
 
-### Item 4 next, and its shape *[untested]*
+### Item 4, 2026-10-02: parts proved, assembly deferred -- and why
+
+**Correction to the estimate above.**  I said item 4 would land in one
+sitting, independently of items 6--8.  Its *lemmas* did; its *assembly* did
+not, and cannot where I expected.  `SecLusUnnestingNodes.v`'s functor does
+not take `SECLNAMINGTOTALITY`, and `SecLNamingTotality.v` does not see
+`Normalization.Unnesting` -- so the only place that sees both the naming pass
+and the unnesting passes is the program-level file items 6--8 need anyway.
+Adding the parameter to `SecLusUnnestingNodes.v` would have meant changing
+its signature and every instantiation, for no gain over doing the assembly
+where it belongs.
+
+What is proved:
+
+  * `declared_not_sec` (`SecLNamingTotality.v`) -- a variable a node declares
+    is never one of the two auxiliary names, since `n_good` puts it among the
+    atoms and the node's own prefixes and `gensym_prefs` excludes `sec`.
+  * `sec_of_disjoint` (`SecLusUnnestingNodes.v`) -- the security names of
+    disjoint variable lists are disjoint, by `env` injectivity.  This is what
+    turns a statement about *variables* into one about their security names.
+  * `unnest_node_new_not_interface` (same file) -- a variable the unnesting
+    run created is not an interface variable.  Notably this needs **no**
+    prefix reasoning: the unnested node's own `n_nodup` says so, because the
+    run's annotations are exactly its new locals and unnesting keeps the
+    interface.  That is cheaper than the prefix argument the plan predicted.
+  * and, already present, `locals_not_interface` and
+    `generate_lnode_scoped_env_st_fresh_sec` -- the latter settling the
+    minted names, by index rather than prefix, with the naming pass's final
+    state as the boundary.
+
+What is left is one line of assembly per premise, in the new file: combine
+`sec_of_disjoint` with `unnest_node_new_not_interface` for the interface part
+of the scope, and with `declared_not_sec` for the two auxiliary names.
+
+### The shape item 4's assembly needs *[untested]*
 
 The four remaining premises are all about the *choice* of `scope`, and the
 choice that makes them tractable is
