@@ -3857,6 +3857,82 @@ Module SecLusUnnestingBase
     destruct Hx as [Hx|Hx]; [subst x; now exists ck0|exact (IH x Hx)].
   Qed.
 
+  (** * Clock types exist where the naming pass has named the clock's variables
+
+      [assign_clk_type]'s only partiality is an [Env.find] on a sampling
+      variable, so it succeeds on any clock whose variables the naming pass
+      covered.  Together with [clock_vars_wc] that makes it total on the
+      clocks of a well-clocked node: [wc_env] says a declared variable's clock
+      is well clocked, and [wc_equation] says an equation's stream clocks are
+      declared variables' clocks. *)
+
+  Lemma assign_clk_type_total_of_vars :
+    forall env base_ty ck,
+      (forall x, In x (clock_vars ck) -> exists b, Env.find x env = Some b) ->
+      exists ckty, assign_clk_type env base_ty ck = Some ckty.
+  Proof.
+    intros env base_ty ck. induction ck as [|ck IH x b]; intros Hvars.
+    - exists [base_ty]. reflexivity.
+    - destruct (IH ltac:(intros y Hy; apply Hvars; now right))
+        as (ckty & Hck).
+      destruct (Hvars x ltac:(now left)) as (bx & Hbx).
+      exists (merge ckty [bx]).
+      cbn [assign_clk_type]. rewrite Hck, Hbx. reflexivity.
+  Qed.
+
+  Lemma clocksof_types_defined :
+    forall env base_ty P vars (eq : equation),
+      wc_env vars ->
+      wc_equation P vars eq ->
+      (forall x ck, In (x, ck) vars -> exists b, Env.find x env = Some b) ->
+      forall ck, In ck (clocksof (snd eq)) ->
+                 exists ckty, assign_clk_type env base_ty ck = Some ckty.
+  Proof.
+    intros env base_ty P vars (xs & es) Hwcenv Hwceq Henv ck Hck.
+    cbn [snd] in Hck.
+    destruct Hwceq as (_ & _ & Hvars).
+    assert (exists x, In (x, ck) vars) as (x & Hxv).
+    { destruct (Forall2_in_right _ xs (clocksof es) ck Hvars Hck)
+        as (y & _ & Hyv).
+      exists y. exact Hyv. }
+    assert (wc_clock vars ck) as Hwck.
+    { unfold wc_env in Hwcenv. rewrite Forall_forall in Hwcenv.
+      exact (Hwcenv (x, ck) Hxv). }
+    apply assign_clk_type_total_of_vars.
+    intros y Hy.
+    destruct (clock_vars_wc vars ck Hwck y Hy) as (cky & Hyv).
+    exact (Henv y cky Hyv).
+  Qed.
+
+  (** The same for an expression's own stream clocks, which is the form the
+      call case's [clk_types_defined] asks for.  Note what it reduces to: the
+      *arguments'* clocks being well clocked in [vars].  [wc_exp_clockof]
+      gives that over [vars ++ idck (fresh_in e)], so it is immediate for an
+      argument with no nested call in it, and for one with a nested call it is
+      a genuine restriction -- a nested call's output name is anonymous, and
+      [env_key_not_anon] says the naming pass never named it, so
+      [assign_clk_type] on a clock sampled by one does not merely go
+      unproved, it fails.  Programs where that happens are the ones the
+      generator rejects. *)
+  Lemma nclockof_types_defined :
+    forall env base_ty vars e,
+      Forall (wc_clock vars) (clockof e) ->
+      (forall x ck, In (x, ck) vars -> exists b, Env.find x env = Some b) ->
+      forall nck, In nck (nclockof e) ->
+        exists ckty, assign_clk_type env base_ty (stripname nck) = Some ckty.
+  Proof.
+    intros env base_ty vars e Hwc Henv nck Hnck.
+    assert (In (stripname nck) (clockof e)) as Hin.
+    { rewrite clockof_nclockof. apply in_map_iff.
+      exists nck. split; [reflexivity|exact Hnck]. }
+    rewrite Forall_forall in Hwc.
+    apply assign_clk_type_total_of_vars.
+    intros y Hy.
+    destruct (clock_vars_wc vars (stripname nck) (Hwc _ Hin) y Hy)
+      as (cky & Hyv).
+    exact (Henv y cky Hyv).
+  Qed.
+
   (** The generator reads the call's base clock off the arguments, as
       [find_base_clock (clocksof es)]; clocking calls it [bck].  They agree,
       and this is where [wc_global] is needed -- the callee's own
