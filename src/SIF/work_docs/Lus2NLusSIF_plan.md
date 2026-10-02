@@ -500,8 +500,62 @@ Leg I's two surviving run conjuncts -- that a created variable has a security
 name outside the scope, and that its clock has a type inside it -- fall to
 the same three separations plus item 5.
 
-Items 6 and 7 are the bulk; 2, 3 and 8 are bookkeeping at the instantiation
-site.  They need a new file after
+### DONE 2026-10-02: the program-level file exists, and items 1, 4, 5 are closed
+
+`src/SIF/SecLusTypingCorrectness.v`, registered in `vfiles` after
+`SecLusNormFby.v`, is the Lustre counterpart of
+`SecNLusTypingCorrectness.v`.  It takes the naming pass's modules alongside
+the two normalisation passes, which is what no earlier file does -- that is
+why item 4's assembly had to wait for it.
+
+  * *the bridge* -- `get_mappings_from_node_sec_of` and `sec_of_app`: the
+    published signature speaks of `get_mappings_from_node` and the node
+    theorems of `sec_of`, and they compute the same list.
+  * *item 4, assembled* -- `unnest_moved_not_sig_scope`, over
+    `unnest_run_declared`.  Against the interface part of the scope it is
+    `sec_of_disjoint` over `unnest_node_new_not_interface`; against the base
+    and reset part it is `declared_not_sec` against
+    `generate_lnode_scoped_env_aux_sec_names` (the Lustre spelling of the
+    NLustre lemma, added to `SecLNamingTotality.v` with its per-node and fold
+    halves).  **Item 4 is complete.**
+
+### Items 6 and 7: what is actually in them
+
+Measured now rather than extrapolated, because `wf_constraints` splits into
+two halves of very different cost.
+
+*7a, singleton targets* -- every constraint has a one-element target.  This
+is structural, and the plumbing is in place
+(`singleton_targets_cmerge` -- note `cmerge` is a sorted merge with dedup,
+not an append, so a `Forall` has to be pushed through it by membership --
+`singleton_targets_app`, and
+`generate_constraints_singleton_targets` from `generate_constraints_targets`).
+What is left is one expression induction: *the carried component of
+`assign_lexp_type` has singleton targets*.  Nine of its ten cases are
+immediate -- the carried component is `[]` or a `cmerge` of the
+sub-expressions' -- and the call case is the instantiated block, which the
+third lemma above already covers.  Then the equation generator pushes it
+through mechanically, since every rule emits `lconstrain _ b` over the
+carried component.  *[untested, but the shape is checked against the
+definitions]*
+
+*7b, distinct targets* -- this is where the work is.  The targets of a node's
+raw constraints are the security names of the variables it defines together
+with the names the generator minted, and distinctness needs both: the defined
+variables are distinct by `n_defd` and `NoDup`, carried to their names by
+`env` injectivity; the minted names are distinct from each other and from
+every `env` value, the latter by index, with the naming pass's final state as
+the boundary -- the same argument item 4 used, which is already proved as
+`generate_lnode_scoped_env_st_fresh_sec`.  The induction has to carry the
+minted window along the equation list.
+
+*6* -- then `signature_good` is 7 plus the fact that `simplify` eliminates
+exactly the locals and the minted names, leaving the outputs; and
+`signature_scoped`, `NoDup (signature_scope ...)`,
+`generate_lnode_sig_instantiations` and `sig_rooted` follow the four NLustre
+templates named above.
+
+Items 2, 3 and 8 are bookkeeping at the instantiation site.  They need a new file after
 `SecLusUnnesting.v`/`SecLusNormFby.v`, since they speak about
 `generate_all_lsignatures_scoped_env`, which is built there.  Prose for each
 is in `work_docs/Next_remaining.v`.
