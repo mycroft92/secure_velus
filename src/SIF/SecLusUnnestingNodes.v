@@ -2308,6 +2308,54 @@ Import UNN.Fresh.Tactics.
       - apply in_or_app. right. apply in_or_app. now right.
     Qed.
 
+    (** The prefix-free half of the moved-name separation: a variable the
+        unnesting run created is not an interface variable.  No prefix
+        reasoning is needed -- the *unnested* node's own [n_nodup] says so,
+        because the run's annotations are exactly its new locals and
+        unnesting keeps the interface. *)
+    Lemma unnest_node_new_not_interface :
+      forall P (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs) y,
+        In y (st_ids (snd (unnest_equations P n.(n_eqs) init_st))) ->
+        ~ In y (List.map fst (n.(n_in) ++ n.(n_out))).
+    Proof.
+      intros P n Hwl Hpref y Hy.
+      destruct (unnest_node_interface P n Hwl Hpref) as (Hi & Ho).
+      unfold st_ids in Hy. apply in_map_iff in Hy as (p & Hfst & Hp).
+      destruct p as (z & an). cbn [fst] in Hfst. subst z.
+      assert (InMembers y (unnest_node P n Hwl Hpref).(n_vars)) as Hinv.
+      { destruct (unnest_node_fields P n Hwl Hpref) as (_ & Hv).
+        rewrite Hv. apply InMembers_app. right.
+        apply In_InMembers with (b := an). exact Hp. }
+      assert (NoDupMembers ((unnest_node P n Hwl Hpref).(n_in)
+                              ++ (unnest_node P n Hwl Hpref).(n_vars)
+                              ++ (unnest_node P n Hwl Hpref).(n_out)))
+        as Hnd3.
+      { pose proof (n_nodup (unnest_node P n Hwl Hpref)) as Hnd0.
+        rewrite !app_assoc in Hnd0. apply NoDupMembers_app_l in Hnd0.
+        rewrite <- !app_assoc in Hnd0. exact Hnd0. }
+      assert (Permutation
+                ((unnest_node P n Hwl Hpref).(n_in)
+                   ++ (unnest_node P n Hwl Hpref).(n_vars)
+                   ++ (unnest_node P n Hwl Hpref).(n_out))
+                ((unnest_node P n Hwl Hpref).(n_vars)
+                   ++ (unnest_node P n Hwl Hpref).(n_in)
+                   ++ (unnest_node P n Hwl Hpref).(n_out))) as Hperm
+          by (rewrite 2 app_assoc;
+              apply Permutation_app_tail, Permutation_app_comm).
+      assert (NoDupMembers ((unnest_node P n Hwl Hpref).(n_vars)
+                              ++ (unnest_node P n Hwl Hpref).(n_in)
+                              ++ (unnest_node P n Hwl Hpref).(n_out)))
+        as Hnd4 by (rewrite <- Hperm; exact Hnd3).
+      intro Hc.
+      eapply (NoDupMembers_app_InMembers y
+                (unnest_node P n Hwl Hpref).(n_vars)
+                ((unnest_node P n Hwl Hpref).(n_in)
+                   ++ (unnest_node P n Hwl Hpref).(n_out))
+                Hnd4 Hinv).
+      rewrite Hi, Ho. apply fst_InMembers. exact Hc.
+    Qed.
+
     Lemma new_ids_from_init :
       forall st, new_ids init_st st = st_ids st.
     Proof.
