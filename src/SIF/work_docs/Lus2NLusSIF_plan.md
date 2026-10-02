@@ -226,15 +226,60 @@ premise the pointwise contract exists to avoid, so `reset_step_streams` is a
 separate ~200-line lemma resting on `clocks_covered` and
 `state_clocks_found` instead.
 
-### Assumed, not yet discharged: what is left of Leg U
+### DONE 2026-10-02: the bound is derived, not assumed
 
-One ambient premise survives in `unnest_node_step_streams`, and it is
-satisfiable rather than contradictory:
+The premise above is gone as well, and in the end **no new program-level
+invariant was needed**: the `sig_outputs_clock_closed` the previous section
+predicted turned out to be unnecessary, because the call rule never needed
+the *per-output* clock ambient -- only the call's own base ambient, which the
+block already gives.
 
-    (forall ce dlt, listSatisfiable dlt ce ->
-       forall eq, In eq n.(n_eqs) -> eqn_bounds env dlt (As eq) (fst eq))
+What replaced it, in two halves:
 
-"each defined variable is above its own stream's ambient".  For every rule
+  * *the call rule* -- `generate_constraints_targets`,
+    `generate_constraints_target_In`, `all_sources_below_target` and
+    `generate_constraints_amb_below_out` (`SecLusUnnestingCalls.v`).  The
+    generated block has exactly one constraint per output, and
+    `generate_constraints_clk_reaches` / `_rst_reaches` say the clock and
+    reset levels reach every constraint; so satisfying the block already puts
+    them below each output.  `generate_constraints_targets` is the `map snd`
+    half of `generate_constraints_shape` *without* its `NoDup out` premise --
+    that premise is there for the `wf_constraints` half, and a source
+    equation's variable list comes with no `NoDup` at the equation level.
+    `eqn_carries_call_streams` consequently needs **no ambients at all**: its
+    `ambs`, `stream_ambients_scoped`, `clocks_covered`, length and bound
+    premises are all gone.
+  * *the general rule* -- `generate_lvars_constraints_bounds`
+    (`SecLusUnnestingEquations.v`).  The source rule emits
+    `ambient ckty_i ⊔ t_i ⊑ b_i`; dropping the right operand is the bound.
+
+`eqn_bounds` was then replaced by `eqn_ambients` -- "each ambient is the
+ambient of its variable's declared clock" -- which mentions no valuation, so
+the transport of the bound to each successive witness disappeared from the
+chunked rule and from `eqns_carries_streams`, and the three node-level
+statements lost the `forall dlt, listSatisfiable dlt ce -> ...` wrapper.
+
+Finally `canonical_ambients` (`SecLusUnnestingNodes.v`, after
+`End NodeEquations`) discharges `eqn_ambients` and `As_scoped` by
+construction.  **What is left of the ambient story is one premise about clock
+environments**, `canonical_ambients_cover`'s hypothesis:
+
+    (forall x ck, In (x, ck) vars -> find_clock cenv x = OK ck)
+
+the agreement between the target node's clock environment and the source
+node's declared variables.  It is true -- `lnode_clock_env (unnest_node ...)`
+keeps every source variable with its clock and only adds the fresh ones -- and
+it is proved where `cenv` is chosen, which is the program level.
+
+#### Superseded: the old reading of the bound
+
+The paragraph below is kept because the shape of the mistake is worth
+recognising: I assumed the call rule needed its outputs to dominate their own
+*instantiated* clock ambients, and went looking for a signature invariant
+strong enough to give that.  The call rule needs only the base ambient, so no
+such invariant exists in the development -- and did not need to.
+
+    "each defined variable is above its own stream's ambient".  For every rule
 but the call it is the equation's own generated constraint, read off
 `generate_lvars_constraints`, which emits exactly
 `merge (merge [rst_ty] ckty_i) (fst t_i) ⊑ b_i`.
