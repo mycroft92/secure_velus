@@ -794,6 +794,75 @@ Module Type SECLNAMINGTOTALITY
       split; [exact Hrst|split; [exact Hinp|split; [exact Hvars|exact Hout]]]]]].
   Qed.
 
+  (** * The two auxiliary names are [sec] gensyms
+
+      The Lustre spelling of [generate_node_scoped_env_aux_sec_names].  It is
+      what pairs with [declared_not_sec]: a node's auxiliary names are [sec]
+      gensyms and its declared variables are not, so the two can never
+      collide -- which is how the base and reset types stay apart from
+      everything a pass creates. *)
+
+  Lemma generate_local_env_for_lnode_aux_sec_names :
+    forall (n : node) st env aux st',
+      generate_local_env_for_lnode n st = OK ((env, aux), st') ->
+      aux.(nclk) = Ids.gensym Ids.sec st
+      /\ aux.(nrst) = Ids.gensym Ids.sec (Pos.succ st).
+  Proof.
+    intros n st env aux st' Hgen.
+    unfold generate_local_env_for_lnode in Hgen.
+    eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+    eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
+    unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
+    unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
+    unfold NMret in Hret. inversion Hret; subst env aux st'.
+    split; reflexivity.
+  Qed.
+
+  Lemma generate_lnode_scoped_env'_aux_sec_names :
+    forall ns envs acc st envs' aux st',
+      aux_sec_names acc ->
+      generate_lnode_scoped_env' ns envs acc st = OK ((envs', aux), st') ->
+      aux_sec_names aux.
+  Proof.
+    induction ns as [|n ns IH]; intros envs acc st envs' aux st' Hacc Hgen.
+    - cbn in Hgen. unfold NMret in Hgen. inversion Hgen; subst. exact Hacc.
+    - cbn in Hgen.
+      eapply name_bind2_inv in Hgen as (local_env & rec & st1 & Hlocal & Hgen).
+      eapply name_bind_inv in Hgen as (envs1 & st2 & Hins & Hgen).
+      eapply name_bind2_inv in Hgen as (envs2 & aux2 & st3 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst envs2 aux2 st3.
+      eapply IH; [|exact Hrec].
+      intros rec' [Heq|Hin].
+      + subst rec'.
+        destruct (generate_local_env_for_lnode_aux_sec_names
+                    n st local_env rec st1 Hlocal) as (Hclk & Hrst).
+        exists st, (Pos.succ st). split; [exact Hclk|exact Hrst].
+      + exact (Hacc rec' Hin).
+  Qed.
+
+  Corollary generate_lnode_scoped_env_aux_sec_names :
+    forall ns envs aux name clk_id rst_id,
+      generate_lnode_scoped_env ns = OK (envs, aux) ->
+      get_node_aux name aux = Some (clk_id, rst_id) ->
+      exists i j,
+        clk_id = Ids.gensym Ids.sec i
+        /\ rst_id = Ids.gensym Ids.sec j.
+  Proof.
+    intros ns envs aux name clk_id rst_id Hgen Haux.
+    unfold generate_lnode_scoped_env in Hgen.
+    destruct (generate_lnode_scoped_env' ns (Env.empty _) [] init_state)
+      as [((envs0 & aux0) & st0)|] eqn:Hrun; [|discriminate Hgen].
+    inversion Hgen; subst envs aux.
+    assert (aux_sec_names aux0) as Hprops.
+    { eapply generate_lnode_scoped_env'_aux_sec_names; [|exact Hrun].
+      intros rec Hin. contradiction. }
+    eapply get_node_aux_In in Haux as (rec & Hin & _ & Hclk & Hrst).
+    destruct (Hprops rec Hin) as (i & j & Hi & Hj).
+    exists i, j. split; congruence.
+  Qed.
+
 End SECLNAMINGTOTALITY.
 
 Module SecLNamingTotality
