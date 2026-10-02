@@ -126,4 +126,106 @@ Import SECMONADNotations.
     intros env xs ys. unfold CALLS.sec_of. symmetry. apply flat_map_app.
   Qed.
 
+  (** * Item 4, assembled: the scope keeps the published interface apart from
+        everything the unnesting run created
+
+      Taking the scope to be the published signature's own scope, the moved
+      names fall outside it for two reasons, one per part of the scope.
+
+      Against the *interface* part it is [sec_of_disjoint] over
+      [unnest_node_new_not_interface]: a variable the run created is not an
+      interface variable, and [env] is injective, so its security name is not
+      one of the interface's.
+
+      Against the *base and reset* part it is [declared_not_sec] against
+      [generate_lnode_scoped_env_aux_sec_names]: the two auxiliary names are
+      [sec] gensyms, a variable the unnested node declares is not, and
+      injectivity again carries that to the names. *)
+
+  Lemma unnest_run_declared :
+    forall P (n : node) (Hwl : wl_node P n)
+           (Hpref : n_prefixes n = elab_prefs) x,
+      In x (st_ids (snd (unnest_equations P n.(n_eqs) init_st))) ->
+      In x (List.map fst ((unnest_node P n Hwl Hpref).(n_in)
+                            ++ (unnest_node P n Hwl Hpref).(n_vars)
+                            ++ (unnest_node P n Hwl Hpref).(n_out))).
+  Proof.
+    intros P n Hwl Hpref x Hx.
+    unfold st_ids in Hx. apply in_map_iff in Hx as (p & Hfst & Hp).
+    destruct p as (z & an). cbn [fst] in Hfst. subst z.
+    destruct (unnest_node_fields P n Hwl Hpref) as (_ & Hv).
+    apply in_map_iff. exists (x, an). split; [reflexivity|].
+    apply in_or_app. right. apply in_or_app. left.
+    rewrite Hv. apply in_or_app. now right.
+  Qed.
+
+  Theorem unnest_moved_not_sig_scope :
+    forall (G : secglobal) (env : Env.t ident) (n : node)
+           (aux : list node_aux_names) sg st st'
+           P (Hwl : wl_node P n) (Hpref : n_prefixes n = elab_prefs)
+           ns envs,
+      env_injective env ->
+      PS.Subset (unnest_node P n Hwl Hpref).(n_prefixes)
+        (PSP.of_list gensym_prefs) ->
+      generate_lnode_scoped_env ns = OK (envs, aux) ->
+      generate_lnode_sig G n env aux st = OK (sg, st') ->
+      forall y,
+        In y (CALLS.moved_by env init_st
+                (snd (unnest_equations P n.(n_eqs) init_st))) ->
+        ~ In y (signature_scope sg).
+  Proof.
+    intros G env n aux sg st st' P Hwl Hpref ns envs
+      Hinj Hsub Hnames Hsig y Hy.
+    destruct (lnode_sig_inv env G n aux sg st st' Hsig)
+      as (clk_id & rst_id & clk_type & rst_type & inp & out & locals & cns
+          & Haux & Hclk & Hrst & Hinp & Hout & _ & _ & Esg).
+    subst sg. unfold signature_scope. cbn [s_in s_out s_clk s_reset].
+    rewrite (get_mappings_from_node_sec_of n.(n_in) env inp Hinp).
+    rewrite (get_mappings_from_node_sec_of n.(n_out) env out Hout).
+    unfold CALLS.moved_by in Hy.
+
+    (** the interface part *)
+    assert (~ In y (CALLS.sec_of env (List.map fst n.(n_in))
+                      ++ CALLS.sec_of env (List.map fst n.(n_out)))) as Hiface.
+    { rewrite <- sec_of_app.
+      eapply (sec_of_disjoint env Hinj
+                (CALLS.new_ids init_st
+                   (snd (unnest_equations P n.(n_eqs) init_st)))
+                (List.map fst n.(n_in) ++ List.map fst n.(n_out)) y);
+        [|exact Hy].
+      intros x Hx Hc.
+      apply CALLS.new_ids_spec in Hx as (Hx & _).
+      eapply (unnest_node_new_not_interface P n Hwl Hpref x Hx).
+      rewrite map_app. exact Hc. }
+
+    (** and the two auxiliary names *)
+    assert (forall z, In z [clk_type; rst_type] -> y <> z) as Haux'.
+    { intros z Hz Heq. subst z.
+      unfold CALLS.sec_of in Hy. apply in_flat_map in Hy as (x & Hx & Hyx).
+      destruct (Env.find x env) as [b|] eqn:Ex; [|contradiction].
+      destruct Hyx as [Hyx|[]]; subst b.
+      apply CALLS.new_ids_spec in Hx as (Hx & _).
+      assert (forall i, x <> Ids.gensym Ids.sec i) as Hxns
+          by (intros i; eapply SECLNT.declared_not_sec;
+              [exact Hsub|exact (unnest_run_declared P n Hwl Hpref x Hx)]).
+      destruct (SECLNT.generate_lnode_scoped_env_aux_sec_names
+                  ns envs aux n.(n_name) clk_id rst_id Hnames Haux)
+        as (i & j & Hi & Hj).
+      destruct Hz as [Hz|[Hz|[]]].
+      - (** the base name *)
+        assert (x = clk_id) as ? by (eapply Hinj; [exact Ex|exact Hclk|
+                                     exact (@Coq.Init.Logic.eq_sym _ _ _ Hz)]).
+        subst x. exact (Hxns i Hi).
+      - (** the reset name *)
+        assert (x = rst_id) as ? by (eapply Hinj; [exact Ex|exact Hrst|
+                                     exact (@Coq.Init.Logic.eq_sym _ _ _ Hz)]).
+        subst x. exact (Hxns j Hj). }
+
+    intro Hc. apply in_app_or in Hc as [Hc|Hc].
+    - apply Hiface. apply in_or_app. now left.
+    - apply in_app_or in Hc as [Hc|Hc].
+      + apply Hiface. apply in_or_app. now right.
+      + exact (Haux' y Hc (@Coq.Init.Logic.eq_refl _ y)).
+  Qed.
+
 End SecLusTypingCorrectness.
