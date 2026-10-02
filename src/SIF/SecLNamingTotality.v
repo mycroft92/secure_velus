@@ -402,6 +402,43 @@ Module Type SECLNAMINGTOTALITY
       eapply Permutation_in; [apply Permutation_sym, lnode_keys_perm|exact Hin].
   Qed.
 
+  (** * Two separations the scope choice rests on
+
+      Taking [scope] to be the published signature's own scope --
+      [s_in ++ s_out ++ [s_clk; s_reset]] -- leaves three things to keep apart
+      from it: a node's locals, the names a generator mints, and the names a
+      pass's fresh variables carry.  The minted names are already handled, by
+      [generate_lnode_scoped_env_st_fresh_sec]: both namespaces are [sec], so
+      the separation is by index, and the naming pass's final state is the
+      boundary.  The other two reduce to these.
+
+      [declared_not_sec] is the prefix half: a variable a node declares is
+      never one of the two auxiliary names, because [n_good] puts it among the
+      atoms and the node's own prefixes and [gensym_prefs] excludes [sec].
+
+      The injectivity half -- that the security names of disjoint variable
+      lists are disjoint -- is [sec_of_disjoint], and it lives where [sec_of]
+      does, in [SecLusUnnestingNodes.v]. *)
+
+  Lemma declared_not_sec :
+    forall (n : node) w i,
+      PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs) ->
+      In w (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+      w <> Ids.gensym Ids.sec i.
+  Proof.
+    intros n w i Hsub Hin.
+    destruct n.(n_good) as [Hgood _].
+    rewrite Forall_forall in Hgood.
+    apply atom_or_gensym_not_sec_gensym.
+    apply AtomOrGensym_mono with (p := n.(n_prefixes)); [exact Hsub|].
+    apply Hgood.
+    replace (n.(n_in) ++ n.(n_vars) ++ n.(n_out) ++ anon_in_eqs n.(n_eqs))
+      with ((n.(n_in) ++ n.(n_vars) ++ n.(n_out)) ++ anon_in_eqs n.(n_eqs))
+      by (now rewrite <- !app_assoc).
+    rewrite map_app. apply in_or_app. now left.
+  Qed.
+
+
   Theorem env_key_not_anon :
     forall (n : node) st le aux st' w b,
       PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs) ->

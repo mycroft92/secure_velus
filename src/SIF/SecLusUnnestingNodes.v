@@ -2929,6 +2929,28 @@ Import UNN.Fresh.Tactics.
           |exact Hqm].
     Qed.
 
+    (** The injectivity half of the scope separation: the security names of
+        disjoint variable lists are disjoint.  This is what turns "a fresh
+        variable is not an interface variable" into "its security name is not
+        one of the interface's", which is how [moved_by] is kept out of the
+        published signature's scope. *)
+    Lemma sec_of_disjoint :
+      forall (xs ys : list ident) b,
+        (forall x, In x xs -> ~ In x ys) ->
+        In b (sec_of env xs) ->
+        ~ In b (sec_of env ys).
+    Proof.
+      intros xs ys b Hdisj Hb Hc.
+      unfold CALLS.sec_of in Hb, Hc.
+      apply in_flat_map in Hb as (x & Hx & Hbx).
+      apply in_flat_map in Hc as (y & Hy & Hby).
+      destruct (Env.find x env) as [bx|] eqn:Ex; [|contradiction].
+      destruct (Env.find y env) as [by0|] eqn:Ey; [|contradiction].
+      destruct Hbx as [Hbx|[]]; destruct Hby as [Hby|[]]; subst bx by0.
+      apply (Hdisj x Hx).
+      rewrite (env_inj x y b b Ex Ey (@Coq.Init.Logic.eq_refl _ b)). exact Hy.
+    Qed.
+
     (** * Signature preservation for one unnested node
 
         The statement the phase is for: the signature [unnest_node] publishes
