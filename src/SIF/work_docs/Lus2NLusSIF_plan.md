@@ -396,8 +396,78 @@ what discharges them:
      constraints.  Documented at `SecLusUnnestingCalls.v`'s
      `sig_inputs_ok` as a program-level fact from the start.
 
-Items 6 and 7 are the bulk; 1 and 5 are each a contained induction; 2, 3 and
-8 are bookkeeping at the instantiation site.  They need a new file after
+**Items 1 and 5 are done (2026-10-02).**
+
+*1, the naming pass read at one node* -- `generate_lnode_scoped_env_at_node`
+and `generate_lnode_scoped_env_at_node_covers` (`SecLNamingTotality.v`).  The
+pass is a fold that inserts one environment per node and prepends one
+auxiliary record per node, so the lookups are determined by the run once two
+facts about the fold are in place, each an induction over the node list:
+`_envs_mono` (it preserves an entry whose name it does not insert) and
+`_aux_mono` (it preserves a record lookup whose name it does not prepend).
+Distinctness of the node names makes both hypotheses available at the head.
+The covering corollary reads the base and reset *types* off the environment,
+which is what turns item 2's `Env.find clk_id env = Some base_ty` into a
+choice rather than an obligation.
+
+*5, clock-type totality* -- `assign_clk_type_total_of_vars`,
+`clocksof_types_defined`, `nclockof_types_defined`
+(`SecLusUnnestingBase.v`).  `assign_clk_type`'s only partiality is an
+`Env.find` on a sampling variable.  For an equation's stream clocks the
+premise is fully discharged: `wc_equation` says they are declared variables'
+clocks, `wc_env` says a declared variable's clock is well clocked, and
+`clock_vars_wc` puts every sampling variable among the declared ones -- so
+`unnest_node_canonical_cover`'s premise follows from `wc_node` plus totality
+of `env` on the node's variables.
+
+  **And a limit worth stating precisely.**  `clk_types_defined` reduces to
+  *the arguments' clocks being well clocked in `vars`*.  `wc_exp_clockof`
+  gives that over `vars ++ idck (fresh_in e)`, so it is immediate for an
+  argument with no nested call in it.  For an argument *with* a nested call
+  it is a genuine restriction on programs, not an unproved lemma: a nested
+  call's output name is anonymous, `env_key_not_anon` says the naming pass
+  never named it, so `assign_clk_type` on a clock sampled by one **fails**.
+  Those are programs the generator rejects, and the theorems are conditioned
+  on its success -- which is the development's stance everywhere, but this is
+  the one place where the restriction is visible in a hypothesis rather than
+  in an `OK`.
+
+### Item 4 next, and its shape *[untested]*
+
+The four remaining premises are all about the *choice* of `scope`, and the
+choice that makes them tractable is
+
+    scope := signature_scope sgS  =  s_in ++ s_out ++ [base_ty; rst_ty]
+
+which discharges `(forall z, In z (signature_scope sgS) -> In z scope)` by
+`incl_refl` and leaves three separations:
+
+  * *the locals* -- already proved: `locals_not_interface`
+    (`SecLusUnnestingNodes.v`), from `env` injectivity and `n_nodup` (a local
+    is neither an input nor an output).
+  * *the minted names* -- both the interface names and the minted ones are
+    `gensym sec _`, so the separation is by *index*, not by prefix: the
+    naming pass allocates below `st0` and the generator mints from `st0`
+    upwards.  `SIFSignature.v`'s `signature_scope_bounded_above` is the
+    notion and `NameInterface.v`'s `node_scoped_env_sec_bounded` is the
+    input; what is missing is propagating the latter through
+    `generate_lnode_scoped_env'` to the node, which is the same induction
+    item 1 just did.
+  * *the moved names* -- `moved_by env st st'` is `sec_of env (new_ids st st')`,
+    i.e. the security names of the variables a pass created.  By `env`
+    injectivity this reduces to: a `norm1`/`norm2` gensym is neither a
+    declared variable of the node nor one of its two auxiliary names.  The
+    first half is prefix disjointness (`n_good` makes declared names
+    `AtomOrGensym elab_prefs`, and `norm1 ∉ elab_prefs`); the second is the
+    aux names' own prefix.  `SecLNamingTotality.v`'s `anon_stream_not_sec` /
+    `declared_not_anon` / `env_key_not_anon` family is the machinery.
+
+Leg I's two surviving run conjuncts -- that a created variable has a security
+name outside the scope, and that its clock has a type inside it -- fall to
+the same three separations plus item 5.
+
+Items 6 and 7 are the bulk; 2, 3 and 8 are bookkeeping at the instantiation
+site.  They need a new file after
 `SecLusUnnesting.v`/`SecLusNormFby.v`, since they speak about
 `generate_all_lsignatures_scoped_env`, which is built there.  Prose for each
 is in `work_docs/Next_remaining.v`.
