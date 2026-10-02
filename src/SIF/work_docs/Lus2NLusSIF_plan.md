@@ -325,11 +325,88 @@ So the remaining step is: state `sig_outputs_clock_closed`, carry it beside
 the base's plus the formal's clock variables' actuals) that a call equation's
 outputs dominate their own clock ambients.  *[untested]*
 
-The other outstanding item is unchanged: the program level, which discharges
-the fourteen section hypotheses (the twelve the scalar chain had, plus
-`clk_types_defined` and `call_anon_not_env_key`) together with
-`wc_global P` and `sig_inputs_ok GL P`.  Template:
-`SecNLusTypingCorrectness.v`; prose in `work_docs/Next_remaining.v`.
+### DONE 2026-10-02: the ambient story, and both legs' run facts
+
+*The last gap of the ambient story.*  `lnode_clock_env_from_list` collapses
+the three layers of `lnode_clock_env` into one `Env.from_list`, after which
+the node's own `n_nodup` makes any lookup in its interface unambiguous
+(`lnode_clock_env_find`).  `unnest_node_interface` and
+`unnest_node_cenv_vars` then give the agreement -- the unnested node's clock
+environment finds every *source* variable at its declared clock, since
+unnesting keeps the interface and only extends the locals -- and
+`unnest_node_canonical_cover` combines it with `wc_equation`'s third
+component.  **Nothing about ambients is assumed at the node level any more.**
+
+*Both legs' run facts.*  `state_clocks_found` was a hypothesis on both
+sides; it is a fact about the passes.  Both put the fresh state's annotations
+into the target node's local variables -- unnesting verbatim, `normfby`
+dropping only the cut flag -- so a variable a run created is found at exactly
+the clock the run stored (`unnest_node_state_clocks_found`,
+`normfby_node_state_clocks`).  And `NoDup (st_ids stf)` is Velus's own
+`st_valid_after` invariant, which `fby_equations` preserves and `init_st`
+starts in; taking the "after" set empty makes it exactly that
+(`fby_run_st_ids_NoDup`).  So `unnest_node_step_streams` lost its
+`state_clocks_found` premise and `normfby_node_step`'s run-facts premise lost
+two of its three conjuncts.
+
+### Assumed, not yet discharged: the program level, in eight pieces
+
+This is all that is left of Leg U and Leg I, and none of it is
+phase-specific.  `unnest_node_step_streams`'s surviving premises, grouped by
+what discharges them:
+
+  1. *the naming pass, read at one node* -- `find_node_env` and the
+     `get_node_aux` lookups.  `SecLNamingTotality.v` has the per-node pieces
+     (`generate_local_env_for_lnode_ok/_binds/_covers`) and the program-level
+     existence (`generate_lnode_scoped_env_ok`); what is missing is the
+     *split at a node*, an induction over the accumulating fold
+     `generate_lnode_scoped_env'`.  Leg A's
+     `generate_all_signatures_entails_scoped'` is the template.
+  2. *choices, not obligations* -- `cenv = lnode_clock_env (unnest_node ...)`,
+     and `base_ty`/`rst_ty` being `env`'s values at the two aux names.  These
+     are discharged by *instantiating* the section, not by proof.
+  3. *Velus's own* -- `Forall (unnested_equation Q)` from
+     `unnest_node_unnested_eq`, and the `wl_equation`/`wc_equation` lists
+     from `wl_node`/`wc_node`.
+  4. *the scope, and what a run moves* -- the moved-name freshness, the
+     locals-and-minted exclusion, and (what is left of the run facts) that a
+     created variable has a security name outside the scope and its clock a
+     type inside it.  All four are about the *choice of* `scope` against the
+     naming pass's domain; `SecLNamingTotality.v`'s
+     `generate_local_env_for_lnode_domain` family is the input.
+  5. *clock-type totality* -- `clk_types_defined`, and the "clocks occurring
+     in the node have types" premise of `unnest_node_canonical_cover`.  One
+     fact: `env` is total on the node's declared variables, which the naming
+     pass gives, plus `assign_clk_type_total`.
+  6. *that generated signatures are good* -- `signature_good`,
+     `signature_scoped`, `NoDup (signature_scope ...)`,
+     `generate_lnode_sig_instantiations`, and `sig_rooted`.  Templates, all in
+     `SecNLusTypingCorrectness.v` (3022 lines) and each about 200 lines there:
+     `generate_node_sig_good_from_local_env`,
+     `generate_node_sig_scoped_env_scoped`,
+     `generate_node_sig_scope_nodup_from_local_env`, and
+     `generated_signature_constraints_mention_clock_scoped_env` /
+     `..._mention_reset_scoped_env` for `sig_rooted`.
+  7. *the raw constraints' shape* -- `wf_constraints ce` for a Lustre node's
+     generated constraints.  The Lustre analogue of what the NLustre side
+     proves on the way to `signature_good`: the targets are the defined
+     variables' names together with the minted ones, each once.
+  8. *`sig_inputs_ok GL P`* -- the pairing of the published signature's input
+     list with the callee's node inputs, and the clock closure of its
+     constraints.  Documented at `SecLusUnnestingCalls.v`'s
+     `sig_inputs_ok` as a program-level fact from the start.
+
+Items 6 and 7 are the bulk; 1 and 5 are each a contained induction; 2, 3 and
+8 are bookkeeping at the instantiation site.  They need a new file after
+`SecLusUnnesting.v`/`SecLusNormFby.v`, since they speak about
+`generate_all_lsignatures_scoped_env`, which is built there.  Prose for each
+is in `work_docs/Next_remaining.v`.
+
+One caution, learned twice on this leg: state each of them about the run the
+generator *actually performs*, not about a description of it.  A premise
+quantified over all states, or keyed on a recorded annotation, speaks about
+identifiers the pass never created -- and is then unsatisfiable.  See the
+`source_types_scoped` and `fby_created_pairs` corrections above.
 
 ### RESOLVED 2026-09-25: `source_types_scoped` was unsatisfiable for programs with calls
 
