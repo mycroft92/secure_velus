@@ -228,4 +228,57 @@ Import SECMONADNotations.
       + exact (Haux' y Hc (@Coq.Init.Logic.eq_refl _ y)).
   Qed.
 
+  (** * Towards item 7: singleton targets
+
+      [wf_constraints] is two things -- every constraint has a one-element
+      target, and the targets are pairwise distinct -- and they have quite
+      different costs.  The first is structural: every rule the generator has
+      emits [lconstrain _ b], whose target is [[b]], over whatever the
+      expression carried, and an instantiated call block's targets are its
+      outputs.  The second needs the minted window, and is where the real
+      work is.
+
+      These two are the first half's plumbing: [cmerge] is a sorted merge
+      with dedup rather than an append, so a [Forall] property has to be
+      pushed through it by membership, and an instantiated block's targets are
+      singletons because they are exactly its outputs. *)
+
+  Lemma singleton_targets_cmerge :
+    forall c1 c2,
+      SIGPROOFS.singleton_targets c1 ->
+      SIGPROOFS.singleton_targets c2 ->
+      SIGPROOFS.singleton_targets (cmerge c1 c2).
+  Proof.
+    intros c1 c2 H1 H2.
+    unfold SIGPROOFS.singleton_targets in H1, H2 |- *.
+    rewrite Forall_forall in H1, H2 |- *.
+    intros c Hin. apply cmerge_In in Hin as [Hin|Hin]; auto.
+  Qed.
+
+  Lemma singleton_targets_app :
+    forall c1 c2,
+      SIGPROOFS.singleton_targets c1 ->
+      SIGPROOFS.singleton_targets c2 ->
+      SIGPROOFS.singleton_targets (c1 ++ c2).
+  Proof.
+    intros c1 c2 H1 H2. unfold SIGPROOFS.singleton_targets in *.
+    apply Forall_app. split; assumption.
+  Qed.
+
+  Lemma generate_constraints_singleton_targets :
+    forall sg inp clk rst out cns sa sa',
+      generate_constraints sg inp clk rst out sa = OK (cns, sa') ->
+      SIGPROOFS.singleton_targets cns.
+  Proof.
+    intros sg inp clk rst out cns sa sa' Hgen.
+    pose proof (CALLS.generate_constraints_targets sg inp clk rst out cns
+                  sa sa' Hgen) as Hsnd.
+    unfold SIGPROOFS.singleton_targets. apply Forall_forall.
+    intros c Hc.
+    assert (In (snd c) (List.map (fun ty => [ty]) out)) as Hin
+        by (rewrite <- Hsnd; apply in_map_iff; exists c;
+            split; [reflexivity|exact Hc]).
+    apply in_map_iff in Hin as (d & Hd & _). now exists d.
+  Qed.
+
 End SecLusTypingCorrectness.
