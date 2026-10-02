@@ -583,6 +583,180 @@ Module Type SECLNAMINGTOTALITY
       [apply lOrdered_nodes_NoDup_names, Hord|exact Hpre].
   Qed.
 
+  (** * The run, read at one node
+
+      Every Lustre-side theorem is conditioned on [find_node_env] and
+      [get_node_aux] succeeding at the node it speaks about.  The pass is a
+      fold that inserts one entry per node and prepends one auxiliary record
+      per node, so those lookups are determined by the run -- but only after
+      two facts about the fold: that it preserves an entry whose name it does
+      not insert, and that it preserves a record lookup whose name it does not
+      prepend.  Both are inductions over the node list. *)
+
+  Lemma generate_lnode_scoped_env'_envs_mono :
+    forall ns envs acc st envs' aux st' x le,
+      generate_lnode_scoped_env' ns envs acc st = OK ((envs', aux), st') ->
+      ~ In x (List.map n_name ns) ->
+      find_node_env x envs = Some le ->
+      find_node_env x envs' = Some le.
+  Proof.
+    induction ns as [|n ns IH];
+      intros envs acc st envs' aux st' x le Hrun Hnin Hfind.
+    - cbn in Hrun. unfold NMret in Hrun. inversion Hrun; subst. exact Hfind.
+    - cbn in Hrun.
+      apply name_bind_inv in Hrun as (p & st1 & Hloc & Hrun).
+      destruct p as (le0 & r0).
+      apply name_bind_inv in Hrun as (envs1 & st2 & Hins & Hrun).
+      apply name_bind_inv in Hrun as (q & st3 & Hrec & Hret).
+      destruct q as (envs2 & aux2).
+      unfold NMret in Hret. inversion Hret; subst envs2 aux2 st3.
+      assert (envs1 = Env.add n.(n_name) le0 envs /\ st2 = st1)
+        as (? & ?).
+      { unfold fresh_insert_node_env in Hins.
+        destruct (Env.mem n.(n_name) envs); [discriminate Hins|].
+        unfold insert_node_env, NMret in Hins.
+        inversion Hins; split; reflexivity. }
+      subst envs1 st2.
+      eapply (IH (Env.add n.(n_name) le0 envs) (r0 :: acc) st1);
+        [exact Hrec|intro Hc; apply Hnin; now right|].
+      unfold find_node_env in Hfind |- *.
+      rewrite Env.gso; [exact Hfind|].
+      intro Hc. apply Hnin. left. now rewrite Hc.
+  Qed.
+
+  Lemma generate_lnode_scoped_env'_aux_mono :
+    forall ns envs acc st envs' aux st' x,
+      generate_lnode_scoped_env' ns envs acc st = OK ((envs', aux), st') ->
+      ~ In x (List.map n_name ns) ->
+      get_node_aux x aux = get_node_aux x acc.
+  Proof.
+    induction ns as [|n ns IH];
+      intros envs acc st envs' aux st' x Hrun Hnin.
+    - cbn in Hrun. unfold NMret in Hrun. inversion Hrun; subst.
+      reflexivity.
+    - cbn in Hrun.
+      apply name_bind_inv in Hrun as (p & st1 & Hloc & Hrun).
+      destruct p as (le0 & r0).
+      apply name_bind_inv in Hrun as (envs1 & st2 & Hins & Hrun).
+      apply name_bind_inv in Hrun as (q & st3 & Hrec & Hret).
+      destruct q as (envs2 & aux2).
+      unfold NMret in Hret. inversion Hret; subst envs2 aux2 st3.
+      assert (r0.(nname) = n.(n_name)) as Hrname.
+      { unfold generate_local_env_for_lnode in Hloc.
+        apply name_bind_inv in Hloc as (c1 & s1 & _ & Hloc).
+        apply name_bind_inv in Hloc as (c2 & s2 & _ & Hloc).
+        apply name_bind_inv in Hloc as (c3 & s3 & _ & Hloc).
+        apply name_bind_inv in Hloc as (c4 & s4 & _ & Hret0).
+        unfold NMret in Hret0. inversion Hret0. reflexivity. }
+      rewrite (IH envs1 (r0 :: acc) st2 envs' aux st' x Hrec
+                 ltac:(intro Hc; apply Hnin; now right)).
+      unfold get_node_aux. cbn [find_node_names].
+      destruct (ident_eqb x r0.(nname)) eqn:Ex; [|reflexivity].
+      exfalso. apply ident_eqb_eq in Ex. apply Hnin. left.
+      now rewrite Ex, Hrname.
+  Qed.
+
+  Theorem generate_lnode_scoped_env'_at_node :
+    forall ns envs acc st envs' aux st' n,
+      NoDup (List.map n_name ns) ->
+      generate_lnode_scoped_env' ns envs acc st = OK ((envs', aux), st') ->
+      In n ns ->
+      exists le r sta stb,
+        generate_local_env_for_lnode n sta = OK ((le, r), stb)
+        /\ find_node_env n.(n_name) envs' = Some le
+        /\ get_node_aux n.(n_name) aux = Some (r.(nclk), r.(nrst)).
+  Proof.
+    induction ns as [|n0 ns IH];
+      intros envs acc st envs' aux st' n Hnd Hrun Hin; [contradiction|].
+    cbn in Hrun.
+    apply name_bind_inv in Hrun as (p & st1 & Hloc & Hrun).
+    destruct p as (le0 & r0).
+    apply name_bind_inv in Hrun as (envs1 & st2 & Hins & Hrun).
+    apply name_bind_inv in Hrun as (q & st3 & Hrec & Hret).
+    destruct q as (envs2 & aux2).
+    unfold NMret in Hret. inversion Hret; subst envs2 aux2 st3.
+    assert (envs1 = Env.add n0.(n_name) le0 envs /\ st2 = st1) as (? & ?).
+    { unfold fresh_insert_node_env in Hins.
+      destruct (Env.mem n0.(n_name) envs); [discriminate Hins|].
+      unfold insert_node_env, NMret in Hins.
+      inversion Hins; split; reflexivity. }
+    subst envs1 st2.
+    cbn in Hnd. inversion Hnd as [|z zs Hnotin Hnd']; subst z zs.
+    destruct Hin as [Heq|Hin].
+    - (** the head: its entry and its record survive, because no later node
+          repeats its name *)
+      subst n0.
+      assert (r0.(nname) = n.(n_name)) as Hrname.
+      { unfold generate_local_env_for_lnode in Hloc.
+        apply name_bind_inv in Hloc as (c1 & s1 & _ & Hl).
+        apply name_bind_inv in Hl as (c2 & s2 & _ & Hl).
+        apply name_bind_inv in Hl as (c3 & s3 & _ & Hl).
+        apply name_bind_inv in Hl as (c4 & s4 & _ & Hret0).
+        unfold NMret in Hret0. inversion Hret0. reflexivity. }
+      exists le0, r0, st, st1.
+      split; [exact Hloc|split].
+      + eapply generate_lnode_scoped_env'_envs_mono;
+          [exact Hrec|exact Hnotin|].
+        unfold find_node_env. apply Env.gss.
+      + rewrite (generate_lnode_scoped_env'_aux_mono ns
+                   (Env.add n.(n_name) le0 envs) (r0 :: acc) st1
+                   envs' aux st' n.(n_name) Hrec Hnotin).
+        unfold get_node_aux. cbn [find_node_names].
+        rewrite Hrname, ident_eqb_refl. reflexivity.
+    - (** or further down, where the induction hypothesis applies *)
+      exact (IH (Env.add n0.(n_name) le0 envs) (r0 :: acc) st1
+               envs' aux st' n Hnd' Hrec Hin).
+  Qed.
+
+  Corollary generate_lnode_scoped_env_at_node :
+    forall ns envs aux n,
+      NoDup (List.map n_name ns) ->
+      generate_lnode_scoped_env ns = OK (envs, aux) ->
+      In n ns ->
+      exists le r sta stb,
+        generate_local_env_for_lnode n sta = OK ((le, r), stb)
+        /\ find_node_env n.(n_name) envs = Some le
+        /\ get_node_aux n.(n_name) aux = Some (r.(nclk), r.(nrst)).
+  Proof.
+    intros ns envs aux n Hnd Hgen Hin.
+    unfold generate_lnode_scoped_env in Hgen.
+    destruct (generate_lnode_scoped_env' ns (Env.empty _) [] init_state)
+      as [((envs0 & aux0) & st0)|] eqn:Hrun; [|discriminate Hgen].
+    inversion Hgen; subst envs0 aux0.
+    exact (generate_lnode_scoped_env'_at_node ns (Env.empty _) [] init_state
+             envs aux st0 n Hnd Hrun Hin).
+  Qed.
+
+  (** And in the form the generators want it: the node's environment, the two
+      auxiliary names, and the fact that everything looked up is there.  The
+      base and reset *types* are read off here rather than assumed -- which is
+      what makes the node theorems' premise
+      [Env.find clk_id env = Some base_ty] a choice at the instantiation site
+      rather than an obligation. *)
+  Corollary generate_lnode_scoped_env_at_node_covers :
+    forall ns envs aux n,
+      NoDup (List.map n_name ns) ->
+      generate_lnode_scoped_env ns = OK (envs, aux) ->
+      In n ns ->
+      exists le clk_id rst_id base_ty rst_ty,
+        find_node_env n.(n_name) envs = Some le
+        /\ get_node_aux n.(n_name) aux = Some (clk_id, rst_id)
+        /\ Env.find clk_id le = Some base_ty
+        /\ Env.find rst_id le = Some rst_ty
+        /\ (exists tys, get_mappings_from_node n.(n_in) le = Some tys)
+        /\ (exists tys, get_mappings_from_node n.(n_vars) le = Some tys)
+        /\ (exists tys, get_mappings_from_node n.(n_out) le = Some tys).
+  Proof.
+    intros ns envs aux n Hnd Hgen Hin.
+    destruct (generate_lnode_scoped_env_at_node ns envs aux n Hnd Hgen Hin)
+      as (le & r & sta & stb & Hloc & Hfenv & Haux).
+    destruct (generate_local_env_for_lnode_covers n sta le r stb Hloc)
+      as ((bt & Hclk) & (rt & Hrst) & Hinp & Hvars & Hout).
+    exists le, r.(nclk), r.(nrst), bt, rt.
+    split; [exact Hfenv|split; [exact Haux|split; [exact Hclk|
+      split; [exact Hrst|split; [exact Hinp|split; [exact Hvars|exact Hout]]]]]].
+  Qed.
+
 End SECLNAMINGTOTALITY.
 
 Module SecLNamingTotality
