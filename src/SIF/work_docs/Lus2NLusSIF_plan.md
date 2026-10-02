@@ -172,22 +172,90 @@ The three scoping hypotheses on the source generator --
 are *satisfiable*; see the section below.  They are still undischarged, and
 the discharge is the node level's job.
 
-`node_carries` -- and with it `unnest_node_step` -- still carries the two
-ambient premises that the per-equation statement cannot discharge; removing
-them is what the pointwise contract is for.  As of 2026-09-30 the pointwise
-expression level is closed, so what stands between the two is the
-right-hand-side and equation chain on the pointwise relation: the streams
-analogues of `rhs_carries_exp`, `rhs_carries_list_intro`,
-`eqn_carries_plain`, `eqn_carries_call`, `eqn_carries_one`,
-`eqn_carries_split` and `eqn_carries_all`.  The scalar chain is
-`SecLusUnnestingEquations.v` lines 228--4367.
+### RESOLVED 2026-10-02: the `A eq` pair is gone
 
-Note the premises are not merely inconvenient, they are **jointly
-unsatisfiable** for a multi-output equation whose outputs sit on differing
-clocks: the first forces `A eq` to contain every lifted variable's clock
-type, the second forces it below every left-hand variable's level.  So this
-is not an optimisation; the node theorem is vacuous on exactly the equations
-that matter until the chain is redone pointwise.
+The scalar `node_carries`/`unnest_node_step` carried two ambient premises
+that the per-equation statement could not discharge, and they were not
+merely inconvenient: for a multi-output equation whose outputs sit on
+differing clocks they are **jointly unsatisfiable**, since the first forces
+`A eq` to contain every lifted variable's clock type and the second forces
+it below every left-hand variable's level.  The node theorem was therefore
+vacuous on exactly the equations that matter.
+
+The pointwise chain is now complete and the pair is gone:
+
+  * `rhs_carries_streams`, `rhs_carries_other_streams`,
+    `rhs_carries_Efby_streams`, `rhs_carries_Earrow_streams`,
+    `rhs_carries_exp_streams`, `rhs_carries_list_streams` and its fold
+    (`SecLusUnnestingEquations.v`);
+  * `eqn_bounds`, `eqn_carries_plain_streams`, `eqn_carries_call_streams`,
+    `eqn_carries_one_streams`, `eqn_carries_split_streams`,
+    `eqn_carries_streams`, `eqn_carries_covered_streams`,
+    `eqn_carries_all_streams` (same file);
+  * `eqns_carries_streams`, `node_carries_streams`,
+    `node_carries_preserves_streams`, `unnest_node_entailment_streams`,
+    `unnest_node_step_streams` (`SecLusUnnestingNodes.v`).
+
+`normalize_signatures_weaken` needed no change: it takes the per-node step
+as an abstract premise, so `unnest_node_step_streams` discharges it exactly
+where `unnest_node_step` did.
+
+Three things were learned doing it.
+
+*The delays were cheap and the equations were not.*  `wc_exp` puts both
+operand lists of an `fby`/`arrow` on the result clocks, so one ambient list
+serves the two recursive calls and the join.  An equation's left-hand
+variables need not share a clock, which is the whole reason the chain had to
+be redone.
+
+*The call needed a forced ambient, twice.*  Inside an expression and at the
+top of an equation the transfer runs at `merge [rst_ty] ckty` -- the call's
+own ambient -- because `generate_constraints_mono_sem_aug` wants a single one
+for the clock, the reset and the outputs while the argument slots' clocks
+differ.  Anything larger is not below `merge amb_call (fst rstty)`, so a
+"big enough" ambient is not an option.  At the equation level this is also
+what makes the per-stream bound *enough* for the outputs: the call's ambient
+sits inside every result's ambient (`call_amb_below_result_ambients`), and
+`satisfiable` only gets easier as its left-hand side shrinks, so each
+output's own bound implies the one the instantiated block needs.  The scalar
+proof had to be handed that bound; here it is derived.
+
+*The reset could not be reused.*  `reset_step` asks for a containment
+covering every variable the reset's unnesting lifts, which is precisely the
+premise the pointwise contract exists to avoid, so `reset_step_streams` is a
+separate ~200-line lemma resting on `clocks_covered` and
+`state_clocks_found` instead.
+
+### Assumed, not yet discharged: what is left of Leg U
+
+One ambient premise survives in `unnest_node_step_streams`, and it is
+satisfiable rather than contradictory:
+
+    (forall ce dlt, listSatisfiable dlt ce ->
+       forall eq, In eq n.(n_eqs) -> eqn_bounds env dlt (As eq) (fst eq))
+
+"each defined variable is above its own stream's ambient".  For every rule
+but the call it is the equation's own generated constraint, read off
+`generate_lvars_constraints`, which emits exactly
+`merge (merge [rst_ty] ckty_i) (fst t_i) ⊑ b_i`.
+
+For a call equation it is *not* the call's own constraint: the source call
+rule passes the **base** clock's type to `generate_constraints`, so the block
+gives `merge [rst_ty] bckty ⊑ b_i` and no more, while an output on
+`bck on c` needs `typeof c ⊑ b_i` as well.  That is available, but only
+through the callee: inside the callee the output sits on `Con Cbase c` with
+`c` an input, so the callee's own general rule put `level(c) ⊑ level(out)`
+into its signature, and instantiation substitutes `c`'s actual into the input
+position.  **So the discharge goes through `sig_inputs_clock_closed`, which
+`sig_inputs_ok` already supplies** -- it is a lemma about
+`generate_constraints`, not a new assumption.  Writing it is the next piece
+of Leg U.  *[untested]*
+
+The other outstanding item is unchanged: the program level, which discharges
+the fourteen section hypotheses (the twelve the scalar chain had, plus
+`clk_types_defined` and `call_anon_not_env_key`) together with
+`wc_global P` and `sig_inputs_ok GL P`.  Template:
+`SecNLusTypingCorrectness.v`; prose in `work_docs/Next_remaining.v`.
 
 ### RESOLVED 2026-09-25: `source_types_scoped` was unsatisfiable for programs with calls
 
