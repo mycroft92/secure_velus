@@ -5765,6 +5765,71 @@ Import UNN.Fresh.Tactics.
                Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd).
     Qed.
 
+    (** One chunk, per stream: a single expression bound to the variables that
+        its own streams fill. *)
+    Lemma eqn_carries_one_streams :
+      forall (P : global) ys e ambs eqs' st st' ce xst xst' cet yst yst' dlt,
+        wc_global P ->
+        CALLS.sig_inputs_ok GL P ->
+        wl_exp P e -> wc_exp P vars e ->
+        List.length ys = numstreams e ->
+        NoDup (vars_defined eqs' ++ st_ids st) ->
+        (forall x, In x (moved_by st st') -> ~ In x scope) ->
+        stream_ambients_scoped scope ambs ->
+        clocks_covered_local (clockof e) ambs ->
+        List.length ambs = List.length ys ->
+        state_clocks_found_local st' ->
+        eqn_bounds dlt ambs ys ->
+        constraints_scoped scope ce ->
+        unnest_equation P (ys, [e]) st = (eqs', st') ->
+        generate_leqn_constraint GL env base_ty rst_ty cenv (ys, [e]) xst
+          = OK (ce, xst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
+          = OK (cet, yst') ->
+        listSatisfiable dlt ce ->
+        sec_le xst' stF ->
+        exists dlt',
+          agree_off (moved_by st st') dlt dlt'
+          /\ listSatisfiable dlt' cet
+          /\ constraints_scoped (scope ++ moved_by st st') cet.
+    Proof.
+      intros P ys e ambs eqs' st st' ce xst xst' cet yst yst' dlt
+        Hwcg Hsigin Hwl Hwc Hlen Hnd Hmv Hambsc Hcovered Hlenamb Hfound
+        Hbnds Hcesc Hun Hgen Hgent Hsat Hbnd.
+      assert (List.length ys = List.length (annots [e])) as Hlena.
+      { rewrite Hlen. unfold annots. simpl. rewrite app_nil_r.
+        now rewrite length_annot_numstreams. }
+      assert (clocksof [e] = clockof e) as Hcl1
+          by (unfold clocksof; simpl; apply app_nil_r).
+      assert ((match e with Eapp _ _ _ _ => False | _ => True end) ->
+              exists dlt',
+                agree_off (moved_by st st') dlt dlt'
+                /\ listSatisfiable dlt' cet
+                /\ constraints_scoped (scope ++ moved_by st st') cet)
+        as Hplain.
+      { intro Hnotapp.
+        assert (Forall (fun z => match z with
+                       | Eapp _ _ _ _ => False | _ => True end) [e]) as Hne0
+            by (constructor; [exact Hnotapp|constructor]).
+        assert (Forall (wl_exp P) [e]) as Hwl0
+            by (constructor; [exact Hwl|constructor]).
+        assert (Forall (wc_exp P vars) [e]) as Hwc0
+            by (constructor; [exact Hwc|constructor]).
+        exact (eqn_carries_plain_streams P ys [e] ambs eqs' st st' ce
+                 xst xst' cet yst yst' dlt Hwcg Hsigin Hne0 Hwl0 Hwc0 Hlena
+                 Hnd Hmv Hambsc
+                 ltac:(rewrite Hcl1; exact Hcovered)
+                 Hlenamb Hfound Hbnds Hcesc Hun Hgen Hgent Hsat Hbnd). }
+      destruct e as [| | | | | | | | |f args er anns];
+        try (apply Hplain; exact I).
+      assert (List.length ys = List.length anns) as Hlencall
+          by (simpl in Hlen; exact Hlen).
+      exact (eqn_carries_call_streams P ys f args er anns ambs eqs' st st' ce
+               xst xst' cet yst yst' dlt Hwcg Hsigin Hwl Hwc Hlencall Hnd Hmv
+               Hambsc Hcovered Hlenamb Hfound Hbnds Hcesc Hun Hgen Hgent
+               Hsat Hbnd).
+    Qed.
+
     Lemma eqn_carries_split :
       forall (P : global) es xs eqs' st st' ce xst xst' cet yst yst' dlt,
         Forall (wl_exp P) es ->
@@ -6211,6 +6276,445 @@ Import UNN.Fresh.Tactics.
                         c Hinc2 Hc) cB2 HscB2).
     Qed.
 
+    (** The chunked rule, per stream.  The ambient list splits where the
+        variable list does: the head chunk takes the first [numstreams e]
+        ambients, because those are the streams its own expression fills. *)
+    Lemma eqn_carries_split_streams :
+      forall (P : global) es xs ambs eqs' st st' ce xst xst' cet yst yst' dlt,
+        wc_global P ->
+        CALLS.sig_inputs_ok GL P ->
+        Forall (wl_exp P) es ->
+        Forall (wc_exp P vars) es ->
+        List.length xs = List.length (annots es) ->
+        NoDup (vars_defined eqs' ++ st_ids st) ->
+        (forall x, In x (moved_by st st') -> ~ In x scope) ->
+        stream_ambients_scoped scope ambs ->
+        clocks_covered_local (clocksof es) ambs ->
+        List.length ambs = List.length xs ->
+        state_clocks_found_local st' ->
+        eqn_bounds dlt ambs xs ->
+        constraints_scoped scope ce ->
+        unnest_equation P (xs, es) st = (eqs', st') ->
+        generate_lsplit_constraints GL env base_ty rst_ty cenv xs es xst
+          = OK (ce, xst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
+          = OK (cet, yst') ->
+        listSatisfiable dlt ce ->
+        sec_le xst' stF ->
+        exists dlt',
+          agree_off (moved_by st st') dlt dlt'
+          /\ listSatisfiable dlt' cet
+          /\ constraints_scoped (scope ++ moved_by st st') cet.
+    Proof.
+      intros P es. induction es as [|e es IH];
+        intros xs ambs eqs' st st' ce xst xst' cet yst yst' dlt
+          Hwcg Hsigin Hwles Hwces Hlen Hnd Hmv Hambsc Hcovered Hlenamb Hfound
+          Hbnds Hcesc Hun Hgen Hgent Hsat Hbnd.
+      - (** nothing on the right: nothing emitted, nothing generated *)
+        apply unnest_equation_inv in Hun
+          as (es1 & eqs1 & ess & eqss & Hmap & ? & ? & ?); subst.
+        apply map_bind2_unnest_rhs_nil in Hmap as (? & ? & ?); subst.
+        simpl List.concat in *. simpl app in *.
+        apply generate_leqns_constraints_nil in Hgent as (? & ?); subst.
+        exists dlt. split; [apply agree_off_refl|split; constructor].
+      - inversion Hwles as [|ea esa Hwle Hwlr]; subst.
+        inversion Hwces as [|eb esb Hwce Hwcr]; subst.
+        apply unnest_equation_inv in Hun
+          as (es1 & eqs1 & ess & eqss & Hmap & ? & ? & ?); subst.
+        apply map_bind2_unnest_rhs_cons in Hmap
+          as (esh & eqh & s1 & esr & eqr & Hunh & Hunr & ? & ?); subst.
+        simpl List.concat in *.
+
+        assert (List.length (annots esh) = numstreams e) as Hnh.
+        { erewrite unnest_rhs_annot; [|exact Hwle|exact Hunh].
+          apply length_annot_numstreams. }
+        assert (List.length (annots (e :: es))
+                = numstreams e + List.length (annots es)) as Hlsum.
+        { unfold annots. simpl. rewrite app_length.
+          now rewrite length_annot_numstreams. }
+
+        (** the target equations, chunked *)
+        rewrite split_equation_app, Hnh in Hnd, Hgent.
+        rewrite gen_lsplit_cons in Hgen.
+        apply sec_bind_inv in Hgen as (ceh & xsth & Hgenh & Hgen).
+        apply sec_bind_inv in Hgen as (cer & xstr & Hgenr & Hret).
+        unfold SC.ret in Hret. inv Hret.
+        rewrite generate_lone_is_leqn in Hgenh.
+
+        assert (sec_le xsth stF) as Hbh
+            by exact (sec_le_trans _ _ _
+                        (generate_lsplit_constraints_sec_le es
+                           (skipn (numstreams e) xs) cer xsth xst' Hgenr) Hbnd).
+        apply listSatisfiable_app in Hsat as (Hsath & Hsatr).
+        apply Forall_app in Hcesc as (Hcesch & Hcescr).
+
+        assert (List.length (firstn (numstreams e) xs) = numstreams e)
+          as HlenH by (rewrite firstn_length, Hlen, Hlsum; lia).
+        assert (List.length (skipn (numstreams e) xs)
+                = List.length (annots es)) as HlenT
+            by (rewrite skipn_length_any, Hlen, Hlsum; lia).
+
+        (** and the ambients, chunked the same way *)
+        assert (numstreams e <= List.length ambs)%nat as Hamble
+            by (rewrite Hlenamb, Hlen, Hlsum; lia).
+        destruct (split_at_length ST (numstreams e) ambs)
+          as (ambs1 & ambs2 & Hambs & Hambs1len); [exact Hamble|].
+        subst ambs.
+        apply Forall_app in Hambsc as (Hambsc1 & Hambsc2).
+        assert (List.length (clockof e) = List.length ambs1) as Hclocklen
+            by (rewrite length_clockof_numstreams, Hambs1len; reflexivity).
+        change (clocks_covered_local (clockof e ++ clocksof es)
+                  (ambs1 ++ ambs2)) in Hcovered.
+        destruct (Forall2_app_split
+                    (clock_covered env base_ty rst_ty)
+                    (clockof e) ambs1 (clocksof es) ambs2
+                    Hcovered Hclocklen) as (Hcovered1 & Hcovered2).
+        assert (List.length ambs2 = List.length (skipn (numstreams e) xs))
+          as Hambs2len.
+        { rewrite skipn_length_any.
+          rewrite app_length, Hambs1len in Hlenamb. lia. }
+        assert (eqn_bounds dlt ambs1 (firstn (numstreams e) xs)
+                /\ eqn_bounds dlt ambs2 (skipn (numstreams e) xs))
+          as (Hbnds1 & Hbnds2).
+        { unfold eqn_bounds in Hbnds |- *.
+          rewrite <- (firstn_skipn (numstreams e) xs) in Hbnds.
+          apply (Forall2_app_split
+                   (fun a x => forall b, Env.find x env = Some b ->
+                                         satisfiable dlt a [b])
+                   ambs1 (firstn (numstreams e) xs)
+                   ambs2 (skipn (numstreams e) xs) Hbnds).
+          transitivity (numstreams e); [exact Hambs1len|symmetry; exact HlenH]. }
+
+        (** the head chunk is an equation in its own right *)
+        assert (unnest_equation P (firstn (numstreams e) xs, [e]) st
+                = (split_equation (firstn (numstreams e) xs, esh) ++ eqh, s1))
+          as Hunh'.
+        { destruct (unnest_equation P (firstn (numstreams e) xs, [e]) st)
+            as [eqsh sh] eqn:Hue.
+          apply unnest_equation_inv in Hue
+            as (u1 & u2 & uess & ueqss & Humap & ? & ? & ?); subst.
+          apply map_bind2_unnest_rhs_cons in Humap
+            as (ueh & ueq & us1 & uesr & ueqr & Huh & Hur & ? & ?); subst.
+          apply map_bind2_unnest_rhs_nil in Hur as (? & ? & ?); subst.
+          rewrite Hunh in Huh. inv Huh.
+          simpl List.concat. now rewrite !app_nil_r. }
+        assert (unnest_equation P (skipn (numstreams e) xs, es) s1
+                = (split_equation (skipn (numstreams e) xs, List.concat esr)
+                     ++ List.concat eqr, st')) as Hunr'.
+        { destruct (unnest_equation P (skipn (numstreams e) xs, es) s1)
+            as [eqsr sr] eqn:Hue.
+          apply unnest_equation_inv in Hue
+            as (u1 & u2 & uess & ueqss & Humap & ? & ? & ?); subst.
+          rewrite Hunr in Humap. inv Humap. reflexivity. }
+
+        assert (st_follows st s1) as Hf1
+            by exact (unnest_equation_st_follows P
+                        (firstn (numstreams e) xs, [e])
+                        (split_equation (firstn (numstreams e) xs, esh) ++ eqh)
+                        st s1 Hunh').
+        assert (st_follows s1 st') as Hf2
+            by exact (unnest_equation_st_follows P
+                        (skipn (numstreams e) xs, es)
+                        (split_equation
+                           (skipn (numstreams e) xs, List.concat esr)
+                           ++ List.concat eqr) s1 st' Hunr').
+        assert (state_clocks_found_local s1) as Hfound1
+            by exact (state_clocks_found_prefix cenv s1 st' Hf2 Hfound).
+
+        (** the target run, cut into its four pieces and reassembled *)
+        assert (Forall (unnested_equation P)
+                  (split_equation (firstn (numstreams e) xs, esh) ++ eqh))
+          as HuneH.
+        { assert (wl_equation P (firstn (numstreams e) xs, [e])) as HwleqH.
+          { split; [repeat constructor; exact Hwle|].
+            rewrite HlenH. unfold annots. simpl. rewrite app_nil_r.
+            now rewrite length_annot_numstreams. }
+          exact (unnest_equation_unnested_eq P
+                   (firstn (numstreams e) xs, [e])
+                   (split_equation (firstn (numstreams e) xs, esh) ++ eqh)
+                   st s1 HwleqH Hunh'). }
+        assert (Forall (unnested_equation P)
+                  (split_equation (skipn (numstreams e) xs, List.concat esr)
+                     ++ List.concat eqr)) as HuneT.
+        { assert (wl_equation P (skipn (numstreams e) xs, es)) as HwleqT
+            by exact (conj Hwlr HlenT).
+          exact (unnest_equation_unnested_eq P
+                   (skipn (numstreams e) xs, es)
+                   (split_equation
+                      (skipn (numstreams e) xs, List.concat esr)
+                      ++ List.concat eqr) s1 st' HwleqT Hunr'). }
+        apply Forall_app in HuneH as (HuneA1 & HuneB1).
+        apply Forall_app in HuneT as (HuneA2 & HuneB2).
+
+        apply generate_leqns_constraints_app in Hgent
+          as (cA & cB & yA & HgA & HgB & ?); subst.
+        apply generate_leqns_constraints_app in HgA
+          as (cA1 & cA2 & yA1 & HgA1 & HgA2 & ?); subst.
+        apply generate_leqns_constraints_app in HgB
+          as (cB1 & cB2 & yB1 & HgB1 & HgB2 & ?); subst.
+        destruct (state_pure_generate_leqns P _ HuneA1 _ yst _ _ HgA1)
+          as (? & HgA1'); subst yA1.
+        destruct (state_pure_generate_leqns P _ HuneA2 _ yst _ _ HgA2)
+          as (? & HgA2'); subst yA.
+        destruct (state_pure_generate_leqns P _ HuneB1 _ yst _ _ HgB1)
+          as (? & HgB1'); subst yB1.
+        destruct (state_pure_generate_leqns P _ HuneB2 _ yst _ _ HgB2)
+          as (? & HgB2'); subst yst'.
+        assert (generate_leqns_constraints GL env base_ty rst_ty cenv
+                  (split_equation (firstn (numstreams e) xs, esh) ++ eqh) yst
+                = OK (cA1 ++ cB1, yst)) as HgH
+            by exact (generate_leqns_constraints_app_intro
+                        (split_equation (firstn (numstreams e) xs, esh)) eqh
+                        cA1 cB1 yst yst yst HgA1' HgB1').
+        assert (generate_leqns_constraints GL env base_ty rst_ty cenv
+                  (split_equation (skipn (numstreams e) xs, List.concat esr)
+                     ++ List.concat eqr) yst
+                = OK (cA2 ++ cB2, yst)) as HgT
+            by exact (generate_leqns_constraints_app_intro
+                        (split_equation
+                           (skipn (numstreams e) xs, List.concat esr))
+                        (List.concat eqr) cA2 cB2 yst yst yst
+                        HgA2' HgB2').
+
+        (** the defined variables, chunked the same way *)
+        assert (NoDup (vars_defined
+                         (split_equation (firstn (numstreams e) xs, esh)
+                            ++ eqh)
+                       ++ vars_defined
+                            (split_equation (skipn (numstreams e) xs,
+                                             List.concat esr)
+                               ++ List.concat eqr)
+                       ++ st_ids st)) as Hnd'.
+        { assert
+            (Permutation
+               (vars_defined
+                  ((split_equation (firstn (numstreams e) xs, esh) ++
+                    split_equation (skipn (numstreams e) xs,
+                                    List.concat esr)) ++
+                   eqh ++ List.concat eqr) ++ st_ids st)
+               (vars_defined
+                  (split_equation (firstn (numstreams e) xs, esh) ++ eqh) ++
+                vars_defined
+                  (split_equation (skipn (numstreams e) xs,
+                                   List.concat esr) ++ List.concat eqr) ++
+                st_ids st)) as Hperm.
+          { rewrite !vars_defined_app.
+            rewrite <- !app_assoc.
+            exact
+              (Permutation_app_head
+                 (vars_defined
+                    (split_equation (firstn (numstreams e) xs, esh)))
+                 (Permutation_swap3
+                    (vars_defined
+                       (split_equation (skipn (numstreams e) xs,
+                                        List.concat esr)))
+                    (vars_defined eqh)
+                    (vars_defined (List.concat eqr) ++ st_ids st))). }
+          exact (@Permutation_NoDup ident _ _ Hperm Hnd). }
+
+        (** the head *)
+        edestruct (eqn_carries_one_streams P (firstn (numstreams e) xs) e
+                     ambs1
+                     (split_equation (firstn (numstreams e) xs, esh) ++ eqh)
+                     st s1 ceh xst xsth (cA1 ++ cB1) yst yst dlt)
+          as (dlt1 & Hoff1 & Hce1 & Hscope1).
+        { exact Hwcg. }
+        { exact Hsigin. }
+        { exact Hwle. }
+        { exact Hwce. }
+        { exact HlenH. }
+        { exact
+            (NoDup_drop_middle
+               (vars_defined
+                  (split_equation (firstn (numstreams e) xs, esh) ++ eqh))
+               (vars_defined
+                  (split_equation (skipn (numstreams e) xs,
+                                   List.concat esr) ++ List.concat eqr))
+               (st_ids st) Hnd'). }
+        { intros y Hy.
+          exact (Hmv y (eq_moved_by_prefix st s1 st' Hf2 y Hy)). }
+        { exact Hambsc1. }
+        { exact Hcovered1. }
+        { now rewrite Hambs1len, HlenH. }
+        { exact Hfound1. }
+        { exact Hbnds1. }
+        { exact Hcesch. }
+        { exact Hunh'. }
+        { exact Hgenh. }
+        { exact HgH. }
+        { exact Hsath. }
+        { exact Hbh. }
+
+        (** and the rest *)
+        assert (Permutation
+                  (vars_defined
+                     (split_equation (firstn (numstreams e) xs, esh) ++ eqh)
+                     ++ st_ids st)
+                  (firstn (numstreams e) xs ++ st_ids s1)) as Hp1'.
+        { assert
+            (wl_equation P (firstn (numstreams e) xs, [e])) as HwleqH.
+          { split.
+            - constructor; [exact Hwle|constructor].
+            - simpl. rewrite app_nil_r, length_annot_numstreams.
+              exact HlenH. }
+          assert
+            (Permutation
+               (vars_defined
+                  (split_equation (firstn (numstreams e) xs, esh) ++ eqh) ++
+                st_ids st)
+               (vars_defined [(firstn (numstreams e) xs, [e])] ++ st_ids s1))
+            as Hunnestperm
+            by exact
+              (unnest_equation_vars_perm P
+                 (firstn (numstreams e) xs, [e])
+                 (split_equation (firstn (numstreams e) xs, esh) ++ eqh)
+                 st s1 HwleqH Hunh').
+          assert
+            (Permutation
+               (vars_defined [(firstn (numstreams e) xs, [e])] ++ st_ids s1)
+               (firstn (numstreams e) xs ++ st_ids s1)) as Hsourceperm.
+          { rewrite vars_defined_cons_eq. simpl. rewrite app_nil_r.
+            reflexivity. }
+          exact
+            (@Permutation_trans ident
+               (vars_defined
+                  (split_equation (firstn (numstreams e) xs, esh) ++ eqh) ++
+                st_ids st)
+               (vars_defined [(firstn (numstreams e) xs, [e])] ++ st_ids s1)
+               (firstn (numstreams e) xs ++ st_ids s1)
+               Hunnestperm Hsourceperm). }
+        edestruct (IH (skipn (numstreams e) xs) ambs2
+                     (split_equation (skipn (numstreams e) xs,
+                                      List.concat esr) ++ List.concat eqr)
+                     s1 st' cer xsth xst' (cA2 ++ cB2) yst yst dlt1)
+          as (dlt2 & Hoff2 & Hce2 & Hscope2).
+        { exact Hwcg. }
+        { exact Hsigin. }
+        { exact Hwlr. }
+        { exact Hwcr. }
+        { exact HlenT. }
+        { assert
+            (NoDup
+               (vars_defined
+                  (split_equation (skipn (numstreams e) xs,
+                                   List.concat esr) ++ List.concat eqr) ++
+                vars_defined
+                  (split_equation (firstn (numstreams e) xs, esh) ++ eqh) ++
+                st_ids st)) as Hndswap
+            by exact
+              (@Permutation_NoDup ident _ _
+                 (Permutation_swap3
+                    (vars_defined
+                       (split_equation (firstn (numstreams e) xs, esh) ++ eqh))
+                    (vars_defined
+                       (split_equation (skipn (numstreams e) xs,
+                                        List.concat esr) ++ List.concat eqr))
+                    (st_ids st)) Hnd').
+          assert
+            (NoDup
+               (vars_defined
+                  (split_equation (skipn (numstreams e) xs,
+                                   List.concat esr) ++ List.concat eqr) ++
+                firstn (numstreams e) xs ++ st_ids s1)) as Hndmapped
+            by exact
+              (@Permutation_NoDup ident _ _
+                 (Permutation_app_head
+                    (vars_defined
+                       (split_equation (skipn (numstreams e) xs,
+                                        List.concat esr) ++ List.concat eqr))
+                    Hp1') Hndswap).
+          exact
+            (NoDup_drop_middle
+               (vars_defined
+                  (split_equation (skipn (numstreams e) xs,
+                                   List.concat esr) ++ List.concat eqr))
+               (firstn (numstreams e) xs) (st_ids s1) Hndmapped). }
+        { intros y Hy.
+          exact (Hmv y (eq_moved_by_suffix st s1 st' Hf1 y Hy)). }
+        { exact Hambsc2. }
+        { exact Hcovered2. }
+        { exact Hambs2len. }
+        { exact Hfound. }
+        { (** the tail's bounds, carried to the head's witness *)
+          unfold eqn_bounds in Hbnds2 |- *.
+          eapply Forall2_impl_In; [|exact Hbnds2].
+          intros a x Ha Hx Hax b Hb.
+          assert (In b scope) as Hbsc by exact (env_range_scoped x b Hb).
+          assert (forall y, In y a -> ~ In y (moved_by st s1)) as Haoff.
+          { intros y Hy Hin.
+            rewrite Forall_forall in Hambsc2.
+            exact (Hmv y (eq_moved_by_prefix st s1 st' Hf2 y Hin)
+                     (Hambsc2 a Ha y Hy)). }
+          assert (forall y, In y [b] -> ~ In y (moved_by st s1)) as Hboff.
+          { intros y Hy Hin. destruct Hy as [Hy|[]]. subst y.
+            exact (Hmv b (eq_moved_by_prefix st s1 st' Hf2 b Hin) Hbsc). }
+          exact (satisfiable_off a [b] (moved_by st s1) dlt dlt1
+                   Hoff1 Haoff Hboff (Hax b Hb)). }
+        { exact Hcescr. }
+        { exact Hunr'. }
+        { exact Hgenr. }
+        { exact HgT. }
+        { assert (forall y, In y (moved_by st s1) -> ~ In y scope)
+            as Hprefixfresh.
+          { intros y Hy.
+            exact (Hmv y (eq_moved_by_prefix st s1 st' Hf2 y Hy)). }
+          exact
+            (listSatisfiable_off scope cer (moved_by st s1) dlt dlt1
+               Hcescr Hprefixfresh Hoff1 Hsatr). }
+        { exact Hbnd. }
+
+        assert (forall y, In y (moved_by s1 st') ->
+                          ~ In y (scope ++ moved_by st s1)) as Hsep.
+        { intros y Hin Hy. apply in_app_or in Hy as [Hy|Hy].
+          - apply (Hmv y); [|exact Hy].
+            apply (eq_moved_by_suffix st s1 st' Hf1). exact Hin.
+          - exact (eq_moved_by_disjoint st s1 st' y Hy Hin). }
+        assert (incl (scope ++ moved_by st s1)
+                     (scope ++ moved_by st st')) as Hinc1.
+        { apply incl_app; [apply incl_appl, incl_refl|].
+          apply incl_appr. exact (eq_moved_by_prefix st s1 st' Hf2). }
+        assert (incl (scope ++ moved_by s1 st')
+                     (scope ++ moved_by st st')) as Hinc2.
+        { apply incl_app; [apply incl_appl, incl_refl|].
+          apply incl_appr. exact (eq_moved_by_suffix st s1 st' Hf1). }
+
+        (** the two halves, put back in the order the run produced *)
+        apply listSatisfiable_app in Hce2 as (HceA2 & HceB2).
+        assert (listSatisfiable dlt2 (cA1 ++ cB1)) as Hce1'
+            by exact
+              (listSatisfiable_off_scope (cA1 ++ cB1)
+                 (scope ++ moved_by st s1) (moved_by s1 st') dlt1 dlt2
+                 Hscope1 Hsep Hoff2 Hce1).
+        apply listSatisfiable_app in Hce1' as (HceA1 & HceB1).
+        apply Forall_app in Hscope1 as (HscA1 & HscB1).
+        apply Forall_app in Hscope2 as (HscA2 & HscB2).
+
+        exists dlt2. split; [|split].
+        + exact
+            (agree_off_trans (moved_by st st') dlt dlt1 dlt2
+               (agree_off_incl (moved_by st s1) (moved_by st st') dlt dlt1
+                  (eq_moved_by_prefix st s1 st' Hf2) Hoff1)
+               (agree_off_incl (moved_by s1 st') (moved_by st st') dlt1 dlt2
+                  (eq_moved_by_suffix st s1 st' Hf1) Hoff2)).
+        + apply listSatisfiable_app. split;
+            [apply listSatisfiable_app; split; assumption|].
+          apply listSatisfiable_app. split; assumption.
+        + apply Forall_app. split; [apply Forall_app; split|
+                                    apply Forall_app; split].
+          * eapply Forall_impl; [|exact HscA1]. intros c Hc.
+            exact (constraint_scoped_incl (scope ++ moved_by st s1)
+                     (scope ++ moved_by st st') c Hinc1 Hc).
+          * eapply Forall_impl; [|exact HscA2]. intros c Hc.
+            exact (constraint_scoped_incl (scope ++ moved_by s1 st')
+                     (scope ++ moved_by st st') c Hinc2 Hc).
+          * eapply Forall_impl; [|exact HscB1]. intros c Hc.
+            exact (constraint_scoped_incl (scope ++ moved_by st s1)
+                     (scope ++ moved_by st st') c Hinc1 Hc).
+          * eapply Forall_impl; [|exact HscB2]. intros c Hc.
+            exact (constraint_scoped_incl (scope ++ moved_by s1 st')
+                     (scope ++ moved_by st st') c Hinc2 Hc).
+    Qed.
+
     Lemma eqn_carries_all : forall P eq, eqn_carries P eq.
     Proof.
       intros P (xs, es).
@@ -6232,6 +6736,104 @@ Import UNN.Fresh.Tactics.
         exact
           (eqn_carries_split P (e :: e2 :: es2) xs eqs' st st' ce xst xst'
              cet yst yst' dlt Hwles Hwces Hlen Hnd Hmv Hamb Hbs0 Hcesc
+             Hun Hgen Hgent Hsat Hbnd).
+    Qed.
+
+    (** * One equation, per stream
+
+        The pointwise [eqn_carries], and the two rules packaged.  The ambient
+        premises are [stream_ambients_scoped], [clocks_covered] -- one ambient
+        per stream of the right-hand side, which is one per defined variable --
+        [state_clocks_found], and [eqn_bounds]. *)
+
+    Definition eqn_carries_streams (P : global) (eq : equation) : Prop :=
+      forall ambs eqs' st st' ce xst xst' cet yst yst' dlt,
+        wl_equation P eq -> wc_equation P vars eq ->
+        NoDup (vars_defined eqs' ++ st_ids st) ->
+        (forall x, In x (moved_by st st') -> ~ In x scope) ->
+        stream_ambients_scoped scope ambs ->
+        clocks_covered_local (clocksof (snd eq)) ambs ->
+        List.length ambs = List.length (fst eq) ->
+        state_clocks_found_local st' ->
+        eqn_bounds dlt ambs (fst eq) ->
+        constraints_scoped scope ce ->
+        unnest_equation P eq st = (eqs', st') ->
+        generate_leqn_constraint GL env base_ty rst_ty cenv eq xst
+          = OK (ce, xst') ->
+        generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
+          = OK (cet, yst') ->
+        listSatisfiable dlt ce ->
+        sec_le xst' stF ->
+        exists dlt',
+          agree_off (moved_by st st') dlt dlt'
+          /\ listSatisfiable dlt' cet
+          /\ constraints_scoped (scope ++ moved_by st st') cet.
+
+    Lemma eqn_carries_covered_streams :
+      forall P eq,
+        wc_global P ->
+        CALLS.sig_inputs_ok GL P ->
+        eqn_covered eq -> eqn_carries_streams P eq.
+    Proof.
+      intros P (xs, es) Hwcg Hsigin Hcov
+        ambs eqs' st st' ce xst xst' cet yst yst' dlt
+        Hwl Hwc Hnd Hmv Hambsc Hcovered Hlenamb Hfound Hbnds Hcesc
+        Hun Hgen Hgent Hsat Hbnd.
+      unfold eqn_covered in Hcov. simpl in Hcov, Hcovered, Hlenamb, Hbnds.
+      destruct Hwl as (Hwles & Hlen).
+      destruct Hwc as (Hwces & _ & _).
+      destruct Hcov as [Hne|(f & args & er & anns & Hes)].
+      - exact (eqn_carries_plain_streams P xs es ambs eqs' st st' ce
+                 xst xst' cet yst yst' dlt Hwcg Hsigin Hne Hwles Hwces Hlen
+                 Hnd Hmv Hambsc Hcovered Hlenamb Hfound Hbnds Hcesc
+                 Hun Hgen Hgent Hsat Hbnd).
+      - subst es.
+        assert (List.length xs = List.length anns) as Hlen'.
+        { rewrite Hlen. unfold annots. simpl.
+          now rewrite app_nil_r. }
+        assert (wl_exp P (Eapp f args er anns)) as Hwlapp by now inv Hwles.
+        assert (wc_exp P vars (Eapp f args er anns)) as Hwcapp
+            by now inv Hwces.
+        assert (clocks_covered_local (clockof (Eapp f args er anns)) ambs)
+          as Hcovapp
+            by (unfold clocksof in Hcovered; simpl in Hcovered;
+                rewrite app_nil_r in Hcovered; exact Hcovered).
+        exact (eqn_carries_call_streams P xs f args er anns ambs eqs' st st' ce
+                 xst xst' cet yst yst' dlt Hwcg Hsigin Hwlapp Hwcapp Hlen'
+                 Hnd Hmv Hambsc Hcovapp Hlenamb Hfound Hbnds Hcesc
+                 Hun Hgen Hgent Hsat Hbnd).
+    Qed.
+
+    Theorem eqn_carries_all_streams :
+      forall P eq,
+        wc_global P ->
+        CALLS.sig_inputs_ok GL P ->
+        eqn_carries_streams P eq.
+    Proof.
+      intros P (xs, es) Hwcg Hsigin.
+      destruct es as [|e [|e2 es2]].
+      - apply eqn_carries_covered_streams;
+          [exact Hwcg|exact Hsigin|left; constructor].
+      - apply eqn_carries_covered_streams; [exact Hwcg|exact Hsigin|].
+        destruct e as [c | x a | op e a | op e1 e2 a
+                      | es0 es1 anns | es0 es1 anns | es x b a
+                      | x es0 es1 a | e es0 es1 a | f args er anns];
+          try (left; repeat constructor; exact I).
+        right. exists f, args, er, anns. reflexivity.
+      - destruct (has_lcall (e :: e2 :: es2)) eqn:Hh;
+          [|apply eqn_carries_covered_streams;
+            [exact Hwcg|exact Hsigin|left; now apply has_lcall_false_inv]].
+        intros ambs eqs' st st' ce xst xst' cet yst yst' dlt
+          Hwl Hwc Hnd Hmv Hambsc Hcovered Hlenamb Hfound Hbnds Hcesc
+          Hun Hgen Hgent Hsat Hbnd.
+        destruct Hwl as (Hwles & Hlen).
+        destruct Hwc as (Hwces & _ & _).
+        simpl in Hcovered, Hlenamb, Hbnds.
+        rewrite gen_leqn_split in Hgen by exact Hh.
+        exact
+          (eqn_carries_split_streams P (e :: e2 :: es2) xs ambs eqs' st st'
+             ce xst xst' cet yst yst' dlt Hwcg Hsigin Hwles Hwces Hlen Hnd Hmv
+             Hambsc Hcovered Hlenamb Hfound Hbnds Hcesc
              Hun Hgen Hgent Hsat Hbnd).
     Qed.
 
