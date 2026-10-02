@@ -2197,6 +2197,42 @@ Import UNN.Fresh.Tactics.
       exact (NoDup_vars_defined_n_eqs (unnest_node P n Hwl Hpref)).
     Qed.
 
+    (** * The clocks a run records are the node's own
+
+        [state_clocks_found] was a hypothesis of the node step; it is a fact
+        about the pass.  [unnest_node] puts the fresh state's annotations into
+        the target node's local variables verbatim, and [lnode_clock_env] is
+        built from those locals, so a variable the run created is found at
+        exactly the clock the run stored.  The target node's [n_nodup] is what
+        makes the lookup unambiguous. *)
+
+    Lemma lnode_clock_env_vars :
+      forall (m : node) x an,
+        In (x, an) m.(n_vars) ->
+        find_clock (lnode_clock_env m) x = OK (snd an).
+    Proof.
+      intros m x an Hin.
+      assert (NoDupMembers m.(n_vars)) as Hnd.
+      { pose proof (n_nodup m) as Hnd0.
+        apply NoDupMembers_app_r in Hnd0.
+        apply NoDupMembers_app_l in Hnd0. exact Hnd0. }
+      unfold find_clock, lnode_clock_env.
+      rewrite (Env.In_find_adds' x an m.(n_vars) _ Hnd Hin).
+      destruct an as (ty & ck). reflexivity.
+    Qed.
+
+    Lemma unnest_node_state_clocks_found :
+      forall P (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs),
+        state_clocks_found (lnode_clock_env (unnest_node P n Hwl Hpref))
+          (snd (unnest_equations P n.(n_eqs) init_st)).
+    Proof.
+      intros P n Hwl Hpref x an Hin.
+      apply lnode_clock_env_vars.
+      destruct (unnest_node_fields P n Hwl Hpref) as (_ & Hv).
+      rewrite Hv. apply in_or_app. now right.
+    Qed.
+
     Lemma new_ids_from_init :
       forall st, new_ids init_st st = st_ids st.
     Proof.
@@ -2725,8 +2761,6 @@ Import UNN.Fresh.Tactics.
         (forall eq, In eq n.(n_eqs) ->
             clocks_covered env base_ty rst_ty (clocksof (snd eq)) (As eq)
             /\ List.length (As eq) = List.length (fst eq)) ->
-        state_clocks_found cenv
-          (snd (unnest_equations P n.(n_eqs) init_st)) ->
         (forall eq, In eq n.(n_eqs) ->
             eqn_ambients env base_ty rst_ty cenv (fst eq) (As eq)) ->
         constraints_scoped scope ce ->
@@ -2739,7 +2773,11 @@ Import UNN.Fresh.Tactics.
         preserves_on scope ce cet.
     Proof.
       intros P n Hwl Hpref ce cet st0 ct1 ct1' Hwcg Hsigin Hcenv Hwle Hwce
-        Hmv Hamb Hfound Hbs Hcesc Hbnd Hsrc Htgt.
+        Hmv Hamb Hbs Hcesc Hbnd Hsrc Htgt.
+      assert (state_clocks_found cenv
+                (snd (unnest_equations P n.(n_eqs) init_st))) as Hfound
+          by (rewrite Hcenv;
+              exact (unnest_node_state_clocks_found P n Hwl Hpref)).
       remember (unnest_equations P n.(n_eqs) init_st) as r eqn:Hr.
       destruct r as (eqs' & st').
       assert ((unnest_node P n Hwl Hpref).(n_eqs) = eqs') as Heqs'.
@@ -3252,8 +3290,6 @@ Import UNN.Fresh.Tactics.
         (forall eq, In eq n.(n_eqs) ->
             clocks_covered env base_ty rst_ty (clocksof (snd eq)) (As eq)
             /\ List.length (As eq) = List.length (fst eq)) ->
-        state_clocks_found cenv
-          (snd (unnest_equations P n.(n_eqs) init_st)) ->
         (forall eq, In eq n.(n_eqs) ->
             eqn_ambients env base_ty rst_ty cenv (fst eq) (As eq)) ->
         (** the runs against the target accumulator are scoped and bounded *)
@@ -3287,7 +3323,7 @@ Import UNN.Fresh.Tactics.
         sig_head_weakens sgS sgT.
     Proof.
       intros P Q n Hwl Hpref envs aux accS sgS stS0 stS1 sgT stT0 stT1
-        Hwcg Hsigin Hfind Haux Hcenv Hunt Hwle Hwce Hmv Hamb Hfound Hbs
+        Hwcg Hsigin Hfind Haux Hcenv Hunt Hwle Hwce Hmv Hamb Hbs
         Htgtok Hwf Hdisj Hgood1 Hnd1 Hgood2 Hsc2 Hincl Hinst Hw HS HT.
       unfold generate_lnode_sig_scoped_env in HS, HT.
       rewrite Hfind in HS.
@@ -3300,7 +3336,7 @@ Import UNN.Fresh.Tactics.
         destruct (Htgtok ce ct1 Hsrc) as (Hcesc & Hbnd).
         eapply unnest_node_entailment_streams;
           [exact Hwcg|exact Hsigin|exact Hcenv|exact Hwle|exact Hwce
-          |exact Hmv|exact Hamb|exact Hfound|exact Hbs
+          |exact Hmv|exact Hamb|exact Hbs
           |exact Hcesc|exact Hbnd|exact Hsrc|exact Htgt].
       - exact Hwf.
       - exact Hdisj.

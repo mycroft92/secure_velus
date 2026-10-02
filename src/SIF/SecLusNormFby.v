@@ -162,6 +162,66 @@ Import UNN.Fresh.Tactics.
       repeat split; reflexivity.
     Qed.
 
+    (** * The clocks the fby run records are the node's own
+
+        Leg I's counterpart of [unnest_node_state_clocks_found], and the first
+        of the three run facts [normfby_node_step] was given.  [normfby_node]
+        puts the fresh state's annotations into its local variables (dropping
+        only the cut flag), so a variable the run created is found at exactly
+        the clock the run stored. *)
+
+    Lemma normfby_node_state_clocks :
+      forall Q c (n : node) (Hunt : unnested_node Q n)
+             (Hpref : n_prefixes n = norm1_prefs) eqs' stf y a,
+        map_bind (fby_equation
+                    (PS.union c (ps_from_list (List.map fst (n_out n)))))
+          n.(n_eqs) init_st = (eqs', stf) ->
+        In (y, a) (st_anns stf) ->
+        find_clock (lnode_clock_env (normfby_node Q c n Hunt Hpref)) y
+        = OK (snd (fst a)).
+    Proof.
+      intros Q c n Hunt Hpref eqs' stf y a Hrun Hin.
+      assert (fby_equations
+                (PS.union c (ps_from_list (List.map fst (n_out n))))
+                n.(n_eqs) init_st = (List.concat eqs', stf)) as Hfbys.
+      { unfold fby_equations. apply bind_spec.
+        exists eqs', stf. split; [exact Hrun|apply ret_spec]. }
+      apply (lnode_clock_env_vars _ y (fst a)).
+      destruct (normfby_node_fields Q c n Hunt Hpref) as (_ & Hv & _).
+      rewrite Hv, Hfbys. cbn [snd].
+      apply in_or_app. right.
+      unfold idty. apply in_map_iff. exists (y, a).
+      split; [reflexivity|exact Hin].
+    Qed.
+
+    (** And the second run fact: the state's identifiers are distinct.  This
+        is Velus's own [st_valid_after] invariant, which [fby_equations]
+        preserves and [init_st] starts in; taking the "after" set empty makes
+        it exactly [NoDup (st_ids stf)]. *)
+
+    Lemma fby_run_st_ids_NoDup :
+      forall to_cut (eqs : list equation) eqs' stf,
+        map_bind (fby_equation to_cut) eqs init_st = (eqs', stf) ->
+        NoDup (st_ids stf).
+    Proof.
+      intros to_cut eqs eqs' stf Hrun.
+      assert (fby_equations to_cut eqs init_st = (List.concat eqs', stf))
+        as Hfbys.
+      { unfold fby_equations. apply bind_spec.
+        exists eqs', stf. split; [exact Hrun|apply ret_spec]. }
+      assert (st_valid_after
+                (init_st : fresh_st ((type * clock) * bool)) PS.empty)
+        as Hinit.
+      { apply (UNN.Fresh.init_st_valid norm2 PS.empty PS.empty).
+        - intro Hc. now apply PSF.empty_iff in Hc.
+        - intros z Hz. exfalso. now apply PSF.empty_iff in Hz. }
+      pose proof (fby_equations_st_valid to_cut eqs (List.concat eqs')
+                    init_st stf PS.empty Hfbys Hinit) as Hvalid.
+      apply UNN.Fresh.st_valid_NoDup in Hvalid.
+      assert (PSP.to_list PS.empty = []) as Hemp by apply PSP.elements_empty.
+      rewrite Hemp, app_nil_r in Hvalid. exact Hvalid.
+    Qed.
+
     (** * Five of a signature's six fields are equal on the nose
 
         [generate_lnode_sig] reads the interface fields off [n_name], [n_in],
@@ -3153,9 +3213,7 @@ Import UNN.Fresh.Tactics.
                         (PS.union c (ps_from_list (List.map fst (n_out n)))))
               n.(n_eqs) init_st = (eqs', stf) ->
             (forall y a, In (y, a) (st_anns stf) ->
-                find_clock cenv y = OK (snd (fst a))
-                /\ exists d, Env.find y env = Some d /\ ~ In d scope)
-            /\ NoDup (st_ids stf)
+                exists d, Env.find y env = Some d /\ ~ In d scope)
             /\ (forall v a, In (v, a) (st_anns stf) ->
                    exists ckty,
                      assign_clk_type env base_ty (snd (fst a)) = Some ckty
@@ -3229,7 +3287,20 @@ Import UNN.Fresh.Tactics.
                           Env.find i env = Some bi ->
                           In (bi, merge [rst_ty] ckti) pairs)).
       { intros eqs' stf Hrun.
-        destruct (Hstate eqs' stf Hrun) as (Hnew & Hndst & Hclocks).
+        destruct (Hstate eqs' stf Hrun) as (Hnew0 & Hclocks).
+        (** the two run facts the pass itself supplies *)
+        assert (forall y a, In (y, a) (st_anns stf) ->
+                   find_clock cenv y = OK (snd (fst a))
+                   /\ exists d, Env.find y env = Some d /\ ~ In d scope)
+          as Hnew.
+        { intros y a Hya. split; [|exact (Hnew0 y a Hya)].
+          rewrite Hcenv.
+          exact (normfby_node_state_clocks Q c n Hunt Hpref eqs' stf y a
+                   Hrun Hya). }
+        assert (NoDup (st_ids stf)) as Hndst
+            by exact (fby_run_st_ids_NoDup
+                        (PS.union c (ps_from_list (List.map fst (n_out n))))
+                        n.(n_eqs) eqs' stf Hrun).
         destruct (node_pairs_exists
                     (PS.union c (ps_from_list (List.map fst (n_out n))))
                     n.(n_eqs) eqs' stf Hrun
