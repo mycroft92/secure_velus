@@ -2206,6 +2206,47 @@ Import UNN.Fresh.Tactics.
         exactly the clock the run stored.  The target node's [n_nodup] is what
         makes the lookup unambiguous. *)
 
+
+    (** * The target node's clock environment, read anywhere in its interface
+
+        [lnode_clock_env] layers the locals over the inputs over the outputs,
+        but [Env.adds'_app] collapses the three layers into one [from_list],
+        after which the node's own [n_nodup] makes the lookup unambiguous.
+        This generalises [lnode_clock_env_vars] from the locals to the whole
+        interface, which is what the agreement with [wc_equation]'s [vars]
+        needs. *)
+
+    Lemma lnode_clock_env_from_list :
+      forall (m : node),
+        lnode_clock_env m
+        = Env.from_list (m.(n_out) ++ m.(n_in) ++ m.(n_vars)).
+    Proof.
+      intros m. unfold lnode_clock_env, Env.from_list.
+      rewrite Env.adds'_app, Env.adds'_app.
+      f_equal.
+    Qed.
+
+    Lemma lnode_clock_env_find :
+      forall (m : node) x tc,
+        In (x, tc) (m.(n_in) ++ m.(n_vars) ++ m.(n_out)) ->
+        find_clock (lnode_clock_env m) x = OK (snd tc).
+    Proof.
+      intros m x tc Hin.
+      assert (NoDupMembers (m.(n_in) ++ m.(n_vars) ++ m.(n_out))) as Hnd.
+      { pose proof (n_nodup m) as Hnd0.
+        rewrite !app_assoc in Hnd0. apply NoDupMembers_app_l in Hnd0.
+        rewrite <- !app_assoc in Hnd0. exact Hnd0. }
+      assert (Permutation (m.(n_in) ++ m.(n_vars) ++ m.(n_out))
+                (m.(n_out) ++ m.(n_in) ++ m.(n_vars))) as Hperm.
+      { rewrite app_assoc. apply Permutation_app_comm. }
+      assert (Env.find x (lnode_clock_env m) = Some tc) as Hfind.
+      { rewrite lnode_clock_env_from_list.
+        apply Env.find_In_from_list.
+        - eapply Permutation_in; [exact Hperm|exact Hin].
+        - rewrite <- Hperm. exact Hnd. }
+      unfold find_clock. rewrite Hfind. destruct tc as (ty & ck). reflexivity.
+    Qed.
+
     Lemma lnode_clock_env_vars :
       forall (m : node) x an,
         In (x, an) m.(n_vars) ->
@@ -2231,6 +2272,40 @@ Import UNN.Fresh.Tactics.
       apply lnode_clock_env_vars.
       destruct (unnest_node_fields P n Hwl Hpref) as (_ & Hv).
       rewrite Hv. apply in_or_app. now right.
+    Qed.
+
+    (** And the agreement the ambient story needs: the unnested node's clock
+        environment finds every *source* variable at its declared clock, since
+        unnesting keeps the interface and only extends the locals.  This is the
+        last premise [canonical_ambients_cover] asks for. *)
+
+    Lemma unnest_node_interface :
+      forall P (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs),
+        (unnest_node P n Hwl Hpref).(n_in) = n.(n_in)
+        /\ (unnest_node P n Hwl Hpref).(n_out) = n.(n_out).
+    Proof. intros P n Hwl Hpref. unfold unnest_node. split; reflexivity. Qed.
+
+    Lemma unnest_node_cenv_vars :
+      forall P (n : node) (Hwl : wl_node P n)
+             (Hpref : n_prefixes n = elab_prefs) x ck,
+        In (x, ck) (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+        find_clock (lnode_clock_env (unnest_node P n Hwl Hpref)) x = OK ck.
+    Proof.
+      intros P n Hwl Hpref x ck Hin.
+      unfold idck in Hin. apply in_map_iff in Hin as (p & Heq & Hy).
+      destruct p as (y & tc). cbn [fst snd] in Heq.
+      inversion Heq; subst y.
+      replace ck with (snd tc) by (now inversion Heq).
+      apply lnode_clock_env_find.
+      destruct (unnest_node_interface P n Hwl Hpref) as (Hi & Ho).
+      destruct (unnest_node_fields P n Hwl Hpref) as (_ & Hv).
+      rewrite Hi, Ho, Hv.
+      apply in_app_or in Hy as [Hy|Hy]; [apply in_or_app; now left|].
+      apply in_app_or in Hy as [Hy|Hy].
+      - apply in_or_app. right. apply in_or_app. left.
+        apply in_or_app. now left.
+      - apply in_or_app. right. apply in_or_app. now right.
     Qed.
 
     Lemma new_ids_from_init :
@@ -3451,6 +3526,33 @@ Import UNN.Fresh.Tactics.
         unfold canonical_ambient. rewrite (Hagree x ck Hin), Hac.
         apply incl_refl.
       + apply IH. intros ck0 Hck0. apply Hdef. now right.
+  Qed.
+
+  (** The two put together: for an equation of a well-clocked node, the
+      canonical ambients cover its stream clocks.  Nothing about ambients is
+      assumed at the node level any more -- what is left is that the clocks
+      occurring in the node have types, which is the naming pass's business. *)
+  Corollary unnest_node_canonical_cover :
+    forall env base_ty rst_ty P (n : node) (Hwl : wl_node P n)
+           (Hpref : n_prefixes n = elab_prefs) (eq : equation),
+      Forall (wc_equation P (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))))
+        n.(n_eqs) ->
+      In eq n.(n_eqs) ->
+      (forall ck, In ck (clocksof (snd eq)) ->
+                  exists ckty, assign_clk_type env base_ty ck = Some ckty) ->
+      clocks_covered env base_ty rst_ty (clocksof (snd eq))
+        (canonical_ambients env base_ty rst_ty
+           (lnode_clock_env (unnest_node P n Hwl Hpref)) eq).
+  Proof.
+    intros env base_ty rst_ty P n Hwl Hpref eq Hwc Hin Hdef.
+    rewrite Forall_forall in Hwc.
+    pose proof (Hwc eq Hin) as Hwceq.
+    destruct eq as (xs & es). destruct Hwceq as (_ & _ & Hvars).
+    eapply (canonical_ambients_cover env base_ty rst_ty _
+              (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))));
+      [|exact Hdef|exact Hvars].
+    intros y cky Hy.
+    exact (unnest_node_cenv_vars P n Hwl Hpref y cky Hy).
   Qed.
 
 End SecLusUnnestingNodes.
