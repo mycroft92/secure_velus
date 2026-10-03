@@ -447,6 +447,80 @@ Import SECMONADNotations.
             rewrite snd_lvar. constructor.
     Qed.
 
+    (** The carried component, element by element: membership in one flow
+        type's constraints is membership in the list's, so a [singleton_targets]
+        for the whole is one for each. *)
+
+    Lemma In_carried :
+      forall (ts : list LST) t c,
+        In t ts -> In c (snd t) -> In c (carried ts).
+    Proof.
+      induction ts as [|t0 ts IH]; intros t c Ht Hc; [contradiction|].
+      rewrite carried_cons. apply cmerge_In.
+      destruct Ht as [Ht|Ht]; [subst t0; now left|right; exact (IH t c Ht Hc)].
+    Qed.
+
+    Lemma singleton_targets_carried_elements :
+      forall ts,
+        SIGPROOFS.singleton_targets (carried ts) ->
+        Forall (fun t => SIGPROOFS.singleton_targets (snd t)) ts.
+    Proof.
+      intros ts H. apply Forall_forall. intros t Ht.
+      unfold SIGPROOFS.singleton_targets in H |- *.
+      rewrite Forall_forall in H |- *. intros c Hc.
+      apply H. exact (In_carried ts t c Ht Hc).
+    Qed.
+
+    (** The hoisting rule's own constraint targets the one generated name, and
+        the rest is what the flow carried.  Proved through membership rather
+        than by unfolding, because [cmerge] with a literal first argument
+        reduces into its inner [fix] and then no lemma about [cmerge] matches
+        any more. *)
+    Lemma singleton_targets_lconstrain :
+      forall p b,
+        SIGPROOFS.singleton_targets (snd p) ->
+        SIGPROOFS.singleton_targets (lconstrain p b).
+    Proof.
+      intros p b Hp.
+      unfold SIGPROOFS.singleton_targets in Hp |- *.
+      rewrite Forall_forall in Hp |- *. intros c Hc.
+      apply (cmerge_In [(fst p, [b])] (snd p) c) in Hc as [Hc|Hc].
+      - destruct Hc as [Hc|[]]; subst c. cbn [snd]. now exists b.
+      - exact (Hp c Hc).
+    Qed.
+
+    (** And the general rule: its own constraint targets the defined variable,
+        over whatever the defining flow carried. *)
+
+    Lemma generate_lvars_constraints_singleton :
+      forall cenv xs bs ts c s s',
+        Forall (fun t => SIGPROOFS.singleton_targets (snd t)) ts ->
+        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
+          = OK (c, s') ->
+        SIGPROOFS.singleton_targets c.
+    Proof.
+      intros cenv xs. induction xs as [|x xs IH];
+        intros bs ts c s s' Hts Hgen.
+      - destruct bs as [|b bs]; [|destruct ts; cbn in Hgen; discriminate].
+        destruct ts; cbn in Hgen; [|discriminate].
+        unfold SC.ret in Hgen. inv Hgen. constructor.
+      - destruct bs as [|b bs];
+          [destruct ts; cbn in Hgen; discriminate|].
+        destruct ts as [|t ts]; [cbn in Hgen; discriminate|].
+        inversion Hts as [|t0 ts0 Ht Htr]; subst.
+        rewrite gen_lvars_cons_eq in Hgen.
+        apply sec_bind_inv in Hgen as (ckty & s1 & Hck & Hgen).
+        apply sec_bind_inv in Hgen as (rest & s2 & Hr & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Hc & ?); subst s'.
+        rewrite Hc.
+        apply singleton_targets_app; [|exact (IH bs ts rest s1 s2 Htr Hr)].
+        apply singleton_targets_lconstrain.
+        rewrite snd_ljoin. unfold ambient.
+        rewrite snd_ljoin, snd_lvar. cbn [snd].
+        rewrite cmerge_nil, cmerge_nil2. exact Ht.
+    Qed.
+
   End RawTargets.
 
 End SecLusTypingCorrectness.
