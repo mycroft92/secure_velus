@@ -1673,4 +1673,264 @@ Import SECMONADNotations.
       exfalso. apply existsb_exists in He as (d & Hd & Heq).
       apply ident_eqb_eq in Heq. subst d. exact (Hos o Ho Hd).
   Qed.
+
+  (** Two stretches of the fresh state that do not overlap mint disjoint
+      sets, whichever order they are merged in. *)
+  Lemma minted_apart :
+    forall a b c d x,
+      sec_le b c -> In x (minted a b) -> In x (minted c d) -> False.
+  Proof.
+    intros a b c d x Hbc H1 H2.
+    apply minted_spec in H1 as (j & _ & Hj & Hdj).
+    apply minted_spec in H2 as (k & Hk & _ & Hdk).
+    rewrite Hdj in Hdk.
+    apply Ids.gensym_injective in Hdk as (_ & ?); subst k.
+    apply (Pos.lt_irrefl j).
+    exact (Pos.lt_le_trans j b j Hj (Pos.le_trans b c j Hbc Hk)).
+  Qed.
+
+  (** The shape of one merge, which is the step every case of the expression
+      induction takes: the two sides were minted over stretches that do not
+      overlap, so nothing is deduplicated and the targets append. *)
+  Lemma shape_cmerge :
+    forall ms1 ms2 cs1 cs2 a b c d ns,
+      sec_le b c ->
+      targets_of ms1 cs1 -> incl ms1 (minted a b) ->
+      targets_of ms2 cs2 -> incl ms2 (minted c d) ->
+      incl (minted a b) ns -> incl (minted c d) ns ->
+      exists ms, targets_of ms (cmerge cs1 cs2) /\ incl ms ns.
+  Proof.
+    intros ms1 ms2 cs1 cs2 a b c d ns Hbc H1 Hi1 H2 Hi2 Hn1 Hn2.
+    exists (ms1 ++ ms2). split.
+    - apply targets_of_cmerge; [exact H1|exact H2|].
+      intros d1 d2 Hd1 Hd2 Heq. subst d2.
+      exact (minted_apart a b c d d1 Hbc (Hi1 d1 Hd1) (Hi2 d1 Hd2)).
+    - intros x Hx. apply in_app_or in Hx as [Hx|Hx];
+        [apply Hn1, Hi1, Hx|apply Hn2, Hi2, Hx].
+  Qed.
+
+  Section ExactShape.
+
+    Variable G       : secglobal.
+    Variable env     : Env.t ident.
+    Variable base_ty : ident.
+    Variable rst_ty  : ident.
+
+    (** * 7c, the expression half: how many constraints an expression carries
+
+        One per name the run minted for a call result -- so the multiset of
+        targets is a sub-multiset of the window, not merely a subset of it.
+        Stated against the run's own window rather than a superset, because
+        the disjointness that drives every merge is a property of the window
+        itself. *)
+    Definition lexp_carried_exact (e : exp) : Prop :=
+      forall ts s s',
+        assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+        exists ms, targets_of ms (carried ts) /\ incl ms (minted s s').
+
+    Lemma lexps_carried_exact_of :
+      forall es,
+        Forall lexp_carried_exact es ->
+        forall ts s s',
+          assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+          exists ms, targets_of ms (carried ts) /\ incl ms (minted s s').
+    Proof.
+      intros es Hall. induction Hall as [|e es He Hes IH]; intros ts s s' H.
+      - apply (assign_lexps_carried_nil G env base_ty rst_ty) in H
+          as (? & _ & _); subst ts.
+        exists []. split; [apply targets_of_nil|intros x []].
+      - apply assign_lexps_carried_cons in H
+          as (t & r & sa & Ht & Hr & ? & _); subst ts.
+        assert (sec_le s sa) as Hl1
+            by (eapply assign_lexp_type_sec_le; exact Ht).
+        assert (sec_le sa s') as Hl2
+            by (eapply assign_lexps_sec_le; exact Hr).
+        destruct (He t s sa Ht) as (ms1 & Ht1 & Hi1).
+        destruct (IH r sa s' Hr) as (ms2 & Ht2 & Hi2).
+        rewrite carried_app.
+        apply (shape_cmerge ms1 ms2 _ _ s sa sa s');
+          [apply sec_le_refl|exact Ht1|exact Hi1|exact Ht2|exact Hi2
+          |apply minted_window; [apply sec_le_refl|exact Hl2]
+          |apply minted_window; [exact Hl1|apply sec_le_refl]].
+    Qed.
+
+    Theorem lexp_carried_exact_all : forall e, lexp_carried_exact e.
+    Proof.
+      intros e. induction e using exp_ind2; intros ts s s' Hgen.
+      - (** a constant and a variable carry nothing *)
+        rewrite assign_lexp_Econst in Hgen. unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hts & _); subst ts.
+        exists []. split; [|intros ? []].
+        unfold targets_of. cbn [carried lbot snd List.map]. reflexivity.
+      - apply assign_lexp_Evar_inv in Hgen as (a0 & _ & Hts & _). subst ts.
+        exists []. split; [|intros ? []].
+        unfold targets_of. cbn [carried snd List.map]. reflexivity.
+      - (** the unary operator is its operand *)
+        exact (IHe ts s s' Hgen).
+      - (** the binary one, each operand pinned by [single] *)
+        rewrite assign_lexp_Ebinop in Hgen.
+        apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
+        apply sec_bind_inv in Hgen as (t2 & s2 & Ht2 & Hgen).
+        apply sec_bind_inv in Hgen as (a1 & s3 & Ha1 & Hgen).
+        apply sec_bind_inv in Hgen as (a2 & s4 & Ha2 & Hret).
+        apply single_inv in Ha1 as (? & ?); subst t1 s3.
+        apply single_inv in Ha2 as (? & ?); subst t2 s4.
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Hts & ?); subst ts s'.
+        destruct (IHe1 [a1] s s1 Ht1) as (ms1 & Hm1 & Hi1).
+        destruct (IHe2 [a2] s1 s2 Ht2) as (ms2 & Hm2 & Hi2).
+        rewrite carried_single in Hm1, Hm2.
+        rewrite carried_single, snd_ljoin.
+        apply (shape_cmerge ms1 ms2 _ _ s s1 s1 s2);
+          [apply sec_le_refl|exact Hm1|exact Hi1|exact Hm2|exact Hi2
+          |apply minted_window;
+           [apply sec_le_refl|eapply assign_lexp_type_sec_le; exact Ht2]
+          |apply minted_window;
+           [eapply assign_lexp_type_sec_le; exact Ht1|apply sec_le_refl]].
+      - (** the two delays: a pointwise join of two lists *)
+        rewrite assign_lexp_Efby in Hgen.
+        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (us & s2 & Hus & Hj).
+        assert (s' = s2) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
+        rewrite (ljoin_list_carried ts0 us ts s2 s2 Hj).
+        destruct (lexps_carried_exact_of e0s H ts0 s s1 Hts0) as (ms1 & Hm1 & Hi1).
+        destruct (lexps_carried_exact_of es H0 us s1 s2 Hus) as (ms2 & Hm2 & Hi2).
+        apply (shape_cmerge ms1 ms2 _ _ s s1 s1 s2);
+          [apply sec_le_refl|exact Hm1|exact Hi1|exact Hm2|exact Hi2
+          |apply minted_window;
+           [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hus]
+          |apply minted_window;
+           [eapply assign_lexps_sec_le; exact Hts0|apply sec_le_refl]].
+      - rewrite assign_lexp_Earrow in Hgen.
+        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (us & s2 & Hus & Hj).
+        assert (s' = s2) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
+        rewrite (ljoin_list_carried ts0 us ts s2 s2 Hj).
+        destruct (lexps_carried_exact_of e0s H ts0 s s1 Hts0) as (ms1 & Hm1 & Hi1).
+        destruct (lexps_carried_exact_of es H0 us s1 s2 Hus) as (ms2 & Hm2 & Hi2).
+        apply (shape_cmerge ms1 ms2 _ _ s s1 s1 s2);
+          [apply sec_le_refl|exact Hm1|exact Hi1|exact Hm2|exact Hi2
+          |apply minted_window;
+           [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hus]
+          |apply minted_window;
+           [eapply assign_lexps_sec_le; exact Hts0|apply sec_le_refl]].
+      - (** sampling adds a name and no constraint *)
+        rewrite assign_lexp_Ewhen in Hgen.
+        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (g & s2 & Hg & Hret).
+        apply find_env_inv in Hg as (_ & ?); subst s2.
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Hts & ?); subst ts s'.
+        rewrite carried_map_when.
+        exact (lexps_carried_exact_of es H ts0 s s1 Hts0).
+      - (** the merge and the conditional *)
+        destruct a as (tys & cl).
+        rewrite assign_lexp_Emerge in Hgen.
+        apply sec_bind_inv in Hgen as (g & s1 & Hg & Hgen).
+        apply find_env_inv in Hg as (_ & ?); subst s1.
+        apply sec_bind_inv in Hgen as (ts0 & s2 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (us & s3 & Hus & Hj).
+        assert (s' = s3) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
+        rewrite (ljoin_list_carried _ us ts s3 s3 Hj).
+        rewrite carried_map_merge_l.
+        destruct (lexps_carried_exact_of ets H ts0 s s2 Hts0) as (ms1 & Hm1 & Hi1).
+        destruct (lexps_carried_exact_of efs H0 us s2 s3 Hus) as (ms2 & Hm2 & Hi2).
+        apply (shape_cmerge ms1 ms2 _ _ s s2 s2 s3);
+          [apply sec_le_refl|exact Hm1|exact Hi1|exact Hm2|exact Hi2
+          |apply minted_window;
+           [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hus]
+          |apply minted_window;
+           [eapply assign_lexps_sec_le; exact Hts0|apply sec_le_refl]].
+      - destruct a as (tys & cl).
+        rewrite assign_lexp_Eite in Hgen.
+        apply sec_bind_inv in Hgen as (t0 & s1 & Ht0 & Hgen).
+        apply sec_bind_inv in Hgen as (th & s2 & Hth & Hgen).
+        apply single_inv in Hth as (? & ?); subst t0 s2.
+        apply sec_bind_inv in Hgen as (ts0 & s3 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (us & s4 & Hus & Hj).
+        assert (s' = s4) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
+        assert (sec_le s s1) as Hl01
+            by (eapply assign_lexp_type_sec_le; exact Ht0).
+        assert (sec_le s1 s3) as Hl13
+            by (eapply assign_lexps_sec_le; exact Hts0).
+        assert (sec_le s3 s4) as Hl34
+            by (eapply assign_lexps_sec_le; exact Hus).
+        rewrite (ljoin_list_carried _ us ts s4 s4 Hj).
+        destruct (lexps_carried_exact_of ets H ts0 s1 s3 Hts0)
+          as (ms2 & Hm2 & Hi2).
+        destruct (lexps_carried_exact_of efs H0 us s3 s4 Hus)
+          as (ms3 & Hm3 & Hi3).
+        destruct (IHe [th] s s1 Ht0) as (ms1 & Hm1 & Hi1).
+        rewrite carried_single in Hm1.
+        destruct ts0 as [|t00 ts0'].
+        + (** nothing was joined onto, so nothing was carried *)
+          cbn [List.map carried]. rewrite cmerge_nil2.
+          exists ms3. split; [exact Hm3|].
+          eapply incl_tran; [exact Hi3|].
+          apply minted_window;
+            [eapply sec_le_trans; [exact Hl01|exact Hl13]|apply sec_le_refl].
+        + rewrite carried_map_ljoin_eq by (intros HF; inversion HF).
+          destruct (shape_cmerge ms1 ms2 (snd th) (carried (t00 :: ts0'))
+                      s s1 s1 s3 (minted s s3)
+                      (sec_le_refl s1) Hm1 Hi1 Hm2 Hi2
+                      (minted_window s s s1 s3 (sec_le_refl s) Hl13)
+                      (minted_window s s1 s3 s3 Hl01 (sec_le_refl s3)))
+            as (msI & HmI & HiI).
+          apply (shape_cmerge msI ms3 _ _ s s3 s3 s4);
+            [apply sec_le_refl|exact HmI|exact HiI|exact Hm3|exact Hi3
+            |apply minted_window; [apply sec_le_refl|exact Hl34]
+            |apply minted_window;
+             [eapply sec_le_trans; [exact Hl01|exact Hl13]|apply sec_le_refl]].
+      - (** the call: one constraint per result, and the results are exactly
+            what this run minted *)
+        apply assign_lexp_Eapp_inv in Hgen
+          as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
+              & Hargs & _ & Hrst & _ & Houts & Hcs & Hts).
+        destruct (assign_lexp_Eapp_stages_le G env base_ty rst_ty es ro _
+                    s s' sg argts rstty ckty outs cs sta stb stc
+                    Hargs Hrst Houts Hcs) as (Hlab & Hlbc & Hlcs).
+        assert (sec_le s sta) as Hlsa
+            by (eapply assign_lexps_sec_le; exact Hargs).
+        subst ts. rewrite carried_uniform.
+        destruct outs as [|o os].
+        + exists []. split; [apply targets_of_nil|intros ? []].
+        + pose proof (CALLS.generate_constraints_targets sg
+                        (List.map fst argts) ckty (fst rstty) (o :: os) cs
+                        stc s' Hcs) as Hsnd.
+          assert (targets_of (o :: os) cs) as Hmcs
+              by (unfold targets_of; rewrite Hsnd; reflexivity).
+          assert (incl (o :: os) (minted stb stc)) as Hics
+              by (eapply fresh_idents_minted; exact Houts).
+          destruct (lexps_carried_exact_of es H0 argts s sta Hargs)
+            as (ms1 & Hm1 & Hi1).
+          assert (exists ms2, targets_of ms2 (snd rstty)
+                              /\ incl ms2 (minted sta stb))
+            as (ms2 & Hm2 & Hi2).
+          { destruct ro as [e1|].
+            - destruct Hrst as (t1 & a1 & rck & stm & Ht1 & Hsg1 & _ & Hr).
+              apply single_inv in Hsg1 as (? & ?); subst t1 stb.
+              subst rstty. rewrite !snd_ljoin, snd_lvar.
+              cbn [snd]. rewrite cmerge_nil, cmerge_nil2.
+              destruct (H [a1] sta stm Ht1) as (ms2 & Hm2 & Hi2).
+              rewrite carried_single in Hm2.
+              exists ms2. split; [exact Hm2|exact Hi2].
+            - destruct Hrst as (Hr & _). subst rstty. rewrite snd_lvar.
+              exists []. split; [apply targets_of_nil|intros ? []]. }
+          rewrite (cmerge_comm cs (cmerge (carried argts) (snd rstty))).
+          destruct (shape_cmerge ms1 ms2 (carried argts) (snd rstty)
+                      s sta sta stb (minted s stb)
+                      (sec_le_refl sta) Hm1 Hi1 Hm2 Hi2
+                      (minted_window s s sta stb (sec_le_refl s) Hlab)
+                      (minted_window s sta stb stb Hlsa (sec_le_refl stb)))
+            as (msI & HmI & HiI).
+          apply (shape_cmerge msI (o :: os) _ _ s stb stb stc);
+            [apply sec_le_refl|exact HmI|exact HiI|exact Hmcs|exact Hics
+            |apply minted_window;
+             [apply sec_le_refl
+             |eapply sec_le_trans; [exact Hlbc|exact Hlcs]]
+            |apply minted_window;
+             [eapply sec_le_trans; [exact Hlsa|exact Hlab]|exact Hlcs]].
+    Qed.
+
+  End ExactShape.
 End SecLusTypingCorrectness.
