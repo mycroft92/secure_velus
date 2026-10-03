@@ -15,6 +15,7 @@
 
 From Coq Require Import List.
 From Coq Require Import PArith.
+From Coq Require Import Lia.
 From Coq Require Import Sorting.Permutation.
 Import List.ListNotations.
 
@@ -1862,6 +1863,330 @@ Import SECMONADNotations.
           rewrite snd_ljoin, snd_lvar. cbn [snd].
           rewrite cmerge_nil, cmerge_nil2. exact Hm.
         + exact (Hsep x b Hxb).
+    Qed.
+
+
+    Lemma generate_lcall_constraint_shape :
+      forall xs f es rstty cs s s' ns,
+        incl (minted s s') ns ->
+        (forall x b, Env.find x env = Some b -> ~ In b ns) ->
+        SIGPROOFS.singleton_targets (snd rstty) ->
+        targets_in ns (snd rstty) ->
+        generate_lcall_constraint G env base_ty rst_ty xs f es rstty s
+          = OK (cs, s') ->
+        exists ms, targets_of (CALLS.sec_of env xs ++ ms) cs /\ incl ms ns.
+    Proof.
+      intros xs f es rstty cs s s' ns Hns Hsep Hrs Hrt Hgen.
+      apply generate_lcall_constraint_inv in Hgen
+        as (sg & ckty & argts & outs & sti & cs0
+            & Esg & Hck & Hargs & Houts & Hgc & Hcs).
+      assert (s' = sti) as ?
+          by (destruct (state_pure_generate_constraints sg
+                          (List.map fst argts) ckty (fst rstty) outs
+                          sti sti _ _ Hgc) as (Hp & _); exact Hp).
+      subst s'.
+      assert (Forall2 (fun x b => Env.find x env = Some b) xs outs) as Hf2
+          by (eapply CALLS.mmap_find_env_Forall2; exact Houts).
+      rewrite Hcs, (Forall2_sec_of xs outs Hf2).
+      assert (targets_of outs cs0) as Hm0.
+      { unfold targets_of.
+        rewrite (CALLS.generate_constraints_targets sg (List.map fst argts)
+                   ckty (fst rstty) outs cs0 sti sti Hgc).
+        reflexivity. }
+      assert (exists ms, targets_of ms (cmerge (carried argts) (snd rstty))
+                         /\ incl ms ns) as (ms & Hm & Hi).
+      { apply shape_of_singleton_minted.
+        - apply singleton_targets_cmerge;
+            [exact (assign_lexps_carried_singleton es argts s sti Hargs)
+            |exact Hrs].
+        - apply Forall_cmerge; [|exact Hrt].
+          assert (Forall lexp_carried_minted es) as Hall
+              by (apply Forall_forall; intros e0 _;
+                  apply lexp_carried_minted_all).
+          exact (lexps_carried_minted_of es Hall argts s sti ns Hns Hargs). }
+      exists ms. split; [|exact Hi].
+      apply (targets_of_cmerge outs ms); [exact Hm0|exact Hm|].
+      intros d1 d2 Hd1 Hd2 Heq. subst d2.
+      destruct (Forall2_env_image xs outs d1 Hf2 Hd1) as (y & Hy).
+      exact (Hsep y d1 Hy (Hi d1 Hd2)).
+    Qed.
+
+    Lemma generate_ldef_constraint_shape :
+      forall ckenv x e cs s s' ns,
+        incl (minted s s') ns ->
+        (forall x b, Env.find x env = Some b -> ~ In b ns) ->
+        generate_ldef_constraint G env base_ty rst_ty ckenv x e s
+          = OK (cs, s') ->
+        exists ms, targets_of (CALLS.sec_of env [x] ++ ms) cs /\ incl ms ns.
+    Proof.
+      intros ckenv x e cs s s' ns Hns Hsep Hgen.
+      apply generate_ldef_constraint_inv in Hgen
+        as (ck & ckty & tf & b & s1 & _ & _ & Hte & Hb & Hs1 & Hcs).
+      subst s1. rewrite Hcs.
+      change (cmerge [(merge (merge [rst_ty] ckty) (fst tf), [b])] (snd tf))
+        with (lconstrain (merge (merge [rst_ty] ckty) (fst tf), snd tf) b).
+      assert (exists m, targets_of m (snd tf) /\ incl m ns) as (m & Hm & Hi).
+      { apply shape_of_singleton_minted.
+        - rewrite <- (carried_single tf).
+          exact (lexp_carried_singleton_all e [tf] s s' Hte).
+        - rewrite <- (carried_single tf).
+          exact (lexp_carried_minted_all e [tf] s s' ns Hns Hte). }
+      assert (CALLS.sec_of env [x] = [b]) as Hso
+          by (unfold CALLS.sec_of; simpl; rewrite Hb; reflexivity).
+      rewrite Hso. exists m. split; [|exact Hi].
+      apply (shape_lconstrain
+               (merge (merge [rst_ty] ckty) (fst tf), snd tf) b m ns Hm Hi).
+      exact (Hsep x b Hb).
+    Qed.
+
+    Lemma generate_lgen_constraint_shape :
+      forall ckenv xs es cs s s' ns,
+        incl (minted s s') ns ->
+        (forall x b, Env.find x env = Some b -> ~ In b ns) ->
+        generate_lgen_constraint G env base_ty rst_ty ckenv xs es s
+          = OK (cs, s') ->
+        exists ms, targets_of (CALLS.sec_of env xs ++ ms) cs /\ incl ms ns.
+    Proof.
+      intros ckenv xs es cs s s' ns Hns Hsep Hgen.
+      unfold generate_lgen_constraint in Hgen.
+      apply sec_bind_inv in Hgen as (ts & s1 & Hts & Hgen).
+      apply sec_bind_inv in Hgen as (bs & s2 & Hbs & Hlv).
+      apply option_to_sec_inv in Hbs as (Hbs & ?); subst s2.
+      assert (s' = s1) as ?
+          by (destruct (state_pure_generate_lvars_constraints env base_ty
+                          rst_ty ckenv xs bs ts s1 s1 _ _ Hlv) as (Hp & _);
+              exact Hp).
+      subst s'.
+      assert (Forall2 (fun x b => Env.find x env = Some b) xs bs) as Hf2
+          by (eapply (get_mappings_Forall2 env xs bs); exact Hbs).
+      rewrite (Forall2_sec_of xs bs Hf2).
+      eapply generate_lvars_constraints_shape;
+        [exact Hf2| | |exact Hsep|exact Hlv].
+      - exact (assign_lexps_carried_singleton es ts s s1 Hts).
+      - assert (Forall lexp_carried_minted es) as Hall
+            by (apply Forall_forall; intros e0 _;
+                apply lexp_carried_minted_all).
+        exact (lexps_carried_minted_of es Hall ts s s1 ns Hns Hts).
+    Qed.
+
+    Lemma generate_lone_constraint_shape :
+      forall ckenv ys e cs s s' ns,
+        incl (minted s s') ns ->
+        (forall x b, Env.find x env = Some b -> ~ In b ns) ->
+        generate_lone_constraint G env base_ty rst_ty ckenv ys e s
+          = OK (cs, s') ->
+        exists ms, targets_of (CALLS.sec_of env ys ++ ms) cs /\ incl ms ns.
+    Proof.
+      intros ckenv ys e cs s s' ns Hns Hsep Hgen.
+      destruct e as [c0|x0 a0|op0 e0 a0|op0 e1 e2 a0|e0s es0 an0|e0s es0 an0
+                    |es0 x0 b0 a0|x0 ets efs a0|e0 ets efs a0|f args ro anns].
+      1-9: destruct ys as [|x [|y ys]];
+        [eapply generate_lgen_constraint_shape; [exact Hns|exact Hsep|exact Hgen]
+        |eapply generate_ldef_constraint_shape; [exact Hns|exact Hsep|exact Hgen]
+        |eapply generate_lgen_constraint_shape;
+           [exact Hns|exact Hsep|exact Hgen]].
+      destruct ro as [e1|]; destruct ys as [|y ys].
+      - unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _). rewrite Hc.
+        exists []. split; [apply targets_of_nil|intros ? []].
+      - cbn [generate_lone_constraint] in Hgen.
+        apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
+        apply sec_bind_inv in Hgen as (a1 & s2 & Ha1 & Hgen).
+        apply single_inv in Ha1 as (? & ?); subst t1 s2.
+        apply sec_bind_inv in Hgen as (rck & s3 & Hrck & Hgen).
+        apply option_to_sec_inv in Hrck as (_ & ?); subst s3.
+        assert (sec_le s1 s') as Hl1
+            by (eapply generate_lcall_constraint_sec_le; exact Hgen).
+        eapply generate_lcall_constraint_shape; [| | | |exact Hgen].
+        + apply (minted_incl_sub s s1 s' s' ns);
+            [eapply assign_lexp_type_sec_le; exact Ht1
+            |apply sec_le_refl|exact Hns].
+        + exact Hsep.
+        + rewrite !snd_ljoin, snd_lvar. cbn [snd].
+          rewrite cmerge_nil, cmerge_nil2.
+          rewrite <- (carried_single a1).
+          exact (lexp_carried_singleton_all e1 [a1] s s1 Ht1).
+        + rewrite !snd_ljoin, snd_lvar. cbn [snd].
+          rewrite cmerge_nil, cmerge_nil2.
+          rewrite <- (carried_single a1).
+          apply (lexp_carried_minted_all e1 [a1] s s1 ns); [|exact Ht1].
+          apply (minted_incl_sub s s s1 s' ns);
+            [apply sec_le_refl|exact Hl1|exact Hns].
+      - unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _). rewrite Hc.
+        exists []. split; [apply targets_of_nil|intros ? []].
+      - eapply generate_lcall_constraint_shape;
+          [exact Hns|exact Hsep| | |exact Hgen];
+          rewrite snd_lvar; constructor.
+    Qed.
+
+    Lemma generate_lsplit_constraints_shape :
+      forall ckenv es xs cs s s' ns,
+        incl (minted s s') ns ->
+        (forall x b, Env.find x env = Some b -> ~ In b ns) ->
+        length xs = length (LSyn.annots es) ->
+        generate_lsplit_constraints G env base_ty rst_ty ckenv xs es s
+          = OK (cs, s') ->
+        exists ms, targets_of (CALLS.sec_of env xs ++ ms) cs /\ incl ms ns.
+    Proof.
+      intros ckenv es. induction es as [|e es IH];
+        intros xs cs s s' ns Hns Hsep Hlen Hgen.
+      - cbn [generate_lsplit_constraints] in Hgen. unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _). rewrite Hc.
+        assert (xs = []) as ?
+            by (apply length_zero_iff_nil; rewrite Hlen; reflexivity).
+        subst xs.
+        exists []. split; [apply targets_of_nil|intros ? []].
+      - rewrite gen_lsplit_cons in Hgen.
+        apply sec_bind_inv in Hgen as (c & s1 & Hc & Hgen).
+        apply sec_bind_inv in Hgen as (cr & s2 & Hcr & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Heq & ?); subst s'.
+        rewrite Heq.
+        assert (length (skipn (numstreams e) xs) = length (LSyn.annots es))
+          as Hls.
+        { rewrite skipn_length, Hlen.
+          unfold LSyn.annots. cbn [flat_map]. rewrite app_length.
+          rewrite length_annot_numstreams. lia. }
+        assert (sec_le s s1) as Hla
+            by (eapply generate_lone_constraint_sec_le; exact Hc).
+        assert (sec_le s1 s2) as Hlb
+            by (eapply generate_lsplit_constraints_sec_le; exact Hcr).
+        destruct (generate_lone_constraint_shape ckenv
+                    (firstn (numstreams e) xs) e c s s1 ns
+                    (minted_incl_sub s s s1 s2 ns (sec_le_refl s) Hlb Hns)
+                    Hsep Hc)
+          as (ms1 & Hm1 & Hi1).
+        destruct (IH (skipn (numstreams e) xs) cr s1 s2 ns
+                    (minted_incl_sub s s1 s2 s2 ns Hla (sec_le_refl s2) Hns)
+                    Hsep Hls Hcr)
+          as (ms2 & Hm2 & Hi2).
+        assert (CALLS.sec_of env xs
+                = CALLS.sec_of env (firstn (numstreams e) xs)
+                  ++ CALLS.sec_of env (skipn (numstreams e) xs)) as Hsplit
+            by (rewrite <- sec_of_app, firstn_skipn; reflexivity).
+        rewrite Hsplit.
+        exists (ms1 ++ ms2). split; [|apply incl_app; [exact Hi1|exact Hi2]].
+        eapply targets_of_perm; [apply perm_app4|].
+        apply targets_of_app; [exact Hm1|exact Hm2].
+    Qed.
+
+    Lemma generate_leqn_constraint_shape :
+      forall ckenv eqn cs s s' ns,
+        incl (minted s s') ns ->
+        (forall x b, Env.find x env = Some b -> ~ In b ns) ->
+        length (fst eqn) = length (LSyn.annots (snd eqn)) ->
+        generate_leqn_constraint G env base_ty rst_ty ckenv eqn s
+          = OK (cs, s') ->
+        exists ms, targets_of (CALLS.sec_of env (fst eqn) ++ ms) cs
+                   /\ incl ms ns.
+    Proof.
+      intros ckenv eqn cs s s' ns Hns Hsep Hlen Hgen.
+      destruct eqn as (xs & es). cbn [fst snd] in Hlen |- *.
+      destruct es as [|e [|e2 es2]].
+      - eapply generate_lgen_constraint_shape;
+          [exact Hns|exact Hsep|exact Hgen].
+      - destruct e as [c0|x0 a0|op0 e0 a0|op0 e1 e2 a0|e0s es0 an0|e0s es0 an0
+                      |es0 x0 b0 a0|x0 ets efs a0|e0 ets efs a0
+                      |f args ro anns].
+        1-9: destruct xs as [|x [|y xs]];
+          [eapply generate_lgen_constraint_shape;
+             [exact Hns|exact Hsep|exact Hgen]
+          |eapply generate_ldef_constraint_shape;
+             [exact Hns|exact Hsep|exact Hgen]
+          |eapply generate_lgen_constraint_shape;
+             [exact Hns|exact Hsep|exact Hgen]].
+        destruct ro as [e1|]; destruct xs as [|y xs].
+        + unfold SC.ret in Hgen.
+          destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _). rewrite Hc.
+          exists []. split; [apply targets_of_nil|intros ? []].
+        + cbn [generate_leqn_constraint] in Hgen.
+          apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
+          apply sec_bind_inv in Hgen as (a1 & s2 & Ha1 & Hgen).
+          apply single_inv in Ha1 as (? & ?); subst t1 s2.
+          apply sec_bind_inv in Hgen as (rck & s3 & Hrck & Hgen).
+          apply option_to_sec_inv in Hrck as (_ & ?); subst s3.
+          assert (sec_le s1 s') as Hl1
+              by (eapply generate_lcall_constraint_sec_le; exact Hgen).
+          eapply generate_lcall_constraint_shape; [| | | |exact Hgen].
+          * apply (minted_incl_sub s s1 s' s' ns);
+              [eapply assign_lexp_type_sec_le; exact Ht1
+              |apply sec_le_refl|exact Hns].
+          * exact Hsep.
+          * rewrite !snd_ljoin, snd_lvar. cbn [snd].
+            rewrite cmerge_nil, cmerge_nil2.
+            rewrite <- (carried_single a1).
+            exact (lexp_carried_singleton_all e1 [a1] s s1 Ht1).
+          * rewrite !snd_ljoin, snd_lvar. cbn [snd].
+            rewrite cmerge_nil, cmerge_nil2.
+            rewrite <- (carried_single a1).
+            apply (lexp_carried_minted_all e1 [a1] s s1 ns); [|exact Ht1].
+            apply (minted_incl_sub s s s1 s' ns);
+              [apply sec_le_refl|exact Hl1|exact Hns].
+        + unfold SC.ret in Hgen.
+          destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _). rewrite Hc.
+          exists []. split; [apply targets_of_nil|intros ? []].
+        + eapply generate_lcall_constraint_shape;
+            [exact Hns|exact Hsep| | |exact Hgen];
+            rewrite snd_lvar; constructor.
+      - destruct (has_lcall (e :: e2 :: es2)) eqn:Hh;
+          cbn [generate_leqn_constraint] in Hgen; rewrite Hh in Hgen.
+        + destruct e; try destruct o;
+            (eapply generate_lsplit_constraints_shape;
+             [exact Hns|exact Hsep|exact Hlen|exact Hgen]).
+        + destruct e; try destruct o;
+            (eapply generate_lgen_constraint_shape;
+             [exact Hns|exact Hsep|exact Hgen]).
+    Qed.
+
+    (** * 7c, assembled: the raw constraint set, name by name
+
+        One constraint per variable the equation list defines, and the rest
+        targeting names the run minted.  This is the shape [signature_good]
+        needs: [simplify] drops the second group -- every occurrence of it --
+        and what is left is one constraint per output. *)
+    Theorem generate_leqns_constraints_shape :
+      forall ckenv eqs cs s s' ns,
+        incl (minted s s') ns ->
+        (forall x b, Env.find x env = Some b -> ~ In b ns) ->
+        Forall (fun eq => length (fst eq) = length (LSyn.annots (snd eq))) eqs ->
+        generate_leqns_constraints G env base_ty rst_ty ckenv eqs s
+          = OK (cs, s') ->
+        exists ms, targets_of (CALLS.sec_of env (vars_defined eqs) ++ ms) cs
+                   /\ incl ms ns.
+    Proof.
+      intros ckenv eqs. induction eqs as [|eqn eqs IH];
+        intros cs s s' ns Hns Hsep Hl Hgen.
+      - apply generate_leqns_constraints_nil in Hgen as (Hc & _).
+        rewrite Hc.
+        exists []. split; [apply targets_of_nil|intros ? []].
+      - assert (length (fst eqn) = length (LSyn.annots (snd eqn))) as Hle
+            by (rewrite Forall_forall in Hl; apply Hl; now left).
+        assert (Forall (fun eq => length (fst eq)
+                                  = length (LSyn.annots (snd eq))) eqs) as Hlr
+            by (rewrite Forall_forall in Hl |- *;
+                intros y Hy; apply Hl; now right).
+        rewrite generate_leqns_constraints_cons in Hgen.
+        apply sec_bind_inv in Hgen as (c1 & s1 & Hc1 & Hgen).
+        apply sec_bind_inv in Hgen as (c2 & s2 & Hc2 & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Heq & ?); subst s'.
+        assert (sec_le s s1) as Hla
+            by (eapply generate_leqn_constraint_sec_le; exact Hc1).
+        assert (sec_le s1 s2) as Hlb
+            by (eapply generate_leqns_constraints_sec_le; exact Hc2).
+        destruct (generate_leqn_constraint_shape ckenv eqn c1 s s1 ns
+                    (minted_incl_sub s s s1 s2 ns (sec_le_refl s) Hlb Hns)
+                    Hsep Hle Hc1)
+          as (ms1 & Hm1 & Hi1).
+        destruct (IH c2 s1 s2 ns
+                    (minted_incl_sub s s1 s2 s2 ns Hla (sec_le_refl s2) Hns)
+                    Hsep Hlr Hc2)
+          as (ms2 & Hm2 & Hi2).
+        rewrite Heq, vars_defined_cons_eq, sec_of_app.
+        exists (ms1 ++ ms2). split; [|apply incl_app; [exact Hi1|exact Hi2]].
+        eapply targets_of_perm; [apply perm_app4|].
+        apply targets_of_app; [exact Hm1|exact Hm2].
     Qed.
 
   End RawTargets.
