@@ -545,22 +545,23 @@ cons step has to be taken with `gen_lvars_cons_eq` and `OK_pair_inv` rather
 than with `cbn` and `inversion`, which reduce it in the goal.  This is the
 same trap `OK_pair_inv` and `pair_inv` were introduced for on Leg I.
 
-What is left of 7a is the dispatch, which is case analysis and no new idea:
+**7a is done**: `generate_leqns_constraints_singleton`, through the whole
+dispatch -- `generate_lcall_constraint_singleton`,
+`generate_ldef_constraint_singleton`, `generate_lgen_constraint_singleton`,
+`generate_lone_constraint_singleton`,
+`generate_lsplit_constraints_singleton`,
+`generate_leqn_constraint_singleton`, and the two folds.
 
-    generate_lcall_constraint_singleton   -- the inv lemma, then the three
-                                             cmerge components
-    generate_lone_constraint_singleton    -- a call with or without a reset,
-                                             a single defined variable
-                                             (ldef), or the general rule
-    generate_lsplit_constraints_singleton -- an app fold over the above
-    generate_leqn_constraint_singleton    -- the same dispatch as
-                                             eqn_carries_all_streams
-    generate_leqns_constraints_singleton  -- an app fold
+Two frictions, both from pattern compilation and worth knowing:
 
-The reset argument is `lvar rst_ty` (carrying nothing) or
-`ljoin (lvar rst_ty) (ljoin a1 (rck, []))`, whose carried part is the reset
-expression's own -- so `lexp_carried_singleton_all` covers both.
-*[untested]*
+  * `generate_ldef_constraint_inv` *in scope* returns the flow type whole
+    with its own final state, not split into a pair.  The shape written in
+    `SecLTyping.v`'s own statement nearby is not the one `Include` brings --
+    check with `Check`, do not read it off the source.
+  * the equation rule's "two or more expressions" branch leaves a residual
+    `match` on the head expression, and on its reset when that head is a
+    call, because the single-expression call patterns have to inspect both.
+    Every branch is the same term, so `destruct e; try destruct o` closes it.
 
 *7b, distinct targets* -- this is where the work is.  The targets of a node's
 raw constraints are the security names of the variables it defines together
