@@ -281,4 +281,172 @@ Import SECMONADNotations.
     apply in_map_iff in Hin as (d & Hd & _). now exists d.
   Qed.
 
+  (** * 7a: every constraint the generator emits has a one-element target
+
+      The expression induction.  Nine of the ten cases are immediate -- the
+      carried component is empty, or a [cmerge]/[ljoin_list] of the
+      sub-expressions' -- and the call case is the instantiated block, whose
+      targets are its outputs. *)
+
+  Lemma singleton_targets_cmerge_inv :
+    forall c1 c2,
+      SIGPROOFS.singleton_targets (cmerge c1 c2) ->
+      SIGPROOFS.singleton_targets c1 /\ SIGPROOFS.singleton_targets c2.
+  Proof.
+    intros c1 c2 H.
+    unfold SIGPROOFS.singleton_targets in H |- *.
+    rewrite Forall_forall in H. split; rewrite Forall_forall;
+      intros c Hc; apply H, cmerge_In; tauto.
+  Qed.
+
+  Lemma singleton_targets_carried_map_ljoin :
+    forall h ts,
+      SIGPROOFS.singleton_targets (snd h) ->
+      SIGPROOFS.singleton_targets (carried ts) ->
+      SIGPROOFS.singleton_targets
+        (carried (List.map (fun t => ljoin h t) ts)).
+  Proof.
+    intros h ts Hh. induction ts as [|t ts IH]; intros Hts.
+    - cbn [List.map carried]. constructor.
+    - cbn [List.map]. rewrite carried_cons.
+      rewrite carried_cons in Hts.
+      apply singleton_targets_cmerge_inv in Hts as (Ht & Htr).
+      apply singleton_targets_cmerge; [|exact (IH Htr)].
+      rewrite snd_ljoin. apply singleton_targets_cmerge; assumption.
+  Qed.
+
+  Section RawTargets.
+
+    Variable G       : secglobal.
+    Variable env     : Env.t ident.
+    Variable base_ty : ident.
+    Variable rst_ty  : ident.
+
+    Definition lexp_carried_singleton (e : exp) : Prop :=
+      forall ts st st',
+        assign_lexp_type G env base_ty rst_ty e st = OK (ts, st') ->
+        SIGPROOFS.singleton_targets (carried ts).
+
+    Definition lexps_carried_singleton (es : list exp) : Prop :=
+      forall ts st st',
+        assign_lexps G env base_ty rst_ty es st = OK (ts, st') ->
+        SIGPROOFS.singleton_targets (carried ts).
+
+    Lemma lexps_carried_singleton_intro :
+      forall es,
+        Forall lexp_carried_singleton es -> lexps_carried_singleton es.
+    Proof.
+      intros es Hall. induction Hall as [|e es He Hes IH];
+        intros ts st st' H.
+      - rewrite assign_lexps_nil in H. unfold SC.ret in H. inv H.
+        constructor.
+      - rewrite assign_lexps_cons in H.
+        apply sec_bind_inv in H as (t & s1 & Ht & H).
+        apply sec_bind_inv in H as (r & s2 & Hr & Hret).
+        unfold SC.ret in Hret. inv Hret.
+        rewrite carried_app.
+        apply singleton_targets_cmerge;
+          [exact (He t st s1 Ht)|exact (IH r s1 st' Hr)].
+    Qed.
+
+    Theorem lexp_carried_singleton_all :
+      forall e, lexp_carried_singleton e.
+    Proof.
+      intros e. induction e using exp_ind2;
+        intros ts st st' Hgen.
+      - (** a constant carries nothing *)
+        rewrite assign_lexp_Econst in Hgen. unfold SC.ret in Hgen. inv Hgen.
+        cbn [carried lbot snd]. constructor.
+      - (** nor a variable *)
+        apply assign_lexp_Evar_inv in Hgen as (a0 & _ & Hts & _). subst ts.
+        cbn [carried snd]. constructor.
+      - (** the unary operator is its operand *)
+        exact (IHe ts st st' Hgen).
+      - (** the binary one joins its two, each pinned by [single] *)
+        rewrite assign_lexp_Ebinop in Hgen.
+        apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
+        apply sec_bind_inv in Hgen as (t2 & s2 & Ht2 & Hgen).
+        apply sec_bind_inv in Hgen as (a1 & s3 & Ha1 & Hgen).
+        apply sec_bind_inv in Hgen as (a2 & s4 & Ha2 & Hret).
+        unfold SC.ret in Hret. inv Hret.
+        apply single_inv in Ha1 as (? & ?); subst t1 s3.
+        apply single_inv in Ha2 as (? & ?); subst t2.
+        rewrite carried_single, snd_ljoin.
+        apply singleton_targets_cmerge.
+        + rewrite <- carried_single. exact (IHe1 [a1] st s1 Ht1).
+        + rewrite <- carried_single. exact (IHe2 [a2] s1 s2 Ht2).
+      - (** the delay, and the initialised delay: a pointwise join *)
+        rewrite assign_lexp_Efby in Hgen.
+        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (us & s2 & Hus & Hj).
+        rewrite (ljoin_list_carried ts0 us ts s2 st' Hj).
+        apply singleton_targets_cmerge.
+        + eapply lexps_carried_singleton_intro; [exact H|exact Hts0].
+        + eapply lexps_carried_singleton_intro; [exact H0|exact Hus].
+      - rewrite assign_lexp_Earrow in Hgen.
+        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (us & s2 & Hus & Hj).
+        rewrite (ljoin_list_carried ts0 us ts s2 st' Hj).
+        apply singleton_targets_cmerge.
+        + eapply lexps_carried_singleton_intro; [exact H|exact Hts0].
+        + eapply lexps_carried_singleton_intro; [exact H0|exact Hus].
+      - (** sampling adds a name and no constraint *)
+        rewrite assign_lexp_Ewhen in Hgen.
+        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (g & s2 & Hg & Hret).
+        apply find_env_inv in Hg as (_ & ?); subst s2.
+        unfold SC.ret in Hret. inv Hret.
+        rewrite carried_map_when.
+        eapply lexps_carried_singleton_intro; [exact H|exact Hts0].
+      - (** the merge, and the conditional, join their two branch lists *)
+        destruct a as (tys & cl).
+        rewrite assign_lexp_Emerge in Hgen.
+        apply sec_bind_inv in Hgen as (g & s1 & Hg & Hgen).
+        apply find_env_inv in Hg as (_ & ?); subst s1.
+        apply sec_bind_inv in Hgen as (ts0 & s2 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (us & s3 & Hus & Hj).
+        rewrite (ljoin_list_carried _ us ts s3 st' Hj).
+        apply singleton_targets_cmerge.
+        + rewrite carried_map_merge_l.
+          eapply lexps_carried_singleton_intro; [exact H|exact Hts0].
+        + eapply lexps_carried_singleton_intro; [exact H0|exact Hus].
+      - destruct a as (tys & cl).
+        rewrite assign_lexp_Eite in Hgen.
+        apply sec_bind_inv in Hgen as (t0 & s1 & Ht0 & Hgen).
+        apply sec_bind_inv in Hgen as (th & s2 & Hth & Hgen).
+        apply single_inv in Hth as (? & ?); subst t0 s2.
+        apply sec_bind_inv in Hgen as (ts0 & s3 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (us & s4 & Hus & Hj).
+        rewrite (ljoin_list_carried _ us ts s4 st' Hj).
+        apply singleton_targets_cmerge.
+        + apply singleton_targets_carried_map_ljoin.
+          * rewrite <- carried_single. exact (IHe [th] st s1 Ht0).
+          * eapply lexps_carried_singleton_intro; [exact H|exact Hts0].
+        + eapply lexps_carried_singleton_intro; [exact H0|exact Hus].
+      - (** and the call: the instantiated block over what the arguments and
+            the reset were carrying *)
+        apply assign_lexp_Eapp_inv in Hgen
+          as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
+              & Hargs & _ & Hrst & _ & _ & Hcs & Hts).
+        subst ts. rewrite carried_uniform.
+        destruct outs as [|o os]; [constructor|].
+        apply singleton_targets_cmerge;
+          [exact (generate_constraints_singleton_targets sg
+                    (List.map fst argts) ckty (fst rstty) (o :: os) cs
+                    stc st' Hcs)|].
+        apply singleton_targets_cmerge.
+        + eapply lexps_carried_singleton_intro; [exact H0|exact Hargs].
+        + destruct ro as [e1|].
+          * destruct Hrst as (t1 & a1 & rck & stm & Ht1 & Hsg1 & _ & Hr).
+            apply single_inv in Hsg1 as (? & ?); subst t1 stb.
+            subst rstty. rewrite !snd_ljoin, snd_lvar.
+            cbn [snd]. rewrite cmerge_nil, cmerge_nil2.
+            rewrite <- carried_single.
+            exact (H [a1] sta stm Ht1).
+          * destruct Hrst as (Hr & _). subst rstty.
+            rewrite snd_lvar. constructor.
+    Qed.
+
+  End RawTargets.
+
 End SecLusTypingCorrectness.
