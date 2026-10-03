@@ -633,11 +633,109 @@ the defined variables are distinct by `n_defd`, carried to their names by
 arithmetic (`minted_spec`); and no minted name is an `env` value, by index,
 which is `generate_lnode_scoped_env_st_fresh_sec`.  *[untested]*
 
-*6* -- then `signature_good` is 7 plus the fact that `simplify` eliminates
-exactly the locals and the minted names, leaving the outputs; and
-`signature_scoped`, `NoDup (signature_scope ...)`,
-`generate_lnode_sig_instantiations` and `sig_rooted` follow the four NLustre
-templates named above.
+### CORRECTION 2026-10-04: the `NoDup` conjunct is false, and not needed
+
+The statement above is wrong in its last conjunct, and the error is
+instructive.  `NoDup (tys ++ ms)` does not hold of the raw set.  Take
+
+    x, y = (0, 0) fby f(z)
+
+with `f` returning two streams.  `assign_lexp_type` mints `n1, n2` for the
+call and gives *both* streams of the `Efby` the same carried set, because
+`carried_uniform` makes every result of a call carry the one instantiated
+block.  The equation then goes through `generate_lgen_constraint`, whose
+`generate_lvars_constraints` **appends** one `lconstrain` per defined
+variable -- so the two constraints targeting `n1` and `n2` are emitted
+twice, once under `x` and once under `y`.  That is not a defect of the
+generator: the two occurrences are literally equal constraints, and the
+Lustre type rule has no equation to hang them on just once.
+
+What saves `signature_good` is `subAll`.  Reading it rather than
+`simplify_nodup`:
+
+    Fixpoint subAll cns d st' :=
+      match cns with
+      | (st, [d'])::cns' => if ident_eqb d' d then subAll cns' d st'
+                            else normalize_constraint (subST st d st') d'
+                                 :: subAll cns' d st'
+      | _ :: cns'        => subAll cns' d st'
+      | [] => [] end
+
+it **drops every** constraint whose target is `d`, not just the first, and
+leaves every other target untouched.  So `simplify cns ds` is, on targets, a
+filter: it keeps exactly the constraints whose target is outside `ds`, with
+whatever multiplicity they had.  Since `ds` is `locals ++ minted st0 st1`,
+the duplicates all go, and the raw set never had to be duplicate-free.
+
+So item 7's remaining lemma is the same statement **without** the `NoDup`:
+
+    exists ms, Permutation (map snd cns)
+                 (map (fun d => [d]) (sec_of env (vars_defined eqs) ++ ms))
+               /\ incl ms (minted s s')
+
+and `ms` is a *multiset* contained in the window, not a subset of it.  Two
+further consequences of dropping `NoDup`:
+
+- **The expression level needs no induction of its own.**  Existentially
+  quantified, that statement is exactly 7a and 7b together: if every
+  constraint targets one name (7a) and every such name is in the window
+  (7b), read the targets off in order.  `shape_of_singleton_minted` does
+  that in fifteen lines, and `lexp_carried_shape` / `lexps_carried_shape`
+  are two-line corollaries of `lexp_carried_singleton_all` and
+  `lexp_carried_minted_all`.  An earlier draft proved the expression level
+  by a full `exp_ind2` induction carrying disjointness of the minted
+  windows; that is all dead weight and was removed.
+- **What is left is the equation level only** -- and there the content is
+  that a *defined* variable is targeted exactly once.  That needs
+  `cmerge_perm`: `cmerge` is a permutation of the append exactly when the
+  two sides share no constraint, and the one merge that matters
+  (`lconstrain p b = cmerge [(_,[b])] (snd p)`) has a declared name on the
+  left and minted names on the right.  Those are apart by
+  `generate_lnode_scoped_env_st_fresh_sec`, threaded as the premise
+
+      forall x b, Env.find x env = Some b -> ~ In b ns
+
+**7c is done** (2026-10-04), in `SecLusTypingCorrectness.v`:
+
+- plumbing, at module level **before** `Section RawTargets` -- it was first
+  written after the section and had to be moved, because everything else in
+  7c needs both the plumbing and the section's `G`/`env`/`base_ty`/`rst_ty`,
+  and a lemma written in a *second* section with the same variable names does
+  not see the first section's lemmas without re-passing all four:
+  `cmerge_perm`, `targets_of` with
+  `_nil/_perm/_In/_app/_cmerge`, and the `simplify` story --
+  `subAll_map_snd`, `simplify_map_snd` (`= filter (kept ds)`),
+  `simplify_targets`;
+- `shape_of_singleton_minted`, `lexp_carried_shape`, `lexps_carried_shape`;
+- `shape_lconstrain`, `generate_lvars_constraints_shape`, then the dispatch
+  `generate_{lcall,ldef,lgen,lone,lsplit,leqn,leqns}_constraint(s)_shape`;
+- the capstone `generate_leqns_constraints_published`:
+
+      targets_of out (simplify cs (locals ++ minted s s'))
+
+  and `generate_leqns_constraints_published_wf`, which is `signature_good`'s
+  two components for a node, given
+  `Permutation (sec_of env (vars_defined eqs)) (locals ++ out)` and
+  `NoDup (locals ++ out)`.
+
+One genuinely new premise appears: the split rule needs
+`length xs = length (annots es)` per equation -- the arity half of Velus'
+`wl_equation` -- because `generate_lsplit_constraints` chunks `xs` by
+`firstn`/`skipn` and would silently drop a tail that no expression claims.
+That is carried as
+`Forall (fun eq => length (fst eq) = length (annots (snd eq))) eqs` and is
+for item 3 to discharge at the instantiation site.
+
+*6* -- `signature_good` for a node is now
+`generate_leqns_constraints_published_wf` instantiated at that node: what is
+left is to supply its three node-level premises from the node record and the
+naming pass --
+`Permutation (sec_of env (vars_defined n_eqs)) (locals ++ out)` from
+`n_defd` through `get_mappings_from_node_sec_of`, `NoDup (locals ++ out)`
+from `n_nodup` through `env` injectivity, and the separation premise from
+`generate_lnode_scoped_env_st_fresh_sec`.  Then `signature_scoped`,
+`NoDup (signature_scope ...)`, `generate_lnode_sig_instantiations` and
+`sig_rooted` follow the four NLustre templates named above.
 
 Items 2, 3 and 8 are bookkeeping at the instantiation site.  They need a new file after
 `SecLusUnnesting.v`/`SecLusNormFby.v`, since they speak about

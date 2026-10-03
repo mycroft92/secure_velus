@@ -2189,6 +2189,79 @@ Import SECMONADNotations.
         apply targets_of_app; [exact Hm1|exact Hm2].
     Qed.
 
+
+    Lemma NoDup_map_singleton :
+      forall (l : list ident), NoDup l -> NoDup (List.map (fun d => [d]) l).
+    Proof.
+      induction 1 as [|x l Hx Hnd IH]; [constructor|].
+      cbn [List.map]. constructor; [|exact IH].
+      intros Hin. apply in_map_iff in Hin as (d & Hd & Hdl).
+      injection Hd as Hd. subst d. exact (Hx Hdl).
+    Qed.
+
+    (** * Item 7, the conclusion: the published constraint set
+
+        [simplify] is handed the locals and the whole minted window, so it
+        drops every constraint that does not target an output -- including the
+        repeats, which is why the raw set did not have to be duplicate-free.
+        What is left is one constraint per output, which is exactly the second
+        half of [signature_good]; the first half follows from it. *)
+    Theorem generate_leqns_constraints_published :
+      forall ckenv eqs cs s s' locals out,
+        (forall x b, Env.find x env = Some b -> ~ In b (minted s s')) ->
+        Forall (fun eq => length (fst eq) = length (LSyn.annots (snd eq))) eqs ->
+        Permutation (CALLS.sec_of env (vars_defined eqs)) (locals ++ out) ->
+        NoDup (locals ++ out) ->
+        (forall o, In o out -> exists x, Env.find x env = Some o) ->
+        generate_leqns_constraints G env base_ty rst_ty ckenv eqs s
+          = OK (cs, s') ->
+        targets_of out (simplify cs (locals ++ minted s s')).
+    Proof.
+      intros ckenv eqs cs s s' locals out Hsep Hl Hperm Hnd Hout Hgen.
+      destruct (generate_leqns_constraints_shape ckenv eqs cs s s'
+                  (minted s s') (incl_refl _) Hsep Hl Hgen)
+        as (ms & Hm & Hi).
+      apply (simplify_targets cs (locals ++ minted s s') out (locals ++ ms)).
+      - exact (generate_leqns_constraints_singleton ckenv eqs cs s s' Hgen).
+      - eapply targets_of_perm; [|exact Hm].
+        eapply Permutation_trans; [apply Permutation_app_tail; exact Hperm|].
+        rewrite <- app_assoc. apply (perm_mid3 locals out ms).
+      - apply incl_app; [apply incl_appl, incl_refl|apply incl_appr, Hi].
+      - intros o Ho Hin. apply in_app_or in Hin as [Hin|Hin].
+        + exact (NoDup_app_In o locals out Hnd Hin Ho).
+        + destruct (Hout o Ho) as (y & Hy). exact (Hsep y o Hy Hin).
+    Qed.
+
+    (** And the first half: distinct targets, each a single name. *)
+    Corollary generate_leqns_constraints_published_wf :
+      forall ckenv eqs cs s s' locals out,
+        (forall x b, Env.find x env = Some b -> ~ In b (minted s s')) ->
+        Forall (fun eq => length (fst eq) = length (LSyn.annots (snd eq))) eqs ->
+        Permutation (CALLS.sec_of env (vars_defined eqs)) (locals ++ out) ->
+        NoDup (locals ++ out) ->
+        (forall o, In o out -> exists x, Env.find x env = Some o) ->
+        generate_leqns_constraints G env base_ty rst_ty ckenv eqs s
+          = OK (cs, s') ->
+        wf_constraints (simplify cs (locals ++ minted s s'))
+        /\ Permutation
+             (List.map snd (simplify cs (locals ++ minted s s')))
+             (List.map (fun ty => [ty]) out).
+    Proof.
+      intros ckenv eqs cs s s' locals out Hsep Hl Hperm Hnd Hout Hgen.
+      pose proof (generate_leqns_constraints_published ckenv eqs cs s s'
+                    locals out Hsep Hl Hperm Hnd Hout Hgen) as Hpub.
+      unfold targets_of in Hpub.
+      split; [|exact Hpub]. split.
+      - eapply Permutation_NoDup; [apply Permutation_sym; exact Hpub|].
+        apply NoDup_map_singleton. eapply NoDup_app_r; exact Hnd.
+      - apply Forall_forall. intros c Hc.
+        assert (In (snd c) (List.map (fun ty => [ty]) out)) as Hin
+            by (eapply Permutation_in; [exact Hpub|];
+                apply in_map_iff; exists c; split; [reflexivity|exact Hc]).
+        apply in_map_iff in Hin as (d & Hd & _).
+        destruct c as (lhs, rhs). cbn [snd] in Hd. subst rhs. reflexivity.
+    Qed.
+
   End RawTargets.
 
 End SecLusTypingCorrectness.
