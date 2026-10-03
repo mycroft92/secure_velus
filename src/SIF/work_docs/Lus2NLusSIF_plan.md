@@ -563,15 +563,35 @@ Two frictions, both from pattern compilation and worth knowing:
     call, because the single-expression call patterns have to inspect both.
     Every branch is the same term, so `destruct e; try destruct o` closes it.
 
-*7b, distinct targets* -- this is where the work is.  The targets of a node's
-raw constraints are the security names of the variables it defines together
-with the names the generator minted, and distinctness needs both: the defined
-variables are distinct by `n_defd` and `NoDup`, carried to their names by
-`env` injectivity; the minted names are distinct from each other and from
-every `env` value, the latter by index, with the naming pass's final state as
-the boundary -- the same argument item 4 used, which is already proved as
-`generate_lnode_scoped_env_st_fresh_sec`.  The induction has to carry the
-minted window along the equation list.
+*7b, distinct targets* -- the expression half is done (2026-10-03).
+
+`lexp_carried_minted_all`: every target of what an expression carries is a
+name the run minted.  Stated against an arbitrary *superset* of the window
+rather than the window itself -- that is what keeps the conclusion stable
+under sub-runs, and is the device `assign_lexp_type_clock_closed` already
+uses; `minted_incl_sub` and the `sec_le` family move it between windows.  The
+call case is the only one that mints, and `generate_constraints_targets` says
+the block's targets are exactly the results `fresh_idents` just handed out.
+The generic `Forall_cmerge`, `_cmerge_inv` and `Forall_carried_map_ljoin` are
+the 7a plumbing with the property as a parameter.
+
+Two things found on the way: `ljoin_list` is **state-pure**
+(`ljoin_list_pure`), so the four join cases need no window step at all; and
+`exp_ind2` orders the `Eapp` case's two induction hypotheses with the
+*reset* first and the argument list second, which is the opposite of what the
+other list cases suggest -- worth checking rather than assuming.
+
+What is left of 7b:
+
+  * the equation level: the targets of `generate_leqns_constraints` are the
+    defined variables' security names together with what the expressions
+    carried, so `lexp_carried_minted_all` plus the dispatch gives "a target is
+    a defined variable's name or a minted name";
+  * then `NoDup`: the defined variables are distinct by `n_defd` and `NoDup`,
+    carried to their names by `env` injectivity; the minted names are
+    distinct from each other along the run, and from every `env` value by
+    index, with the naming pass's final state as the boundary -- which is
+    `generate_lnode_scoped_env_st_fresh_sec`, already proved for item 4.
 
 *6* -- then `signature_good` is 7 plus the fact that `simplify` eliminates
 exactly the locals and the minted names, leaving the outputs; and
