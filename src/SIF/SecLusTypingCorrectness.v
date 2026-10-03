@@ -964,6 +964,369 @@ Import SECMONADNotations.
                rewrite snd_lvar. constructor.
     Qed.
 
+    (** * 7b, the equation level: a target is a defined name or a minted one
+
+        Every rule's own constraint targets a variable the equation defines;
+        everything else it emits came from an expression, and so was minted.
+        [targets_in] is the two possibilities as one set, which is what lets
+        the dispatch be uniform. *)
+
+    Definition targets_in (ds : list ident)
+        (cs : list SymTypes.constraint) : Prop :=
+      Forall (fun c => incl (snd c) ds) cs.
+
+    Lemma targets_in_incl :
+      forall ds ds' cs, incl ds ds' -> targets_in ds cs -> targets_in ds' cs.
+    Proof.
+      intros ds ds' cs Hincl H. unfold targets_in in H |- *.
+      eapply Forall_impl; [|exact H]. intros c Hc.
+      eapply incl_tran; [exact Hc|exact Hincl].
+    Qed.
+
+    Lemma targets_in_carried_elements :
+      forall ns ts,
+        targets_in ns (carried ts) ->
+        Forall (fun t => targets_in ns (snd t)) ts.
+    Proof.
+      intros ns ts H. apply Forall_forall. intros t Ht.
+      unfold targets_in in H |- *.
+      rewrite Forall_forall in H |- *. intros c Hc.
+      apply H. exact (In_carried ts t c Ht Hc).
+    Qed.
+
+    Lemma generate_lvars_constraints_targets :
+      forall ckenv xs bs ts c s s' ns,
+        Forall2 (fun x b => Env.find x env = Some b) xs bs ->
+        Forall (fun t => targets_in ns (snd t)) ts ->
+        generate_lvars_constraints env base_ty rst_ty ckenv xs bs ts s
+          = OK (c, s') ->
+        targets_in (CALLS.sec_of env xs ++ ns) c.
+    Proof.
+      intros ckenv xs. induction xs as [|x xs IH];
+        intros bs ts c s s' ns Hbs Hts Hgen.
+      - destruct bs as [|b bs]; [|inversion Hbs].
+        destruct ts; cbn in Hgen; [|discriminate].
+        unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _). rewrite Hc.
+        constructor.
+      - destruct bs as [|b bs]; [inversion Hbs|].
+        destruct ts as [|t ts]; [cbn in Hgen; discriminate|].
+        inversion Hbs as [|x0 b0 xs0 bs0 Hxb Hbsr]; subst.
+        inversion Hts as [|t0 ts0 Ht Htr]; subst.
+        rewrite gen_lvars_cons_eq in Hgen.
+        apply sec_bind_inv in Hgen as (ckty & s1 & Hck & Hgen).
+        apply sec_bind_inv in Hgen as (rest & s2 & Hr & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Hc & ?); subst s'.
+        rewrite Hc. unfold targets_in. apply Forall_app. split.
+        + (** the rule's own constraint, at the variable it defines *)
+          apply Forall_forall. intros cc Hcc.
+          apply (cmerge_In [(fst (ljoin (ambient rst_ty ckty) t), [b])]
+                   (snd (ljoin (ambient rst_ty ckty) t)) cc) in Hcc
+            as [Hcc|Hcc].
+          * destruct Hcc as [Hcc|[]]; subst cc. cbn [snd].
+            intros z [Hz|[]]; subst z. apply in_or_app. left.
+            unfold CALLS.sec_of. apply in_flat_map.
+            exists x. split; [now left|rewrite Hxb; now left].
+          * rewrite snd_ljoin in Hcc. unfold ambient in Hcc.
+            rewrite snd_ljoin, snd_lvar in Hcc. cbn [snd] in Hcc.
+            rewrite cmerge_nil, cmerge_nil2 in Hcc.
+            unfold targets_in in Ht. rewrite Forall_forall in Ht.
+            intros z Hz. apply in_or_app. right. exact (Ht cc Hcc z Hz).
+        + (** and the rest, by the induction hypothesis *)
+          eapply (targets_in_incl (CALLS.sec_of env xs ++ ns));
+            [|exact (IH bs ts rest s1 s2 ns Hbsr Htr Hr)].
+          apply incl_app; [|apply incl_appr, incl_refl].
+          apply incl_appl. apply sec_of_incl. intros y Hy. now right.
+    Qed.
+
+    Lemma targets_in_cmerge :
+      forall ds c1 c2,
+        targets_in ds c1 -> targets_in ds c2 -> targets_in ds (cmerge c1 c2).
+    Proof.
+      intros ds c1 c2 H1 H2. unfold targets_in in H1, H2 |- *.
+      apply Forall_cmerge; assumption.
+    Qed.
+
+    Lemma generate_constraints_targets_in :
+      forall sg inp clk rst out cns sa sa' ds,
+        incl out ds ->
+        generate_constraints sg inp clk rst out sa = OK (cns, sa') ->
+        targets_in ds cns.
+    Proof.
+      intros sg inp clk rst out cns sa sa' ds Hout Hgen.
+      pose proof (CALLS.generate_constraints_targets sg inp clk rst out cns
+                    sa sa' Hgen) as Hsnd.
+      unfold targets_in. apply Forall_forall. intros c Hc.
+      assert (In (snd c) (List.map (fun ty => [ty]) out)) as Hin
+          by (rewrite <- Hsnd; apply in_map_iff; exists c;
+              split; [reflexivity|exact Hc]).
+      apply in_map_iff in Hin as (d & Hd & Hdo).
+      intros z Hz.
+      assert (In z [d]) as Hz' by (rewrite Hd; exact Hz).
+      destruct Hz' as [Hz'|[]]; subst z. exact (Hout d Hdo).
+    Qed.
+
+    Lemma generate_lcall_constraint_targets :
+      forall xs f es rstty cs s s' ns,
+        incl (minted s s') ns ->
+        targets_in ns (snd rstty) ->
+        generate_lcall_constraint G env base_ty rst_ty xs f es rstty s
+          = OK (cs, s') ->
+        targets_in (CALLS.sec_of env xs ++ ns) cs.
+    Proof.
+      intros xs f es rstty cs s s' ns Hns Hrst Hgen.
+      apply generate_lcall_constraint_inv in Hgen
+        as (sg & ckty & argts & outs & sti & cs0
+            & Esg & Hck & Hargs & Houts & Hgc & Hcs).
+      assert (sec_le s sti) as Hlsi
+          by (eapply assign_lexps_sec_le; exact Hargs).
+      assert (s' = sti) as ?
+          by (destruct (state_pure_generate_constraints sg
+                          (List.map fst argts) ckty (fst rstty) outs
+                          sti sti _ _ Hgc) as (Hp & _); exact Hp).
+      subst s'.
+      rewrite Hcs. apply targets_in_cmerge.
+      - (** the block's targets are the equation's own variables *)
+        eapply generate_constraints_targets_in; [|exact Hgc].
+        intros d Hd. apply in_or_app. left.
+        eapply CALLS.Forall2_in_sec_of;
+          [eapply CALLS.mmap_find_env_Forall2; exact Houts|exact Hd].
+      - apply targets_in_cmerge.
+        + eapply targets_in_incl; [apply incl_appr, incl_refl|].
+          assert (Forall lexp_carried_minted es) as Hall
+              by (apply Forall_forall; intros e0 _;
+                  apply lexp_carried_minted_all).
+          exact (lexps_carried_minted_of es Hall argts s sti ns Hns Hargs).
+        + eapply targets_in_incl; [apply incl_appr, incl_refl|exact Hrst].
+    Qed.
+
+    Lemma generate_ldef_constraint_targets :
+      forall ckenv x e cs s s' ns,
+        incl (minted s s') ns ->
+        generate_ldef_constraint G env base_ty rst_ty ckenv x e s
+          = OK (cs, s') ->
+        targets_in (CALLS.sec_of env [x] ++ ns) cs.
+    Proof.
+      intros ckenv x e cs s s' ns Hns Hgen.
+      apply generate_ldef_constraint_inv in Hgen
+        as (ck & ckty & tf & b & s1 & _ & _ & Hte & Hb & Hs1 & Hcs).
+      subst s1. rewrite Hcs.
+      change (cmerge [(merge (merge [rst_ty] ckty) (fst tf), [b])] (snd tf))
+        with (lconstrain (merge (merge [rst_ty] ckty) (fst tf), snd tf) b).
+      unfold lconstrain. apply targets_in_cmerge.
+      - constructor; [|constructor]. cbn [snd].
+        intros z [Hz|[]]; subst z. apply in_or_app. left.
+        unfold CALLS.sec_of. apply in_flat_map.
+        exists x. split; [now left|rewrite Hb; now left].
+      - cbn [snd]. eapply targets_in_incl; [apply incl_appr, incl_refl|].
+        rewrite <- (carried_single tf).
+        exact (lexp_carried_minted_all e [tf] s s' ns Hns Hte).
+    Qed.
+
+    Lemma generate_lgen_constraint_targets :
+      forall ckenv xs es cs s s' ns,
+        incl (minted s s') ns ->
+        generate_lgen_constraint G env base_ty rst_ty ckenv xs es s
+          = OK (cs, s') ->
+        targets_in (CALLS.sec_of env xs ++ ns) cs.
+    Proof.
+      intros ckenv xs es cs s s' ns Hns Hgen.
+      unfold generate_lgen_constraint in Hgen.
+      apply sec_bind_inv in Hgen as (ts & s1 & Hts & Hgen).
+      apply sec_bind_inv in Hgen as (bs & s2 & Hbs & Hlv).
+      apply option_to_sec_inv in Hbs as (Hbs & ?); subst s2.
+      assert (s' = s1) as ?
+          by (destruct (state_pure_generate_lvars_constraints env base_ty
+                          rst_ty ckenv xs bs ts s1 s1 _ _ Hlv) as (Hp & _);
+              exact Hp).
+      subst s'.
+      eapply generate_lvars_constraints_targets;
+        [eapply (get_mappings_Forall2 env xs bs); exact Hbs| |exact Hlv].
+      apply targets_in_carried_elements.
+      assert (Forall lexp_carried_minted es) as Hall
+          by (apply Forall_forall; intros e0 _; apply lexp_carried_minted_all).
+      exact (lexps_carried_minted_of es Hall ts s s1 ns Hns Hts).
+    Qed.
+
+    Lemma generate_lone_constraint_targets :
+      forall ckenv ys e cs s s' ns,
+        incl (minted s s') ns ->
+        generate_lone_constraint G env base_ty rst_ty ckenv ys e s
+          = OK (cs, s') ->
+        targets_in (CALLS.sec_of env ys ++ ns) cs.
+    Proof.
+      intros ckenv ys e cs s s' ns Hns Hgen.
+      destruct e as [c0|x0 a0|op0 e0 a0|op0 e1 e2 a0|e0s es0 an0|e0s es0 an0
+                    |es0 x0 b0 a0|x0 ets efs a0|e0 ets efs a0|f args ro anns].
+      1-9: destruct ys as [|x [|y ys]];
+        [eapply generate_lgen_constraint_targets; [exact Hns|exact Hgen]
+        |eapply generate_ldef_constraint_targets; [exact Hns|exact Hgen]
+        |eapply generate_lgen_constraint_targets; [exact Hns|exact Hgen]].
+      destruct ro as [e1|]; destruct ys as [|y ys].
+      - unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _).
+        rewrite Hc. constructor.
+      - cbn [generate_lone_constraint] in Hgen.
+        apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
+        apply sec_bind_inv in Hgen as (a1 & s2 & Ha1 & Hgen).
+        apply single_inv in Ha1 as (? & ?); subst t1 s2.
+        apply sec_bind_inv in Hgen as (rck & s3 & Hrck & Hgen).
+        apply option_to_sec_inv in Hrck as (_ & ?); subst s3.
+        assert (sec_le s1 s') as Hl1
+            by (eapply generate_lcall_constraint_sec_le; exact Hgen).
+        eapply generate_lcall_constraint_targets; [| |exact Hgen].
+        + apply (minted_incl_sub s s1 s' s' ns);
+            [eapply assign_lexp_type_sec_le; exact Ht1
+            |apply sec_le_refl|exact Hns].
+        + rewrite !snd_ljoin, snd_lvar. cbn [snd].
+          rewrite cmerge_nil, cmerge_nil2.
+          rewrite <- (carried_single a1).
+          apply (lexp_carried_minted_all e1 [a1] s s1 ns); [|exact Ht1].
+          apply (minted_incl_sub s s s1 s' ns);
+            [apply sec_le_refl|exact Hl1|exact Hns].
+      - unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _).
+        rewrite Hc. constructor.
+      - eapply generate_lcall_constraint_targets; [exact Hns| |exact Hgen].
+        rewrite snd_lvar. constructor.
+    Qed.
+
+    Lemma generate_lsplit_constraints_targets :
+      forall ckenv es xs cs s s' ns,
+        incl (minted s s') ns ->
+        generate_lsplit_constraints G env base_ty rst_ty ckenv xs es s
+          = OK (cs, s') ->
+        targets_in (CALLS.sec_of env xs ++ ns) cs.
+    Proof.
+      intros ckenv es. induction es as [|e es IH];
+        intros xs cs s s' ns Hns Hgen.
+      - cbn [generate_lsplit_constraints] in Hgen. unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _).
+        rewrite Hc. constructor.
+      - rewrite gen_lsplit_cons in Hgen.
+        apply sec_bind_inv in Hgen as (c & s1 & Hc & Hgen).
+        apply sec_bind_inv in Hgen as (cr & s2 & Hcr & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Heq & ?); subst s'.
+        rewrite Heq. unfold targets_in. apply Forall_app. split.
+        + eapply targets_in_incl;
+            [|eapply generate_lone_constraint_targets; [|exact Hc]].
+          * apply incl_app; [|apply incl_appr, incl_refl].
+            apply incl_appl, sec_of_incl. intros y Hy.
+            exact (In_firstn_any ident (numstreams e) xs y Hy).
+          * apply (minted_incl_sub s s s1 s2 ns);
+              [apply sec_le_refl
+              |eapply generate_lsplit_constraints_sec_le; exact Hcr
+              |exact Hns].
+        + eapply targets_in_incl;
+            [|eapply (IH (skipn (numstreams e) xs) cr s1 s2 ns); [|exact Hcr]].
+          * apply incl_app; [|apply incl_appr, incl_refl].
+            apply incl_appl, sec_of_incl. intros y Hy.
+            exact (In_skipn_any ident (numstreams e) xs y Hy).
+          * apply (minted_incl_sub s s1 s2 s2 ns);
+              [eapply generate_lone_constraint_sec_le; exact Hc
+              |apply sec_le_refl|exact Hns].
+    Qed.
+
+    Lemma generate_leqn_constraint_targets :
+      forall ckenv eqn cs s s' ns,
+        incl (minted s s') ns ->
+        generate_leqn_constraint G env base_ty rst_ty ckenv eqn s
+          = OK (cs, s') ->
+        targets_in (CALLS.sec_of env (fst eqn) ++ ns) cs.
+    Proof.
+      intros ckenv eqn cs s s' ns Hns Hgen.
+      destruct eqn as (xs & es). cbn [fst].
+      destruct es as [|e [|e2 es2]].
+      - eapply generate_lgen_constraint_targets; [exact Hns|exact Hgen].
+      - destruct e as [c0|x0 a0|op0 e0 a0|op0 e1 e2 a0|e0s es0 an0|e0s es0 an0
+                      |es0 x0 b0 a0|x0 ets efs a0|e0 ets efs a0
+                      |f args ro anns].
+        1-9: destruct xs as [|x [|y xs]];
+          [eapply generate_lgen_constraint_targets; [exact Hns|exact Hgen]
+          |eapply generate_ldef_constraint_targets; [exact Hns|exact Hgen]
+          |eapply generate_lgen_constraint_targets; [exact Hns|exact Hgen]].
+        destruct ro as [e1|]; destruct xs as [|y xs].
+        + unfold SC.ret in Hgen.
+          destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _).
+          rewrite Hc. constructor.
+        + cbn [generate_leqn_constraint] in Hgen.
+          apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
+          apply sec_bind_inv in Hgen as (a1 & s2 & Ha1 & Hgen).
+          apply single_inv in Ha1 as (? & ?); subst t1 s2.
+          apply sec_bind_inv in Hgen as (rck & s3 & Hrck & Hgen).
+          apply option_to_sec_inv in Hrck as (_ & ?); subst s3.
+          assert (sec_le s1 s') as Hl1
+              by (eapply generate_lcall_constraint_sec_le; exact Hgen).
+          eapply generate_lcall_constraint_targets; [| |exact Hgen].
+          * apply (minted_incl_sub s s1 s' s' ns);
+              [eapply assign_lexp_type_sec_le; exact Ht1
+              |apply sec_le_refl|exact Hns].
+          * rewrite !snd_ljoin, snd_lvar. cbn [snd].
+            rewrite cmerge_nil, cmerge_nil2.
+            rewrite <- (carried_single a1).
+            apply (lexp_carried_minted_all e1 [a1] s s1 ns); [|exact Ht1].
+            apply (minted_incl_sub s s s1 s' ns);
+              [apply sec_le_refl|exact Hl1|exact Hns].
+        + unfold SC.ret in Hgen.
+          destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _).
+          rewrite Hc. constructor.
+        + eapply generate_lcall_constraint_targets; [exact Hns| |exact Hgen].
+          rewrite snd_lvar. constructor.
+      - destruct (has_lcall (e :: e2 :: es2)) eqn:Hh;
+          cbn [generate_leqn_constraint] in Hgen; rewrite Hh in Hgen.
+        + destruct e; try destruct o;
+            eapply generate_lsplit_constraints_targets;
+            [exact Hns|exact Hgen|exact Hns|exact Hgen|exact Hns|exact Hgen
+            |exact Hns|exact Hgen|exact Hns|exact Hgen|exact Hns|exact Hgen
+            |exact Hns|exact Hgen|exact Hns|exact Hgen|exact Hns|exact Hgen
+            |exact Hns|exact Hgen|exact Hns|exact Hgen].
+        + destruct e; try destruct o;
+            eapply generate_lgen_constraint_targets;
+            [exact Hns|exact Hgen|exact Hns|exact Hgen|exact Hns|exact Hgen
+            |exact Hns|exact Hgen|exact Hns|exact Hgen|exact Hns|exact Hgen
+            |exact Hns|exact Hgen|exact Hns|exact Hgen|exact Hns|exact Hgen
+            |exact Hns|exact Hgen|exact Hns|exact Hgen].
+    Qed.
+
+    Theorem generate_leqns_constraints_targets :
+      forall ckenv eqs cs s s' ns,
+        incl (minted s s') ns ->
+        generate_leqns_constraints G env base_ty rst_ty ckenv eqs s
+          = OK (cs, s') ->
+        targets_in (CALLS.sec_of env (vars_defined eqs) ++ ns) cs.
+    Proof.
+      intros ckenv eqs. induction eqs as [|eqn eqs IH];
+        intros cs s s' ns Hns Hgen.
+      - apply generate_leqns_constraints_nil in Hgen as (Hc & _).
+        rewrite Hc. constructor.
+      - rewrite generate_leqns_constraints_cons in Hgen.
+        apply sec_bind_inv in Hgen as (c1 & s1 & Hc1 & Hgen).
+        apply sec_bind_inv in Hgen as (c2 & s2 & Hc2 & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Heq & ?); subst s'.
+        rewrite Heq, vars_defined_cons_eq, sec_of_app.
+        unfold targets_in. apply Forall_app. split.
+        + eapply targets_in_incl;
+            [|eapply generate_leqn_constraint_targets; [|exact Hc1]].
+          * apply incl_app;
+              [apply incl_appl, incl_appl, incl_refl
+              |apply incl_appr, incl_refl].
+          * apply (minted_incl_sub s s s1 s2 ns);
+              [apply sec_le_refl
+              |eapply generate_leqns_constraints_sec_le; exact Hc2
+              |exact Hns].
+        + eapply targets_in_incl;
+            [|eapply (IH c2 s1 s2 ns); [|exact Hc2]].
+          * apply incl_app;
+              [apply incl_appl, incl_appr, incl_refl
+              |apply incl_appr, incl_refl].
+          * apply (minted_incl_sub s s1 s2 s2 ns);
+              [eapply generate_leqn_constraint_sec_le; exact Hc1
+              |apply sec_le_refl|exact Hns].
+    Qed.
+
   End RawTargets.
 
 End SecLusTypingCorrectness.
