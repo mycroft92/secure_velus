@@ -581,17 +581,57 @@ Two things found on the way: `ljoin_list` is **state-pure**
 *reset* first and the argument list second, which is the opposite of what the
 other list cases suggest -- worth checking rather than assuming.
 
-What is left of 7b:
+**The equation level is done too** (2026-10-03):
+`generate_leqns_constraints_targets`, through the same dispatch as 7a.
+`targets_in` holds the two possibilities -- a defined variable's name, or a
+minted one -- as a single set, which is what lets every rule be handled
+uniformly.  The window is threaded with `minted_incl_sub` and the
+generator's own `sec_le` family, and two purity facts stand in for `sec_le`
+steps that do not exist: `generate_constraints` and
+`generate_lvars_constraints` are both `state_pure`.
 
-  * the equation level: the targets of `generate_leqns_constraints` are the
-    defined variables' security names together with what the expressions
-    carried, so `lexp_carried_minted_all` plus the dispatch gives "a target is
-    a defined variable's name or a minted name";
-  * then `NoDup`: the defined variables are distinct by `n_defd` and `NoDup`,
-    carried to their names by `env` injectivity; the minted names are
-    distinct from each other along the run, and from every `env` value by
-    index, with the naming pass's final state as the boundary -- which is
-    `generate_lnode_scoped_env_st_fresh_sec`, already proved for item 4.
+  *Reminder, cost two round trips:* a lemma proved inside a section with
+  `env`/`base_ty`/`rst_ty`/`cenv` as Variables takes all four back as
+  explicit arguments once the section closes.
+  `state_pure_generate_lvars_constraints` needs them;
+  `state_pure_generate_constraints` does not.
+
+### CORRECTION 2026-10-03: item 7 is three parts, not two
+
+I split `wf_constraints` into "singleton targets" and "distinct targets".
+That undercounts, and reading what the NLustre proof actually consumes shows
+why.  `generate_node_sig_good_from_local_env` does not use `NoDup` alone; it
+uses `generate_eqns_constraints_shape`, which gives
+
+    exists tys, get_mappings (vars_defined eqs) env = Some tys
+             /\ map snd cns = map (fun ty => [ty]) tys
+             /\ wf_constraints cns
+
+-- an **equality** on the target list.  That is what turns `simplify`
+eliminating the locals into `Permutation (map snd (simplify raw locals))
+(map (fun ty => [ty]) out)`, which is `signature_good`'s second component.
+NLustre can state an equality because it has no nested calls and so mints
+nothing; on the Lustre side the targets are the defined names *interleaved
+with* the minted ones, so the exact multiset is needed, not a containment.
+
+So what remains of item 7 is one lemma, of the same kind as the NLustre one
+but carrying the minted names along:
+
+    exists tys ms,
+      get_mappings (vars_defined eqs) env = Some tys
+      /\ Permutation (map snd cns) (map (fun d => [d]) (tys ++ ms))
+      /\ incl ms (minted s s')
+      /\ NoDup (tys ++ ms)
+
+It is one induction over the equation list, not three: the permutation and
+the `NoDup` have to be established together, as NLustre's does.  `targets_in`
+and `generate_leqns_constraints_singleton` are both consumed by it rather
+than superseded -- they are the containment half and the singleton half of
+the same statement.  The `NoDup` has three sources, all already available:
+the defined variables are distinct by `n_defd`, carried to their names by
+`env` injectivity; the minted names are distinct along the run by the window
+arithmetic (`minted_spec`); and no minted name is an `env` value, by index,
+which is `generate_lnode_scoped_env_st_fresh_sec`.  *[untested]*
 
 *6* -- then `signature_good` is 7 plus the fact that `simplify` eliminates
 exactly the locals and the minted names, leaving the outputs; and
