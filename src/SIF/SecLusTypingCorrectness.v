@@ -493,13 +493,13 @@ Import SECMONADNotations.
         over whatever the defining flow carried. *)
 
     Lemma generate_lvars_constraints_singleton :
-      forall cenv xs bs ts c s s',
+      forall ckenv xs bs ts c s s',
         Forall (fun t => SIGPROOFS.singleton_targets (snd t)) ts ->
-        generate_lvars_constraints env base_ty rst_ty cenv xs bs ts s
+        generate_lvars_constraints env base_ty rst_ty ckenv xs bs ts s
           = OK (c, s') ->
         SIGPROOFS.singleton_targets c.
     Proof.
-      intros cenv xs. induction xs as [|x xs IH];
+      intros ckenv xs. induction xs as [|x xs IH];
         intros bs ts c s s' Hts Hgen.
       - destruct bs as [|b bs]; [|destruct ts; cbn in Hgen; discriminate].
         destruct ts; cbn in Hgen; [|discriminate].
@@ -519,6 +519,194 @@ Import SECMONADNotations.
         rewrite snd_ljoin. unfold ambient.
         rewrite snd_ljoin, snd_lvar. cbn [snd].
         rewrite cmerge_nil, cmerge_nil2. exact Ht.
+    Qed.
+
+    (** * 7a's dispatch
+
+        Every rule the equation generator has, in turn.  No new idea: each one
+        is a [cmerge] or an append of pieces already covered -- an
+        instantiated block, what an expression carried, or one
+        [lconstrain]. *)
+
+    Corollary assign_lexps_carried_singleton :
+      forall es ts st st',
+        assign_lexps G env base_ty rst_ty es st = OK (ts, st') ->
+        SIGPROOFS.singleton_targets (carried ts).
+    Proof.
+      intros es. apply lexps_carried_singleton_intro.
+      apply Forall_forall. intros e _. apply lexp_carried_singleton_all.
+    Qed.
+
+    Lemma generate_lcall_constraint_singleton :
+      forall xs f es rstty cs s s',
+        SIGPROOFS.singleton_targets (snd rstty) ->
+        generate_lcall_constraint G env base_ty rst_ty xs f es rstty s
+          = OK (cs, s') ->
+        SIGPROOFS.singleton_targets cs.
+    Proof.
+      intros xs f es rstty cs s s' Hrst Hgen.
+      apply generate_lcall_constraint_inv in Hgen
+        as (sg & ckty & argts & outs & sti & cs0
+            & Esg & Hck & Hargs & Houts & Hgc & Hcs).
+      rewrite Hcs.
+      apply singleton_targets_cmerge;
+        [exact (generate_constraints_singleton_targets sg (List.map fst argts)
+                  ckty (fst rstty) outs cs0 sti s' Hgc)|].
+      apply singleton_targets_cmerge;
+        [exact (assign_lexps_carried_singleton es argts s sti Hargs)
+        |exact Hrst].
+    Qed.
+
+    Lemma generate_ldef_constraint_singleton :
+      forall ckenv x e cs s s',
+        generate_ldef_constraint G env base_ty rst_ty ckenv x e s = OK (cs, s') ->
+        SIGPROOFS.singleton_targets cs.
+    Proof.
+      intros ckenv x e cs s s' Hgen.
+      apply generate_ldef_constraint_inv in Hgen
+        as (ck & ckty & tf & b & s1 & _ & _ & Hte & _ & _ & Hcs).
+      rewrite Hcs.
+      change (cmerge [(merge (merge [rst_ty] ckty) (fst tf), [b])] (snd tf))
+        with (lconstrain (merge (merge [rst_ty] ckty) (fst tf), snd tf) b).
+      apply singleton_targets_lconstrain. cbn [snd].
+      rewrite <- (carried_single tf).
+      exact (lexp_carried_singleton_all e [tf] s s1 Hte).
+    Qed.
+
+    Lemma generate_lgen_constraint_singleton :
+      forall ckenv xs es cs s s',
+        generate_lgen_constraint G env base_ty rst_ty ckenv xs es s
+          = OK (cs, s') ->
+        SIGPROOFS.singleton_targets cs.
+    Proof.
+      intros ckenv xs es cs s s' Hgen.
+      unfold generate_lgen_constraint in Hgen.
+      apply sec_bind_inv in Hgen as (ts & s1 & Hts & Hgen).
+      apply sec_bind_inv in Hgen as (bs & s2 & Hbs & Hlv).
+      apply option_to_sec_inv in Hbs as (_ & ?); subst s2.
+      eapply generate_lvars_constraints_singleton; [|exact Hlv].
+      apply singleton_targets_carried_elements.
+      exact (assign_lexps_carried_singleton es ts s s1 Hts).
+    Qed.
+
+    Lemma generate_lone_constraint_singleton :
+      forall ckenv ys e cs s s',
+        generate_lone_constraint G env base_ty rst_ty ckenv ys e s
+          = OK (cs, s') ->
+        SIGPROOFS.singleton_targets cs.
+    Proof.
+      intros ckenv ys e cs s s' Hgen.
+      destruct e as [c0|x0 a0|op0 e0 a0|op0 e1 e2 a0|e0s es0 an0|e0s es0 an0
+                    |es0 x0 b0 a0|x0 ets efs a0|e0 ets efs a0|f args ro anns].
+      (** the nine forms an equation can bind directly *)
+      1-9: destruct ys as [|x [|y ys]];
+        [eapply generate_lgen_constraint_singleton; exact Hgen
+        |eapply generate_ldef_constraint_singleton; exact Hgen
+        |eapply generate_lgen_constraint_singleton; exact Hgen].
+      (** and the call, with or without a reset *)
+      destruct ro as [e1|]; destruct ys as [|y ys].
+      - unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _). rewrite Hc. constructor.
+      - cbn [generate_lone_constraint] in Hgen.
+        apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
+        apply sec_bind_inv in Hgen as (a1 & s2 & Ha1 & Hgen).
+        apply single_inv in Ha1 as (? & ?); subst t1 s2.
+        apply sec_bind_inv in Hgen as (rck & s3 & Hrck & Hgen).
+        apply option_to_sec_inv in Hrck as (_ & ?); subst s3.
+        eapply generate_lcall_constraint_singleton; [|exact Hgen].
+        rewrite !snd_ljoin, snd_lvar. cbn [snd].
+        rewrite cmerge_nil, cmerge_nil2.
+        rewrite <- (carried_single a1).
+        exact (lexp_carried_singleton_all e1 [a1] s s1 Ht1).
+      - unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _). rewrite Hc. constructor.
+      - eapply generate_lcall_constraint_singleton; [|exact Hgen].
+        rewrite snd_lvar. constructor.
+    Qed.
+
+    Lemma generate_lsplit_constraints_singleton :
+      forall ckenv es xs cs s s',
+        generate_lsplit_constraints G env base_ty rst_ty ckenv xs es s
+          = OK (cs, s') ->
+        SIGPROOFS.singleton_targets cs.
+    Proof.
+      intros ckenv es. induction es as [|e es IH]; intros xs cs s s' Hgen.
+      - cbn [generate_lsplit_constraints] in Hgen. unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _).
+        rewrite Hc. constructor.
+      - rewrite gen_lsplit_cons in Hgen.
+        apply sec_bind_inv in Hgen as (c & s1 & Hc & Hgen).
+        apply sec_bind_inv in Hgen as (cr & s2 & Hcr & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Heq & _). rewrite Heq.
+        apply singleton_targets_app.
+        + eapply generate_lone_constraint_singleton; exact Hc.
+        + exact (IH (skipn (numstreams e) xs) cr s1 s2 Hcr).
+    Qed.
+
+    Lemma generate_leqn_constraint_singleton :
+      forall ckenv eqn cs s s',
+        generate_leqn_constraint G env base_ty rst_ty ckenv eqn s = OK (cs, s') ->
+        SIGPROOFS.singleton_targets cs.
+    Proof.
+      intros ckenv eqn cs s s' Hgen.
+      destruct eqn as (xs & es).
+      destruct es as [|e [|e2 es2]].
+      - (** nothing on the right: the general rule, vacuously *)
+        eapply generate_lgen_constraint_singleton; exact Hgen.
+      - (** one expression: a call, a single definition, or the general rule *)
+        destruct e as [c0|x0 a0|op0 e0 a0|op0 e1 e2 a0|e0s es0 an0|e0s es0 an0
+                      |es0 x0 b0 a0|x0 ets efs a0|e0 ets efs a0|f args ro anns].
+        1-9: destruct xs as [|x [|y xs]];
+          [eapply generate_lgen_constraint_singleton; exact Hgen
+          |eapply generate_ldef_constraint_singleton; exact Hgen
+          |eapply generate_lgen_constraint_singleton; exact Hgen].
+        destruct ro as [e1|]; destruct xs as [|y xs].
+        + unfold SC.ret in Hgen.
+          destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _).
+          rewrite Hc. constructor.
+        + cbn [generate_leqn_constraint] in Hgen.
+          apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
+          apply sec_bind_inv in Hgen as (a1 & s2 & Ha1 & Hgen).
+          apply single_inv in Ha1 as (? & ?); subst t1 s2.
+          apply sec_bind_inv in Hgen as (rck & s3 & Hrck & Hgen).
+          apply option_to_sec_inv in Hrck as (_ & ?); subst s3.
+          eapply generate_lcall_constraint_singleton; [|exact Hgen].
+          rewrite !snd_ljoin, snd_lvar. cbn [snd].
+          rewrite cmerge_nil, cmerge_nil2.
+          rewrite <- (carried_single a1).
+          exact (lexp_carried_singleton_all e1 [a1] s s1 Ht1).
+        + unfold SC.ret in Hgen.
+          destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _).
+          rewrite Hc. constructor.
+        + eapply generate_lcall_constraint_singleton; [|exact Hgen].
+          rewrite snd_lvar. constructor.
+      - (** two or more: chunked if one of them is a call *)
+        destruct (has_lcall (e :: e2 :: es2)) eqn:Hh;
+          cbn [generate_leqn_constraint] in Hgen; rewrite Hh in Hgen.
+        + destruct e; try destruct o;
+            eapply generate_lsplit_constraints_singleton; exact Hgen.
+        + destruct e; try destruct o;
+            eapply generate_lgen_constraint_singleton; exact Hgen.
+    Qed.
+
+    Theorem generate_leqns_constraints_singleton :
+      forall ckenv eqs cs s s',
+        generate_leqns_constraints G env base_ty rst_ty ckenv eqs s
+          = OK (cs, s') ->
+        SIGPROOFS.singleton_targets cs.
+    Proof.
+      intros ckenv eqs. induction eqs as [|eqn eqs IH]; intros cs s s' Hgen.
+      - apply generate_leqns_constraints_nil in Hgen as (Hc & _).
+        rewrite Hc. constructor.
+      - rewrite generate_leqns_constraints_cons in Hgen.
+        apply sec_bind_inv in Hgen as (c1 & s1 & Hc1 & Hgen).
+        apply sec_bind_inv in Hgen as (c2 & s2 & Hc2 & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Heq & _). rewrite Heq.
+        apply singleton_targets_app.
+        + eapply generate_leqn_constraint_singleton; exact Hc1.
+        + exact (IH c2 s1 s2 Hc2).
     Qed.
 
   End RawTargets.
