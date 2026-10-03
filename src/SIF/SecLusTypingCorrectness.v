@@ -359,6 +359,386 @@ Import SECMONADNotations.
       rewrite snd_ljoin. apply Forall_cmerge; assumption.
   Qed.
 
+  (** * 7c: the exact target multiset
+
+      7a and 7b say what a target looks like and where it comes from; what
+      [signature_good] needs is how *many* times each one occurs.  The answer
+      is: once per variable the equation list defines, and once per
+      constraint an expression carried -- and [simplify] drops the second
+      group wholesale, so the published set is one constraint per output.
+
+      [cmerge] is a sorted union with deduplication, so it is a permutation
+      of the append only when the two sides share no constraint.  Every merge
+      the generator performs is of that kind: the two sides' targets are
+      drawn from disjoint stretches of the fresh state, or one is a declared
+      name and the other was minted. *)
+
+  Lemma cmerge_perm :
+    forall r1 r2,
+      (forall c1 c2, In c1 r1 -> In c2 r2 -> c1 <> c2) ->
+      Permutation (cmerge r1 r2) (r1 ++ r2).
+  Proof.
+    induction r1 as [|x xs IHxs]; intros r2 Hdisj.
+    - rewrite cmerge_nil2. reflexivity.
+    - induction r2 as [|y ys IHys].
+      + rewrite cmerge_nil, app_nil_r. reflexivity.
+      + destruct (ccmp x y) eqn:Hc.
+        * apply ccmp_eq in Hc. subst y.
+          exfalso. eapply Hdisj;
+            [left; reflexivity|left; reflexivity|reflexivity].
+        * rewrite cmerge1 by exact Hc. simpl.
+          apply perm_skip. apply IHxs.
+          intros c1 c2 Hc1 Hc2. apply Hdisj; [right|]; assumption.
+        * rewrite cmerge2 by exact Hc.
+          etransitivity; [apply perm_skip, IHys|].
+          { intros c1 c2 Hc1 Hc2. apply Hdisj; [|right]; assumption. }
+          apply Permutation_middle.
+  Qed.
+
+  (** Two stretches of the fresh state that meet but do not overlap mint
+      disjoint sets of names: the generated name determines the state it was
+      generated at. *)
+  Lemma minted_disjoint :
+    forall s s1 s2 d, In d (minted s s1) -> In d (minted s1 s2) -> False.
+  Proof.
+    intros s s1 s2 d H1 H2.
+    apply minted_spec in H1 as (j & _ & Hj & Hdj).
+    apply minted_spec in H2 as (k & Hk & _ & Hdk).
+    rewrite Hdj in Hdk.
+    apply Ids.gensym_injective in Hdk as (_ & ?); subst k.
+    exact (Pos.lt_irrefl j (Pos.lt_le_trans j s1 j Hj Hk)).
+  Qed.
+
+  Lemma minted_refl : forall s, minted s s = [].
+  Proof.
+    intros s. unfold minted. now rewrite PeanoNat.Nat.sub_diag.
+  Qed.
+
+  (** [filter] respects permutations.  Not in the standard library. *)
+  Lemma Permutation_filter :
+    forall {A : Type} (f : A -> bool) (l1 l2 : list A),
+      Permutation l1 l2 -> Permutation (filter f l1) (filter f l2).
+  Proof.
+    intros A f l1 l2 H. induction H as [| x l l' H IH
+                                        | x y l | l l' l'' H1 IH1 H2 IH2].
+    - reflexivity.
+    - simpl. destruct (f x); [apply perm_skip|]; exact IH.
+    - simpl. destruct (f x) eqn:Hx, (f y) eqn:Hy; try reflexivity.
+      apply perm_swap.
+    - etransitivity; [exact IH1|exact IH2].
+  Qed.
+
+  (** The target multiset of a constraint list, named so the merges below
+      read as one line each. *)
+  Definition targets_of (ms : list ident) (cs : list SymTypes.constraint) : Prop :=
+    Permutation (List.map snd cs) (List.map (fun d => [d]) ms).
+
+  Lemma targets_of_nil : targets_of [] [].
+  Proof. unfold targets_of. reflexivity. Qed.
+
+  Lemma targets_of_perm :
+    forall ms ms' cs, Permutation ms ms' -> targets_of ms cs -> targets_of ms' cs.
+  Proof.
+    intros ms ms' cs Hp H. unfold targets_of in H |- *.
+    etransitivity; [exact H|now apply Permutation_map].
+  Qed.
+
+  Lemma targets_of_In :
+    forall ms cs c,
+      targets_of ms cs -> In c cs -> exists d, In d ms /\ snd c = [d].
+  Proof.
+    intros ms cs c H Hc. unfold targets_of in H.
+    assert (In (snd c) (List.map (fun d => [d]) ms)) as Hin.
+    { eapply Permutation_in; [exact H|].
+      apply in_map_iff. exists c. split; [reflexivity|exact Hc]. }
+    apply in_map_iff in Hin as (d & Hd & Hdm).
+    exists d. split; [exact Hdm|now rewrite <- Hd].
+  Qed.
+
+  Lemma targets_of_app :
+    forall ms1 ms2 cs1 cs2,
+      targets_of ms1 cs1 -> targets_of ms2 cs2 ->
+      targets_of (ms1 ++ ms2) (cs1 ++ cs2).
+  Proof.
+    intros ms1 ms2 cs1 cs2 H1 H2. unfold targets_of in *.
+    rewrite map_app, map_app. now apply Permutation_app.
+  Qed.
+
+  (** The merge, which is where the hypothesis is needed: two constraints
+      with different targets are different constraints, so nothing is
+      deduplicated and the union is the append. *)
+  Lemma targets_of_cmerge :
+    forall ms1 ms2 cs1 cs2,
+      targets_of ms1 cs1 -> targets_of ms2 cs2 ->
+      (forall d1 d2, In d1 ms1 -> In d2 ms2 -> d1 <> d2) ->
+      targets_of (ms1 ++ ms2) (cmerge cs1 cs2).
+  Proof.
+    intros ms1 ms2 cs1 cs2 H1 H2 Hd.
+    assert (Permutation (cmerge cs1 cs2) (cs1 ++ cs2)) as Hp.
+    { apply cmerge_perm. intros c1 c2 Hc1 Hc2.
+      destruct (targets_of_In ms1 cs1 c1 H1 Hc1) as (d1 & Hd1 & He1).
+      destruct (targets_of_In ms2 cs2 c2 H2 Hc2) as (d2 & Hd2 & He2).
+      intros Heq. rewrite Heq, He2 in He1.
+      injection He1 as He1. symmetry in He1. exact (Hd d1 d2 Hd1 Hd2 He1). }
+    unfold targets_of.
+    eapply Permutation_trans; [apply (Permutation_map snd Hp)|].
+    exact (targets_of_app ms1 ms2 cs1 cs2 H1 H2).
+  Qed.
+
+  (** Joining one head onto every stream of a list.  The head's constraints
+      are merged in once per stream, and [cmerge] deduplicates them, so the
+      result is the head's set together with the list's -- each once. *)
+  Lemma carried_map_ljoin_eq :
+    forall h ts,
+      ts <> [] ->
+      carried (List.map (fun t => ljoin h t) ts) = cmerge (snd h) (carried ts).
+  Proof.
+    intros h ts. induction ts as [|t ts IH]; intros Hne; [contradiction|].
+    destruct ts as [|t2 ts].
+    - cbn [List.map]. rewrite !carried_single, snd_ljoin. reflexivity.
+    - cbn [List.map] in IH |- *. rewrite carried_cons.
+      rewrite IH by (intros HF; discriminate).
+      rewrite snd_ljoin, cmerge_assoc, (carried_cons t (t2 :: ts)).
+      rewrite (cmerge_shuffle (snd t) (snd h) (carried (t2 :: ts))).
+      rewrite cmerge_dedup_l. reflexivity.
+  Qed.
+
+  (** * What [simplify] does to the targets
+
+      [subAll cns d st] drops *every* constraint whose target is [d] and
+      substitutes [d] away in the rest, leaving each remaining target
+      untouched.  So [simplify cns ds] is, on targets, a filter: it keeps
+      exactly the constraints whose target is outside [ds].  That is what
+      makes the published set one constraint per output -- the local and
+      minted targets go, however many times they occur. *)
+
+  Definition singleton_rhs (c : SymTypes.constraint) : Prop :=
+    exists b, snd c = [b].
+
+  Definition kept (ds : list ident) (r : list ident) : bool :=
+    match r with
+    | [b] => negb (existsb (fun d => ident_eqb b d) ds)
+    | _   => false
+    end.
+
+  Lemma kept_cons :
+    forall d ds r, kept (d :: ds) r = andb (kept [d] r) (kept ds r).
+  Proof.
+    intros d ds r. destruct r as [|b [|? ?]]; try reflexivity.
+    cbn [kept existsb]. rewrite Bool.orb_false_r, Bool.negb_orb. reflexivity.
+  Qed.
+
+  Lemma filter_filter :
+    forall {A : Type} (f g : A -> bool) l,
+      filter f (filter g l) = filter (fun x => andb (g x) (f x)) l.
+  Proof.
+    intros A f g l. induction l as [|x l IH]; [reflexivity|].
+    cbn [filter]. destruct (g x) eqn:Hg; cbn [filter andb].
+    - destruct (f x); [cbn; now rewrite IH|exact IH].
+    - exact IH.
+  Qed.
+
+  Lemma filter_ext_In :
+    forall {A : Type} (f g : A -> bool) l,
+      (forall x, In x l -> f x = g x) -> filter f l = filter g l.
+  Proof.
+    intros A f g l. induction l as [|x l IH]; intros H; [reflexivity|].
+    cbn [filter]. rewrite (H x (in_eq x l)).
+    rewrite (IH (fun y Hy => H y (in_cons x y l Hy))).
+    reflexivity.
+  Qed.
+
+  Lemma filter_all_true :
+    forall {A : Type} (f : A -> bool) l,
+      (forall x, In x l -> f x = true) -> filter f l = l.
+  Proof.
+    intros A f l. induction l as [|x l IH]; intros H; [reflexivity|].
+    cbn [filter]. rewrite (H x (in_eq x l)).
+    f_equal. apply IH. intros y Hy. exact (H y (in_cons x y l Hy)).
+  Qed.
+
+  Lemma filter_all_false :
+    forall {A : Type} (f : A -> bool) l,
+      (forall x, In x l -> f x = false) -> filter f l = [].
+  Proof.
+    intros A f l. induction l as [|x l IH]; intros H; [reflexivity|].
+    cbn [filter]. rewrite (H x (in_eq x l)).
+    apply IH. intros y Hy. exact (H y (in_cons x y l Hy)).
+  Qed.
+
+  Lemma map_filter_comm :
+    forall {A B : Type} (f : B -> bool) (g : A -> B) l,
+      filter f (List.map g l) = List.map g (filter (fun x => f (g x)) l).
+  Proof.
+    intros A B f g l. induction l as [|x l IH]; [reflexivity|].
+    cbn [List.map filter]. destruct (f (g x)); [cbn; now rewrite IH|exact IH].
+  Qed.
+
+  Lemma findST_None :
+    forall cns d, findST cns d = None -> ~ In [d] (List.map snd cns).
+  Proof.
+    induction cns as [|(st, rhs) cns IH]; intros d H; [intros []|].
+    cbn [List.map snd].
+    destruct rhs as [|d' [|? ?]]; simpl in H.
+    - intros [Hc|Hc]; [discriminate Hc|exact (IH d H Hc)].
+    - destruct (ident_eqb d' d) eqn:He; [discriminate H|].
+      intros [Hc|Hc]; [|exact (IH d H Hc)].
+      injection Hc as Hc. subst d'. now rewrite ident_eqb_refl in He.
+    - intros [Hc|Hc]; [discriminate Hc|exact (IH d H Hc)].
+  Qed.
+
+  Lemma subAll_singleton :
+    forall cns d st',
+      Forall singleton_rhs cns -> Forall singleton_rhs (subAll cns d st').
+  Proof.
+    induction cns as [|(st, rhs) cns IH]; intros d st' H; [constructor|].
+    inversion H as [|c0 cs0 Hc Hcs]; subst.
+    destruct rhs as [|d' [|? ?]]; simpl.
+    - exact (IH d st' Hcs).
+    - destruct (ident_eqb d' d); [exact (IH d st' Hcs)|].
+      constructor; [now exists d'|exact (IH d st' Hcs)].
+    - exact (IH d st' Hcs).
+  Qed.
+
+  Lemma subAll_cons_eq :
+    forall st b cns d st',
+      subAll ((st, [b]) :: cns) d st'
+      = if ident_eqb b d then subAll cns d st'
+        else normalize_constraint (subST st d st') b :: subAll cns d st'.
+  Proof. reflexivity. Qed.
+
+  Lemma kept_single : forall d b, kept [d] [b] = negb (ident_eqb b d).
+  Proof.
+    intros d b. unfold kept. cbn [existsb].
+    now rewrite Bool.orb_false_r.
+  Qed.
+
+  Lemma subAll_map_snd :
+    forall cns d st',
+      Forall singleton_rhs cns ->
+      List.map snd (subAll cns d st') = filter (kept [d]) (List.map snd cns).
+  Proof.
+    induction cns as [|(st, rhs) cns IH]; intros d st' H; [reflexivity|].
+    inversion H as [|c0 cs0 Hc Hcs]; subst.
+    destruct Hc as (b & Hb); cbn [snd] in Hb; subst rhs.
+    rewrite subAll_cons_eq.
+    cbn [List.map snd filter]. rewrite kept_single.
+    destruct (ident_eqb b d); cbn [negb].
+    - exact (IH d st' Hcs).
+    - cbn [List.map snd normalize_constraint]. f_equal. exact (IH d st' Hcs).
+  Qed.
+
+  Lemma simplify_nil_eq : forall cns, simplify cns [] = cns.
+  Proof. reflexivity. Qed.
+
+  Lemma simplify_cons_eq :
+    forall cns d ds,
+      simplify cns (d :: ds)
+      = match findST cns d with
+        | None    => simplify cns ds
+        | Some st => simplify (subAll cns d st) ds
+        end.
+  Proof. reflexivity. Qed.
+
+  Lemma simplify_map_snd :
+    forall ds cns,
+      Forall singleton_rhs cns ->
+      List.map snd (simplify cns ds) = filter (kept ds) (List.map snd cns).
+  Proof.
+    induction ds as [|d ds IH]; intros cns H.
+    - rewrite simplify_nil_eq.
+      symmetry. apply filter_all_true. intros r Hr.
+      apply in_map_iff in Hr as (c & Hc & Hin).
+      rewrite Forall_forall in H. destruct (H c Hin) as (b & Hb).
+      rewrite <- Hc, Hb. reflexivity.
+    - rewrite simplify_cons_eq.
+      destruct (findST cns d) as [st|] eqn:Hfind.
+      + rewrite (IH _ (subAll_singleton cns d st H)).
+        rewrite (subAll_map_snd cns d st H), filter_filter.
+        apply filter_ext_In. intros r _. now rewrite (kept_cons d ds r).
+      + rewrite (IH cns H). symmetry.
+        apply filter_ext_In. intros r Hr. rewrite (kept_cons d ds r).
+        rewrite Forall_forall in H.
+        apply in_map_iff in Hr as (c & Hc & Hin).
+        destruct (H c Hin) as (b & Hb).
+        assert (kept [d] r = true) as Hk.
+        { rewrite <- Hc, Hb. cbn [kept existsb].
+          rewrite Bool.orb_false_r.
+          destruct (ident_eqb b d) eqn:He; [|reflexivity].
+          exfalso. apply ident_eqb_eq in He. subst b.
+          apply (findST_None cns d Hfind).
+          apply in_map_iff. exists c. split; [exact Hb|exact Hin]. }
+        now rewrite Hk.
+  Qed.
+
+  (** The payoff: eliminate every local and minted target and what is left is
+      the outputs, each once. *)
+  Lemma simplify_targets :
+    forall cns ds os ms,
+      Forall singleton_rhs cns ->
+      targets_of (os ++ ms) cns ->
+      incl ms ds ->
+      (forall o, In o os -> ~ In o ds) ->
+      targets_of os (simplify cns ds).
+  Proof.
+    intros cns ds os ms Hsing Htgt Hms Hos.
+    unfold targets_of in Htgt |- *.
+    rewrite (simplify_map_snd ds cns Hsing).
+    eapply Permutation_trans;
+      [apply (Permutation_filter (kept ds) _ _ Htgt)|].
+    rewrite map_filter_comm, <- filter_app.
+    rewrite (filter_all_true _ os), (filter_all_false _ ms).
+    - now rewrite app_nil_r.
+    - intros m Hm. cbn [kept existsb].
+      destruct (existsb (fun d => ident_eqb m d) ds) eqn:He; [reflexivity|].
+      exfalso. assert (In m ds) as Hin by (apply Hms, Hm).
+      assert (existsb (fun d => ident_eqb m d) ds = true) as HT
+          by (apply existsb_exists; exists m;
+              split; [exact Hin|apply ident_eqb_refl]).
+      rewrite He in HT. discriminate.
+    - intros o Ho. cbn [kept existsb].
+      destruct (existsb (fun d => ident_eqb o d) ds) eqn:He;
+        [|reflexivity].
+      exfalso. apply existsb_exists in He as (d & Hd & Heq).
+      apply ident_eqb_eq in Heq. subst d. exact (Hos o Ho Hd).
+  Qed.
+
+  (** Two stretches of the fresh state that do not overlap mint disjoint
+      sets, whichever order they are merged in. *)
+  Lemma minted_apart :
+    forall a b c d x,
+      sec_le b c -> In x (minted a b) -> In x (minted c d) -> False.
+  Proof.
+    intros a b c d x Hbc H1 H2.
+    apply minted_spec in H1 as (j & _ & Hj & Hdj).
+    apply minted_spec in H2 as (k & Hk & _ & Hdk).
+    rewrite Hdj in Hdk.
+    apply Ids.gensym_injective in Hdk as (_ & ?); subst k.
+    apply (Pos.lt_irrefl j).
+    exact (Pos.lt_le_trans j b j Hj (Pos.le_trans b c j Hbc Hk)).
+  Qed.
+
+  (** The shape of one merge, which is the step every case of the expression
+      induction takes: the two sides were minted over stretches that do not
+      overlap, so nothing is deduplicated and the targets append. *)
+  Lemma shape_cmerge :
+    forall ms1 ms2 cs1 cs2 a b c d ns,
+      sec_le b c ->
+      targets_of ms1 cs1 -> incl ms1 (minted a b) ->
+      targets_of ms2 cs2 -> incl ms2 (minted c d) ->
+      incl (minted a b) ns -> incl (minted c d) ns ->
+      exists ms, targets_of ms (cmerge cs1 cs2) /\ incl ms ns.
+  Proof.
+    intros ms1 ms2 cs1 cs2 a b c d ns Hbc H1 Hi1 H2 Hi2 Hn1 Hn2.
+    exists (ms1 ++ ms2). split.
+    - apply targets_of_cmerge; [exact H1|exact H2|].
+      intros d1 d2 Hd1 Hd2 Heq. subst d2.
+      exact (minted_apart a b c d d1 Hbc (Hi1 d1 Hd1) (Hi2 d1 Hd2)).
+    - intros x Hx. apply in_app_or in Hx as [Hx|Hx];
+        [apply Hn1, Hi1, Hx|apply Hn2, Hi2, Hx].
+  Qed.
+
+
   Section RawTargets.
 
     Variable G       : secglobal.
@@ -1327,610 +1707,163 @@ Import SECMONADNotations.
               |apply sec_le_refl|exact Hns].
     Qed.
 
+
+    (** 7a and 7b together already fix the multiset: if every constraint of a
+        list targets one name, and every such name lies in [ns], then reading
+        the targets off in order gives the multiset, and it lies in [ns].  So
+        the expression level needs no induction of its own here -- all the
+        counting that is left to do is at the equation level, where a defined
+        variable must be targeted exactly once. *)
+    Lemma shape_of_singleton_minted :
+      forall cs ns,
+        SIGPROOFS.singleton_targets cs ->
+        Forall (fun c => incl (snd c) ns) cs ->
+        exists ms, targets_of ms cs /\ incl ms ns.
+    Proof.
+      intros cs ns Hs Hm.
+      unfold SIGPROOFS.singleton_targets in Hs.
+      rewrite Forall_forall in Hs. rewrite Forall_forall in Hm.
+      revert Hs Hm. induction cs as [|c cs IH]; intros Hs Hm.
+      - exists []. split; [apply targets_of_nil|intros ? []].
+      - destruct (Hs c (in_eq c cs)) as (d & Hd).
+        assert (incl (snd c) ns) as Hc by (exact (Hm c (in_eq c cs))).
+        destruct (IH (fun y Hy => Hs y (in_cons c y cs Hy))
+                     (fun y Hy => Hm y (in_cons c y cs Hy)))
+          as (ms & Hms & Hims).
+        destruct c as (lhs, rhs). cbn [snd] in Hd, Hc. subst rhs.
+        exists (d :: ms). split.
+        + unfold targets_of. cbn [List.map snd].
+          apply perm_skip. exact Hms.
+        + intros z [Hz|Hz]; [subst z; apply Hc; now left|exact (Hims z Hz)].
+    Qed.
+
+    Corollary lexp_carried_shape :
+      forall e ts s s' ns,
+        incl (minted s s') ns ->
+        assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+        exists ms, targets_of ms (carried ts) /\ incl ms ns.
+    Proof.
+      intros e ts s s' ns Hns Hgen. apply shape_of_singleton_minted.
+      - exact (lexp_carried_singleton_all e ts s s' Hgen).
+      - exact (lexp_carried_minted_all e ts s s' ns Hns Hgen).
+    Qed.
+
+    Corollary lexps_carried_shape :
+      forall es ts s s' ns,
+        incl (minted s s') ns ->
+        assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+        exists ms, targets_of ms (carried ts) /\ incl ms ns.
+    Proof.
+      intros es ts s s' ns Hns Hgen. apply shape_of_singleton_minted.
+      - exact (assign_lexps_carried_singleton es ts s s' Hgen).
+      - assert (Forall lexp_carried_minted es) as Hall
+            by (apply Forall_forall; intros e0 _; apply lexp_carried_minted_all).
+        exact (lexps_carried_minted_of es Hall ts s s' ns Hns Hgen).
+    Qed.
+
+    (** * 7c, the equation level: one constraint per defined variable
+
+        The counting argument.  A rule's own constraint targets the variable
+        it defines, and [lconstrain] merges it onto what the flow carried --
+        a merge that deduplicates nothing, because a declared security name
+        is never one the generator minted.  That separation is the premise
+        [Hsep] below; the naming pass supplies it at the program level. *)
+
+    Lemma Forall2_sec_of :
+      forall xs bs,
+        Forall2 (fun x b => Env.find x env = Some b) xs bs ->
+        CALLS.sec_of env xs = bs.
+    Proof.
+      induction 1 as [|x b xs bs Hxb Hr IH]; [reflexivity|].
+      unfold CALLS.sec_of. simpl. rewrite Hxb.
+      simpl. f_equal. exact IH.
+    Qed.
+
+    Lemma Forall2_env_image :
+      forall xs bs b,
+        Forall2 (fun x b => Env.find x env = Some b) xs bs ->
+        In b bs -> exists x, Env.find x env = Some b.
+    Proof.
+      induction 1 as [|x b0 xs bs Hxb Hr IH]; intros Hin; [contradiction|].
+      destruct Hin as [Hin|Hin]; [subst b0; now exists x|exact (IH Hin)].
+    Qed.
+
+    Lemma shape_lconstrain :
+      forall p b ms ns,
+        targets_of ms (snd p) -> incl ms ns -> ~ In b ns ->
+        targets_of (b :: ms) (lconstrain p b).
+    Proof.
+      intros p b ms ns Hm Hi Hb.
+      unfold lconstrain.
+      apply (targets_of_cmerge [b] ms); [|exact Hm|].
+      - unfold targets_of. simpl. reflexivity.
+      - intros d1 d2 [Hd1|[]] Hd2 Heq; subst d1 d2.
+        exact (Hb (Hi _ Hd2)).
+    Qed.
+
+    Lemma perm_mid3 :
+      forall {A : Type} (m bs ms : list A),
+        Permutation (m ++ bs ++ ms) (bs ++ m ++ ms).
+    Proof.
+      intros A m bs ms. rewrite !app_assoc.
+      apply Permutation_app_tail, Permutation_app_comm.
+    Qed.
+
+    Lemma perm_app4 :
+      forall {A : Type} (a b c d : list A),
+        Permutation ((a ++ b) ++ c ++ d) ((a ++ c) ++ b ++ d).
+    Proof.
+      intros A a b c d. rewrite <- (app_assoc a b (c ++ d)).
+      rewrite <- (app_assoc a c (b ++ d)).
+      apply Permutation_app_head. apply perm_mid3.
+    Qed.
+
+    Lemma generate_lvars_constraints_shape :
+      forall ckenv xs bs ts c s s' ns,
+        Forall2 (fun x b => Env.find x env = Some b) xs bs ->
+        SIGPROOFS.singleton_targets (carried ts) ->
+        Forall (fun c => incl (snd c) ns) (carried ts) ->
+        (forall x b, Env.find x env = Some b -> ~ In b ns) ->
+        generate_lvars_constraints env base_ty rst_ty ckenv xs bs ts s
+          = OK (c, s') ->
+        exists ms, targets_of (bs ++ ms) c /\ incl ms ns.
+    Proof.
+      intros ckenv xs. induction xs as [|x xs IH];
+        intros bs ts c s s' ns Hbs Hsg Hmt Hsep Hgen.
+      - destruct bs as [|b bs]; [|inversion Hbs].
+        destruct ts; cbn in Hgen; [|discriminate].
+        unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _). rewrite Hc.
+        exists []. split; [apply targets_of_nil|intros ? []].
+      - destruct bs as [|b bs]; [inversion Hbs|].
+        destruct ts as [|t ts]; [cbn in Hgen; discriminate|].
+        inversion Hbs as [|x0 b0 xs0 bs0 Hxb Hbsr]; subst.
+        rewrite carried_cons in Hsg, Hmt.
+        apply singleton_targets_cmerge_inv in Hsg as (Hsgt & Hsgr).
+        apply Forall_cmerge_inv in Hmt as (Hmtt & Hmtr).
+        rewrite gen_lvars_cons_eq in Hgen.
+        apply sec_bind_inv in Hgen as (ckty & s1 & Hck & Hgen).
+        apply sec_bind_inv in Hgen as (rest & s2 & Hr & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Hc & ?); subst s'.
+        rewrite Hc.
+        destruct (shape_of_singleton_minted (snd t) ns Hsgt Hmtt)
+          as (m & Hm & Hi).
+        destruct (IH bs ts rest s1 s2 ns Hbsr Hsgr Hmtr Hsep Hr)
+          as (ms & Hms & Hims).
+        exists (m ++ ms). split; [|apply incl_app; [exact Hi|exact Hims]].
+        eapply targets_of_perm;
+          [apply perm_skip, (perm_mid3 m bs ms)|].
+        apply (targets_of_app (b :: m) (bs ++ ms)
+                 (lconstrain (ljoin (ambient rst_ty ckty) t) b) rest);
+          [|exact Hms].
+        apply (shape_lconstrain _ b m ns); [|exact Hi|].
+        + rewrite snd_ljoin. unfold ambient.
+          rewrite snd_ljoin, snd_lvar. cbn [snd].
+          rewrite cmerge_nil, cmerge_nil2. exact Hm.
+        + exact (Hsep x b Hxb).
+    Qed.
+
   End RawTargets.
 
-
-  (** * 7c: the exact target multiset
-
-      7a and 7b say what a target looks like and where it comes from; what
-      [signature_good] needs is how *many* times each one occurs.  The answer
-      is: once per variable the equation list defines, and once per
-      constraint an expression carried -- and [simplify] drops the second
-      group wholesale, so the published set is one constraint per output.
-
-      [cmerge] is a sorted union with deduplication, so it is a permutation
-      of the append only when the two sides share no constraint.  Every merge
-      the generator performs is of that kind: the two sides' targets are
-      drawn from disjoint stretches of the fresh state, or one is a declared
-      name and the other was minted. *)
-
-  Lemma cmerge_perm :
-    forall r1 r2,
-      (forall c1 c2, In c1 r1 -> In c2 r2 -> c1 <> c2) ->
-      Permutation (cmerge r1 r2) (r1 ++ r2).
-  Proof.
-    induction r1 as [|x xs IHxs]; intros r2 Hdisj.
-    - rewrite cmerge_nil2. reflexivity.
-    - induction r2 as [|y ys IHys].
-      + rewrite cmerge_nil, app_nil_r. reflexivity.
-      + destruct (ccmp x y) eqn:Hc.
-        * apply ccmp_eq in Hc. subst y.
-          exfalso. eapply Hdisj;
-            [left; reflexivity|left; reflexivity|reflexivity].
-        * rewrite cmerge1 by exact Hc. simpl.
-          apply perm_skip. apply IHxs.
-          intros c1 c2 Hc1 Hc2. apply Hdisj; [right|]; assumption.
-        * rewrite cmerge2 by exact Hc.
-          etransitivity; [apply perm_skip, IHys|].
-          { intros c1 c2 Hc1 Hc2. apply Hdisj; [|right]; assumption. }
-          apply Permutation_middle.
-  Qed.
-
-  (** Two stretches of the fresh state that meet but do not overlap mint
-      disjoint sets of names: the generated name determines the state it was
-      generated at. *)
-  Lemma minted_disjoint :
-    forall s s1 s2 d, In d (minted s s1) -> In d (minted s1 s2) -> False.
-  Proof.
-    intros s s1 s2 d H1 H2.
-    apply minted_spec in H1 as (j & _ & Hj & Hdj).
-    apply minted_spec in H2 as (k & Hk & _ & Hdk).
-    rewrite Hdj in Hdk.
-    apply Ids.gensym_injective in Hdk as (_ & ?); subst k.
-    exact (Pos.lt_irrefl j (Pos.lt_le_trans j s1 j Hj Hk)).
-  Qed.
-
-  Lemma minted_refl : forall s, minted s s = [].
-  Proof.
-    intros s. unfold minted. now rewrite PeanoNat.Nat.sub_diag.
-  Qed.
-
-  (** [filter] respects permutations.  Not in the standard library. *)
-  Lemma Permutation_filter :
-    forall {A : Type} (f : A -> bool) (l1 l2 : list A),
-      Permutation l1 l2 -> Permutation (filter f l1) (filter f l2).
-  Proof.
-    intros A f l1 l2 H. induction H as [| x l l' H IH
-                                        | x y l | l l' l'' H1 IH1 H2 IH2].
-    - reflexivity.
-    - simpl. destruct (f x); [apply perm_skip|]; exact IH.
-    - simpl. destruct (f x) eqn:Hx, (f y) eqn:Hy; try reflexivity.
-      apply perm_swap.
-    - etransitivity; [exact IH1|exact IH2].
-  Qed.
-
-  (** The target multiset of a constraint list, named so the merges below
-      read as one line each. *)
-  Definition targets_of (ms : list ident) (cs : list SymTypes.constraint) : Prop :=
-    Permutation (List.map snd cs) (List.map (fun d => [d]) ms).
-
-  Lemma targets_of_nil : targets_of [] [].
-  Proof. unfold targets_of. reflexivity. Qed.
-
-  Lemma targets_of_perm :
-    forall ms ms' cs, Permutation ms ms' -> targets_of ms cs -> targets_of ms' cs.
-  Proof.
-    intros ms ms' cs Hp H. unfold targets_of in H |- *.
-    etransitivity; [exact H|now apply Permutation_map].
-  Qed.
-
-  Lemma targets_of_In :
-    forall ms cs c,
-      targets_of ms cs -> In c cs -> exists d, In d ms /\ snd c = [d].
-  Proof.
-    intros ms cs c H Hc. unfold targets_of in H.
-    assert (In (snd c) (List.map (fun d => [d]) ms)) as Hin.
-    { eapply Permutation_in; [exact H|].
-      apply in_map_iff. exists c. split; [reflexivity|exact Hc]. }
-    apply in_map_iff in Hin as (d & Hd & Hdm).
-    exists d. split; [exact Hdm|now rewrite <- Hd].
-  Qed.
-
-  Lemma targets_of_app :
-    forall ms1 ms2 cs1 cs2,
-      targets_of ms1 cs1 -> targets_of ms2 cs2 ->
-      targets_of (ms1 ++ ms2) (cs1 ++ cs2).
-  Proof.
-    intros ms1 ms2 cs1 cs2 H1 H2. unfold targets_of in *.
-    rewrite map_app, map_app. now apply Permutation_app.
-  Qed.
-
-  (** The merge, which is where the hypothesis is needed: two constraints
-      with different targets are different constraints, so nothing is
-      deduplicated and the union is the append. *)
-  Lemma targets_of_cmerge :
-    forall ms1 ms2 cs1 cs2,
-      targets_of ms1 cs1 -> targets_of ms2 cs2 ->
-      (forall d1 d2, In d1 ms1 -> In d2 ms2 -> d1 <> d2) ->
-      targets_of (ms1 ++ ms2) (cmerge cs1 cs2).
-  Proof.
-    intros ms1 ms2 cs1 cs2 H1 H2 Hd.
-    assert (Permutation (cmerge cs1 cs2) (cs1 ++ cs2)) as Hp.
-    { apply cmerge_perm. intros c1 c2 Hc1 Hc2.
-      destruct (targets_of_In ms1 cs1 c1 H1 Hc1) as (d1 & Hd1 & He1).
-      destruct (targets_of_In ms2 cs2 c2 H2 Hc2) as (d2 & Hd2 & He2).
-      intros Heq. rewrite Heq, He2 in He1.
-      injection He1 as He1. symmetry in He1. exact (Hd d1 d2 Hd1 Hd2 He1). }
-    unfold targets_of.
-    eapply Permutation_trans; [apply (Permutation_map snd Hp)|].
-    exact (targets_of_app ms1 ms2 cs1 cs2 H1 H2).
-  Qed.
-
-  (** Joining one head onto every stream of a list.  The head's constraints
-      are merged in once per stream, and [cmerge] deduplicates them, so the
-      result is the head's set together with the list's -- each once. *)
-  Lemma carried_map_ljoin_eq :
-    forall h ts,
-      ts <> [] ->
-      carried (List.map (fun t => ljoin h t) ts) = cmerge (snd h) (carried ts).
-  Proof.
-    intros h ts. induction ts as [|t ts IH]; intros Hne; [contradiction|].
-    destruct ts as [|t2 ts].
-    - cbn [List.map]. rewrite !carried_single, snd_ljoin. reflexivity.
-    - cbn [List.map] in IH |- *. rewrite carried_cons.
-      rewrite IH by (intros HF; discriminate).
-      rewrite snd_ljoin, cmerge_assoc, (carried_cons t (t2 :: ts)).
-      rewrite (cmerge_shuffle (snd t) (snd h) (carried (t2 :: ts))).
-      rewrite cmerge_dedup_l. reflexivity.
-  Qed.
-
-  (** * What [simplify] does to the targets
-
-      [subAll cns d st] drops *every* constraint whose target is [d] and
-      substitutes [d] away in the rest, leaving each remaining target
-      untouched.  So [simplify cns ds] is, on targets, a filter: it keeps
-      exactly the constraints whose target is outside [ds].  That is what
-      makes the published set one constraint per output -- the local and
-      minted targets go, however many times they occur. *)
-
-  Definition singleton_rhs (c : SymTypes.constraint) : Prop :=
-    exists b, snd c = [b].
-
-  Definition kept (ds : list ident) (r : list ident) : bool :=
-    match r with
-    | [b] => negb (existsb (fun d => ident_eqb b d) ds)
-    | _   => false
-    end.
-
-  Lemma kept_cons :
-    forall d ds r, kept (d :: ds) r = andb (kept [d] r) (kept ds r).
-  Proof.
-    intros d ds r. destruct r as [|b [|? ?]]; try reflexivity.
-    cbn [kept existsb]. rewrite Bool.orb_false_r, Bool.negb_orb. reflexivity.
-  Qed.
-
-  Lemma filter_filter :
-    forall {A : Type} (f g : A -> bool) l,
-      filter f (filter g l) = filter (fun x => andb (g x) (f x)) l.
-  Proof.
-    intros A f g l. induction l as [|x l IH]; [reflexivity|].
-    cbn [filter]. destruct (g x) eqn:Hg; cbn [filter andb].
-    - destruct (f x); [cbn; now rewrite IH|exact IH].
-    - exact IH.
-  Qed.
-
-  Lemma filter_ext_In :
-    forall {A : Type} (f g : A -> bool) l,
-      (forall x, In x l -> f x = g x) -> filter f l = filter g l.
-  Proof.
-    intros A f g l. induction l as [|x l IH]; intros H; [reflexivity|].
-    cbn [filter]. rewrite (H x (in_eq x l)).
-    rewrite (IH (fun y Hy => H y (in_cons x y l Hy))).
-    reflexivity.
-  Qed.
-
-  Lemma filter_all_true :
-    forall {A : Type} (f : A -> bool) l,
-      (forall x, In x l -> f x = true) -> filter f l = l.
-  Proof.
-    intros A f l. induction l as [|x l IH]; intros H; [reflexivity|].
-    cbn [filter]. rewrite (H x (in_eq x l)).
-    f_equal. apply IH. intros y Hy. exact (H y (in_cons x y l Hy)).
-  Qed.
-
-  Lemma filter_all_false :
-    forall {A : Type} (f : A -> bool) l,
-      (forall x, In x l -> f x = false) -> filter f l = [].
-  Proof.
-    intros A f l. induction l as [|x l IH]; intros H; [reflexivity|].
-    cbn [filter]. rewrite (H x (in_eq x l)).
-    apply IH. intros y Hy. exact (H y (in_cons x y l Hy)).
-  Qed.
-
-  Lemma map_filter_comm :
-    forall {A B : Type} (f : B -> bool) (g : A -> B) l,
-      filter f (List.map g l) = List.map g (filter (fun x => f (g x)) l).
-  Proof.
-    intros A B f g l. induction l as [|x l IH]; [reflexivity|].
-    cbn [List.map filter]. destruct (f (g x)); [cbn; now rewrite IH|exact IH].
-  Qed.
-
-  Lemma findST_None :
-    forall cns d, findST cns d = None -> ~ In [d] (List.map snd cns).
-  Proof.
-    induction cns as [|(st, rhs) cns IH]; intros d H; [intros []|].
-    cbn [List.map snd].
-    destruct rhs as [|d' [|? ?]]; simpl in H.
-    - intros [Hc|Hc]; [discriminate Hc|exact (IH d H Hc)].
-    - destruct (ident_eqb d' d) eqn:He; [discriminate H|].
-      intros [Hc|Hc]; [|exact (IH d H Hc)].
-      injection Hc as Hc. subst d'. now rewrite ident_eqb_refl in He.
-    - intros [Hc|Hc]; [discriminate Hc|exact (IH d H Hc)].
-  Qed.
-
-  Lemma subAll_singleton :
-    forall cns d st',
-      Forall singleton_rhs cns -> Forall singleton_rhs (subAll cns d st').
-  Proof.
-    induction cns as [|(st, rhs) cns IH]; intros d st' H; [constructor|].
-    inversion H as [|c0 cs0 Hc Hcs]; subst.
-    destruct rhs as [|d' [|? ?]]; simpl.
-    - exact (IH d st' Hcs).
-    - destruct (ident_eqb d' d); [exact (IH d st' Hcs)|].
-      constructor; [now exists d'|exact (IH d st' Hcs)].
-    - exact (IH d st' Hcs).
-  Qed.
-
-  Lemma subAll_cons_eq :
-    forall st b cns d st',
-      subAll ((st, [b]) :: cns) d st'
-      = if ident_eqb b d then subAll cns d st'
-        else normalize_constraint (subST st d st') b :: subAll cns d st'.
-  Proof. reflexivity. Qed.
-
-  Lemma kept_single : forall d b, kept [d] [b] = negb (ident_eqb b d).
-  Proof.
-    intros d b. unfold kept. cbn [existsb].
-    now rewrite Bool.orb_false_r.
-  Qed.
-
-  Lemma subAll_map_snd :
-    forall cns d st',
-      Forall singleton_rhs cns ->
-      List.map snd (subAll cns d st') = filter (kept [d]) (List.map snd cns).
-  Proof.
-    induction cns as [|(st, rhs) cns IH]; intros d st' H; [reflexivity|].
-    inversion H as [|c0 cs0 Hc Hcs]; subst.
-    destruct Hc as (b & Hb); cbn [snd] in Hb; subst rhs.
-    rewrite subAll_cons_eq.
-    cbn [List.map snd filter]. rewrite kept_single.
-    destruct (ident_eqb b d); cbn [negb].
-    - exact (IH d st' Hcs).
-    - cbn [List.map snd normalize_constraint]. f_equal. exact (IH d st' Hcs).
-  Qed.
-
-  Lemma simplify_nil_eq : forall cns, simplify cns [] = cns.
-  Proof. reflexivity. Qed.
-
-  Lemma simplify_cons_eq :
-    forall cns d ds,
-      simplify cns (d :: ds)
-      = match findST cns d with
-        | None    => simplify cns ds
-        | Some st => simplify (subAll cns d st) ds
-        end.
-  Proof. reflexivity. Qed.
-
-  Lemma simplify_map_snd :
-    forall ds cns,
-      Forall singleton_rhs cns ->
-      List.map snd (simplify cns ds) = filter (kept ds) (List.map snd cns).
-  Proof.
-    induction ds as [|d ds IH]; intros cns H.
-    - rewrite simplify_nil_eq.
-      symmetry. apply filter_all_true. intros r Hr.
-      apply in_map_iff in Hr as (c & Hc & Hin).
-      rewrite Forall_forall in H. destruct (H c Hin) as (b & Hb).
-      rewrite <- Hc, Hb. reflexivity.
-    - rewrite simplify_cons_eq.
-      destruct (findST cns d) as [st|] eqn:Hfind.
-      + rewrite (IH _ (subAll_singleton cns d st H)).
-        rewrite (subAll_map_snd cns d st H), filter_filter.
-        apply filter_ext_In. intros r _. now rewrite (kept_cons d ds r).
-      + rewrite (IH cns H). symmetry.
-        apply filter_ext_In. intros r Hr. rewrite (kept_cons d ds r).
-        rewrite Forall_forall in H.
-        apply in_map_iff in Hr as (c & Hc & Hin).
-        destruct (H c Hin) as (b & Hb).
-        assert (kept [d] r = true) as Hk.
-        { rewrite <- Hc, Hb. cbn [kept existsb].
-          rewrite Bool.orb_false_r.
-          destruct (ident_eqb b d) eqn:He; [|reflexivity].
-          exfalso. apply ident_eqb_eq in He. subst b.
-          apply (findST_None cns d Hfind).
-          apply in_map_iff. exists c. split; [exact Hb|exact Hin]. }
-        now rewrite Hk.
-  Qed.
-
-  (** The payoff: eliminate every local and minted target and what is left is
-      the outputs, each once. *)
-  Lemma simplify_targets :
-    forall cns ds os ms,
-      Forall singleton_rhs cns ->
-      targets_of (os ++ ms) cns ->
-      incl ms ds ->
-      (forall o, In o os -> ~ In o ds) ->
-      targets_of os (simplify cns ds).
-  Proof.
-    intros cns ds os ms Hsing Htgt Hms Hos.
-    unfold targets_of in Htgt |- *.
-    rewrite (simplify_map_snd ds cns Hsing).
-    eapply Permutation_trans;
-      [apply (Permutation_filter (kept ds) _ _ Htgt)|].
-    rewrite map_filter_comm, <- filter_app.
-    rewrite (filter_all_true _ os), (filter_all_false _ ms).
-    - now rewrite app_nil_r.
-    - intros m Hm. cbn [kept existsb].
-      destruct (existsb (fun d => ident_eqb m d) ds) eqn:He; [reflexivity|].
-      exfalso. assert (In m ds) as Hin by (apply Hms, Hm).
-      assert (existsb (fun d => ident_eqb m d) ds = true) as HT
-          by (apply existsb_exists; exists m;
-              split; [exact Hin|apply ident_eqb_refl]).
-      rewrite He in HT. discriminate.
-    - intros o Ho. cbn [kept existsb].
-      destruct (existsb (fun d => ident_eqb o d) ds) eqn:He;
-        [|reflexivity].
-      exfalso. apply existsb_exists in He as (d & Hd & Heq).
-      apply ident_eqb_eq in Heq. subst d. exact (Hos o Ho Hd).
-  Qed.
-
-  (** Two stretches of the fresh state that do not overlap mint disjoint
-      sets, whichever order they are merged in. *)
-  Lemma minted_apart :
-    forall a b c d x,
-      sec_le b c -> In x (minted a b) -> In x (minted c d) -> False.
-  Proof.
-    intros a b c d x Hbc H1 H2.
-    apply minted_spec in H1 as (j & _ & Hj & Hdj).
-    apply minted_spec in H2 as (k & Hk & _ & Hdk).
-    rewrite Hdj in Hdk.
-    apply Ids.gensym_injective in Hdk as (_ & ?); subst k.
-    apply (Pos.lt_irrefl j).
-    exact (Pos.lt_le_trans j b j Hj (Pos.le_trans b c j Hbc Hk)).
-  Qed.
-
-  (** The shape of one merge, which is the step every case of the expression
-      induction takes: the two sides were minted over stretches that do not
-      overlap, so nothing is deduplicated and the targets append. *)
-  Lemma shape_cmerge :
-    forall ms1 ms2 cs1 cs2 a b c d ns,
-      sec_le b c ->
-      targets_of ms1 cs1 -> incl ms1 (minted a b) ->
-      targets_of ms2 cs2 -> incl ms2 (minted c d) ->
-      incl (minted a b) ns -> incl (minted c d) ns ->
-      exists ms, targets_of ms (cmerge cs1 cs2) /\ incl ms ns.
-  Proof.
-    intros ms1 ms2 cs1 cs2 a b c d ns Hbc H1 Hi1 H2 Hi2 Hn1 Hn2.
-    exists (ms1 ++ ms2). split.
-    - apply targets_of_cmerge; [exact H1|exact H2|].
-      intros d1 d2 Hd1 Hd2 Heq. subst d2.
-      exact (minted_apart a b c d d1 Hbc (Hi1 d1 Hd1) (Hi2 d1 Hd2)).
-    - intros x Hx. apply in_app_or in Hx as [Hx|Hx];
-        [apply Hn1, Hi1, Hx|apply Hn2, Hi2, Hx].
-  Qed.
-
-  Section ExactShape.
-
-    Variable G       : secglobal.
-    Variable env     : Env.t ident.
-    Variable base_ty : ident.
-    Variable rst_ty  : ident.
-
-    (** * 7c, the expression half: how many constraints an expression carries
-
-        One per name the run minted for a call result -- so the multiset of
-        targets is a sub-multiset of the window, not merely a subset of it.
-        Stated against the run's own window rather than a superset, because
-        the disjointness that drives every merge is a property of the window
-        itself. *)
-    Definition lexp_carried_exact (e : exp) : Prop :=
-      forall ts s s',
-        assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
-        exists ms, targets_of ms (carried ts) /\ incl ms (minted s s').
-
-    Lemma lexps_carried_exact_of :
-      forall es,
-        Forall lexp_carried_exact es ->
-        forall ts s s',
-          assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
-          exists ms, targets_of ms (carried ts) /\ incl ms (minted s s').
-    Proof.
-      intros es Hall. induction Hall as [|e es He Hes IH]; intros ts s s' H.
-      - apply (assign_lexps_carried_nil G env base_ty rst_ty) in H
-          as (? & _ & _); subst ts.
-        exists []. split; [apply targets_of_nil|intros x []].
-      - apply assign_lexps_carried_cons in H
-          as (t & r & sa & Ht & Hr & ? & _); subst ts.
-        assert (sec_le s sa) as Hl1
-            by (eapply assign_lexp_type_sec_le; exact Ht).
-        assert (sec_le sa s') as Hl2
-            by (eapply assign_lexps_sec_le; exact Hr).
-        destruct (He t s sa Ht) as (ms1 & Ht1 & Hi1).
-        destruct (IH r sa s' Hr) as (ms2 & Ht2 & Hi2).
-        rewrite carried_app.
-        apply (shape_cmerge ms1 ms2 _ _ s sa sa s');
-          [apply sec_le_refl|exact Ht1|exact Hi1|exact Ht2|exact Hi2
-          |apply minted_window; [apply sec_le_refl|exact Hl2]
-          |apply minted_window; [exact Hl1|apply sec_le_refl]].
-    Qed.
-
-    Theorem lexp_carried_exact_all : forall e, lexp_carried_exact e.
-    Proof.
-      intros e. induction e using exp_ind2; intros ts s s' Hgen.
-      - (** a constant and a variable carry nothing *)
-        rewrite assign_lexp_Econst in Hgen. unfold SC.ret in Hgen.
-        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hts & _); subst ts.
-        exists []. split; [|intros ? []].
-        unfold targets_of. cbn [carried lbot snd List.map]. reflexivity.
-      - apply assign_lexp_Evar_inv in Hgen as (a0 & _ & Hts & _). subst ts.
-        exists []. split; [|intros ? []].
-        unfold targets_of. cbn [carried snd List.map]. reflexivity.
-      - (** the unary operator is its operand *)
-        exact (IHe ts s s' Hgen).
-      - (** the binary one, each operand pinned by [single] *)
-        rewrite assign_lexp_Ebinop in Hgen.
-        apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
-        apply sec_bind_inv in Hgen as (t2 & s2 & Ht2 & Hgen).
-        apply sec_bind_inv in Hgen as (a1 & s3 & Ha1 & Hgen).
-        apply sec_bind_inv in Hgen as (a2 & s4 & Ha2 & Hret).
-        apply single_inv in Ha1 as (? & ?); subst t1 s3.
-        apply single_inv in Ha2 as (? & ?); subst t2 s4.
-        unfold SC.ret in Hret.
-        destruct (OK_pair_inv _ _ _ _ Hret) as (Hts & ?); subst ts s'.
-        destruct (IHe1 [a1] s s1 Ht1) as (ms1 & Hm1 & Hi1).
-        destruct (IHe2 [a2] s1 s2 Ht2) as (ms2 & Hm2 & Hi2).
-        rewrite carried_single in Hm1, Hm2.
-        rewrite carried_single, snd_ljoin.
-        apply (shape_cmerge ms1 ms2 _ _ s s1 s1 s2);
-          [apply sec_le_refl|exact Hm1|exact Hi1|exact Hm2|exact Hi2
-          |apply minted_window;
-           [apply sec_le_refl|eapply assign_lexp_type_sec_le; exact Ht2]
-          |apply minted_window;
-           [eapply assign_lexp_type_sec_le; exact Ht1|apply sec_le_refl]].
-      - (** the two delays: a pointwise join of two lists *)
-        rewrite assign_lexp_Efby in Hgen.
-        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
-        apply sec_bind_inv in Hgen as (us & s2 & Hus & Hj).
-        assert (s' = s2) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
-        rewrite (ljoin_list_carried ts0 us ts s2 s2 Hj).
-        destruct (lexps_carried_exact_of e0s H ts0 s s1 Hts0) as (ms1 & Hm1 & Hi1).
-        destruct (lexps_carried_exact_of es H0 us s1 s2 Hus) as (ms2 & Hm2 & Hi2).
-        apply (shape_cmerge ms1 ms2 _ _ s s1 s1 s2);
-          [apply sec_le_refl|exact Hm1|exact Hi1|exact Hm2|exact Hi2
-          |apply minted_window;
-           [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hus]
-          |apply minted_window;
-           [eapply assign_lexps_sec_le; exact Hts0|apply sec_le_refl]].
-      - rewrite assign_lexp_Earrow in Hgen.
-        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
-        apply sec_bind_inv in Hgen as (us & s2 & Hus & Hj).
-        assert (s' = s2) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
-        rewrite (ljoin_list_carried ts0 us ts s2 s2 Hj).
-        destruct (lexps_carried_exact_of e0s H ts0 s s1 Hts0) as (ms1 & Hm1 & Hi1).
-        destruct (lexps_carried_exact_of es H0 us s1 s2 Hus) as (ms2 & Hm2 & Hi2).
-        apply (shape_cmerge ms1 ms2 _ _ s s1 s1 s2);
-          [apply sec_le_refl|exact Hm1|exact Hi1|exact Hm2|exact Hi2
-          |apply minted_window;
-           [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hus]
-          |apply minted_window;
-           [eapply assign_lexps_sec_le; exact Hts0|apply sec_le_refl]].
-      - (** sampling adds a name and no constraint *)
-        rewrite assign_lexp_Ewhen in Hgen.
-        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
-        apply sec_bind_inv in Hgen as (g & s2 & Hg & Hret).
-        apply find_env_inv in Hg as (_ & ?); subst s2.
-        unfold SC.ret in Hret.
-        destruct (OK_pair_inv _ _ _ _ Hret) as (Hts & ?); subst ts s'.
-        rewrite carried_map_when.
-        exact (lexps_carried_exact_of es H ts0 s s1 Hts0).
-      - (** the merge and the conditional *)
-        destruct a as (tys & cl).
-        rewrite assign_lexp_Emerge in Hgen.
-        apply sec_bind_inv in Hgen as (g & s1 & Hg & Hgen).
-        apply find_env_inv in Hg as (_ & ?); subst s1.
-        apply sec_bind_inv in Hgen as (ts0 & s2 & Hts0 & Hgen).
-        apply sec_bind_inv in Hgen as (us & s3 & Hus & Hj).
-        assert (s' = s3) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
-        rewrite (ljoin_list_carried _ us ts s3 s3 Hj).
-        rewrite carried_map_merge_l.
-        destruct (lexps_carried_exact_of ets H ts0 s s2 Hts0) as (ms1 & Hm1 & Hi1).
-        destruct (lexps_carried_exact_of efs H0 us s2 s3 Hus) as (ms2 & Hm2 & Hi2).
-        apply (shape_cmerge ms1 ms2 _ _ s s2 s2 s3);
-          [apply sec_le_refl|exact Hm1|exact Hi1|exact Hm2|exact Hi2
-          |apply minted_window;
-           [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hus]
-          |apply minted_window;
-           [eapply assign_lexps_sec_le; exact Hts0|apply sec_le_refl]].
-      - destruct a as (tys & cl).
-        rewrite assign_lexp_Eite in Hgen.
-        apply sec_bind_inv in Hgen as (t0 & s1 & Ht0 & Hgen).
-        apply sec_bind_inv in Hgen as (th & s2 & Hth & Hgen).
-        apply single_inv in Hth as (? & ?); subst t0 s2.
-        apply sec_bind_inv in Hgen as (ts0 & s3 & Hts0 & Hgen).
-        apply sec_bind_inv in Hgen as (us & s4 & Hus & Hj).
-        assert (s' = s4) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
-        assert (sec_le s s1) as Hl01
-            by (eapply assign_lexp_type_sec_le; exact Ht0).
-        assert (sec_le s1 s3) as Hl13
-            by (eapply assign_lexps_sec_le; exact Hts0).
-        assert (sec_le s3 s4) as Hl34
-            by (eapply assign_lexps_sec_le; exact Hus).
-        rewrite (ljoin_list_carried _ us ts s4 s4 Hj).
-        destruct (lexps_carried_exact_of ets H ts0 s1 s3 Hts0)
-          as (ms2 & Hm2 & Hi2).
-        destruct (lexps_carried_exact_of efs H0 us s3 s4 Hus)
-          as (ms3 & Hm3 & Hi3).
-        destruct (IHe [th] s s1 Ht0) as (ms1 & Hm1 & Hi1).
-        rewrite carried_single in Hm1.
-        destruct ts0 as [|t00 ts0'].
-        + (** nothing was joined onto, so nothing was carried *)
-          cbn [List.map carried]. rewrite cmerge_nil2.
-          exists ms3. split; [exact Hm3|].
-          eapply incl_tran; [exact Hi3|].
-          apply minted_window;
-            [eapply sec_le_trans; [exact Hl01|exact Hl13]|apply sec_le_refl].
-        + rewrite carried_map_ljoin_eq by (intros HF; inversion HF).
-          destruct (shape_cmerge ms1 ms2 (snd th) (carried (t00 :: ts0'))
-                      s s1 s1 s3 (minted s s3)
-                      (sec_le_refl s1) Hm1 Hi1 Hm2 Hi2
-                      (minted_window s s s1 s3 (sec_le_refl s) Hl13)
-                      (minted_window s s1 s3 s3 Hl01 (sec_le_refl s3)))
-            as (msI & HmI & HiI).
-          apply (shape_cmerge msI ms3 _ _ s s3 s3 s4);
-            [apply sec_le_refl|exact HmI|exact HiI|exact Hm3|exact Hi3
-            |apply minted_window; [apply sec_le_refl|exact Hl34]
-            |apply minted_window;
-             [eapply sec_le_trans; [exact Hl01|exact Hl13]|apply sec_le_refl]].
-      - (** the call: one constraint per result, and the results are exactly
-            what this run minted *)
-        apply assign_lexp_Eapp_inv in Hgen
-          as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
-              & Hargs & _ & Hrst & _ & Houts & Hcs & Hts).
-        destruct (assign_lexp_Eapp_stages_le G env base_ty rst_ty es ro _
-                    s s' sg argts rstty ckty outs cs sta stb stc
-                    Hargs Hrst Houts Hcs) as (Hlab & Hlbc & Hlcs).
-        assert (sec_le s sta) as Hlsa
-            by (eapply assign_lexps_sec_le; exact Hargs).
-        subst ts. rewrite carried_uniform.
-        destruct outs as [|o os].
-        + exists []. split; [apply targets_of_nil|intros ? []].
-        + pose proof (CALLS.generate_constraints_targets sg
-                        (List.map fst argts) ckty (fst rstty) (o :: os) cs
-                        stc s' Hcs) as Hsnd.
-          assert (targets_of (o :: os) cs) as Hmcs
-              by (unfold targets_of; rewrite Hsnd; reflexivity).
-          assert (incl (o :: os) (minted stb stc)) as Hics
-              by (eapply fresh_idents_minted; exact Houts).
-          destruct (lexps_carried_exact_of es H0 argts s sta Hargs)
-            as (ms1 & Hm1 & Hi1).
-          assert (exists ms2, targets_of ms2 (snd rstty)
-                              /\ incl ms2 (minted sta stb))
-            as (ms2 & Hm2 & Hi2).
-          { destruct ro as [e1|].
-            - destruct Hrst as (t1 & a1 & rck & stm & Ht1 & Hsg1 & _ & Hr).
-              apply single_inv in Hsg1 as (? & ?); subst t1 stb.
-              subst rstty. rewrite !snd_ljoin, snd_lvar.
-              cbn [snd]. rewrite cmerge_nil, cmerge_nil2.
-              destruct (H [a1] sta stm Ht1) as (ms2 & Hm2 & Hi2).
-              rewrite carried_single in Hm2.
-              exists ms2. split; [exact Hm2|exact Hi2].
-            - destruct Hrst as (Hr & _). subst rstty. rewrite snd_lvar.
-              exists []. split; [apply targets_of_nil|intros ? []]. }
-          rewrite (cmerge_comm cs (cmerge (carried argts) (snd rstty))).
-          destruct (shape_cmerge ms1 ms2 (carried argts) (snd rstty)
-                      s sta sta stb (minted s stb)
-                      (sec_le_refl sta) Hm1 Hi1 Hm2 Hi2
-                      (minted_window s s sta stb (sec_le_refl s) Hlab)
-                      (minted_window s sta stb stb Hlsa (sec_le_refl stb)))
-            as (msI & HmI & HiI).
-          apply (shape_cmerge msI (o :: os) _ _ s stb stb stc);
-            [apply sec_le_refl|exact HmI|exact HiI|exact Hmcs|exact Hics
-            |apply minted_window;
-             [apply sec_le_refl
-             |eapply sec_le_trans; [exact Hlbc|exact Hlcs]]
-            |apply minted_window;
-             [eapply sec_le_trans; [exact Hlsa|exact Hlab]|exact Hlcs]].
-    Qed.
-
-  End ExactShape.
 End SecLusTypingCorrectness.
