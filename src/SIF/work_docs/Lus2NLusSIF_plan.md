@@ -524,20 +524,43 @@ why item 4's assembly had to wait for it.
 Measured now rather than extrapolated, because `wf_constraints` splits into
 two halves of very different cost.
 
-*7a, singleton targets* -- every constraint has a one-element target.  This
-is structural, and the plumbing is in place
-(`singleton_targets_cmerge` -- note `cmerge` is a sorted merge with dedup,
-not an append, so a `Forall` has to be pushed through it by membership --
-`singleton_targets_app`, and
-`generate_constraints_singleton_targets` from `generate_constraints_targets`).
-What is left is one expression induction: *the carried component of
-`assign_lexp_type` has singleton targets*.  Nine of its ten cases are
-immediate -- the carried component is `[]` or a `cmerge` of the
-sub-expressions' -- and the call case is the instantiated block, which the
-third lemma above already covers.  Then the equation generator pushes it
-through mechanically, since every rule emits `lconstrain _ b` over the
-carried component.  *[untested, but the shape is checked against the
-definitions]*
+*7a, singleton targets* -- mostly done (2026-10-03).
+
+  * the plumbing: `singleton_targets_cmerge`, `_app`, `_cmerge_inv`,
+    `_carried_map_ljoin`, and `generate_constraints_singleton_targets` from
+    `generate_constraints_targets`;
+  * the expression induction: `lexp_carried_singleton_all`, with
+    `lexps_carried_singleton_intro` for the list fold.  Nine of the ten cases
+    are what the shape suggests; the call case is the instantiated block over
+    what the arguments and the reset carried;
+  * the general rule: `In_carried`,
+    `singleton_targets_carried_elements`, `singleton_targets_lconstrain`,
+    `generate_lvars_constraints_singleton`.
+
+**One hazard, twice.**  `cmerge` with a *literal* first argument reduces into
+its inner `fix`, and after that no lemma about `cmerge` matches the term any
+more.  So `lconstrain` has to be handled through membership
+(`cmerge_In`) rather than by `unfold`, and the `generate_lvars_constraints`
+cons step has to be taken with `gen_lvars_cons_eq` and `OK_pair_inv` rather
+than with `cbn` and `inversion`, which reduce it in the goal.  This is the
+same trap `OK_pair_inv` and `pair_inv` were introduced for on Leg I.
+
+What is left of 7a is the dispatch, which is case analysis and no new idea:
+
+    generate_lcall_constraint_singleton   -- the inv lemma, then the three
+                                             cmerge components
+    generate_lone_constraint_singleton    -- a call with or without a reset,
+                                             a single defined variable
+                                             (ldef), or the general rule
+    generate_lsplit_constraints_singleton -- an app fold over the above
+    generate_leqn_constraint_singleton    -- the same dispatch as
+                                             eqn_carries_all_streams
+    generate_leqns_constraints_singleton  -- an app fold
+
+The reset argument is `lvar rst_ty` (carrying nothing) or
+`ljoin (lvar rst_ty) (ljoin a1 (rck, []))`, whose carried part is the reset
+expression's own -- so `lexp_carried_singleton_all` covers both.
+*[untested]*
 
 *7b, distinct targets* -- this is where the work is.  The targets of a node's
 raw constraints are the security names of the variables it defines together
