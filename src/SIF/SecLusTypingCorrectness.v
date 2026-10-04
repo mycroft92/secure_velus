@@ -415,19 +415,19 @@ Import SECMONADNotations.
     intros s. unfold minted. now rewrite PeanoNat.Nat.sub_diag.
   Qed.
 
-  (** [filter] respects permutations.  Not in the standard library. *)
-  Lemma Permutation_filter :
-    forall {A : Type} (f : A -> bool) (l1 l2 : list A),
-      Permutation l1 l2 -> Permutation (filter f l1) (filter f l2).
-  Proof.
-    intros A f l1 l2 H. induction H as [| x l l' H IH
-                                        | x y l | l l' l'' H1 IH1 H2 IH2].
-    - reflexivity.
-    - simpl. destruct (f x); [apply perm_skip|]; exact IH.
-    - simpl. destruct (f x) eqn:Hx, (f y) eqn:Hy; try reflexivity.
-      apply perm_swap.
-    - etransitivity; [exact IH1|exact IH2].
-  Qed.
+  (** [SecLTyping.v]'s [simplify_map_snd] restated here.  Its statement is
+      the same one, but elaborated in *this* file: [SymTypes.ST] is
+      [list ident] by [Definition], so [@snd ST ST] and
+      [@snd ST (list ident)] are convertible without being syntactically
+      equal, and a [rewrite] with a fact stated in another file can fail to
+      match a goal that prints identically.  [exact] goes through conversion,
+      so the restatement costs one line and makes the rewrites below
+      reliable. *)
+  Lemma simplify_map_snd_here :
+    forall ds cns,
+      Forall singleton_rhs cns ->
+      List.map snd (simplify cns ds) = filter (kept ds) (List.map snd cns).
+  Proof. exact simplify_map_snd. Qed.
 
   (** The target multiset of a constraint list, named so the merges below
       read as one line each. *)
@@ -502,206 +502,6 @@ Import SECMONADNotations.
       rewrite snd_ljoin, cmerge_assoc, (carried_cons t (t2 :: ts)).
       rewrite (cmerge_shuffle (snd t) (snd h) (carried (t2 :: ts))).
       rewrite cmerge_dedup_l. reflexivity.
-  Qed.
-
-  (** * What [simplify] does to the targets
-
-      [subAll cns d st] drops *every* constraint whose target is [d] and
-      substitutes [d] away in the rest, leaving each remaining target
-      untouched.  So [simplify cns ds] is, on targets, a filter: it keeps
-      exactly the constraints whose target is outside [ds].  That is what
-      makes the published set one constraint per output -- the local and
-      minted targets go, however many times they occur. *)
-
-  Definition singleton_rhs (c : SymTypes.constraint) : Prop :=
-    exists b, snd c = [b].
-
-  Definition kept (ds : list ident) (r : list ident) : bool :=
-    match r with
-    | [b] => negb (existsb (fun d => ident_eqb b d) ds)
-    | _   => false
-    end.
-
-  Lemma kept_cons :
-    forall d ds r, kept (d :: ds) r = andb (kept [d] r) (kept ds r).
-  Proof.
-    intros d ds r. destruct r as [|b [|? ?]]; try reflexivity.
-    cbn [kept existsb]. rewrite Bool.orb_false_r, Bool.negb_orb. reflexivity.
-  Qed.
-
-  Lemma filter_filter :
-    forall {A : Type} (f g : A -> bool) l,
-      filter f (filter g l) = filter (fun x => andb (g x) (f x)) l.
-  Proof.
-    intros A f g l. induction l as [|x l IH]; [reflexivity|].
-    cbn [filter]. destruct (g x) eqn:Hg; cbn [filter andb].
-    - destruct (f x); [cbn; now rewrite IH|exact IH].
-    - exact IH.
-  Qed.
-
-  Lemma filter_ext_In :
-    forall {A : Type} (f g : A -> bool) l,
-      (forall x, In x l -> f x = g x) -> filter f l = filter g l.
-  Proof.
-    intros A f g l. induction l as [|x l IH]; intros H; [reflexivity|].
-    cbn [filter]. rewrite (H x (in_eq x l)).
-    rewrite (IH (fun y Hy => H y (in_cons x y l Hy))).
-    reflexivity.
-  Qed.
-
-  Lemma filter_all_true :
-    forall {A : Type} (f : A -> bool) l,
-      (forall x, In x l -> f x = true) -> filter f l = l.
-  Proof.
-    intros A f l. induction l as [|x l IH]; intros H; [reflexivity|].
-    cbn [filter]. rewrite (H x (in_eq x l)).
-    f_equal. apply IH. intros y Hy. exact (H y (in_cons x y l Hy)).
-  Qed.
-
-  Lemma filter_all_false :
-    forall {A : Type} (f : A -> bool) l,
-      (forall x, In x l -> f x = false) -> filter f l = [].
-  Proof.
-    intros A f l. induction l as [|x l IH]; intros H; [reflexivity|].
-    cbn [filter]. rewrite (H x (in_eq x l)).
-    apply IH. intros y Hy. exact (H y (in_cons x y l Hy)).
-  Qed.
-
-  Lemma map_filter_comm :
-    forall {A B : Type} (f : B -> bool) (g : A -> B) l,
-      filter f (List.map g l) = List.map g (filter (fun x => f (g x)) l).
-  Proof.
-    intros A B f g l. induction l as [|x l IH]; [reflexivity|].
-    cbn [List.map filter]. destruct (f (g x)); [cbn; now rewrite IH|exact IH].
-  Qed.
-
-  Lemma findST_None :
-    forall cns d, findST cns d = None -> ~ In [d] (List.map snd cns).
-  Proof.
-    induction cns as [|(st, rhs) cns IH]; intros d H; [intros []|].
-    cbn [List.map snd].
-    destruct rhs as [|d' [|? ?]]; simpl in H.
-    - intros [Hc|Hc]; [discriminate Hc|exact (IH d H Hc)].
-    - destruct (ident_eqb d' d) eqn:He; [discriminate H|].
-      intros [Hc|Hc]; [|exact (IH d H Hc)].
-      injection Hc as Hc. subst d'. now rewrite ident_eqb_refl in He.
-    - intros [Hc|Hc]; [discriminate Hc|exact (IH d H Hc)].
-  Qed.
-
-  Lemma subAll_singleton :
-    forall cns d st',
-      Forall singleton_rhs cns -> Forall singleton_rhs (subAll cns d st').
-  Proof.
-    induction cns as [|(st, rhs) cns IH]; intros d st' H; [constructor|].
-    inversion H as [|c0 cs0 Hc Hcs]; subst.
-    destruct rhs as [|d' [|? ?]]; simpl.
-    - exact (IH d st' Hcs).
-    - destruct (ident_eqb d' d); [exact (IH d st' Hcs)|].
-      constructor; [now exists d'|exact (IH d st' Hcs)].
-    - exact (IH d st' Hcs).
-  Qed.
-
-  Lemma subAll_cons_eq :
-    forall st b cns d st',
-      subAll ((st, [b]) :: cns) d st'
-      = if ident_eqb b d then subAll cns d st'
-        else normalize_constraint (subST st d st') b :: subAll cns d st'.
-  Proof. reflexivity. Qed.
-
-  Lemma kept_single : forall d b, kept [d] [b] = negb (ident_eqb b d).
-  Proof.
-    intros d b. unfold kept. cbn [existsb].
-    now rewrite Bool.orb_false_r.
-  Qed.
-
-  Lemma subAll_map_snd :
-    forall cns d st',
-      Forall singleton_rhs cns ->
-      List.map snd (subAll cns d st') = filter (kept [d]) (List.map snd cns).
-  Proof.
-    induction cns as [|(st, rhs) cns IH]; intros d st' H; [reflexivity|].
-    inversion H as [|c0 cs0 Hc Hcs]; subst.
-    destruct Hc as (b & Hb); cbn [snd] in Hb; subst rhs.
-    rewrite subAll_cons_eq.
-    cbn [List.map snd filter]. rewrite kept_single.
-    destruct (ident_eqb b d); cbn [negb].
-    - exact (IH d st' Hcs).
-    - cbn [List.map snd normalize_constraint]. f_equal. exact (IH d st' Hcs).
-  Qed.
-
-  Lemma simplify_nil_eq : forall cns, simplify cns [] = cns.
-  Proof. reflexivity. Qed.
-
-  Lemma simplify_cons_eq :
-    forall cns d ds,
-      simplify cns (d :: ds)
-      = match findST cns d with
-        | None    => simplify cns ds
-        | Some st => simplify (subAll cns d st) ds
-        end.
-  Proof. reflexivity. Qed.
-
-  Lemma simplify_map_snd :
-    forall ds cns,
-      Forall singleton_rhs cns ->
-      List.map snd (simplify cns ds) = filter (kept ds) (List.map snd cns).
-  Proof.
-    induction ds as [|d ds IH]; intros cns H.
-    - rewrite simplify_nil_eq.
-      symmetry. apply filter_all_true. intros r Hr.
-      apply in_map_iff in Hr as (c & Hc & Hin).
-      rewrite Forall_forall in H. destruct (H c Hin) as (b & Hb).
-      rewrite <- Hc, Hb. reflexivity.
-    - rewrite simplify_cons_eq.
-      destruct (findST cns d) as [st|] eqn:Hfind.
-      + rewrite (IH _ (subAll_singleton cns d st H)).
-        rewrite (subAll_map_snd cns d st H), filter_filter.
-        apply filter_ext_In. intros r _. now rewrite (kept_cons d ds r).
-      + rewrite (IH cns H). symmetry.
-        apply filter_ext_In. intros r Hr. rewrite (kept_cons d ds r).
-        rewrite Forall_forall in H.
-        apply in_map_iff in Hr as (c & Hc & Hin).
-        destruct (H c Hin) as (b & Hb).
-        assert (kept [d] r = true) as Hk.
-        { rewrite <- Hc, Hb. cbn [kept existsb].
-          rewrite Bool.orb_false_r.
-          destruct (ident_eqb b d) eqn:He; [|reflexivity].
-          exfalso. apply ident_eqb_eq in He. subst b.
-          apply (findST_None cns d Hfind).
-          apply in_map_iff. exists c. split; [exact Hb|exact Hin]. }
-        now rewrite Hk.
-  Qed.
-
-  (** The payoff: eliminate every local and minted target and what is left is
-      the outputs, each once. *)
-  Lemma simplify_targets :
-    forall cns ds os ms,
-      Forall singleton_rhs cns ->
-      targets_of (os ++ ms) cns ->
-      incl ms ds ->
-      (forall o, In o os -> ~ In o ds) ->
-      targets_of os (simplify cns ds).
-  Proof.
-    intros cns ds os ms Hsing Htgt Hms Hos.
-    unfold targets_of in Htgt |- *.
-    rewrite (simplify_map_snd ds cns Hsing).
-    eapply Permutation_trans;
-      [apply (Permutation_filter (kept ds) _ _ Htgt)|].
-    rewrite map_filter_comm, <- filter_app.
-    rewrite (filter_all_true _ os), (filter_all_false _ ms).
-    - now rewrite app_nil_r.
-    - intros m Hm. cbn [kept existsb].
-      destruct (existsb (fun d => ident_eqb m d) ds) eqn:He; [reflexivity|].
-      exfalso. assert (In m ds) as Hin by (apply Hms, Hm).
-      assert (existsb (fun d => ident_eqb m d) ds = true) as HT
-          by (apply existsb_exists; exists m;
-              split; [exact Hin|apply ident_eqb_refl]).
-      rewrite He in HT. discriminate.
-    - intros o Ho. cbn [kept existsb].
-      destruct (existsb (fun d => ident_eqb o d) ds) eqn:He;
-        [|reflexivity].
-      exfalso. apply existsb_exists in He as (d & Hd & Heq).
-      apply ident_eqb_eq in Heq. subst d. exact (Hos o Ho Hd).
   Qed.
 
   (** Two stretches of the fresh state that do not overlap mint disjoint
@@ -2199,13 +1999,56 @@ Import SECMONADNotations.
       injection Hd as Hd. subst d. exact (Hx Hdl).
     Qed.
 
+    Lemma NoDup_filter_list :
+      forall {A : Type} (f : A -> bool) (l : list A),
+        NoDup l -> NoDup (filter f l).
+    Proof.
+      intros A f l H. induction H as [|x l Hx Hnd IH]; [constructor|].
+      cbn [filter]. destruct (f x); [|exact IH].
+      constructor; [|exact IH].
+      intros Hin. apply filter_In in Hin as (Hin & _). exact (Hx Hin).
+    Qed.
+
+    Lemma generate_leqns_constraints_len1 :
+      forall ckenv eqs cs s s',
+        generate_leqns_constraints G env base_ty rst_ty ckenv eqs s
+          = OK (cs, s') ->
+        Forall (fun c => List.length (snd c) = 1%nat) cs.
+    Proof.
+      intros ckenv eqs cs s s' Hgen.
+      pose proof (generate_leqns_constraints_singleton ckenv eqs cs s s' Hgen)
+        as Hsing.
+      unfold SIGPROOFS.singleton_targets in Hsing.
+      rewrite Forall_forall in Hsing. apply Forall_forall. intros c Hc.
+      destruct (Hsing c Hc) as (b & Hb).
+      destruct c as (lhs, rhs). cbn [snd] in Hb |- *.
+      rewrite Hb. reflexivity.
+    Qed.
+
+    Lemma kept_spec : forall ds d, kept ds [d] = true <-> ~ In d ds.
+    Proof.
+      intros ds d. unfold kept. split.
+      - intros Hk Hin.
+        assert (existsb (fun d0 => ident_eqb d d0) ds = true) as HT
+            by (apply existsb_exists; exists d;
+                split; [exact Hin|apply ident_eqb_refl]).
+        rewrite HT in Hk. discriminate Hk.
+      - intros Hin.
+        destruct (existsb (fun d0 => ident_eqb d d0) ds) eqn:He;
+          [|reflexivity].
+        exfalso. apply existsb_exists in He as (y & Hy & Heq).
+        apply ident_eqb_eq in Heq. subst y. exact (Hin Hy).
+    Qed.
+
     (** * Item 7, the conclusion: the published constraint set
 
-        [simplify] is handed the locals and the whole minted window, so it
-        drops every constraint that does not target an output -- including the
-        repeats, which is why the raw set did not have to be duplicate-free.
-        What is left is one constraint per output, which is exactly the second
-        half of [signature_good]; the first half follows from it. *)
+        Signature generation collapses before simplifying -- it must, because
+        a Lustre equation can emit two constraints on the same target and
+        [simplify] assumes it does not (see the correction in the plan).
+        After the collapse the targets are distinct, so the set of them
+        determines the multiset; [simplify] then drops every target in
+        [locals ++ minted], and what is left is one constraint per output,
+        which is [signature_good]'s second half. *)
     Theorem generate_leqns_constraints_published :
       forall ckenv eqs cs s s' locals out,
         (forall x b, Env.find x env = Some b -> ~ In b (minted s s')) ->
@@ -2215,24 +2058,55 @@ Import SECMONADNotations.
         (forall o, In o out -> exists x, Env.find x env = Some o) ->
         generate_leqns_constraints G env base_ty rst_ty ckenv eqs s
           = OK (cs, s') ->
-        targets_of out (simplify cs (locals ++ minted s s')).
+        targets_of out (simplify (collapse cs) (locals ++ minted s s')).
     Proof.
       intros ckenv eqs cs s s' locals out Hsep Hl Hperm Hnd Hout Hgen.
       destruct (generate_leqns_constraints_shape ckenv eqs cs s s'
                   (minted s s') (incl_refl _) Hsep Hl Hgen)
         as (ms & Hm & Hi).
-      apply (simplify_targets cs (locals ++ minted s s') out (locals ++ ms)).
-      - exact (generate_leqns_constraints_singleton ckenv eqs cs s s' Hgen).
-      - eapply targets_of_perm; [|exact Hm].
-        eapply Permutation_trans; [apply Permutation_app_tail; exact Hperm|].
-        rewrite <- app_assoc. apply (perm_mid3 locals out ms).
-      - apply incl_app; [apply incl_appl, incl_refl|apply incl_appr, Hi].
-      - intros o Ho Hin. apply in_app_or in Hin as [Hin|Hin].
-        + exact (NoDup_app_In o locals out Hnd Hin Ho).
-        + destruct (Hout o Ho) as (y & Hy). exact (Hsep y o Hy Hin).
+      pose proof (generate_leqns_constraints_len1 ckenv eqs cs s s' Hgen)
+        as Hlen1.
+      destruct (collapse_wf cs Hlen1) as (Hndc & Hlenc).
+      assert (Forall singleton_rhs (collapse cs)) as Hsingc.
+      { rewrite Forall_forall in Hlenc. apply Forall_forall.
+        intros c Hc. specialize (Hlenc c Hc).
+        destruct c as (lhs, rhs). cbn [snd] in Hlenc |- *.
+        destruct rhs as [|b [|? ?]];
+          [discriminate Hlenc|now exists b|discriminate Hlenc]. }
+      unfold targets_of.
+      rewrite (simplify_map_snd_here (locals ++ minted s s') (collapse cs)
+                 Hsingc).
+      apply NoDup_Permutation.
+      - apply NoDup_filter_list. exact Hndc.
+      - apply NoDup_map_singleton. eapply NoDup_app_r; exact Hnd.
+      - intros r. rewrite filter_In, collapse_rhs_in. split.
+        + intros (Hin & Hk).
+          assert (In r (List.map (fun d => [d])
+                          (CALLS.sec_of env (vars_defined eqs) ++ ms))) as Hin'
+              by (eapply Permutation_in; [exact Hm|exact Hin]).
+          apply in_map_iff in Hin' as (d & Hd & Hdin). subst r.
+          apply kept_spec in Hk.
+          apply in_map_iff. exists d. split; [reflexivity|].
+          apply in_app_or in Hdin as [Hdin|Hdin].
+          * assert (In d (locals ++ out)) as Hdlo
+                by (eapply Permutation_in; [exact Hperm|exact Hdin]).
+            apply in_app_or in Hdlo as [Hdlo|Hdlo]; [|exact Hdlo].
+            exfalso. apply Hk, in_or_app. now left.
+          * exfalso. apply Hk, in_or_app. right. exact (Hi d Hdin).
+        + intros Hin. apply in_map_iff in Hin as (o & Ho & Hoin). subst r.
+          split.
+          * eapply Permutation_in; [apply Permutation_sym; exact Hm|].
+            apply in_map_iff. exists o. split; [reflexivity|].
+            apply in_or_app. left.
+            eapply Permutation_in; [apply Permutation_sym; exact Hperm|].
+            apply in_or_app. now right.
+          * apply kept_spec. intros Hin.
+            apply in_app_or in Hin as [Hin|Hin].
+            -- exact (NoDup_app_In o locals out Hnd Hin Hoin).
+            -- destruct (Hout o Hoin) as (y & Hy). exact (Hsep y o Hy Hin).
     Qed.
 
-    (** And the first half: distinct targets, each a single name. *)
+    (** And the first half, which the collapse makes immediate. *)
     Corollary generate_leqns_constraints_published_wf :
       forall ckenv eqs cs s s' locals out,
         (forall x b, Env.find x env = Some b -> ~ In b (minted s s')) ->
@@ -2242,26 +2116,125 @@ Import SECMONADNotations.
         (forall o, In o out -> exists x, Env.find x env = Some o) ->
         generate_leqns_constraints G env base_ty rst_ty ckenv eqs s
           = OK (cs, s') ->
-        wf_constraints (simplify cs (locals ++ minted s s'))
+        wf_constraints (simplify (collapse cs) (locals ++ minted s s'))
         /\ Permutation
-             (List.map snd (simplify cs (locals ++ minted s s')))
+             (List.map snd (simplify (collapse cs) (locals ++ minted s s')))
              (List.map (fun ty => [ty]) out).
     Proof.
       intros ckenv eqs cs s s' locals out Hsep Hl Hperm Hnd Hout Hgen.
-      pose proof (generate_leqns_constraints_published ckenv eqs cs s s'
-                    locals out Hsep Hl Hperm Hnd Hout Hgen) as Hpub.
-      unfold targets_of in Hpub.
-      split; [|exact Hpub]. split.
-      - eapply Permutation_NoDup; [apply Permutation_sym; exact Hpub|].
-        apply NoDup_map_singleton. eapply NoDup_app_r; exact Hnd.
-      - apply Forall_forall. intros c Hc.
-        assert (In (snd c) (List.map (fun ty => [ty]) out)) as Hin
-            by (eapply Permutation_in; [exact Hpub|];
-                apply in_map_iff; exists c; split; [reflexivity|exact Hc]).
-        apply in_map_iff in Hin as (d & Hd & _).
-        destruct c as (lhs, rhs). cbn [snd] in Hd. subst rhs. reflexivity.
+      split.
+      - apply simplify_wf, collapse_wf.
+        exact (generate_leqns_constraints_len1 ckenv eqs cs s s' Hgen).
+      - exact (generate_leqns_constraints_published ckenv eqs cs s s'
+                 locals out Hsep Hl Hperm Hnd Hout Hgen).
     Qed.
 
   End RawTargets.
+
+  (** * Item 6: a generated signature is good
+
+      [signature_good] for one node is item 7 instantiated at that node.  The
+      three list facts it asks for come from the node record and the naming
+      pass: the defined variables are the locals and the outputs by [n_defd],
+      they are distinct by [NoDup_vars_defined_n_eqs], and the separation of
+      declared names from minted ones is
+      [generate_lnode_scoped_env_st_fresh_sec], read at the window. *)
+
+  Lemma Permutation_flat_map :
+    forall {A B : Type} (f : A -> list B) xs ys,
+      Permutation xs ys -> Permutation (flat_map f xs) (flat_map f ys).
+  Proof.
+    intros A B f xs ys H.
+    induction H as [|x l l' H IH|x y l|l l' l'' H1 IH1 H2 IH2].
+    - reflexivity.
+    - cbn [flat_map]. apply Permutation_app_head. exact IH.
+    - cbn [flat_map]. rewrite !app_assoc.
+      apply Permutation_app_tail, Permutation_app_comm.
+    - etransitivity; [exact IH1|exact IH2].
+  Qed.
+
+  Lemma sec_of_Permutation :
+    forall env xs ys,
+      Permutation xs ys ->
+      Permutation (CALLS.sec_of env xs) (CALLS.sec_of env ys).
+  Proof.
+    intros env xs ys H. unfold CALLS.sec_of. now apply Permutation_flat_map.
+  Qed.
+
+  (** The arity half of [wl_equation], which is the one item 7's split rule
+      needs; the other half is about the expressions. *)
+  Lemma wl_node_arity :
+    forall (P : global) (n : node),
+      wl_node P n ->
+      Forall (fun eq => length (fst eq) = length (LSyn.annots (snd eq)))
+        n.(n_eqs).
+  Proof.
+    intros P n Hwl. unfold wl_node in Hwl.
+    rewrite Forall_forall in Hwl. apply Forall_forall.
+    intros eq Hin. destruct eq as (xs, es). cbn [fst snd].
+    destruct (Hwl (xs, es) Hin) as (_ & Hlen). exact Hlen.
+  Qed.
+
+  (** The naming pass allocates below its final state and the generator mints
+      from there upwards, so a declared security name is never a minted one.
+      Both namespaces are [sec]: the separation is by index. *)
+  Lemma env_apart_from_minted :
+    forall ns envs names stN name env s s',
+      SECLNG.generate_lnode_scoped_env_st ns = OK (envs, names, stN) ->
+      find_node_env name envs = Some env ->
+      sec_le stN s ->
+      forall x b, Env.find x env = Some b -> ~ In b (minted s s').
+  Proof.
+    intros ns envs names stN name env s s' Hgen Henv Hle x b Hb Hin.
+    apply minted_spec in Hin as (j & Hsj & _ & Hbj).
+    exact (SECLNG.generate_lnode_scoped_env_st_fresh_sec ns envs names stN
+             name env x b j Hgen Henv Hb (Pos.le_trans stN s j Hle Hsj) Hbj).
+  Qed.
+
+  Theorem generate_lnode_sig_good :
+    forall (G : secglobal) (P : global) (n : node) env aux sg st0 st1,
+      env_injective env ->
+      wl_node P n ->
+      (forall x b, Env.find x env = Some b -> ~ In b (minted st0 st1)) ->
+      generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
+      signature_good sg.
+  Proof.
+    intros G P n env aux sg st0 st1 Hinj Hwl Hsep Hsig.
+    destruct (lnode_sig_inv env G n aux sg st0 st1 Hsig)
+      as (ci & ri & cty & rty & inp & out & locals & cns
+          & _ & _ & _ & _ & Hout & Hloc & Hcns & ?); subst sg.
+    assert (get_mappings (List.map fst n.(n_vars)) env = Some locals) as Hgl
+        by (eapply get_mappings_from_node_eq; exact Hloc).
+    assert (get_mappings (List.map fst n.(n_out)) env = Some out) as Hgo
+        by (eapply get_mappings_from_node_eq; exact Hout).
+    assert (locals = CALLS.sec_of env (List.map fst n.(n_vars))) as Hlo
+        by (eapply get_mappings_from_node_sec_of; exact Hloc).
+    assert (out = CALLS.sec_of env (List.map fst n.(n_out))) as Hou
+        by (eapply get_mappings_from_node_sec_of; exact Hout).
+    (** the defined variables are the locals and the outputs *)
+    assert (Permutation (CALLS.sec_of env (vars_defined n.(n_eqs)))
+                        (locals ++ out)) as Hperm.
+    { rewrite Hlo, Hou, <- sec_of_app, <- map_app.
+      apply sec_of_Permutation. exact (n_defd n). }
+    (** and they are distinct, which [env] injectivity carries to the names *)
+    assert (NoDup (List.map fst n.(n_vars) ++ List.map fst n.(n_out)))
+      as Hndv.
+    { rewrite <- map_app.
+      eapply Permutation_NoDup; [|exact (NoDup_vars_defined_n_eqs n)].
+      exact (n_defd n). }
+    assert (NoDup (locals ++ out)) as Hnd.
+    { eapply get_mappings_nodup_gen; [exact Hndv|exact Hinj|].
+      exact (get_mappings_app (List.map fst n.(n_vars))
+               (List.map fst n.(n_out)) env locals out Hgl Hgo). }
+    assert (forall o, In o out -> exists x, Env.find x env = Some o) as Hoe.
+    { intros o Ho.
+      destruct (get_mappings_In (List.map fst n.(n_out)) env out o Hgo Ho)
+        as (x & _ & Hx).
+      now exists x. }
+    unfold signature_good. cbn [s_constraints s_out].
+    exact (generate_leqns_constraints_published_wf G env cty rty
+             (lnode_clock_env n) n.(n_eqs) cns st0 st1 locals out
+             Hsep (wl_node_arity P n Hwl) Hperm Hnd Hoe Hcns).
+  Qed.
 
 End SecLusTypingCorrectness.

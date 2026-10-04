@@ -2580,7 +2580,7 @@ Import UNN.Fresh.Tactics.
                      s_out   := out;
                      s_reset := rst_type;
                      s_clk   := clk_type;
-                     s_constraints := simplify cns (locals ++ minted st st') |}.
+                     s_constraints := simplify (collapse cns) (locals ++ minted st st') |}.
     Proof.
       intros G n aux sg st st' H.
       unfold generate_lnode_sig in H.
@@ -2606,7 +2606,8 @@ Import UNN.Fresh.Tactics.
       assert (sg = {| s_name := n.(n_name); s_in := inp; s_out := out;
                       s_reset := rst_type; s_clk := clk_type;
                       s_constraints :=
-                        simplify cns (locals ++ minted st s7) |}
+                        simplify (collapse cns)
+                          (locals ++ minted st s7) |}
               /\ st' = s7) as (? & ?)
           by (inversion H; auto); subst sg; subst st'.
       exists clk_id, rst_id, clk_type, rst_type, inp, out, locals, cns.
@@ -3034,7 +3035,7 @@ Import UNN.Fresh.Tactics.
         (forall ce ct1,
             generate_leqns_constraints G env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) st0 = OK (ce, ct1) ->
-            wf_constraints ce) ->
+            Forall (fun c => List.length (snd c) = 1%nat) ce) ->
         (** and what it eliminates lies outside the interface *)
         (forall locals cns ct1,
             get_mappings_from_node n.(n_vars) env = Some locals ->
@@ -3078,9 +3079,10 @@ Import UNN.Fresh.Tactics.
       cbn [s_constraints].
       (** and the entailment goes through both eliminations *)
       eapply preserves_on_simplify;
-        [exact (Hwf cs1 st1 Hcs1)
+        [apply collapse_wf; exact (Hwf cs1 st1 Hcs1)
         |exact (Hdisj l1 cs1 st1 Hl1 Hcs1)
-        |exact (Hpres cs1 cs2 st1 st1' Hcs1 Hcs2)].
+        |apply preserves_on_collapse2;
+         exact (Hpres cs1 cs2 st1 st1' Hcs1 Hcs2)].
     Qed.
 
 
@@ -3125,7 +3127,7 @@ Import UNN.Fresh.Tactics.
         (forall ce ct1,
             generate_leqns_constraints G1 env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) st0 = OK (ce, ct1) ->
-            wf_constraints ce) ->
+            Forall (fun c => List.length (snd c) = 1%nat) ce) ->
         (** and what it eliminates lies outside the interface *)
         (forall locals cns ct1,
             get_mappings_from_node n.(n_vars) env = Some locals ->
@@ -3173,9 +3175,10 @@ Import UNN.Fresh.Tactics.
                   (lnode_clock_env n) n.(n_eqs) cs1 st0 st1 Hacc Hcs1)
         as (cs1' & Hcs1' & Hce).
       eapply preserves_on_simplify;
-        [exact (Hwf cs1 st1 Hcs1)
+        [apply collapse_wf; exact (Hwf cs1 st1 Hcs1)
         |exact (Hdisj l1 cs1 st1 Hl1 Hcs1)
         |].
+      apply preserves_on_collapse2.
       eapply preserves_on_trans;
         [apply preserves_on_from_entailment; exact Hce
         |exact (Hpres cs1' cs2 st1 st1' Hcs1' Hcs2)].
@@ -3225,7 +3228,7 @@ Import UNN.Fresh.Tactics.
         (forall ce ct1,
             generate_leqns_constraints G1 env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS = OK (ce, ct1) ->
-            wf_constraints ce) ->
+            Forall (fun c => List.length (snd c) = 1%nat) ce) ->
         (** and what it eliminates lies outside the interface *)
         (forall locals cns ct1,
             get_mappings_from_node n.(n_vars) env = Some locals ->
@@ -3278,9 +3281,10 @@ Import UNN.Fresh.Tactics.
                   (lnode_clock_env n) n.(n_eqs) cs1 stS stS1 Hw Hcs1)
         as (cs1' & Hcs1' & Hce).
       eapply preserves_on_simplify;
-        [exact (Hwf cs1 stS1 Hcs1)
+        [apply collapse_wf; exact (Hwf cs1 stS1 Hcs1)
         |exact (Hdisj l1 cs1 stS1 Hl1 Hcs1)
         |].
+      apply preserves_on_collapse2.
       eapply preserves_on_trans;
         [apply preserves_on_from_entailment; exact Hce
         |exact (Hpres cs1' cs2 stS1 stS Hcs1' Hcs2s)].
@@ -3341,7 +3345,7 @@ Import UNN.Fresh.Tactics.
         (forall ce ct1,
             generate_leqns_constraints accS env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS0 = OK (ce, ct1) ->
-            wf_constraints ce) ->
+            Forall (fun c => List.length (snd c) = 1%nat) ce) ->
         (forall locals cns ct1,
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints accS env base_ty rst_ty
@@ -3446,7 +3450,7 @@ Import UNN.Fresh.Tactics.
         (forall ce ct1,
             generate_leqns_constraints accS env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS0 = OK (ce, ct1) ->
-            wf_constraints ce) ->
+            Forall (fun c => List.length (snd c) = 1%nat) ce) ->
         (forall locals cns ct1,
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints accS env base_ty rst_ty

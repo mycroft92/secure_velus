@@ -2236,7 +2236,7 @@ Import UNN.Fresh.Tactics.
         (forall ce ct1,
             generate_leqns_constraints G1 env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS = OK (ce, ct1) ->
-            wf_constraints ce) ->
+            Forall (fun c => List.length (snd c) = 1%nat) ce) ->
         (forall locals cns ct1,
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints G1 env base_ty rst_ty
@@ -2285,11 +2285,12 @@ Import UNN.Fresh.Tactics.
       destruct (generate_leqns_constraints_weaken G1 G2 env base_ty rst_ty
                   (lnode_clock_env n) n.(n_eqs) cs1 stS stS1 Hweak Hcs1)
         as (cs1' & Hcs1' & Hentails).
-      apply (preserves_on_simplify scope cs1 cs2
+      apply (preserves_on_simplify scope (collapse cs1) (collapse cs2)
                (l1 ++ minted stS stS1) (l2 ++ minted stT stT1)).
-      - exact (Hwf cs1 stS1 Hcs1).
+      - apply collapse_wf. exact (Hwf cs1 stS1 Hcs1).
       - exact (Hdisj l1 cs1 stS1 Hl1 Hcs1).
-      - apply (preserves_on_trans scope cs1 cs1' cs2).
+      - apply preserves_on_collapse2.
+        apply (preserves_on_trans scope cs1 cs1' cs2).
         + apply (preserves_on_from_entailment scope cs1 cs1').
           exact Hentails.
         + exact (Hpres cs1' cs2 stS1 stS Hcs1' Hcs2s).
@@ -3242,7 +3243,7 @@ Import UNN.Fresh.Tactics.
         (forall ce ct1,
             generate_leqns_constraints accS env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS0 = OK (ce, ct1) ->
-            wf_constraints ce) ->
+            Forall (fun c => List.length (snd c) = 1%nat) ce) ->
         (forall locals cns ct1,
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints accS env base_ty rst_ty

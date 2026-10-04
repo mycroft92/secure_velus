@@ -19,6 +19,7 @@
     satisfiability-preserving ones. *)
 
 From Coq Require Import List.
+From Coq Require Import Sorting.Permutation.
 From Coq Require Import String.
 
 From Velus Require Import Common.
@@ -1314,6 +1315,234 @@ Module Type SECLTYPING
   Definition minted (st0 st1 : sec_state) : list ident :=
     sec_span st0 (Pos.to_nat st1 - Pos.to_nat st0).
 
+  (** [filter] respects permutations.  Not in the standard library. *)
+  Lemma Permutation_filter :
+    forall {A : Type} (f : A -> bool) (l1 l2 : list A),
+      Permutation l1 l2 -> Permutation (filter f l1) (filter f l2).
+  Proof.
+    intros A f l1 l2 H. induction H as [| x l l' H IH
+                                        | x y l | l l' l'' H1 IH1 H2 IH2].
+    - reflexivity.
+    - simpl. destruct (f x); [apply perm_skip|]; exact IH.
+    - simpl. destruct (f x) eqn:Hx, (f y) eqn:Hy; try reflexivity.
+      apply perm_swap.
+    - etransitivity; [exact IH1|exact IH2].
+  Qed.
+
+  (** * What [simplify] does to the targets
+
+      [subAll cns d st] drops *every* constraint whose target is [d] and
+      substitutes [d] away in the rest, leaving each remaining target
+      untouched.  So [simplify cns ds] is, on targets, a filter: it keeps
+      exactly the constraints whose target is outside [ds].  That is what
+      makes the published set one constraint per output -- the local and
+      minted targets go, however many times they occur. *)
+
+  Definition singleton_rhs (c : SymTypes.constraint) : Prop :=
+    exists b, snd c = [b].
+
+  Definition kept (ds : list ident) (r : list ident) : bool :=
+    match r with
+    | [b] => negb (existsb (fun d => ident_eqb b d) ds)
+    | _   => false
+    end.
+
+  Lemma kept_cons :
+    forall d ds r, kept (d :: ds) r = andb (kept [d] r) (kept ds r).
+  Proof.
+    intros d ds r. destruct r as [|b [|? ?]]; try reflexivity.
+    cbn [kept existsb]. rewrite Bool.orb_false_r, Bool.negb_orb. reflexivity.
+  Qed.
+
+  Lemma filter_filter :
+    forall {A : Type} (f g : A -> bool) l,
+      filter f (filter g l) = filter (fun x => andb (g x) (f x)) l.
+  Proof.
+    intros A f g l. induction l as [|x l IH]; [reflexivity|].
+    cbn [filter]. destruct (g x) eqn:Hg; cbn [filter andb].
+    - destruct (f x); [cbn; now rewrite IH|exact IH].
+    - exact IH.
+  Qed.
+
+  Lemma filter_ext_In :
+    forall {A : Type} (f g : A -> bool) l,
+      (forall x, In x l -> f x = g x) -> filter f l = filter g l.
+  Proof.
+    intros A f g l. induction l as [|x l IH]; intros H; [reflexivity|].
+    cbn [filter]. rewrite (H x (in_eq x l)).
+    rewrite (IH (fun y Hy => H y (in_cons x y l Hy))).
+    reflexivity.
+  Qed.
+
+  Lemma filter_all_true :
+    forall {A : Type} (f : A -> bool) l,
+      (forall x, In x l -> f x = true) -> filter f l = l.
+  Proof.
+    intros A f l. induction l as [|x l IH]; intros H; [reflexivity|].
+    cbn [filter]. rewrite (H x (in_eq x l)).
+    f_equal. apply IH. intros y Hy. exact (H y (in_cons x y l Hy)).
+  Qed.
+
+  Lemma filter_all_false :
+    forall {A : Type} (f : A -> bool) l,
+      (forall x, In x l -> f x = false) -> filter f l = [].
+  Proof.
+    intros A f l. induction l as [|x l IH]; intros H; [reflexivity|].
+    cbn [filter]. rewrite (H x (in_eq x l)).
+    apply IH. intros y Hy. exact (H y (in_cons x y l Hy)).
+  Qed.
+
+  Lemma map_filter_comm :
+    forall {A B : Type} (f : B -> bool) (g : A -> B) l,
+      filter f (List.map g l) = List.map g (filter (fun x => f (g x)) l).
+  Proof.
+    intros A B f g l. induction l as [|x l IH]; [reflexivity|].
+    cbn [List.map filter]. destruct (f (g x)); [cbn; now rewrite IH|exact IH].
+  Qed.
+
+  Lemma findST_None :
+    forall cns d, findST cns d = None -> ~ In [d] (List.map snd cns).
+  Proof.
+    induction cns as [|(st, rhs) cns IH]; intros d H; [intros []|].
+    cbn [List.map snd].
+    destruct rhs as [|d' [|? ?]]; simpl in H.
+    - intros [Hc|Hc]; [discriminate Hc|exact (IH d H Hc)].
+    - destruct (ident_eqb d' d) eqn:He; [discriminate H|].
+      intros [Hc|Hc]; [|exact (IH d H Hc)].
+      injection Hc as Hc. subst d'. now rewrite ident_eqb_refl in He.
+    - intros [Hc|Hc]; [discriminate Hc|exact (IH d H Hc)].
+  Qed.
+
+  Lemma subAll_singleton :
+    forall cns d st',
+      Forall singleton_rhs cns -> Forall singleton_rhs (subAll cns d st').
+  Proof.
+    induction cns as [|(st, rhs) cns IH]; intros d st' H; [constructor|].
+    inversion H as [|c0 cs0 Hc Hcs]; subst.
+    destruct rhs as [|d' [|? ?]]; simpl.
+    - exact (IH d st' Hcs).
+    - destruct (ident_eqb d' d); [exact (IH d st' Hcs)|].
+      constructor; [now exists d'|exact (IH d st' Hcs)].
+    - exact (IH d st' Hcs).
+  Qed.
+
+  Lemma subAll_cons_eq :
+    forall st b cns d st',
+      subAll ((st, [b]) :: cns) d st'
+      = if ident_eqb b d then subAll cns d st'
+        else normalize_constraint (subST st d st') b :: subAll cns d st'.
+  Proof. reflexivity. Qed.
+
+  Lemma kept_single : forall d b, kept [d] [b] = negb (ident_eqb b d).
+  Proof.
+    intros d b. unfold kept. cbn [existsb].
+    now rewrite Bool.orb_false_r.
+  Qed.
+
+  Lemma subAll_map_snd :
+    forall cns d st',
+      Forall singleton_rhs cns ->
+      List.map snd (subAll cns d st') = filter (kept [d]) (List.map snd cns).
+  Proof.
+    induction cns as [|(st, rhs) cns IH]; intros d st' H; [reflexivity|].
+    inversion H as [|c0 cs0 Hc Hcs]; subst.
+    destruct Hc as (b & Hb); cbn [snd] in Hb; subst rhs.
+    rewrite subAll_cons_eq.
+    cbn [List.map snd filter]. rewrite kept_single.
+    destruct (ident_eqb b d); cbn [negb].
+    - exact (IH d st' Hcs).
+    - cbn [List.map snd normalize_constraint]. f_equal. exact (IH d st' Hcs).
+  Qed.
+
+  Lemma simplify_nil_eq : forall cns, simplify cns [] = cns.
+  Proof. reflexivity. Qed.
+
+  Lemma simplify_cons_eq :
+    forall cns d ds,
+      simplify cns (d :: ds)
+      = match findST cns d with
+        | None    => simplify cns ds
+        | Some st => simplify (subAll cns d st) ds
+        end.
+  Proof. reflexivity. Qed.
+
+  Lemma simplify_map_snd :
+    forall ds cns,
+      Forall singleton_rhs cns ->
+      List.map snd (simplify cns ds) = filter (kept ds) (List.map snd cns).
+  Proof.
+    induction ds as [|d ds IH]; intros cns H.
+    - rewrite simplify_nil_eq.
+      symmetry. apply filter_all_true. intros r Hr.
+      apply in_map_iff in Hr as (c & Hc & Hin).
+      rewrite Forall_forall in H. destruct (H c Hin) as (b & Hb).
+      rewrite <- Hc, Hb. reflexivity.
+    - rewrite simplify_cons_eq.
+      destruct (findST cns d) as [st|] eqn:Hfind.
+      + rewrite (IH _ (subAll_singleton cns d st H)).
+        rewrite (subAll_map_snd cns d st H), filter_filter.
+        apply filter_ext_In. intros r _. now rewrite (kept_cons d ds r).
+      + rewrite (IH cns H). symmetry.
+        apply filter_ext_In. intros r Hr. rewrite (kept_cons d ds r).
+        rewrite Forall_forall in H.
+        apply in_map_iff in Hr as (c & Hc & Hin).
+        destruct (H c Hin) as (b & Hb).
+        assert (kept [d] r = true) as Hk.
+        { rewrite <- Hc, Hb. cbn [kept existsb].
+          rewrite Bool.orb_false_r.
+          destruct (ident_eqb b d) eqn:He; [|reflexivity].
+          exfalso. apply ident_eqb_eq in He. subst b.
+          apply (findST_None cns d Hfind).
+          apply in_map_iff. exists c. split; [exact Hb|exact Hin]. }
+        now rewrite Hk.
+  Qed.
+
+  (** On the targets, [simplify] is a filter, so two constraint lists with
+      the same targets up to order still have the same targets up to order
+      after it.  Leg A needs exactly this: the Lustre signature publishes the
+      collapse of its raw list and the NLustre one publishes its raw list, and
+      the two raw lists agree on targets only up to order. *)
+  Lemma simplify_rhs_perm :
+    forall cns1 cns2 ds,
+      Forall singleton_rhs cns1 ->
+      Forall singleton_rhs cns2 ->
+      Permutation (List.map snd cns1) (List.map snd cns2) ->
+      Permutation (List.map snd (simplify cns1 ds))
+                  (List.map snd (simplify cns2 ds)).
+  Proof.
+    intros cns1 cns2 ds Hs1 Hs2 Hperm.
+    rewrite (simplify_map_snd ds cns1 Hs1), (simplify_map_snd ds cns2 Hs2).
+    apply Permutation_filter. exact Hperm.
+  Qed.
+
+  (** And the collapse is a permutation on the targets when there were no
+      duplicates to begin with: both lists have the same elements by
+      [collapse_rhs_in] and both are duplicate-free. *)
+  Lemma collapse_rhs_perm :
+    forall cns,
+      NoDup (List.map snd cns : list (list ident)) ->
+      Permutation (List.map snd (SymTypes.collapse cns)) (List.map snd cns).
+  Proof.
+    intros cns Hnd.
+    apply NoDup_Permutation;
+      [apply collapse_rhs_nodup|exact Hnd|].
+    intros r. apply collapse_rhs_in.
+  Qed.
+
+  Lemma collapse_singleton_rhs :
+    forall cns,
+      Forall (fun c => List.length (snd c) = 1%nat) cns ->
+      Forall singleton_rhs (SymTypes.collapse cns).
+  Proof.
+    intros cns Hlen.
+    destruct (collapse_wf cns Hlen) as (_ & Hlenc).
+    rewrite Forall_forall in Hlenc. apply Forall_forall.
+    intros c Hc. specialize (Hlenc c Hc).
+    destruct c as (lhs, rhs). cbn [snd] in Hlenc |- *.
+    destruct rhs as [|b [|? ?]];
+      [discriminate Hlenc|now exists b|discriminate Hlenc].
+  Qed.
+
   (** The declared clocks, built the way [to_node] builds them. *)
   Definition lnode_clock_env (n : node) : Env.t (type * clock) :=
     Env.adds' n.(n_vars) (Env.adds' n.(n_in) (Env.from_list n.(n_out))).
@@ -1337,7 +1566,7 @@ Module Type SECLTYPING
                s_out   := out;
                s_reset := rst_type;
                s_clk   := clk_type;
-               s_constraints := simplify cs (locals ++ minted st0 st1) |}, st1)
+               s_constraints := simplify (collapse cs) (locals ++ minted st0 st1) |}, st1)
     end.
 
   Definition generate_lnode_sig_scoped_env (G : secglobal) (n : node)

@@ -4525,6 +4525,29 @@ Module SecLusUnnestingBase
       [generate_lnode_sig] arranges, since it eliminates the locals and the
       minted names and the scope is the interface. *)
 
+  (** [collapse] is precision-neutral on *both* sides.  [SecTypes.v] has the
+      target half; the source half is the same two lines, and signature
+      generation needs both -- it collapses before simplifying, so the pair
+      of raw constraint sets a preservation result speaks about and the pair
+      the signatures publish differ by a collapse on each side. *)
+  Lemma preserves_on_collapse_l :
+    forall scope c t,
+      preserves_on scope c t ->
+      preserves_on scope (SymTypes.collapse c) t.
+  Proof.
+    intros scope c t Hp dlt Hsat.
+    exact (Hp dlt (proj1 (collapse_satisfaction dlt c) Hsat)).
+  Qed.
+
+  Corollary preserves_on_collapse2 :
+    forall scope c t,
+      preserves_on scope c t ->
+      preserves_on scope (SymTypes.collapse c) (SymTypes.collapse t).
+  Proof.
+    intros scope c t Hp.
+    apply preserves_on_collapse, preserves_on_collapse_l, Hp.
+  Qed.
+
   Lemma preserves_on_simplify :
     forall scope ce cet Ds Ds',
       wf_constraints ce ->

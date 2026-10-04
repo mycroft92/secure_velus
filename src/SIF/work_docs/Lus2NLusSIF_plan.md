@@ -726,6 +726,170 @@ That is carried as
 `Forall (fun eq => length (fst eq) = length (annots (snd eq))) eqs` and is
 for item 3 to discharge at the instantiation site.
 
+### CORRECTION 2026-10-04: `generate_lnode_sig` must collapse before simplifying
+
+Item 7 was supposed to discharge this premise of
+`unnest_node_signatures_preserved_decoupled` and
+`unnest_node_step_streams`:
+
+    (forall ce ct1,
+       generate_leqns_constraints accS env base_ty rst_ty
+         (lnode_clock_env n) n.(n_eqs) stS0 = OK (ce, ct1) ->
+       wf_constraints ce)
+
+`wf_constraints` on the **raw** set.  It is **not satisfiable**, by the same
+counterexample that killed the `NoDup` conjunct:
+
+    x, y = (0, 0) fby f(z)        (* f returns two streams *)
+
+Both streams of the `Efby` carry the one instantiated block
+(`carried_uniform`), and `generate_lvars_constraints` appends one
+`lconstrain` per defined variable, so `f`'s two constraints are emitted
+twice.  And the premise is load-bearing, not incidental: it reaches
+`preserves_on_simplify` and then `simplifyRel_complete`, which needs it,
+because `subAll` drops *every* constraint targeting an eliminated name while
+substituting only the first -- so with a duplicate target information is
+lost and the published signature is not a faithful summary of the raw one.
+
+The repair was already in the tree, one language down.  `SecObcTyping.v`
+publishes `simplify (collapse (craw_step ++ craw_reset))`, for exactly this
+reason ("several constraints may target the same identifier, for instance
+the two branches of a compiled merge").  Lustre is in the same position and
+NLustre is not, which is why only NLustre got away without it.
+
+**Done 2026-10-04.**  `generate_lnode_sig` now publishes
+`simplify (collapse cs) (locals ++ minted st0 st1)`, and:
+
+  * `preserves_on_collapse_l` and `preserves_on_collapse2`
+    (`SecLusUnnestingBase.v`) -- `collapse` is precision-neutral on *both*
+    sides; `SecTypes.v` had only the target half;
+  * the `wf_constraints ce` premise is **gone** from the five node theorems
+    in `SecLusUnnestingNodes.v` and the two in `SecLusNormFby.v`, replaced
+    by `Forall (fun c => List.length (snd c) = 1%nat) ce` -- which is 7a, so
+    it is provable (`generate_leqns_constraints_len1`) rather than assumed.
+    `collapse_wf` turns it into `wf_constraints (collapse ce)` at the four
+    `preserves_on_simplify` sites;
+  * item 7's capstone is restated over the collapse.  After it the targets
+    are distinct, so the *set* of them -- which is all `collapse_rhs_in`
+    gives -- determines the multiset, and the conclusion comes by
+    `NoDup_Permutation` instead of multiset arithmetic.
+
+  * **Leg A had to follow, and the fix is to weaken an equality to a
+    permutation.**  `to_node_sig_preserved` concluded
+    `map snd lsig.(s_constraints) = map snd nsig.(s_constraints)`, an
+    equality, and `collapse` reorders.  But its only consumer is
+    `signature_good_of_rhs`, and `signature_good` is `NoDup` plus a
+    `Permutation` -- both order-blind.  So the conclusion is now a
+    `Permutation`, with `wf_constraints_of_rhs_perm` and
+    `signature_good_of_rhs_perm` beside the equality versions,
+    `entails_simplify_collapse` for the bridge (`collapse_satisfaction` is an
+    equivalence, so only the list `simplify_complete` is applied to changes),
+    and two new lemmas in `SecLusUnnestingBase.v`: `simplify_rhs_perm` (on
+    targets `simplify` is a filter, and `Permutation_filter` does the rest)
+    and `collapse_rhs_perm` (with no duplicates to start with, `collapse`
+    permutes the targets -- same elements by `collapse_rhs_in`, both
+    duplicate-free).  `NoDup` of the Lustre raw targets, which that needs, is
+    free on this path: the NLustre side's `wf_constraints` plus
+    `entails_rhs`.
+
+    The target/filter machinery (`kept`, `subAll_map_snd`,
+    `simplify_map_snd`, `Permutation_filter`) moved from
+    `SecLusTypingCorrectness.v` to **`SecLTyping.v`**.  The first move, to
+    `SecLusUnnestingBase.v`, was wrong: Leg A does not take
+    `SECLUSUNNESTINGBASE` as a parameter and so cannot see it.  `SecLTyping.v`
+    is the lowest file both sides already import, and only the Lustre-leg
+    files require it, so the rebuild set is the same thirteen files either
+    way.
+
+  *Two Coq frictions worth recording, both from the same cause.*  `length`
+  in `SecLusUnnestingNodes.v` resolves to `String.length`, so a premise
+  about a constraint's target must say `List.length`.  And `ST` is
+  `list ident` by `Definition`, so `@snd ST ST` and `@snd ST (list ident)`
+  are convertible but not syntactically equal: a `rewrite` between two
+  separately-stated facts about `map snd cs` can fail with "found no
+  subterm" even though both print identically.  Two fixes, both used here:
+  inline the step rather than naming it with `assert`, so only one occurrence
+  is elaborated; and, when the fact has to come from another file, restate it
+  locally and prove the restatement by `exact`, which goes through conversion
+  (`simplify_map_snd_here`).
+
+### DONE 2026-10-04: item 6's `signature_good`
+
+`generate_lnode_sig_good` (`SecLusTypingCorrectness.v`): item 7's capstone
+instantiated at one node.  Its three list facts come from the node record and
+the naming pass, and all three were already available:
+
+  * `Permutation (sec_of env (vars_defined n_eqs)) (locals ++ out)` from
+    `n_defd` through `sec_of_Permutation` (new, from a `Permutation_flat_map`
+    that is not in the standard library) and `get_mappings_from_node_sec_of`;
+  * `NoDup (locals ++ out)` from `NoDup_vars_defined_n_eqs` carried along
+    `n_defd` and then through `env` injectivity by
+    `get_mappings_nodup_gen`;
+  * the arity list by `wl_node_arity` (new) -- `wl_equation`'s second
+    component *is* item 7's split premise, so item 3 pays for it here with
+    one line;
+  * and the separation by `env_apart_from_minted` (new), which reads
+    `generate_lnode_scoped_env_st_fresh_sec` at the window: the naming pass
+    allocates below its final state and the generator mints from there up, so
+    the index decides, as the plan predicted.
+
+What remains of item 6 is `signature_scoped`, `NoDup (signature_scope ...)`,
+`generate_lnode_sig_instantiations` and `sig_rooted`.  The first of those is
+no longer a template copy; see the finding below.
+
+### FINDING 2026-10-04: `signature_scoped` needs "a minted name that occurs is targeted"
+
+Measured rather than estimated, by reading what `simplify_scoped`
+(`SymTypes.v:1053`) actually consumes:
+
+    Theorem simplify_scoped:
+      forall scope ds cns,
+        NoDup ds ->
+        constraints_scoped (scope ++ ds) cns ->
+        (forall d, In d ds -> In [d] (map snd cns)) ->
+        constraints_scoped scope (simplify cns ds).
+
+The third premise is the one with content.  With
+`ds = locals ++ minted st0 st1`, it says **every** name in the whole minted
+window is the target of a constraint.  That is the *converse* of item 7,
+which gives only `incl ms (minted s s')`, and it does not follow from it.
+
+It is not idle: if a `d` in `ds` has no constraint, `findST` returns `None`,
+`simplify` skips it, and any occurrence of `d` in another constraint's
+*source* survives -- so `signature_scoped` would be false, not merely
+unproved.  Conversely, if `d` occurs nowhere the skip is harmless.  So the
+invariant that actually matters is the dichotomy
+
+    a minted name either is the target of a constraint, or occurs nowhere
+
+and it is true, for a reason worth writing down: a call's result name `o`
+appears in a source only through its stream type `([o], held)`, and `held`
+is the instantiated block, which contains `o`'s own constraint.  So wherever
+`o` appears as a source its constraint is there too.  The cases where the
+carried set is *discarded* -- `carried_uniform` on a call with no outputs,
+and `carried_map_ljoin` on an `Eite` whose branches have no streams -- are
+exactly the cases where the stream type is never used either, so the name
+does not occur at all.
+
+Two routes, and the first is the one to take:
+
+  1. **Prove the dichotomy** and feed it to `simplify_scoped` through a
+     weakened variant proved on the Lustre side (`SecLusUnnestingBase.v`),
+     whose `findST = None` branch discharges from absence.  Needs
+     `subAll_absent` (a name absent from `cns` is absent from
+     `subAll cns d st`, since `st` comes from `cns`).  No restriction on
+     programs.
+  2. Prove plain coverage (`In d (minted s s') -> In [d] (map snd cs)`) and
+     add a premise ruling out zero-stream subexpressions.  Cheaper, but it
+     buys a hypothesis about programs, and today's two corrections were both
+     premises that could not be met -- so prefer 1.
+
+Either way the induction needs `carried_map_ljoin_eq` back: it was proved
+for the superseded expression-level draft and deleted with it.  Also needed,
+and not yet present: `minted_cons`, `minted_split`, `minted_NoDup`
+(for `NoDup ds`), and `fresh_idents_window` (`fresh_idents n s = OK (xs, s')
+-> xs = minted s s'`), all straightforward from `sec_span_spec`.
+
 *6* -- `signature_good` for a node is now
 `generate_leqns_constraints_published_wf` instantiated at that node: what is
 left is to supply its three node-level premises from the node record and the

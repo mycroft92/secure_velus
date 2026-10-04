@@ -14,6 +14,7 @@
 From Coq Require Import List.
 From Coq Require Import String.
 From Coq Require Import Lia.
+From Coq Require Import Sorting.Permutation.
 
 From Velus Require Import Common.
 From Velus Require Import Environment.
@@ -1060,7 +1061,8 @@ Module Type SECLUSNLUSTRANSLATION
                      s_out   := out;
                      s_reset := rst_type;
                      s_clk   := clk_type;
-                     s_constraints := simplify cns (locals ++ minted st st') |}.
+                     s_constraints :=
+                       simplify (collapse cns) (locals ++ minted st st') |}.
   Proof.
     intros G n env aux_names lsig st st' H.
     unfold generate_lnode_sig in H.
@@ -1162,6 +1164,87 @@ Module Type SECLUSNLUSTRANSLATION
       destruct ys as [|y' ys']; [|simpl; eapply IH; eauto].
       simpl. destruct (ident_eqb y d); [eapply IH; eauto|].
       simpl. f_equal. eapply IH; eauto.
+  Qed.
+
+  (** The Lustre signature publishes the *collapse* of its raw constraints --
+      it must, since a Lustre equation can emit two constraints on one target
+      -- so the bridge to the NLustre signature crosses a collapse as well as
+      a [simplify].  [collapse_satisfaction] is an equivalence, so the
+      recovery step is unchanged; only the list [simplify_complete] is applied
+      to differs. *)
+  Lemma entails_len1 : forall cs' cs,
+      entails cs' cs ->
+      wf_constraints cs ->
+      Forall (fun c => List.length (snd c) = 1%nat) cs'.
+  Proof.
+    intros cs' cs He Hwf.
+    assert (wf_constraints cs') as (_ & Hlen')
+        by (eapply wf_constraints_of_rhs; [apply entails_rhs; exact He|exact Hwf]).
+    rewrite Forall_forall in Hlen'. apply Forall_forall.
+    intros c Hc. specialize (Hlen' c Hc).
+    destruct c as (l, r). cbn [snd]. exact Hlen'.
+  Qed.
+
+  (** [SecLTyping.v]'s two target bridges, restated here so that they are
+      elaborated in this file.  [SymTypes.ST] is [list ident] by
+      [Definition], so [map snd] can carry either as its codomain and a
+      [rewrite] across files fails to match a goal that prints the same;
+      [exact] goes through conversion. *)
+  Lemma simplify_rhs_perm_here :
+    forall cns1 cns2 ds,
+      Forall singleton_rhs cns1 ->
+      Forall singleton_rhs cns2 ->
+      Permutation (map snd cns1) (map snd cns2) ->
+      Permutation (map snd (simplify cns1 ds)) (map snd (simplify cns2 ds)).
+  Proof. exact simplify_rhs_perm. Qed.
+
+  Lemma collapse_rhs_perm_here :
+    forall cns,
+      NoDup (map snd cns) ->
+      Permutation (map snd (collapse cns)) (map snd cns).
+  Proof. exact collapse_rhs_perm. Qed.
+
+  Theorem entails_simplify_collapse : forall scope cs' cs ds,
+      entails cs' cs ->
+      wf_constraints cs ->
+      (forall x, In x ds -> ~ In x scope) ->
+      preserves_on scope (simplify (collapse cs') ds) (simplify cs ds).
+  Proof.
+    intros scope cs' cs ds He Hwf Hdisj dlt Hsat.
+    assert (Hwfc : wf_constraints (collapse cs'))
+        by (apply collapse_wf; eapply entails_len1; eauto).
+    edestruct simplify_complete as (dlt' & Hagree & Hsat'); eauto.
+    exists dlt'. split.
+    - intros x Hin. now apply Hagree.
+    - apply simplify_correct. eapply entails_sat; [exact He|].
+      exact (proj1 (collapse_satisfaction dlt' cs') Hsat').
+  Qed.
+
+  Lemma wf_constraints_of_rhs_perm : forall cs' cs,
+      Permutation (map snd cs') (map snd cs) ->
+      wf_constraints cs -> wf_constraints cs'.
+  Proof.
+    intros cs' cs Hr [Hnd Hlen]. split.
+    - eapply Permutation_NoDup; [apply Permutation_sym; exact Hr|exact Hnd].
+    - rewrite Forall_forall in Hlen |- *.
+      intros c Hin. destruct c as [lhs rhs].
+      assert (Hrhs : In rhs (map snd cs)).
+      { eapply Permutation_in; [exact Hr|].
+        apply in_map_iff. exists (lhs, rhs). split; [reflexivity|exact Hin]. }
+      apply in_map_iff in Hrhs as ((l2, r2) & Hr2 & Hin2).
+      cbn [snd] in Hr2. subst r2. exact (Hlen _ Hin2).
+  Qed.
+
+  Lemma signature_good_of_rhs_perm :
+    forall n1 n2,
+      signature_fields_agree n1 n2 ->
+      Permutation (map snd n1.(s_constraints)) (map snd n2.(s_constraints)) ->
+      signature_good n2 ->
+      signature_good n1.
+  Proof.
+    intros n1 n2 (Hin & Hout & Hrst & Hclk) Hr [Hwf Hperm]. split.
+    - eapply wf_constraints_of_rhs_perm; eauto.
+    - rewrite Hout. etransitivity; [exact Hr|exact Hperm].
   Qed.
 
   Lemma simplify_rhs_eq :
@@ -1290,7 +1373,8 @@ Module Type SECLUSNLUSTRANSLATION
           /\ (forall x, In x locals -> ~ In x (signature_scope nsig))) ->
       lsig.(s_name) = nsig.(s_name)
       /\ SIGPROOFS.signatures_preserved lsig nsig
-      /\ map snd lsig.(s_constraints) = map snd nsig.(s_constraints).
+      /\ Permutation (map snd lsig.(s_constraints))
+                    (map snd nsig.(s_constraints)).
   Proof.
     intros P vars scope GL GN n n' Hp env aux_names nsig lsig st st'
            clk_id rst_id clk_type rst_type
@@ -1324,9 +1408,22 @@ Module Type SECLUSNLUSTRANSLATION
     - unfold SIGPROOFS.signatures_preserved. split.
       + repeat split; reflexivity.
       + simpl. rewrite minted_refl, app_nil_r.
-        apply entails_simplify; auto.
+        apply entails_simplify_collapse; auto.
     - simpl. rewrite minted_refl, app_nil_r.
-      apply simplify_rhs_eq. apply entails_rhs. exact Hent.
+      pose proof (entails_rhs _ _ Hent) as Hre.
+      destruct Hwf as (Hndw & Hlenw).
+      apply simplify_rhs_perm_here.
+      + apply collapse_singleton_rhs.
+        eapply entails_len1; [exact Hent|split; [exact Hndw|exact Hlenw]].
+      + rewrite Forall_forall in Hlenw. apply Forall_forall.
+        intros c Hc. specialize (Hlenw c Hc).
+        destruct c as (l, r). cbn [snd] in Hlenw |- *.
+        destruct r as [|b [|? ?]];
+          [discriminate Hlenw|now exists b|discriminate Hlenw].
+      + refine (eq_ind _ (fun l => Permutation (map snd (collapse cns2)) l)
+                  _ _ Hre).
+        apply collapse_rhs_perm_here.
+        exact (eq_ind_r (fun l => NoDup l) Hndw Hre).
   Qed.
 
   (** * One node head
@@ -1372,7 +1469,7 @@ Module Type SECLUSNLUSTRANSLATION
     pose proof Hpres as Hpres'. destruct Hpres' as [Hfields _].
     split; [exact Hname|]. split; [exact Hpres|].
     eapply Signature_call_entails_from_preserved; eauto.
-    - eapply signature_good_of_rhs; eauto.
+    - eapply signature_good_of_rhs_perm; eauto.
     - erewrite signature_scope_agree by exact Hfields. exact HndN.
   Qed.
 
