@@ -961,6 +961,50 @@ Three pieces, all in `SecLusTypingCorrectness.v`:
    `generate_lnode_sig_instantiations`, `sig_rooted`), items 2 and 8, and the
    composition theorem.
 
+### CORRECTION 2026-10-07: the abstract scope proves scoping but loses the dichotomy
+
+The equation-level lemmas above are stated with one abstract scope `S` and a
+window bound, and they do prove `constraints_scoped S cns` for
+`S = decl ++ minted st0 st1`.  That is premise 2 of `simplify_scoped_weak`.
+It is **not** premise 3.
+
+Premise 3's second alternative is `~ occurs d cns`, and discharging it needs
+*a minted name that occurs in `cns` is a target of `cns`* -- the dichotomy
+with scope `decl ++ tgt_names cns`, not `decl ++ minted`.  Knowing a name is
+in the window says nothing about whether it is a target: a call with no
+outputs mints names that are in the window and are not targets, which is
+precisely the case `simplify_scoped_weak` was built to tolerate.
+
+Nor can the abstract lemma simply be instantiated at
+`S := decl ++ tgt_names cns`.  Its `exps_scoped_in` premise then demands
+`incl (minted s0 s1) (decl ++ tgt_names cns)` for every sub-run, and that is
+false for the same reason -- a discarded carried set leaves minted names in
+the window and out of `tgt_names`.
+
+So the equation level has to be done a second time, with the conclusion
+scope `decl ++ tgt_names cs` and the (unconditional, already proved)
+`lexp_scoped_tgt` as its expression premise.  What that costs, and the only
+thing the abstract-scope version was avoiding, is one containment lemma per
+rule:
+
+    incl (tgt_names (carried ts)) (tgt_names c)
+
+-- true because a rule's output literally contains the constraints the flow
+carried (`lconstrain p b` contains `snd p`; the call rule's `cmerge cs0
+(cmerge (carried argts) (snd rstty))` contains `carried argts`), and
+provable by membership through `cmerge_In` in a few lines each.  Both
+versions of the equation level are then wanted: the abstract one for premise
+2, the `tgt_names` one for premise 3.
+
+*Status.*  Everything through the equation level of the abstract version is
+proved and pushed.  `generate_lnode_sig_scoped` is drafted against the plan
+above and is blocked only on these containment lemmas; its other three
+obligations are done (`NoDup ds` from `minted_NoDup`, `n_nodup` and the
+separation; premise 2 from the abstract version through `collapse_scoped`;
+the locals half of premise 3 from item 7).  `clk_scoped_of_env`,
+`tgt_names_carried_minted`, `tgt_names_carried_minted_list` and
+`exps_scoped_in_of_decl` are drafted and independent of the blockage.
+
 *6* -- `signature_good` for a node is now
 `generate_leqns_constraints_published_wf` instantiated at that node: what is
 left is to supply its three node-level premises from the node record and the
