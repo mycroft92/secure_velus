@@ -2346,6 +2346,15 @@ Import SECMONADNotations.
       apply in_flat_map. exists c. split; [apply cmerge_In; now right|exact Hdc].
     Qed.
 
+    Lemma incl_decl_tgt_raw :
+      forall decl (X Y : list ident),
+        incl X Y -> incl (decl ++ X) (decl ++ Y).
+    Proof.
+      intros decl X Y Hi d Hd.
+      apply in_app_or in Hd as [Hd|Hd];
+        [apply in_or_app; now left|apply in_or_app; right; exact (Hi d Hd)].
+    Qed.
+
     Lemma incl_decl_tgt :
       forall decl cs1 cs2,
         incl (tgt_names cs1) (tgt_names cs2) ->
@@ -3112,6 +3121,59 @@ Import SECMONADNotations.
       pose proof (constraints_scoped_In _ _ c d' Hsc Hc Hx) as Hin.
       apply in_flat_map in Hin as (c0 & Hc0 & Hx0).
       exact (Hno (ex_intro _ c0 (conj Hc0 Hx0))).
+    Qed.
+
+
+    (** * The equation level, a second time, with the targets in the scope
+
+        The abstract-scope version above proves [constraints_scoped S cs] and
+        so gives [simplify_scoped_weak]'s second premise.  Its third needs
+        the *dichotomy* -- a name is declared or a target *of this very set* --
+        and that does not follow: the window contains names a discarded
+        carried set minted, which are not targets.  So the level is done
+        again at scope [decl ++ tgt_names c], where the expression premise is
+        the unconditional [lexp_scoped_tgt] and the price is one containment
+        per rule: a rule's output contains the constraints the flow carried. *)
+
+    Lemma tgt_names_app :
+      forall c1 c2, tgt_names (c1 ++ c2) = tgt_names c1 ++ tgt_names c2.
+    Proof. intros. unfold tgt_names. symmetry. apply flat_map_app. Qed.
+
+    Lemma tgt_names_incl_of_In :
+      forall c1 c2,
+        (forall cc, In cc c1 -> In cc c2) ->
+        incl (tgt_names c1) (tgt_names c2).
+    Proof.
+      intros c1 c2 H d Hd. unfold tgt_names in Hd |- *.
+      apply in_flat_map in Hd as (c & Hc & Hdc).
+      apply in_flat_map. exists c. split; [exact (H c Hc)|exact Hdc].
+    Qed.
+
+    Lemma generate_lvars_constraints_carried_in :
+      forall ckenv xs bs ts c s s',
+        generate_lvars_constraints env base_ty rst_ty ckenv xs bs ts s
+          = OK (c, s') ->
+        forall cc, In cc (carried ts) -> In cc c.
+    Proof.
+      intros ckenv xs. induction xs as [|x xs IH];
+        intros bs ts c s s' Hgen cc Hcc.
+      - destruct bs as [|b bs]; destruct ts as [|t ts];
+          cbn in Hgen; try discriminate.
+        cbn [carried] in Hcc. contradiction.
+      - destruct bs as [|b bs]; [destruct ts; cbn in Hgen; discriminate|].
+        destruct ts as [|t ts]; [cbn in Hgen; discriminate|].
+        rewrite gen_lvars_cons_eq in Hgen.
+        apply sec_bind_inv in Hgen as (ckty & s1 & Hck & Hgen).
+        apply sec_bind_inv in Hgen as (rest & s2 & Hr & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Hc & _); subst c.
+        rewrite carried_cons in Hcc.
+        apply cmerge_In in Hcc as [Hcc|Hcc].
+        + apply in_or_app. left. unfold lconstrain. apply cmerge_In. right.
+          rewrite snd_ljoin. unfold ambient.
+          rewrite snd_ljoin, snd_lvar. cbn [snd].
+          rewrite cmerge_nil, cmerge_nil2. exact Hcc.
+        + apply in_or_app. right. exact (IH bs ts rest s1 s2 Hr cc Hcc).
     Qed.
 
   End RawTargets.
