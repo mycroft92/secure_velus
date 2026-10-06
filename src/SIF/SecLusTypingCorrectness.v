@@ -415,6 +415,190 @@ Import SECMONADNotations.
     intros s. unfold minted. now rewrite PeanoNat.Nat.sub_diag.
   Qed.
 
+
+  (** * The window, by index
+
+      Four facts [signature_scoped] needs and item 7 did not: the window
+      splits at any intermediate state, it peels one name at a time, it is
+      duplicate-free, and [fresh_idents] produces *exactly* a window rather
+      than a subset of one. *)
+
+  Lemma minted_cons :
+    forall s s',
+      Pos.lt s s' ->
+      minted s s' = Ids.gensym Ids.sec s :: minted (Pos.succ s) s'.
+  Proof.
+    intros s s' Hlt. unfold minted.
+    replace (Pos.to_nat s' - Pos.to_nat s)%nat
+      with (S (Pos.to_nat s' - Pos.to_nat (Pos.succ s)))%nat
+      by (rewrite Pos2Nat.inj_succ; apply Pos2Nat.inj_lt in Hlt; lia).
+    reflexivity.
+  Qed.
+
+  Lemma minted_split :
+    forall s s1 s2 d,
+      In d (minted s s2) ->
+      In d (minted s s1) \/ In d (minted s1 s2).
+  Proof.
+    intros s s1 s2 d Hd.
+    apply minted_spec in Hd as (j & Hsj & Hjs2 & Hdj).
+    destruct (Pos.ltb_spec j s1) as [Hlt|Hge].
+    - left. apply minted_spec. exists j. repeat split; assumption.
+    - right. apply minted_spec. exists j. repeat split; assumption.
+  Qed.
+
+  Lemma sec_span_NoDup : forall k s, NoDup (sec_span s k).
+  Proof.
+    induction k as [|k IH]; intros s; [constructor|].
+    cbn [sec_span]. constructor; [|apply IH].
+    intros Hin. apply sec_span_spec in Hin as (j & Hj & _ & Hij).
+    apply Ids.gensym_injective in Hij as (_ & ?); subst j.
+    exact (Pos.lt_irrefl s
+             (Pos.lt_le_trans s (Pos.succ s) s (Pos.lt_succ_diag_r s) Hj)).
+  Qed.
+
+  Corollary minted_NoDup : forall s s', NoDup (minted s s').
+  Proof. intros s s'. apply sec_span_NoDup. Qed.
+
+  Lemma fresh_idents_window :
+    forall n s xs s', fresh_idents n s = OK (xs, s') -> xs = minted s s'.
+  Proof.
+    induction n as [|n IH]; intros s xs s' H; cbn [fresh_idents] in H.
+    - unfold SC.ret in H.
+      destruct (OK_pair_inv _ _ _ _ H) as (Hx & ?); subst xs s'.
+      symmetry. apply minted_refl.
+    - apply sec_bind_inv in H as (x & s1 & Hx & H).
+      apply sec_bind_inv in H as (ys & s2 & Hys & Hret).
+      unfold SC.ret in Hret.
+      destruct (OK_pair_inv _ _ _ _ Hret) as (Hxs & ?); subst xs s2.
+      unfold SC.fresh_ident in Hx.
+      destruct (OK_pair_inv _ _ _ _ Hx) as (Hxe & ?); subst x s1.
+      rewrite (IH (Pos.succ s) ys s' Hys).
+      rewrite (minted_cons s s'); [reflexivity|].
+      apply Pos.lt_le_trans with (m := Pos.succ s);
+        [apply Pos.lt_succ_diag_r
+        |exact (fresh_idents_sec_le n ys (Pos.succ s) s' Hys)].
+  Qed.
+
+
+  (** * Eliminating a name that is not there
+
+      [SymTypes.v]'s [simplify_scoped] asks that every eliminated name be the
+      target of a constraint.  For a generated set that is too strong: a call
+      with no outputs, or a branch with no streams, has its carried set
+      discarded by [carried_uniform]/[carried_map_ljoin], so the names its
+      run minted appear nowhere at all.  They need no eliminating, and
+      [simplify] skips them -- [findST] returns [None] and the step is the
+      identity.  So the premise that is both true and sufficient is the
+      dichotomy: an eliminated name is a target, or it does not occur. *)
+
+  Definition occurs (d : ident) (cns : list SymTypes.constraint) : Prop :=
+    exists c, In c cns /\ In d (constraint_scope c).
+
+  (** [constraints_scoped] wraps a [Forall] in a [Definition], and
+      [rewrite Forall_forall in H] does not see through it.  These two cross
+      the wrapper by conversion, once, so no proof below has to. *)
+  Lemma constraints_scoped_In :
+    forall S cns c x,
+      constraints_scoped S cns -> In c cns ->
+      In x (constraint_scope c) -> In x S.
+  Proof.
+    intros S cns c x Hsc Hc Hx.
+    assert (Forall (constraint_scoped S) cns) as Hf by exact Hsc.
+    rewrite Forall_forall in Hf. exact (Hf c Hc x Hx).
+  Qed.
+
+  Lemma constraints_scoped_of_In :
+    forall S cns,
+      (forall c x, In c cns -> In x (constraint_scope c) -> In x S) ->
+      constraints_scoped S cns.
+  Proof.
+    intros S cns H.
+    assert (Forall (constraint_scoped S) cns) as Hf
+        by (apply Forall_forall; intros c Hc x Hx; exact (H c x Hc Hx)).
+    exact Hf.
+  Qed.
+
+  Lemma constraints_scoped_self :
+    forall cns, constraints_scoped (flat_map constraint_scope cns) cns.
+  Proof.
+    intros cns. apply constraints_scoped_of_In. intros c x Hc Hx.
+    apply in_flat_map. exists c. split; [exact Hc|exact Hx].
+  Qed.
+
+  Lemma findST_scoped_self :
+    forall cns d st,
+      findST cns d = Some st ->
+      st_scoped (flat_map constraint_scope cns) st.
+  Proof.
+    intros cns d st Hf x Hx.
+    apply in_flat_map. exists (st, [d]).
+    split; [apply find_correct; exact Hf|].
+    unfold constraint_scope. cbn [fst]. apply in_or_app. now left.
+  Qed.
+
+  Lemma subAll_occurs_mono :
+    forall cns d st d',
+      findST cns d = Some st ->
+      ~ occurs d' cns -> ~ occurs d' (subAll cns d st).
+  Proof.
+    intros cns d st d' Hf Hno (c & Hc & Hx).
+    assert (constraints_scoped (flat_map constraint_scope cns ++ [])
+              (subAll cns d st)) as Hsc.
+    { eapply (subAll_scoped_elim (flat_map constraint_scope cns) []).
+      - eapply constraints_scoped_weaken;
+          [|apply constraints_scoped_self].
+        intros y Hy. apply in_or_app. now left.
+      - eapply st_scoped_weaken;
+          [|eapply findST_scoped_self; exact Hf].
+        intros y Hy. apply in_or_app. now left. }
+    rewrite app_nil_r in Hsc.
+    pose proof (constraints_scoped_In _ _ c d' Hsc Hc Hx) as Hin.
+    apply in_flat_map in Hin as (c0 & Hc0 & Hx0).
+    exact (Hno (ex_intro _ c0 (conj Hc0 Hx0))).
+  Qed.
+
+  Theorem simplify_scoped_weak :
+    forall scope ds cns,
+      NoDup ds ->
+      constraints_scoped (scope ++ ds) cns ->
+      (forall d, In d ds -> In [d] (List.map snd cns) \/ ~ occurs d cns) ->
+      constraints_scoped scope (simplify cns ds).
+  Proof.
+    intros scope ds. revert scope.
+    induction ds as [|d ds IH]; intros scope cns Hnd Hsc Hdefs.
+    - rewrite app_nil_r in Hsc. rewrite simplify_nil_eq. exact Hsc.
+    - apply NoDup_cons_iff in Hnd as (Hdnin & Hnd).
+      rewrite simplify_cons_eq.
+      remember (SymTypes.findST cns d) as fo eqn:Hfind.
+      destruct fo as [st|]; symmetry in Hfind.
+      + apply IH; [exact Hnd| |].
+        * assert (Hst : st_scoped (scope ++ d :: ds) st).
+          { intros x Hin.
+            eapply constraints_scoped_In;
+              [exact Hsc|apply find_correct; exact Hfind|].
+            unfold constraint_scope. cbn [fst snd].
+            apply in_or_app. left. exact Hin. }
+          eapply subAll_scoped_elim; [exact Hsc|exact Hst].
+        * intros d' Hin'.
+          assert (Hne : d' <> d) by (intros ?; subst d'; contradiction).
+          destruct (Hdefs d' (in_cons d d' ds Hin')) as [Htgt|Hno].
+          -- left. eapply subAll_preserves_other_rhs; [exact Hne|exact Htgt].
+          -- right. eapply subAll_occurs_mono; [exact Hfind|exact Hno].
+      + apply IH; [exact Hnd| |].
+        * assert (Hno : ~ occurs d cns).
+          { destruct (Hdefs d (in_eq d ds)) as [Htgt|Hno]; [|exact Hno].
+            exfalso. exact (findST_None cns d Hfind Htgt). }
+          apply constraints_scoped_of_In. intros c x Hc Hx.
+          destruct (in_app_or _ _ _
+                      (constraints_scoped_In _ _ c x Hsc Hc Hx)) as [Hs|Hs];
+            [apply in_or_app; now left|].
+          destruct Hs as [Hs|Hs];
+            [exfalso; subst x; exact (Hno (ex_intro _ c (conj Hc Hx)))
+            |apply in_or_app; now right].
+        * intros d' Hin'. exact (Hdefs d' (in_cons d d' ds Hin')).
+  Qed.
+
   (** [SecLTyping.v]'s [simplify_map_snd] restated here.  Its statement is
       the same one, but elaborated in *this* file: [SymTypes.ST] is
       [list ident] by [Definition], so [@snd ST ST] and
