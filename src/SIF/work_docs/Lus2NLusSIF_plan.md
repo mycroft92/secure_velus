@@ -890,6 +890,77 @@ and not yet present: `minted_cons`, `minted_split`, `minted_NoDup`
 (for `NoDup ds`), and `fresh_idents_window` (`fresh_idents n s = OK (xs, s')
 -> xs = minted s s'`), all straightforward from `sec_span_spec`.
 
+### DONE 2026-10-06: the window arithmetic, `simplify_scoped_weak`, and the
+### expression-level dichotomy
+
+Three pieces, all in `SecLusTypingCorrectness.v`:
+
+  * `minted_cons`, `minted_split`, `minted_NoDup` (through `sec_span_NoDup`)
+    and `fresh_idents_window` -- the last says `fresh_idents` produces
+    *exactly* a window, not a subset of one, which is what makes the minted
+    names of a run enumerable.
+  * `simplify_scoped_weak`.  `SymTypes.v`'s `simplify_scoped` asks that every
+    eliminated name be a target; `simplify_scoped_weak` asks only
+    `In [d] (map snd cns) \/ ~ occurs d cns`, and its `findST = None` branch
+    discharges from absence.  The transport of absence through `subAll` is
+    `subAll_occurs_mono`, and it needs no new induction: instantiate
+    `subAll_scoped_elim` at `scope := flat_map constraint_scope cns` and
+    `ds := []`, and the conclusion says exactly that `subAll` introduces no
+    new name.
+  * `lexp_scoped_tgt_all` -- **the dichotomy**: every name a generated type
+    or carried constraint mentions is either declared (`decl_ok`: the two
+    auxiliary levels and `env`'s image) or in `tgt_names` of what the flow
+    carries.  Ten cases; the call case is `generate_constraints_scoped`
+    against the callee's own `signature_scoped` (so the program level will
+    thread `secglobal_scoped`), and every other case is a widening -- scoping
+    is membership, so `cmerge`'s deduplication costs nothing and
+    `tgt_names_cmerge_l/r` carry all of them.
+
+  *Three Coq frictions, all the same species as the `ST`/`list ident` one.*
+  `rewrite Forall_forall in H` cannot see through a `Definition` that wraps a
+  `Forall`, so `constraints_scoped` is crossed once by
+  `constraints_scoped_In` / `_of_In`, proved by `exact` (conversion), and no
+  other proof unfolds it.  The bare `findST` in this file is **not**
+  `SymTypes.findST` -- `SIG` is imported and shadows it -- so a `destruct`
+  or `remember` of the scrutinee inside `simplify`'s body must say
+  `SymTypes.findST`, or the match never gets abstracted and the error is a
+  confusing "unable to unify" against a goal that prints correctly.  And
+  `eapply L; [incl-goal|exact H]` can leave the first goal's scope a
+  metavariable: give the `exact` first.
+
+### What is left, now specified rather than estimated
+
+1. *The equation-level dichotomy.*  The same dispatch as 7a/7b/7c, a fourth
+   time: `generate_{lvars,lcall,ldef,lgen,lone,lsplit,leqn,leqns}_..._scoped`.
+   State each with **one abstract scope** `S` plus the inclusions it must
+   satisfy (`incl decl S`, `incl (tgt_names (carried ts)) S`, `incl bs S`,
+   `In rst_ty S`) rather than with `decl ++ tgt_names c`: the rule's output
+   contains the carried constraints, so the `decl ++ tgt_names c` form forces
+   an `incl (tgt_names (carried ts)) (tgt_names c)` side lemma per rule, and
+   the abstract scope avoids all of them.  The call rule differs from the
+   expression one in one way that makes it easier: its `outs` are
+   `sec_of env xs`, so they are *declared*, not minted.
+2. `collapse_occurs_mono` -- absence survives `collapse`, by the same
+   `collapse_scoped`-at-`flat_map constraint_scope` trick as
+   `subAll_occurs_mono`.
+3. *The per-node assembly*, `generate_lnode_sig_scoped`.  Take
+   `decl := sec_of env (map fst (n_in ++ n_vars ++ n_out)) ++ [base_ty; rst_ty]`
+   and note `decl = signature_scope sg ++ locals` up to permutation, so
+   `simplify_scoped_weak` applies with `scope := signature_scope sg` and
+   `ds := locals ++ minted st0 st1`.  Premise 2 is item 1 plus
+   `collapse_scoped`; premise 3 splits: a local is a target by item 7
+   (`locals` is inside `sec_of (vars_defined n_eqs)`), and a minted name is a
+   target *if it occurs*, by the dichotomy plus the separation premise
+   (`env_apart_from_minted`) -- which is exactly the shape
+   `simplify_scoped_weak` wants.  `NoDup ds` is `minted_NoDup` with
+   `NoDup locals` and the separation.
+4. *The program fold*, `secglobal_scoped` as the accumulator invariant over
+   `Ordered_nodes`, on the template of
+   `generate_node_sig_scoped_env_scoped`.
+5. Then the rest of item 6 (`NoDup (signature_scope ...)`,
+   `generate_lnode_sig_instantiations`, `sig_rooted`), items 2 and 8, and the
+   composition theorem.
+
 *6* -- `signature_good` for a node is now
 `generate_leqns_constraints_published_wf` instantiated at that node: what is
 left is to supply its three node-level premises from the node record and the
