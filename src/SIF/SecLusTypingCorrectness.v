@@ -2313,112 +2313,362 @@ Import SECMONADNotations.
                  locals out Hsep Hl Hperm Hnd Hout Hgen).
     Qed.
 
+
+    (** * Declared, or carried as a target
+
+        Every name a generated type or carried constraint mentions is either
+        *declared* -- a program variable's security name, or one of the two
+        auxiliary levels -- or the target of a constraint the flow carries.
+        That is the dichotomy [simplify_scoped_weak] needs: a minted name is
+        not declared, so if it occurs at all it is a target.  It also
+        discharges Leg U's three [*_scoped_upto] hypotheses, since a carried
+        target lies in the run's window.
+
+        Scoping is membership, not multiplicity, so [cmerge]'s deduplication
+        costs nothing here and every case is a widening. *)
+
+    Definition tgt_names (cs : list SymTypes.constraint) : list ident :=
+      flat_map snd cs.
+
+    Lemma tgt_names_cmerge_l :
+      forall c1 c2, incl (tgt_names c1) (tgt_names (cmerge c1 c2)).
+    Proof.
+      intros c1 c2 d Hd. unfold tgt_names in Hd |- *.
+      apply in_flat_map in Hd as (c & Hc & Hdc).
+      apply in_flat_map. exists c. split; [apply cmerge_In; now left|exact Hdc].
+    Qed.
+
+    Lemma tgt_names_cmerge_r :
+      forall c1 c2, incl (tgt_names c2) (tgt_names (cmerge c1 c2)).
+    Proof.
+      intros c1 c2 d Hd. unfold tgt_names in Hd |- *.
+      apply in_flat_map in Hd as (c & Hc & Hdc).
+      apply in_flat_map. exists c. split; [apply cmerge_In; now right|exact Hdc].
+    Qed.
+
+    Lemma incl_decl_tgt :
+      forall decl cs1 cs2,
+        incl (tgt_names cs1) (tgt_names cs2) ->
+        incl (decl ++ tgt_names cs1) (decl ++ tgt_names cs2).
+    Proof.
+      intros decl cs1 cs2 Hi d Hd.
+      apply in_app_or in Hd as [Hd|Hd];
+        [apply in_or_app; now left|apply in_or_app; right; exact (Hi d Hd)].
+    Qed.
+
+    Lemma tgt_names_of_targets :
+      forall cs out,
+        List.map snd cs = List.map (fun ty => [ty]) out ->
+        forall d, In d out -> In d (tgt_names cs).
+    Proof.
+      intros cs out Heq d Hd.
+      assert (In [d] (List.map snd cs)) as Hin
+          by (rewrite Heq; apply in_map_iff; exists d;
+              split; [reflexivity|exact Hd]).
+      apply in_map_iff in Hin as (c & Hc & Hcin).
+      unfold tgt_names. apply in_flat_map. exists c.
+      split; [exact Hcin|rewrite Hc; now left].
+    Qed.
+
+    Definition decl_ok (decl : list ident) : Prop :=
+      In base_ty decl
+      /\ In rst_ty decl
+      /\ (forall x b, Env.find x env = Some b -> In b decl).
+
+    Definition clk_scoped (decl : list ident) : Prop :=
+      forall ck ckty,
+        assign_clk_type env base_ty ck = Some ckty -> st_scoped decl ckty.
+
+    Definition lexp_scoped_tgt (decl : list ident) (e : exp) : Prop :=
+      forall ts s s',
+        assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+        Forall (fun t => st_scoped (decl ++ tgt_names (carried ts)) (fst t)) ts
+        /\ constraints_scoped (decl ++ tgt_names (carried ts)) (carried ts).
+
+    Lemma scoped_tgt_widen :
+      forall decl cs1 cs2 (ts : list LST),
+        incl (tgt_names cs1) (tgt_names cs2) ->
+        Forall (fun t => st_scoped (decl ++ tgt_names cs1) (fst t)) ts ->
+        Forall (fun t => st_scoped (decl ++ tgt_names cs2) (fst t)) ts.
+    Proof.
+      intros decl cs1 cs2 ts Hi H.
+      eapply Forall_impl; [|exact H]. intros a Ha.
+      eapply st_scoped_weaken; [apply incl_decl_tgt, Hi|exact Ha].
+    Qed.
+
+    Lemma cscoped_tgt_widen :
+      forall decl cs1 cs2 cs,
+        incl (tgt_names cs1) (tgt_names cs2) ->
+        constraints_scoped (decl ++ tgt_names cs1) cs ->
+        constraints_scoped (decl ++ tgt_names cs2) cs.
+    Proof.
+      intros decl cs1 cs2 cs Hi H.
+      eapply constraints_scoped_weaken; [apply incl_decl_tgt, Hi|exact H].
+    Qed.
+
+    Lemma cscoped_cmerge :
+      forall S c1 c2,
+        constraints_scoped S c1 -> constraints_scoped S c2 ->
+        constraints_scoped S (cmerge c1 c2).
+    Proof.
+      intros S c1 c2 H1 H2. apply constraints_scoped_of_In.
+      intros c x Hc Hx. apply cmerge_In in Hc as [Hc|Hc];
+        [exact (constraints_scoped_In S c1 c x H1 Hc Hx)
+        |exact (constraints_scoped_In S c2 c x H2 Hc Hx)].
+    Qed.
+
+    Lemma lexps_scoped_tgt_of :
+      forall decl es,
+        Forall (lexp_scoped_tgt decl) es ->
+        forall ts s s',
+          assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+          Forall (fun t => st_scoped (decl ++ tgt_names (carried ts)) (fst t))
+            ts
+          /\ constraints_scoped (decl ++ tgt_names (carried ts)) (carried ts).
+    Proof.
+      intros decl es Hall. induction Hall as [|e es He Hes IH];
+        intros ts s s' H.
+      - apply (assign_lexps_carried_nil G env base_ty rst_ty) in H
+          as (? & _ & _); subst ts. split; constructor.
+      - apply assign_lexps_carried_cons in H
+          as (t & r & sa & Ht & Hr & ? & _); subst ts.
+        destruct (He t s sa Ht) as (Hf1 & Hc1).
+        destruct (IH r sa s' Hr) as (Hf2 & Hc2).
+        rewrite carried_app in *.
+        split.
+        + apply Forall_app. split.
+          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hf1].
+          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hf2].
+        + apply cscoped_cmerge;
+            [eapply cscoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hc1]
+            |eapply cscoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hc2]].
+    Qed.
+
+    Theorem lexp_scoped_tgt_all :
+      forall decl,
+        decl_ok decl ->
+        clk_scoped decl ->
+        secglobal_scoped G ->
+        forall e, lexp_scoped_tgt decl e.
+    Proof.
+      intros decl (Hbase & Hrstd & Henv) Hclk Hsg e.
+      induction e using exp_ind2; intros ts s s' Hgen.
+      - rewrite assign_lexp_Econst in Hgen. unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hts & _); subst ts.
+        split.
+        + constructor; [|constructor]. cbn [fst lbot]. intros ? [].
+        + cbn [carried lbot snd]. constructor.
+      - apply assign_lexp_Evar_inv in Hgen as (xt & Hxt & Hts & _); subst ts.
+        split.
+        + constructor; [|constructor]. cbn [fst].
+          intros y [Hy|[]]; subst y. apply in_or_app. left.
+          exact (Henv _ _ Hxt).
+        + cbn [carried snd]. constructor.
+      - exact (IHe ts s s' Hgen).
+      - rewrite assign_lexp_Ebinop in Hgen.
+        apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
+        apply sec_bind_inv in Hgen as (t2 & s2 & Ht2 & Hgen).
+        apply sec_bind_inv in Hgen as (a1 & s3 & Ha1 & Hgen).
+        apply sec_bind_inv in Hgen as (a2 & s4 & Ha2 & Hret).
+        apply single_inv in Ha1 as (? & ?); subst t1 s3.
+        apply single_inv in Ha2 as (? & ?); subst t2 s4.
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Hts & ?); subst ts s'.
+        destruct (IHe1 [a1] s s1 Ht1) as (Hf1 & Hc1).
+        destruct (IHe2 [a2] s1 s2 Ht2) as (Hf2 & Hc2).
+        rewrite carried_single in Hf1, Hc1, Hf2, Hc2.
+        rewrite carried_single, snd_ljoin.
+        inversion Hf1 as [|? ? Hs1 ?]; subst.
+        inversion Hf2 as [|? ? Hs2 ?]; subst.
+        split.
+        + constructor; [|constructor]. rewrite fst_ljoin.
+          apply st_scoped_merge.
+          * eapply st_scoped_weaken;
+              [apply incl_decl_tgt, tgt_names_cmerge_l|exact Hs1].
+          * eapply st_scoped_weaken;
+              [apply incl_decl_tgt, tgt_names_cmerge_r|exact Hs2].
+        + apply cscoped_cmerge;
+            [eapply cscoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hc1]
+            |eapply cscoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hc2]].
+      - rewrite assign_lexp_Efby in Hgen.
+        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (us & s2 & Hus & Hj).
+        assert (s' = s2) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
+        destruct (lexps_scoped_tgt_of decl e0s H ts0 s s1 Hts0) as (Hf1 & Hc1).
+        destruct (lexps_scoped_tgt_of decl es H0 us s1 s2 Hus) as (Hf2 & Hc2).
+        rewrite (ljoin_list_carried ts0 us ts s2 s2 Hj).
+        split.
+        + eapply CALLS.ljoin_list_scoped_plain; [exact Hj| |].
+          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hf1].
+          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hf2].
+        + apply cscoped_cmerge;
+            [eapply cscoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hc1]
+            |eapply cscoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hc2]].
+      - rewrite assign_lexp_Earrow in Hgen.
+        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (us & s2 & Hus & Hj).
+        assert (s' = s2) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
+        destruct (lexps_scoped_tgt_of decl e0s H ts0 s s1 Hts0) as (Hf1 & Hc1).
+        destruct (lexps_scoped_tgt_of decl es H0 us s1 s2 Hus) as (Hf2 & Hc2).
+        rewrite (ljoin_list_carried ts0 us ts s2 s2 Hj).
+        split.
+        + eapply CALLS.ljoin_list_scoped_plain; [exact Hj| |].
+          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hf1].
+          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hf2].
+        + apply cscoped_cmerge;
+            [eapply cscoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hc1]
+            |eapply cscoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hc2]].
+      - rewrite assign_lexp_Ewhen in Hgen.
+        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (g & s2 & Hg & Hret).
+        apply find_env_inv in Hg as (Hg & ?); subst s2.
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Hts & ?); subst ts s'.
+        destruct (lexps_scoped_tgt_of decl es H ts0 s s1 Hts0) as (Hf1 & Hc1).
+        rewrite carried_map_when.
+        split; [|exact Hc1].
+        apply Forall_forall. intros t Ht.
+        apply in_map_iff in Ht as (t0 & Ht0 & Hin0); subst t.
+        rewrite fst_ljoin, fst_lvar. apply st_scoped_merge.
+        + rewrite Forall_forall in Hf1. exact (Hf1 t0 Hin0).
+        + intros y [Hy|[]]; subst y. apply in_or_app. left.
+          exact (Henv _ _ Hg).
+      - destruct a as (tys & cl).
+        rewrite assign_lexp_Emerge in Hgen.
+        apply sec_bind_inv in Hgen as (g & s1 & Hg & Hgen).
+        apply find_env_inv in Hg as (Hg & ?); subst s1.
+        apply sec_bind_inv in Hgen as (ts0 & s2 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (us & s3 & Hus & Hj).
+        assert (s' = s3) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
+        destruct (lexps_scoped_tgt_of decl ets H ts0 s s2 Hts0) as (Hf1 & Hc1).
+        destruct (lexps_scoped_tgt_of decl efs H0 us s2 s3 Hus) as (Hf2 & Hc2).
+        rewrite (ljoin_list_carried _ us ts s3 s3 Hj), carried_map_merge_l.
+        split.
+        + eapply CALLS.ljoin_list_scoped; [|exact Hj| |].
+          * apply in_or_app. left. exact (Henv _ _ Hg).
+          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hf1].
+          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hf2].
+        + apply cscoped_cmerge;
+            [eapply cscoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hc1]
+            |eapply cscoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hc2]].
+      - destruct a as (tys & cl).
+        rewrite assign_lexp_Eite in Hgen.
+        apply sec_bind_inv in Hgen as (t0 & s1 & Ht0 & Hgen).
+        apply sec_bind_inv in Hgen as (th & s2 & Hth & Hgen).
+        apply single_inv in Hth as (? & ?); subst t0 s2.
+        apply sec_bind_inv in Hgen as (ts0 & s3 & Hts0 & Hgen).
+        apply sec_bind_inv in Hgen as (us & s4 & Hus & Hj).
+        assert (s' = s4) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
+        destruct (IHe [th] s s1 Ht0) as (Hfh & Hch).
+        rewrite carried_single in Hfh, Hch.
+        inversion Hfh as [|? ? Hsh ?]; subst.
+        destruct (lexps_scoped_tgt_of decl ets H ts0 s1 s3 Hts0) as (Hf1 & Hc1).
+        destruct (lexps_scoped_tgt_of decl efs H0 us s3 s4 Hus) as (Hf2 & Hc2).
+        rewrite (ljoin_list_carried _ us ts s4 s4 Hj).
+        destruct ts0 as [|t00 ts0'].
+        + cbn [List.map carried]. rewrite cmerge_nil2.
+          split.
+          * eapply CALLS.ljoin_list_scoped_plain; [exact Hj|constructor|].
+            exact Hf2.
+          * exact Hc2.
+        + rewrite carried_map_ljoin_eq by (intros HF; inversion HF).
+          split.
+          * eapply CALLS.ljoin_list_scoped_head; [|exact Hj| |].
+            -- eapply st_scoped_weaken; [|exact Hsh].
+               apply incl_decl_tgt.
+               eapply incl_tran;
+                 [apply tgt_names_cmerge_l|apply tgt_names_cmerge_l].
+            -- eapply scoped_tgt_widen; [|exact Hf1].
+               eapply incl_tran;
+                 [apply tgt_names_cmerge_r|apply tgt_names_cmerge_l].
+            -- eapply scoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hf2].
+          * apply cscoped_cmerge; [apply cscoped_cmerge|].
+            -- eapply cscoped_tgt_widen; [|exact Hch].
+               eapply incl_tran;
+                 [apply tgt_names_cmerge_l|apply tgt_names_cmerge_l].
+            -- eapply cscoped_tgt_widen; [|exact Hc1].
+               eapply incl_tran;
+                 [apply tgt_names_cmerge_r|apply tgt_names_cmerge_l].
+            -- eapply cscoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hc2].
+      - apply assign_lexp_Eapp_inv in Hgen
+          as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
+              & Hargs & Hck & Hrst & Hsgf & Houts & Hcs & Hts).
+        destruct (lexps_scoped_tgt_of decl es H0 argts s sta Hargs)
+          as (Hfa & Hca).
+        assert (exists rs, st_scoped (decl ++ tgt_names rs) (fst rstty)
+                           /\ constraints_scoped (decl ++ tgt_names rs)
+                                (snd rstty)
+                           /\ incl (tgt_names rs) (tgt_names (snd rstty)))
+          as (rs & Hfr & Hcr & Hir).
+        { destruct ro as [e1|].
+          - destruct Hrst as (t1 & a1 & rck & stm & Ht1 & Hsg1 & Hrck & Hr).
+            apply single_inv in Hsg1 as (? & ?); subst t1 stb.
+            destruct (H [a1] sta stm Ht1) as (Hf1 & Hc1).
+            rewrite carried_single in Hf1, Hc1.
+            inversion Hf1 as [|? ? Hs1 ?]; subst.
+            exists (snd a1). try subst rstty.
+            rewrite !fst_ljoin, !snd_ljoin, fst_lvar, snd_lvar.
+            cbn [fst snd]. rewrite cmerge_nil, cmerge_nil2.
+            split; [|split; [exact Hc1|apply incl_refl]].
+            apply st_scoped_merge;
+              [intros y [Hy|[]]; subst y; apply in_or_app; now left|].
+            apply st_scoped_merge; [exact Hs1|].
+            eapply st_scoped_weaken; [|exact (Hclk _ _ Hrck)].
+            intros y Hy. apply in_or_app. left. exact Hy.
+          - destruct Hrst as (Hr & _). subst rstty.
+            exists []. rewrite fst_lvar, snd_lvar.
+            split; [intros y [Hy|[]]; subst y; apply in_or_app; now left|].
+            split; [constructor|intros y []]. }
+        pose proof (CALLS.generate_constraints_targets sg
+                      (List.map fst argts) ckty (fst rstty) outs cs
+                      stc s' Hcs) as Hsnd.
+        subst ts. rewrite carried_uniform.
+        destruct outs as [|o os].
+        + split; [constructor|constructor].
+        + assert (Hcsi : incl (tgt_names cs)
+                           (tgt_names (cmerge cs
+                              (cmerge (carried argts) (snd rstty)))))
+              by apply tgt_names_cmerge_l.
+          assert (Hargi : incl (tgt_names (carried argts))
+                            (tgt_names (cmerge cs
+                               (cmerge (carried argts) (snd rstty))))).
+          { eapply incl_tran;
+              [apply tgt_names_cmerge_l|apply tgt_names_cmerge_r]. }
+          assert (Hrsti : incl (tgt_names (snd rstty))
+                            (tgt_names (cmerge cs
+                               (cmerge (carried argts) (snd rstty))))).
+          { eapply incl_tran;
+              [apply tgt_names_cmerge_r|apply tgt_names_cmerge_r]. }
+          assert (Hoin : forall d, In d (o :: os) ->
+                           In d (decl ++ tgt_names (cmerge cs
+                                   (cmerge (carried argts) (snd rstty))))).
+          { intros d Hd. apply in_or_app. right.
+            apply Hcsi. exact (tgt_names_of_targets cs (o :: os) Hsnd d Hd). }
+          assert (Hcscs : constraints_scoped
+                            (decl ++ tgt_names (cmerge cs
+                               (cmerge (carried argts) (snd rstty)))) cs).
+          { eapply generate_constraints_scoped;
+              [exact (Hsg _ _ Hsgf)| | | | |exact Hcs].
+            - apply Forall_forall. intros X HX.
+              apply in_map_iff in HX as (t & Ht & Htin); subst X.
+              eapply st_scoped_weaken; [apply incl_decl_tgt, Hargi|].
+              rewrite Forall_forall in Hfa. exact (Hfa t Htin).
+            - eapply st_scoped_weaken; [|exact (Hclk _ _ Hck)].
+              intros y Hy. apply in_or_app. left. exact Hy.
+            - eapply st_scoped_weaken; [apply incl_decl_tgt, Hrsti|].
+              eapply st_scoped_weaken; [apply incl_decl_tgt, Hir|exact Hfr].
+            - apply Forall_forall. exact Hoin. }
+          split.
+          * apply Forall_forall. intros t Ht.
+            apply in_map_iff in Ht as (d & Hd & Hdin); subst t.
+            cbn [fst]. intros y [Hy|[]]; subst y. exact (Hoin d Hdin).
+          * apply cscoped_cmerge; [exact Hcscs|].
+            apply cscoped_cmerge.
+            -- eapply cscoped_tgt_widen; [exact Hargi|exact Hca].
+            -- eapply cscoped_tgt_widen; [exact Hrsti|].
+               eapply cscoped_tgt_widen; [exact Hir|exact Hcr].
+    Qed.
+
   End RawTargets.
-
-  (** * Item 6: a generated signature is good
-
-      [signature_good] for one node is item 7 instantiated at that node.  The
-      three list facts it asks for come from the node record and the naming
-      pass: the defined variables are the locals and the outputs by [n_defd],
-      they are distinct by [NoDup_vars_defined_n_eqs], and the separation of
-      declared names from minted ones is
-      [generate_lnode_scoped_env_st_fresh_sec], read at the window. *)
-
-  Lemma Permutation_flat_map :
-    forall {A B : Type} (f : A -> list B) xs ys,
-      Permutation xs ys -> Permutation (flat_map f xs) (flat_map f ys).
-  Proof.
-    intros A B f xs ys H.
-    induction H as [|x l l' H IH|x y l|l l' l'' H1 IH1 H2 IH2].
-    - reflexivity.
-    - cbn [flat_map]. apply Permutation_app_head. exact IH.
-    - cbn [flat_map]. rewrite !app_assoc.
-      apply Permutation_app_tail, Permutation_app_comm.
-    - etransitivity; [exact IH1|exact IH2].
-  Qed.
-
-  Lemma sec_of_Permutation :
-    forall env xs ys,
-      Permutation xs ys ->
-      Permutation (CALLS.sec_of env xs) (CALLS.sec_of env ys).
-  Proof.
-    intros env xs ys H. unfold CALLS.sec_of. now apply Permutation_flat_map.
-  Qed.
-
-  (** The arity half of [wl_equation], which is the one item 7's split rule
-      needs; the other half is about the expressions. *)
-  Lemma wl_node_arity :
-    forall (P : global) (n : node),
-      wl_node P n ->
-      Forall (fun eq => length (fst eq) = length (LSyn.annots (snd eq)))
-        n.(n_eqs).
-  Proof.
-    intros P n Hwl. unfold wl_node in Hwl.
-    rewrite Forall_forall in Hwl. apply Forall_forall.
-    intros eq Hin. destruct eq as (xs, es). cbn [fst snd].
-    destruct (Hwl (xs, es) Hin) as (_ & Hlen). exact Hlen.
-  Qed.
-
-  (** The naming pass allocates below its final state and the generator mints
-      from there upwards, so a declared security name is never a minted one.
-      Both namespaces are [sec]: the separation is by index. *)
-  Lemma env_apart_from_minted :
-    forall ns envs names stN name env s s',
-      SECLNG.generate_lnode_scoped_env_st ns = OK (envs, names, stN) ->
-      find_node_env name envs = Some env ->
-      sec_le stN s ->
-      forall x b, Env.find x env = Some b -> ~ In b (minted s s').
-  Proof.
-    intros ns envs names stN name env s s' Hgen Henv Hle x b Hb Hin.
-    apply minted_spec in Hin as (j & Hsj & _ & Hbj).
-    exact (SECLNG.generate_lnode_scoped_env_st_fresh_sec ns envs names stN
-             name env x b j Hgen Henv Hb (Pos.le_trans stN s j Hle Hsj) Hbj).
-  Qed.
-
-  Theorem generate_lnode_sig_good :
-    forall (G : secglobal) (P : global) (n : node) env aux sg st0 st1,
-      env_injective env ->
-      wl_node P n ->
-      (forall x b, Env.find x env = Some b -> ~ In b (minted st0 st1)) ->
-      generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
-      signature_good sg.
-  Proof.
-    intros G P n env aux sg st0 st1 Hinj Hwl Hsep Hsig.
-    destruct (lnode_sig_inv env G n aux sg st0 st1 Hsig)
-      as (ci & ri & cty & rty & inp & out & locals & cns
-          & _ & _ & _ & _ & Hout & Hloc & Hcns & ?); subst sg.
-    assert (get_mappings (List.map fst n.(n_vars)) env = Some locals) as Hgl
-        by (eapply get_mappings_from_node_eq; exact Hloc).
-    assert (get_mappings (List.map fst n.(n_out)) env = Some out) as Hgo
-        by (eapply get_mappings_from_node_eq; exact Hout).
-    assert (locals = CALLS.sec_of env (List.map fst n.(n_vars))) as Hlo
-        by (eapply get_mappings_from_node_sec_of; exact Hloc).
-    assert (out = CALLS.sec_of env (List.map fst n.(n_out))) as Hou
-        by (eapply get_mappings_from_node_sec_of; exact Hout).
-    (** the defined variables are the locals and the outputs *)
-    assert (Permutation (CALLS.sec_of env (vars_defined n.(n_eqs)))
-                        (locals ++ out)) as Hperm.
-    { rewrite Hlo, Hou, <- sec_of_app, <- map_app.
-      apply sec_of_Permutation. exact (n_defd n). }
-    (** and they are distinct, which [env] injectivity carries to the names *)
-    assert (NoDup (List.map fst n.(n_vars) ++ List.map fst n.(n_out)))
-      as Hndv.
-    { rewrite <- map_app.
-      eapply Permutation_NoDup; [|exact (NoDup_vars_defined_n_eqs n)].
-      exact (n_defd n). }
-    assert (NoDup (locals ++ out)) as Hnd.
-    { eapply get_mappings_nodup_gen; [exact Hndv|exact Hinj|].
-      exact (get_mappings_app (List.map fst n.(n_vars))
-               (List.map fst n.(n_out)) env locals out Hgl Hgo). }
-    assert (forall o, In o out -> exists x, Env.find x env = Some o) as Hoe.
-    { intros o Ho.
-      destruct (get_mappings_In (List.map fst n.(n_out)) env out o Hgo Ho)
-        as (x & _ & Hx).
-      now exists x. }
-    unfold signature_good. cbn [s_constraints s_out].
-    exact (generate_leqns_constraints_published_wf G env cty rty
-             (lnode_clock_env n) n.(n_eqs) cns st0 st1 locals out
-             Hsep (wl_node_arity P n Hwl) Hperm Hnd Hoe Hcns).
-  Qed.
 
 End SecLusTypingCorrectness.
