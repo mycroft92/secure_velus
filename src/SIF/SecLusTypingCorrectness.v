@@ -2669,6 +2669,451 @@ Import SECMONADNotations.
                eapply cscoped_tgt_widen; [exact Hir|exact Hcr].
     Qed.
 
+
+    (** * The equation level of the dichotomy
+
+        One abstract scope [S], not [decl ++ tgt_names c]: a rule's output
+        *contains* the constraints the flow carried, so the second form would
+        force an [incl (tgt_names (carried ts)) (tgt_names c)] side lemma for
+        every rule.  What the rules need of the expressions inside them is
+        [exps_scoped_in], which the node level discharges from
+        [lexp_scoped_tgt_all] -- the carried targets are minted
+        ([lexp_carried_minted_all]), and the node's [S] contains the whole
+        window. *)
+
+    Definition exps_scoped_in (S : list ident) : Prop :=
+      (forall e ts s0 s1,
+          incl (minted s0 s1) S ->
+          assign_lexp_type G env base_ty rst_ty e s0 = OK (ts, s1) ->
+          Forall (fun t => st_scoped S (fst t)) ts
+          /\ constraints_scoped S (carried ts))
+      /\ (forall es ts s0 s1,
+             incl (minted s0 s1) S ->
+             assign_lexps G env base_ty rst_ty es s0 = OK (ts, s1) ->
+             Forall (fun t => st_scoped S (fst t)) ts
+             /\ constraints_scoped S (carried ts)).
+
+    (** A sub-run's window sits inside its parent's, so one line moves a
+        bound down into a rule's sub-expressions. *)
+    Lemma minted_sub_incl :
+      forall s0 s1 s s' S,
+        sec_le s s0 -> sec_le s1 s' ->
+        incl (minted s s') S -> incl (minted s0 s1) S.
+    Proof.
+      intros s0 s1 s s' S H1 H2 H.
+      eapply incl_tran; [apply minted_window; [exact H1|exact H2]|exact H].
+    Qed.
+
+    Lemma cscoped_app :
+      forall S c1 c2,
+        constraints_scoped S c1 -> constraints_scoped S c2 ->
+        constraints_scoped S (c1 ++ c2).
+    Proof.
+      intros S c1 c2 H1 H2. apply constraints_scoped_of_In.
+      intros c x Hc Hx. apply in_app_or in Hc as [Hc|Hc];
+        [exact (constraints_scoped_In S c1 c x H1 Hc Hx)
+        |exact (constraints_scoped_In S c2 c x H2 Hc Hx)].
+    Qed.
+
+    Lemma cscoped_cmerge_inv :
+      forall S c1 c2,
+        constraints_scoped S (cmerge c1 c2) ->
+        constraints_scoped S c1 /\ constraints_scoped S c2.
+    Proof.
+      intros S c1 c2 H. split; apply constraints_scoped_of_In;
+        intros c x Hc Hx;
+        [exact (constraints_scoped_In S _ c x H
+                  (proj2 (cmerge_In c1 c2 c) (or_introl Hc)) Hx)
+        |exact (constraints_scoped_In S _ c x H
+                  (proj2 (cmerge_In c1 c2 c) (or_intror Hc)) Hx)].
+    Qed.
+
+    Lemma cscoped_carried_elem :
+      forall S ts t,
+        constraints_scoped S (carried ts) -> In t ts ->
+        constraints_scoped S (snd t).
+    Proof.
+      intros S ts t H Ht. apply constraints_scoped_of_In.
+      intros c x Hc Hx.
+      exact (constraints_scoped_In S _ c x H (In_carried ts t c Ht Hc) Hx).
+    Qed.
+
+    Lemma cscoped_one :
+      forall S lhs rhs,
+        st_scoped S lhs -> st_scoped S rhs ->
+        constraints_scoped S [(lhs, rhs)].
+    Proof.
+      intros S lhs rhs Hl Hr. apply constraints_scoped_of_In.
+      intros c x Hc Hx. destruct Hc as [Hc|[]]; subst c.
+      unfold constraint_scope in Hx. cbn [fst snd] in Hx.
+      apply in_app_or in Hx as [Hx|Hx]; [exact (Hl x Hx)|exact (Hr x Hx)].
+    Qed.
+
+    Lemma generate_lvars_constraints_scoped_tgt :
+      forall S ckenv xs bs ts c s s',
+        clk_scoped S ->
+        In rst_ty S ->
+        incl bs S ->
+        Forall (fun t => st_scoped S (fst t)) ts ->
+        constraints_scoped S (carried ts) ->
+        generate_lvars_constraints env base_ty rst_ty ckenv xs bs ts s
+          = OK (c, s') ->
+        constraints_scoped S c.
+    Proof.
+      intros S ckenv xs. induction xs as [|x xs IH];
+        intros bs ts c s s' Hclk Hrs Hbs Hfs Hcs Hgen.
+      - destruct bs as [|b bs]; destruct ts as [|t ts];
+          cbn in Hgen; try discriminate.
+        unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _); subst c.
+        constructor.
+      - destruct bs as [|b bs]; [destruct ts; cbn in Hgen; discriminate|].
+        destruct ts as [|t ts]; [cbn in Hgen; discriminate|].
+        rewrite carried_cons in Hcs.
+        apply cscoped_cmerge_inv in Hcs as (Hct & Hctr).
+        inversion Hfs as [|? ? Hft Hfr]; subst.
+        rewrite gen_lvars_cons_eq in Hgen.
+        apply sec_bind_inv in Hgen as (ckty & s1 & Hck & Hgen).
+        apply sec_bind_inv in Hgen as (rest & s2 & Hr & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Hc & _); subst c.
+        apply cscoped_app.
+        + unfold lconstrain. apply cscoped_cmerge.
+          * apply cscoped_one; [|intros y [Hy|[]]; subst y; apply Hbs; now left].
+            rewrite fst_ljoin. unfold ambient.
+            rewrite fst_ljoin, fst_lvar.
+            apply st_scoped_merge; [|exact Hft].
+            apply st_scoped_merge;
+              [intros y [Hy|[]]; subst y; exact Hrs|].
+            unfold eqn_clock_type in Hck.
+            apply sec_bind_inv in Hck as (ck & sa & Hfc & Hck).
+            apply option_to_sec_inv in Hck as (Hck & _).
+            exact (Hclk _ _ Hck).
+          * rewrite snd_ljoin. unfold ambient.
+            rewrite snd_ljoin, snd_lvar. cbn [snd].
+            rewrite cmerge_nil, cmerge_nil2. exact Hct.
+        + eapply IH;
+            [exact Hclk|exact Hrs| |exact Hfr|exact Hctr|exact Hr].
+          intros y Hy. apply Hbs. now right.
+    Qed.
+
+    Lemma generate_ldef_constraint_scoped :
+      forall S ckenv x e cs s s',
+        clk_scoped S ->
+        In rst_ty S ->
+        exps_scoped_in S ->
+        incl (CALLS.sec_of env [x]) S ->
+        incl (minted s s') S ->
+        generate_ldef_constraint G env base_ty rst_ty ckenv x e s
+          = OK (cs, s') ->
+        constraints_scoped S cs.
+    Proof.
+      intros S ckenv x e cs s s' Hclk Hrs (Hexp & _) Hxs Hspan Hgen.
+      apply generate_ldef_constraint_inv in Hgen
+        as (ck & ckty & tf & b & s1 & Hfc & Hck & Hte & Hb & Hs1 & Hcs).
+      subst s1.
+      destruct (Hexp e [tf] s s' Hspan Hte) as (Hft & Hct).
+      rewrite carried_single in Hct. rewrite Hcs.
+      inversion Hft as [|? ? Hf1 ?]; subst.
+      apply cscoped_cmerge; [|exact Hct].
+      apply cscoped_one; [|intros y [Hy|[]]; subst y].
+      - apply st_scoped_merge; [|exact Hf1].
+        apply st_scoped_merge;
+          [intros y [Hy|[]]; subst y; exact Hrs|exact (Hclk _ _ Hck)].
+      - apply Hxs. unfold CALLS.sec_of. cbn [flat_map].
+        rewrite Hb. now left.
+    Qed.
+
+    Lemma generate_lgen_constraint_scoped :
+      forall S ckenv xs es cs s s',
+        clk_scoped S ->
+        In rst_ty S ->
+        exps_scoped_in S ->
+        incl (CALLS.sec_of env xs) S ->
+        incl (minted s s') S ->
+        generate_lgen_constraint G env base_ty rst_ty ckenv xs es s
+          = OK (cs, s') ->
+        constraints_scoped S cs.
+    Proof.
+      intros S ckenv xs es cs s s' Hclk Hrs (_ & Hexps) Hxs Hspan Hgen.
+      unfold generate_lgen_constraint in Hgen.
+      apply sec_bind_inv in Hgen as (ts & s1 & Hts & Hgen).
+      apply sec_bind_inv in Hgen as (bs & s2 & Hbs & Hlv).
+      apply option_to_sec_inv in Hbs as (Hbs & ?); subst s2.
+      assert (s' = s1) as ?
+          by (destruct (state_pure_generate_lvars_constraints env base_ty
+                          rst_ty ckenv xs bs ts s1 s1 _ _ Hlv) as (Hp & _);
+              exact Hp).
+      subst s'.
+      destruct (Hexps es ts s s1 Hspan Hts) as (Hfs & Hcs).
+      eapply generate_lvars_constraints_scoped_tgt;
+        [exact Hclk|exact Hrs| |exact Hfs|exact Hcs|exact Hlv].
+      assert (Forall2 (fun x b => Env.find x env = Some b) xs bs) as Hf2
+          by (eapply (get_mappings_Forall2 env xs bs); exact Hbs).
+      rewrite <- (Forall2_sec_of xs bs Hf2). exact Hxs.
+    Qed.
+
+    Lemma generate_lcall_constraint_scoped :
+      forall S xs f es rstty cs s s',
+        secglobal_scoped G ->
+        clk_scoped S ->
+        exps_scoped_in S ->
+        incl (CALLS.sec_of env xs) S ->
+        st_scoped S (fst rstty) ->
+        constraints_scoped S (snd rstty) ->
+        incl (minted s s') S ->
+        generate_lcall_constraint G env base_ty rst_ty xs f es rstty s
+          = OK (cs, s') ->
+        constraints_scoped S cs.
+    Proof.
+      intros S xs f es rstty cs s s' Hsg Hclk (_ & Hexps) Hxs Hfr Hcr
+        Hspan Hgen.
+      apply generate_lcall_constraint_inv in Hgen
+        as (sg & ckty & argts & outs & sti & cs0
+            & Esg & Hck & Hargs & Houts & Hgc & Hcs).
+      assert (s' = sti) as ?
+          by (destruct (state_pure_generate_constraints sg
+                          (List.map fst argts) ckty (fst rstty) outs
+                          sti sti _ _ Hgc) as (Hp & _); exact Hp).
+      subst s'.
+      destruct (Hexps es argts s sti Hspan Hargs) as (Hfa & Hca).
+      assert (Forall2 (fun x b => Env.find x env = Some b) xs outs) as Hf2
+          by (eapply CALLS.mmap_find_env_Forall2; exact Houts).
+      rewrite Hcs. apply cscoped_cmerge; [|apply cscoped_cmerge].
+      - eapply generate_constraints_scoped;
+          [exact (Hsg _ _ Esg)| |exact (Hclk _ _ Hck)|exact Hfr| |exact Hgc].
+        + apply Forall_forall. intros X HX.
+          apply in_map_iff in HX as (t & Ht & Htin); subst X.
+          rewrite Forall_forall in Hfa. exact (Hfa t Htin).
+        + apply Forall_forall. intros d Hd. apply Hxs.
+          rewrite (Forall2_sec_of xs outs Hf2). exact Hd.
+      - exact Hca.
+      - exact Hcr.
+    Qed.
+
+    Lemma generate_lone_constraint_scoped :
+      forall S ckenv ys e cs s s',
+        secglobal_scoped G ->
+        clk_scoped S ->
+        In rst_ty S ->
+        exps_scoped_in S ->
+        incl (CALLS.sec_of env ys) S ->
+        incl (minted s s') S ->
+        generate_lone_constraint G env base_ty rst_ty ckenv ys e s
+          = OK (cs, s') ->
+        constraints_scoped S cs.
+    Proof.
+      intros S ckenv ys e cs s s' Hsg Hclk Hrs Hexp Hys Hspan Hgen.
+      destruct e as [c0|x0 a0|op0 e0 a0|op0 e1 e2 a0|e0s es0 an0|e0s es0 an0
+                    |es0 x0 b0 a0|x0 ets efs a0|e0 ets efs a0|f args ro anns].
+      1-9: destruct ys as [|x [|y ys]];
+        [eapply generate_lgen_constraint_scoped;
+           [exact Hclk|exact Hrs|exact Hexp|exact Hys|exact Hspan|exact Hgen]
+        |eapply generate_ldef_constraint_scoped;
+           [exact Hclk|exact Hrs|exact Hexp|exact Hys|exact Hspan|exact Hgen]
+        |eapply generate_lgen_constraint_scoped;
+           [exact Hclk|exact Hrs|exact Hexp|exact Hys|exact Hspan|exact Hgen]].
+      destruct Hexp as (Hexp1 & Hexps).
+      destruct ro as [e1|]; destruct ys as [|y ys].
+      - unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _); subst cs. constructor.
+      - cbn [generate_lone_constraint] in Hgen.
+        apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
+        apply sec_bind_inv in Hgen as (a1 & s2 & Ha1 & Hgen).
+        apply single_inv in Ha1 as (? & ?); subst t1 s2.
+        apply sec_bind_inv in Hgen as (rck & s3 & Hrck & Hgen).
+        apply option_to_sec_inv in Hrck as (Hrck & ?); subst s3.
+        assert (sec_le s s1) as Hls1
+            by (eapply assign_lexp_type_sec_le; exact Ht1).
+        assert (sec_le s1 s') as Hl1
+            by (eapply generate_lcall_constraint_sec_le; exact Hgen).
+        destruct (Hexp1 e1 [a1] s s1
+                    (minted_sub_incl s s1 s s' S (sec_le_refl s) Hl1 Hspan)
+                    Ht1) as (Hf1 & Hc1).
+        rewrite carried_single in Hc1.
+        inversion Hf1 as [|? ? Hs1 ?]; subst.
+        eapply generate_lcall_constraint_scoped;
+          [exact Hsg|exact Hclk|exact (conj Hexp1 Hexps)|exact Hys| | |
+           exact (minted_sub_incl s1 s' s s' S Hls1 (sec_le_refl s') Hspan)
+          |exact Hgen].
+        + rewrite !fst_ljoin, fst_lvar.
+          apply st_scoped_merge;
+            [intros y0 [Hy0|[]]; subst y0; exact Hrs|].
+          apply st_scoped_merge; [exact Hs1|exact (Hclk _ _ Hrck)].
+        + rewrite !snd_ljoin, snd_lvar. cbn [snd].
+          rewrite cmerge_nil, cmerge_nil2. exact Hc1.
+      - unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _); subst cs. constructor.
+      - eapply generate_lcall_constraint_scoped;
+          [exact Hsg|exact Hclk|exact (conj Hexp1 Hexps)|exact Hys| | |
+           exact Hspan|exact Hgen].
+        + rewrite fst_lvar. intros y0 [Hy0|[]]; subst y0; exact Hrs.
+        + rewrite snd_lvar. constructor.
+    Qed.
+
+    Lemma generate_lsplit_constraints_scoped :
+      forall S ckenv es xs cs s s',
+        secglobal_scoped G ->
+        clk_scoped S ->
+        In rst_ty S ->
+        exps_scoped_in S ->
+        incl (CALLS.sec_of env xs) S ->
+        incl (minted s s') S ->
+        generate_lsplit_constraints G env base_ty rst_ty ckenv xs es s
+          = OK (cs, s') ->
+        constraints_scoped S cs.
+    Proof.
+      intros S ckenv es. induction es as [|e es IH];
+        intros xs cs s s' Hsg Hclk Hrs Hexp Hxs Hspan Hgen.
+      - cbn [generate_lsplit_constraints] in Hgen. unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _); subst cs. constructor.
+      - rewrite gen_lsplit_cons in Hgen.
+        apply sec_bind_inv in Hgen as (c & s1 & Hc & Hgen).
+        apply sec_bind_inv in Hgen as (cr & s2 & Hcr & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Heq & ?); subst cs s'.
+        assert (sec_le s s1) as Hla
+            by (eapply generate_lone_constraint_sec_le; exact Hc).
+        assert (sec_le s1 s2) as Hlb
+            by (eapply generate_lsplit_constraints_sec_le; exact Hcr).
+        apply cscoped_app.
+        + eapply generate_lone_constraint_scoped;
+            [exact Hsg|exact Hclk|exact Hrs|exact Hexp| | |exact Hc].
+          * eapply incl_tran; [|exact Hxs]. apply sec_of_incl.
+            intros y Hy. exact (In_firstn_any ident (numstreams e) xs y Hy).
+          * exact (minted_sub_incl s s1 s s2 S (sec_le_refl s) Hlb Hspan).
+        + eapply IH;
+            [exact Hsg|exact Hclk|exact Hrs|exact Hexp| | |exact Hcr].
+          * eapply incl_tran; [|exact Hxs]. apply sec_of_incl.
+            intros y Hy. exact (In_skipn_any ident (numstreams e) xs y Hy).
+          * exact (minted_sub_incl s1 s2 s s2 S Hla (sec_le_refl s2) Hspan).
+    Qed.
+
+    Lemma generate_leqn_constraint_scoped :
+      forall S ckenv eqn cs s s',
+        secglobal_scoped G ->
+        clk_scoped S ->
+        In rst_ty S ->
+        exps_scoped_in S ->
+        incl (CALLS.sec_of env (fst eqn)) S ->
+        incl (minted s s') S ->
+        generate_leqn_constraint G env base_ty rst_ty ckenv eqn s
+          = OK (cs, s') ->
+        constraints_scoped S cs.
+    Proof.
+      intros S ckenv eqn cs s s' Hsg Hclk Hrs Hexp Hxs Hspan Hgen.
+      destruct eqn as (xs & es). cbn [fst] in Hxs.
+      destruct es as [|e [|e2 es2]].
+      - eapply generate_lgen_constraint_scoped;
+          [exact Hclk|exact Hrs|exact Hexp|exact Hxs|exact Hspan|exact Hgen].
+      - destruct e as [c0|x0 a0|op0 e0 a0|op0 e1 e2 a0|e0s es0 an0|e0s es0 an0
+                      |es0 x0 b0 a0|x0 ets efs a0|e0 ets efs a0
+                      |f args ro anns].
+        1-9: destruct xs as [|x [|y xs]];
+          [eapply generate_lgen_constraint_scoped;
+             [exact Hclk|exact Hrs|exact Hexp|exact Hxs|exact Hspan|exact Hgen]
+          |eapply generate_ldef_constraint_scoped;
+             [exact Hclk|exact Hrs|exact Hexp|exact Hxs|exact Hspan|exact Hgen]
+          |eapply generate_lgen_constraint_scoped;
+             [exact Hclk|exact Hrs|exact Hexp|exact Hxs|exact Hspan
+             |exact Hgen]].
+        destruct Hexp as (Hexp1 & Hexps).
+        destruct ro as [e1|]; destruct xs as [|y xs].
+        + unfold SC.ret in Hgen.
+          destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _); subst cs. constructor.
+        + cbn [generate_leqn_constraint] in Hgen.
+          apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
+          apply sec_bind_inv in Hgen as (a1 & s2 & Ha1 & Hgen).
+          apply single_inv in Ha1 as (? & ?); subst t1 s2.
+          apply sec_bind_inv in Hgen as (rck & s3 & Hrck & Hgen).
+          apply option_to_sec_inv in Hrck as (Hrck & ?); subst s3.
+          assert (sec_le s s1) as Hls1
+              by (eapply assign_lexp_type_sec_le; exact Ht1).
+          assert (sec_le s1 s') as Hl1
+              by (eapply generate_lcall_constraint_sec_le; exact Hgen).
+          destruct (Hexp1 e1 [a1] s s1
+                      (minted_sub_incl s s1 s s' S (sec_le_refl s) Hl1 Hspan)
+                      Ht1) as (Hf1 & Hc1).
+          rewrite carried_single in Hc1.
+          inversion Hf1 as [|? ? Hs1 ?]; subst.
+          eapply generate_lcall_constraint_scoped;
+            [exact Hsg|exact Hclk|exact (conj Hexp1 Hexps)|exact Hxs| |
+             |exact (minted_sub_incl s1 s' s s' S Hls1 (sec_le_refl s') Hspan)
+             |exact Hgen].
+          * rewrite !fst_ljoin, fst_lvar.
+            apply st_scoped_merge;
+              [intros y0 [Hy0|[]]; subst y0; exact Hrs|].
+            apply st_scoped_merge; [exact Hs1|exact (Hclk _ _ Hrck)].
+          * rewrite !snd_ljoin, snd_lvar. cbn [snd].
+            rewrite cmerge_nil, cmerge_nil2. exact Hc1.
+        + unfold SC.ret in Hgen.
+          destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _); subst cs. constructor.
+        + eapply generate_lcall_constraint_scoped;
+            [exact Hsg|exact Hclk|exact (conj Hexp1 Hexps)|exact Hxs| |
+             |exact Hspan|exact Hgen].
+          * rewrite fst_lvar. intros y0 [Hy0|[]]; subst y0; exact Hrs.
+          * rewrite snd_lvar. constructor.
+      - destruct (has_lcall (e :: e2 :: es2)) eqn:Hh;
+          cbn [generate_leqn_constraint] in Hgen; rewrite Hh in Hgen.
+        + destruct e; try destruct o;
+            (eapply generate_lsplit_constraints_scoped;
+             [exact Hsg|exact Hclk|exact Hrs|exact Hexp|exact Hxs|exact Hspan
+             |exact Hgen]).
+        + destruct e; try destruct o;
+            (eapply generate_lgen_constraint_scoped;
+             [exact Hclk|exact Hrs|exact Hexp|exact Hxs|exact Hspan
+             |exact Hgen]).
+    Qed.
+
+    Theorem generate_leqns_constraints_scoped :
+      forall S ckenv eqs cs s s',
+        secglobal_scoped G ->
+        clk_scoped S ->
+        In rst_ty S ->
+        exps_scoped_in S ->
+        incl (CALLS.sec_of env (vars_defined eqs)) S ->
+        incl (minted s s') S ->
+        generate_leqns_constraints G env base_ty rst_ty ckenv eqs s
+          = OK (cs, s') ->
+        constraints_scoped S cs.
+    Proof.
+      intros S ckenv eqs. induction eqs as [|eqn eqs IH];
+        intros cs s s' Hsg Hclk Hrs Hexp Hxs Hspan Hgen.
+      - apply generate_leqns_constraints_nil in Hgen as (Hc & _).
+        rewrite Hc. constructor.
+      - rewrite generate_leqns_constraints_cons in Hgen.
+        apply sec_bind_inv in Hgen as (c1 & s1 & Hc1 & Hgen).
+        apply sec_bind_inv in Hgen as (c2 & s2 & Hc2 & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Heq & ?); subst cs s'.
+        rewrite vars_defined_cons_eq, sec_of_app in Hxs.
+        assert (sec_le s s1) as Hla
+            by (eapply generate_leqn_constraint_sec_le; exact Hc1).
+        assert (sec_le s1 s2) as Hlb
+            by (eapply generate_leqns_constraints_sec_le; exact Hc2).
+        apply cscoped_app.
+        + eapply generate_leqn_constraint_scoped;
+            [exact Hsg|exact Hclk|exact Hrs|exact Hexp| | |exact Hc1].
+          * eapply incl_tran; [|exact Hxs]. apply incl_appl, incl_refl.
+          * exact (minted_sub_incl s s1 s s2 S (sec_le_refl s) Hlb Hspan).
+        + eapply IH;
+            [exact Hsg|exact Hclk|exact Hrs|exact Hexp| | |exact Hc2].
+          * eapply incl_tran; [|exact Hxs]. apply incl_appr, incl_refl.
+          * exact (minted_sub_incl s1 s2 s s2 S Hla (sec_le_refl s2) Hspan).
+    Qed.
+
+    Lemma collapse_occurs_mono :
+      forall cns d', ~ occurs d' cns -> ~ occurs d' (collapse cns).
+    Proof.
+      intros cns d' Hno (c & Hc & Hx).
+      assert (constraints_scoped (flat_map constraint_scope cns)
+                (collapse cns)) as Hsc
+          by (apply collapse_scoped, constraints_scoped_self).
+      pose proof (constraints_scoped_In _ _ c d' Hsc Hc Hx) as Hin.
+      apply in_flat_map in Hin as (c0 & Hc0 & Hx0).
+      exact (Hno (ex_intro _ c0 (conj Hc0 Hx0))).
+    Qed.
+
   End RawTargets.
 
 End SecLusTypingCorrectness.
