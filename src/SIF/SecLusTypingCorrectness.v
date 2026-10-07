@@ -3192,6 +3192,376 @@ Import SECMONADNotations.
     Qed.
 
 
+    Lemma tgt_names_of_targets_of :
+      forall ds cs, targets_of ds cs -> incl (tgt_names cs) ds.
+    Proof.
+      intros ds cs H d Hd. unfold tgt_names in Hd.
+      apply in_flat_map in Hd as (c & Hc & Hdc).
+      destruct (targets_of_In ds cs c H Hc) as (b & Hb & Hsc).
+      destruct c as (lhs, rhs). cbn [snd] in Hsc, Hdc. subst rhs.
+      destruct Hdc as [Hdc|[]]; subst d. exact Hb.
+    Qed.
+
+    Lemma In_tgt_names_target :
+      forall cs d,
+        Forall singleton_rhs cs ->
+        In d (tgt_names cs) ->
+        In [d] (List.map snd cs).
+    Proof.
+      intros cs d Hs Hd. unfold tgt_names in Hd.
+      apply in_flat_map in Hd as (c & Hc & Hdc).
+      rewrite Forall_forall in Hs. destruct (Hs c Hc) as (b & Hb).
+      destruct c as (lhs, rhs). cbn [snd] in Hb, Hdc. subst rhs.
+      destruct Hdc as [Hdc|[]]; subst b.
+      apply in_map_iff. exists (lhs, [d]). split; [reflexivity|exact Hc].
+    Qed.
+
+    (** The dichotomy, packaged the way the equation rules consume it.  No
+        window reasoning is left: the rules ask only that the targets a flow
+        carries lie in the scope, and they supply that themselves. *)
+    Lemma exps_scoped_in_of_decl :
+      forall decl S,
+        decl_ok decl ->
+        clk_scoped decl ->
+        secglobal_scoped G ->
+        incl decl S ->
+        exps_scoped_in S.
+    Proof.
+      intros decl S Hdk Hclk Hsg Hds. split.
+      - intros e ts s0 s1 Hci Hgen.
+        destruct (lexp_scoped_tgt_all decl Hdk Hclk Hsg e ts s0 s1 Hgen)
+          as (Hf & Hc).
+        assert (incl (decl ++ tgt_names (carried ts)) S) as Hi
+            by (apply incl_app; [exact Hds|exact Hci]).
+        split;
+          [eapply Forall_impl; [|exact Hf]; intros t Ht;
+           eapply st_scoped_weaken; [exact Hi|exact Ht]
+          |eapply constraints_scoped_weaken; [exact Hi|exact Hc]].
+      - intros es ts s0 s1 Hci Hgen.
+        assert (Forall (lexp_scoped_tgt decl) es) as Hall
+            by (apply Forall_forall; intros e0 _;
+                apply (lexp_scoped_tgt_all decl Hdk Hclk Hsg)).
+        destruct (lexps_scoped_tgt_of decl es Hall ts s0 s1 Hgen) as (Hf & Hc).
+        assert (incl (decl ++ tgt_names (carried ts)) S) as Hi
+            by (apply incl_app; [exact Hds|exact Hci]).
+        split;
+          [eapply Forall_impl; [|exact Hf]; intros t Ht;
+           eapply st_scoped_weaken; [exact Hi|exact Ht]
+          |eapply constraints_scoped_weaken; [exact Hi|exact Hc]].
+    Qed.
+
+    Lemma target_In_tgt_names :
+      forall cs d, In [d] (List.map snd cs) -> In d (tgt_names cs).
+    Proof.
+      intros cs d Hd. apply in_map_iff in Hd as (c & Hc & Hcin).
+      unfold tgt_names. apply in_flat_map. exists c.
+      split; [exact Hcin|].
+      destruct c as (lhs, rhs). cbn [snd] in Hc |- *. subst rhs. now left.
+    Qed.
+
   End RawTargets.
+
+  (** * Item 6: a generated signature is good
+
+      [signature_good] for one node is item 7 instantiated at that node.  The
+      three list facts it asks for come from the node record and the naming
+      pass: the defined variables are the locals and the outputs by [n_defd],
+      they are distinct by [NoDup_vars_defined_n_eqs], and the separation of
+      declared names from minted ones is
+      [generate_lnode_scoped_env_st_fresh_sec], read at the window. *)
+
+  Lemma Permutation_flat_map :
+    forall {A B : Type} (f : A -> list B) xs ys,
+      Permutation xs ys -> Permutation (flat_map f xs) (flat_map f ys).
+  Proof.
+    intros A B f xs ys H.
+    induction H as [|x l l' H IH|x y l|l l' l'' H1 IH1 H2 IH2].
+    - reflexivity.
+    - cbn [flat_map]. apply Permutation_app_head. exact IH.
+    - cbn [flat_map]. rewrite !app_assoc.
+      apply Permutation_app_tail, Permutation_app_comm.
+    - etransitivity; [exact IH1|exact IH2].
+  Qed.
+
+  Lemma sec_of_Permutation :
+    forall env xs ys,
+      Permutation xs ys ->
+      Permutation (CALLS.sec_of env xs) (CALLS.sec_of env ys).
+  Proof.
+    intros env xs ys H. unfold CALLS.sec_of. now apply Permutation_flat_map.
+  Qed.
+
+  (** The arity half of [wl_equation], which is the one item 7's split rule
+      needs; the other half is about the expressions. *)
+  Lemma wl_node_arity :
+    forall (P : global) (n : node),
+      wl_node P n ->
+      Forall (fun eq => length (fst eq) = length (LSyn.annots (snd eq)))
+        n.(n_eqs).
+  Proof.
+    intros P n Hwl. unfold wl_node in Hwl.
+    rewrite Forall_forall in Hwl. apply Forall_forall.
+    intros eq Hin. destruct eq as (xs, es). cbn [fst snd].
+    destruct (Hwl (xs, es) Hin) as (_ & Hlen). exact Hlen.
+  Qed.
+
+  (** The naming pass allocates below its final state and the generator mints
+      from there upwards, so a declared security name is never a minted one.
+      Both namespaces are [sec]: the separation is by index. *)
+  Lemma env_apart_from_minted :
+    forall ns envs names stN name env s s',
+      SECLNG.generate_lnode_scoped_env_st ns = OK (envs, names, stN) ->
+      find_node_env name envs = Some env ->
+      sec_le stN s ->
+      forall x b, Env.find x env = Some b -> ~ In b (minted s s').
+  Proof.
+    intros ns envs names stN name env s s' Hgen Henv Hle x b Hb Hin.
+    apply minted_spec in Hin as (j & Hsj & _ & Hbj).
+    exact (SECLNG.generate_lnode_scoped_env_st_fresh_sec ns envs names stN
+             name env x b j Hgen Henv Hb (Pos.le_trans stN s j Hle Hsj) Hbj).
+  Qed.
+
+  Theorem generate_lnode_sig_good :
+    forall (G : secglobal) (P : global) (n : node) env aux sg st0 st1,
+      env_injective env ->
+      wl_node P n ->
+      (forall x b, Env.find x env = Some b -> ~ In b (minted st0 st1)) ->
+      generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
+      signature_good sg.
+  Proof.
+    intros G P n env aux sg st0 st1 Hinj Hwl Hsep Hsig.
+    destruct (lnode_sig_inv env G n aux sg st0 st1 Hsig)
+      as (ci & ri & cty & rty & inp & out & locals & cns
+          & _ & _ & _ & _ & Hout & Hloc & Hcns & ?); subst sg.
+    assert (get_mappings (List.map fst n.(n_vars)) env = Some locals) as Hgl
+        by (eapply get_mappings_from_node_eq; exact Hloc).
+    assert (get_mappings (List.map fst n.(n_out)) env = Some out) as Hgo
+        by (eapply get_mappings_from_node_eq; exact Hout).
+    assert (locals = CALLS.sec_of env (List.map fst n.(n_vars))) as Hlo
+        by (eapply get_mappings_from_node_sec_of; exact Hloc).
+    assert (out = CALLS.sec_of env (List.map fst n.(n_out))) as Hou
+        by (eapply get_mappings_from_node_sec_of; exact Hout).
+    (** the defined variables are the locals and the outputs *)
+    assert (Permutation (CALLS.sec_of env (vars_defined n.(n_eqs)))
+                        (locals ++ out)) as Hperm.
+    { rewrite Hlo, Hou, <- sec_of_app, <- map_app.
+      apply sec_of_Permutation. exact (n_defd n). }
+    (** and they are distinct, which [env] injectivity carries to the names *)
+    assert (NoDup (List.map fst n.(n_vars) ++ List.map fst n.(n_out)))
+      as Hndv.
+    { rewrite <- map_app.
+      eapply Permutation_NoDup; [|exact (NoDup_vars_defined_n_eqs n)].
+      exact (n_defd n). }
+    assert (NoDup (locals ++ out)) as Hnd.
+    { eapply get_mappings_nodup_gen; [exact Hndv|exact Hinj|].
+      exact (get_mappings_app (List.map fst n.(n_vars))
+               (List.map fst n.(n_out)) env locals out Hgl Hgo). }
+    assert (forall o, In o out -> exists x, Env.find x env = Some o) as Hoe.
+    { intros o Ho.
+      destruct (get_mappings_In (List.map fst n.(n_out)) env out o Hgo Ho)
+        as (x & _ & Hx).
+      now exists x. }
+    unfold signature_good. cbn [s_constraints s_out].
+    exact (generate_leqns_constraints_published_wf G env cty rty
+             (lnode_clock_env n) n.(n_eqs) cns st0 st1 locals out
+             Hsep (wl_node_arity P n Hwl) Hperm Hnd Hoe Hcns).
+  Qed.
+
+  (** * Item 6: a generated signature is scoped
+
+      [simplify_scoped_weak] at [scope := signature_scope sg] and
+      [ds := locals ++ minted st0 st1].  One instantiation of the equation
+      dispatch serves both of its premises: at [S := decl ++ tgt_names cns],
+      where [decl] is the node's declared security names together with its
+      two auxiliary levels.  The second premise is that, weakened along
+      [tgt_names cns ⊆ decl ++ minted] -- item 7.  The third splits: a local
+      is a target, also by item 7, and a minted name is a target *if it
+      occurs*, because the same scoping says an occurring name is declared
+      or a target and a minted name is not declared. *)
+
+  Lemma clk_scoped_of_env :
+    forall (env0 : Env.t ident) D ct ck ckty,
+      In ct D ->
+      (forall x b, Env.find x env0 = Some b -> In b D) ->
+      assign_clk_type env0 ct ck = Some ckty ->
+      st_scoped D ckty.
+  Proof.
+    intros env0 D ct ck. induction ck as [|ck IH x b]; intros ckty Hct Henv H.
+    - cbn in H. inversion H; subst ckty.
+      intros y [Hy|[]]; subst y; exact Hct.
+    - cbn in H.
+      destruct (assign_clk_type env0 ct ck) as [c0|] eqn:Hc0; [|discriminate H].
+      destruct (Env.find x env0) as [xty|] eqn:Hx; [|discriminate H].
+      cbn in H. inversion H; subst ckty.
+      apply st_scoped_merge;
+        [apply (IH c0 Hct Henv); reflexivity
+        |intros y [Hy|[]]; subst y; exact (Henv _ _ Hx)].
+  Qed.
+
+  Theorem generate_lnode_sig_scoped :
+    forall (G : secglobal) (P : global) (n : node) env aux sg st0 st1,
+      env_injective env ->
+      secglobal_scoped G ->
+      wl_node P n ->
+      (forall x b, Env.find x env = Some b -> ~ In b (minted st0 st1)) ->
+      (forall clk_id rst_id ct rt,
+          get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
+          Env.find clk_id env = Some ct ->
+          Env.find rst_id env = Some rt ->
+          forall x b, Env.find x env = Some b ->
+            In b (CALLS.sec_of env
+                    (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                  ++ [ct; rt])) ->
+      generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
+      signature_scoped sg.
+  Proof.
+    intros G P n env aux sg st0 st1 Hinj Hsgs Hwl Hsep Hrange Hsig.
+    destruct (lnode_sig_inv env G n aux sg st0 st1 Hsig)
+      as (ci & ri & ct & rt & inp & out & locals & cns
+          & Haux & Hct & Hrt & Hinp & Hout & Hloc & Hcns & ?); subst sg.
+    pose proof (Hrange ci ri ct rt Haux Hct Hrt) as Hrg.
+    assert (inp = CALLS.sec_of env (List.map fst n.(n_in))) as Hi
+        by (eapply get_mappings_from_node_sec_of; exact Hinp).
+    assert (out = CALLS.sec_of env (List.map fst n.(n_out))) as Ho
+        by (eapply get_mappings_from_node_sec_of; exact Hout).
+    assert (locals = CALLS.sec_of env (List.map fst n.(n_vars))) as Hl
+        by (eapply get_mappings_from_node_sec_of; exact Hloc).
+    set (decl := CALLS.sec_of env
+                   (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                 ++ [ct; rt]).
+    assert (Hsplit : decl = (inp ++ locals ++ out) ++ [ct; rt])
+        by (unfold decl; rewrite Hi, Hl, Ho, !map_app, !sec_of_app;
+            reflexivity).
+    (** no declared name was minted *)
+    assert (Hdm : forall d, In d decl -> ~ In d (minted st0 st1)).
+    { intros d Hd. unfold decl in Hd. apply in_app_or in Hd as [Hd|Hd].
+      - unfold CALLS.sec_of in Hd. apply in_flat_map in Hd as (x & _ & Hd).
+        destruct (Env.find x env) as [b|] eqn:Hx; [|contradiction].
+        destruct Hd as [Hd|[]]; subst b. exact (Hsep x d Hx).
+      - destruct Hd as [Hd|[Hd|[]]]; subst d;
+          [exact (Hsep ci ct Hct)|exact (Hsep ri rt Hrt)]. }
+    assert (Hdk : decl_ok env ct rt decl).
+    { split; [|split].
+      - unfold decl. apply in_or_app. right. now left.
+      - unfold decl. apply in_or_app. right. right. now left.
+      - exact Hrg. }
+    assert (Hclk : clk_scoped env ct decl).
+    { intros ck ckty Hck.
+      eapply clk_scoped_of_env; [|exact Hrg|exact Hck].
+      unfold decl. apply in_or_app. right. now left. }
+    (** item 7: every target is a defined name or a minted one *)
+    destruct (generate_leqns_constraints_shape G env ct rt
+                (lnode_clock_env n) n.(n_eqs) cns st0 st1 (minted st0 st1)
+                (incl_refl _) Hsep (wl_node_arity P n Hwl) Hcns)
+      as (ms & Hm & Hms).
+    assert (Hdefd : incl (CALLS.sec_of env (vars_defined n.(n_eqs))) decl).
+    { unfold decl. eapply incl_tran; [|apply incl_appl, incl_refl].
+      apply sec_of_incl. intros y Hy.
+      assert (In y (List.map fst (n.(n_vars) ++ n.(n_out)))) as Hy'
+          by (eapply Permutation_in; [exact (n_defd n)|exact Hy]).
+      rewrite map_app in Hy' |- *. rewrite map_app.
+      apply in_app_or in Hy' as [Hy'|Hy'];
+        [apply in_or_app; right; apply in_or_app; now left
+        |apply in_or_app; right; apply in_or_app; now right]. }
+    assert (Htb : incl (tgt_names cns) (decl ++ minted st0 st1)).
+    { eapply incl_tran; [eapply tgt_names_of_targets_of; exact Hm|].
+      apply incl_app;
+        [eapply incl_tran; [exact Hdefd|apply incl_appl, incl_refl]
+        |eapply incl_tran; [exact Hms|apply incl_appr, incl_refl]]. }
+    (** the scoping, at the scope that carries the dichotomy *)
+    set (S := decl ++ tgt_names cns).
+    assert (HclkS : clk_scoped env ct S).
+    { intros ck ckty Hck.
+      eapply st_scoped_weaken;
+        [unfold S; apply incl_appl, incl_refl|exact (Hclk ck ckty Hck)]. }
+    assert (Hcsc : constraints_scoped S cns).
+    { eapply generate_leqns_constraints_scoped;
+        [exact Hsgs|exact HclkS| |eapply exps_scoped_in_of_decl;
+           [exact Hdk|exact Hclk|exact Hsgs|unfold S; apply incl_appl,
+            incl_refl]
+        |eapply incl_tran; [exact Hdefd|unfold S; apply incl_appl, incl_refl]
+        |unfold S; apply incl_appr, incl_refl|exact Hcns].
+      unfold S, decl. apply in_or_app. left. apply in_or_app. right.
+      right. now left. }
+    assert (Hcol : constraints_scoped S (collapse cns))
+        by (apply collapse_scoped; exact Hcsc).
+    assert (Hlen1c : Forall singleton_rhs cns).
+    { pose proof (generate_leqns_constraints_len1 G env ct rt
+                    (lnode_clock_env n) n.(n_eqs) cns st0 st1 Hcns) as Hl1.
+      rewrite Forall_forall in Hl1. apply Forall_forall.
+      intros c Hc. specialize (Hl1 c Hc).
+      destruct c as (lhs, rhs). cbn [snd] in Hl1 |- *.
+      destruct rhs as [|b [|? ?]]; [discriminate Hl1|now exists b
+                                   |discriminate Hl1]. }
+    assert (Hlen1 : Forall singleton_rhs (collapse cns))
+        by (apply collapse_singleton_rhs;
+            exact (generate_leqns_constraints_len1 G env ct rt
+                     (lnode_clock_env n) n.(n_eqs) cns st0 st1 Hcns)).
+    (** and the elimination *)
+    unfold signature_scoped. cbn [s_constraints s_in s_out s_clk s_reset].
+    eapply simplify_scoped_weak.
+    - (** distinct *)
+      apply NoDup_app'.
+      + rewrite Hl, <- (get_mappings_from_node_sec_of _ _ _ Hloc).
+        eapply get_mappings_nodup_gen;
+          [|exact Hinj|eapply get_mappings_from_node_eq; exact Hloc].
+        rewrite <- fst_NoDupMembers.
+        pose proof (n_nodup n) as Hnd.
+        repeat rewrite app_assoc in Hnd.
+        apply NoDupMembers_app_l in Hnd.
+        apply NoDupMembers_app_l in Hnd.
+        apply NoDupMembers_app_r in Hnd. exact Hnd.
+      + apply minted_NoDup.
+      + apply Forall_forall. intros y Hy Hin. apply (Hdm y); [|exact Hin].
+        rewrite Hsplit. apply in_or_app. left.
+        apply in_or_app. right. apply in_or_app. left. exact Hy.
+    - (** scoped, after moving [decl ++ tgt_names cns] into place *)
+      eapply constraints_scoped_weaken; [|exact Hcol].
+      intros y Hy. unfold S in Hy. apply in_app_or in Hy as [Hy|Hy].
+      + rewrite Hsplit in Hy. apply in_app_or in Hy as [Hy|Hy].
+        * apply in_app_or in Hy as [Hy|Hy];
+            [apply in_or_app; left; apply in_or_app; now left|].
+          apply in_app_or in Hy as [Hy|Hy];
+            [apply in_or_app; right; apply in_or_app; now left
+            |apply in_or_app; left; apply in_or_app; right;
+             apply in_or_app; now left].
+        * apply in_or_app. left. apply in_or_app. right.
+          apply in_or_app. now right.
+      + apply Htb in Hy. apply in_app_or in Hy as [Hy|Hy].
+        * rewrite Hsplit in Hy. apply in_app_or in Hy as [Hy|Hy].
+          -- apply in_app_or in Hy as [Hy|Hy];
+               [apply in_or_app; left; apply in_or_app; now left|].
+             apply in_app_or in Hy as [Hy|Hy];
+               [apply in_or_app; right; apply in_or_app; now left
+               |apply in_or_app; left; apply in_or_app; right;
+                apply in_or_app; now left].
+          -- apply in_or_app. left. apply in_or_app. right.
+             apply in_or_app. now right.
+        * apply in_or_app. right. apply in_or_app. now right.
+    - (** a target, or absent *)
+      intros d Hd. apply in_app_or in Hd as [Hd|Hd].
+      + (** a local: defined by some equation, so item 7 gives it a
+            constraint, and [collapse] keeps the target *)
+        left. apply collapse_rhs_in.
+        eapply Permutation_in; [apply Permutation_sym; exact Hm|].
+        apply in_map_iff. exists d. split; [reflexivity|].
+        apply in_or_app. left.
+        rewrite Hl in Hd. unfold CALLS.sec_of in Hd |- *.
+        apply in_flat_map in Hd as (x & Hx & Hdx).
+        apply in_flat_map. exists x. split; [|exact Hdx].
+        eapply Permutation_in; [apply Permutation_sym; exact (n_defd n)|].
+        rewrite map_app. apply in_or_app. now left.
+      + (** a minted name: a target if it occurs at all *)
+        destruct (In_dec ident_eq_dec d (tgt_names (collapse cns)))
+          as [Ht|Ht].
+        * left. exact (In_tgt_names_target (collapse cns) d Hlen1 Ht).
+        * right. intros (c & Hc & Hx).
+          assert (In d S) as Hin
+              by (eapply constraints_scoped_In; [exact Hcol|exact Hc|exact Hx]).
+          unfold S in Hin. apply in_app_or in Hin as [Hin|Hin].
+          -- exact (Hdm d Hin Hd).
+          -- apply Ht. apply target_In_tgt_names. apply collapse_rhs_in.
+             exact (In_tgt_names_target cns d Hlen1c Hin).
+  Qed.
 
 End SecLusTypingCorrectness.
