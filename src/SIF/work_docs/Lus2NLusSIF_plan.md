@@ -4070,3 +4070,66 @@ threads it.
 (st_ids st')`, so a single `NoDup` premise delivers everything the lifting
 cases need of freshness, uniformly and without the shrinking reusable set.
 See `docs/SecLusUnnesting.md`.
+
+
+### DONE 2026-10-07 (second session): item 1, and the program fold of item 2
+
+Landed in `SecLusTypingCorrectness.v`, admit-free, commits `efef065`,
+`6c5a710`, `6e570b1`:
+
+  * **Item 1, `sig_rooted`.**  `exp_rooted_win_all` (the carried constraints of
+    every expression are rooted at the base name and the reset level, window
+    threaded like `lexp_carried_minted_all`), the equation dispatch
+    `generate_{lcall,lone,lsplit,leqn,leqns}_..._rooted_win`, `collapse_rooted`,
+    and `generate_lnode_sig_rooted` -- through `simplify_rooted`, with the two
+    levels shown never to be a target or an eliminated name
+    (`sec_of_apart`).
+  * **Item 3's naming facts, read off the run.**
+    `generate_local_env_for_lnode_facts` (injective; every value a `sec` gensym
+    in the node's own stretch `[st, st')`; the two aux names are the first
+    two of it) and `generate_lnode_scoped_env'_state_mono`.
+  * **Item 2's fold.**  `lsig_inv` (good, scoped, duplicate-free, rooted,
+    scopes bounded above by the naming state at the node, `sec_le stN st`),
+    `lsig_step` (one node), `generate_all_lsignatures'_inv` (lockstep
+    induction over the naming run and the signature run, which share the node
+    list) and `generate_all_lsignatures_inv` (the program driver).  The cross-
+    node separation is the counter: an accumulator's scopes lie below the
+    state the naming pass was in at this node, this node's names above it
+    (`scope_fresh_from_bounds`).  No prefix machinery was needed.
+
+#### FINDING 2026-10-07: `sig_actuals_fresh` is unsatisfiable as stated
+
+The Section hypothesis (`SecLusUnnestingCalls/Equations/Streams/Nodes`)
+
+    sig_actuals_fresh : forall f sg inp ck rst os cns sa sb,
+      find_signature f GL = Some sg ->
+      generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
+      call_subst_fresh sg inp ck rst os
+
+quantifies over **every** `inp`.  `generate_constraints` succeeds on actuals
+that contain a callee formal -- `subst_inp_ident_in_constraint` errors only
+when the *constraint's own right-hand side* equals the substituted input, and
+`subst_constraints_out_map` only when an output name is already a right-hand
+side.  Take any signature with an input `a` and an output, `inp := [[a]]`,
+`os` fresh: the run is `OK`, and `types_fresh (signature_scope sg) [[a]]`
+fails.  So the hypothesis is false for every callee with an input, and every
+theorem that takes it (and the four step theorems that take its program-level
+sibling `forall inp ck rst os cns sa sb, generate_constraints sgS ... ->
+call_subst_fresh sgS ... /\ NoDup os`, and `call_weakens`, which is quantified
+over all instantiations too) is vacuous on programs with calls.  It is the same
+shape as the `source_types_scoped` defect of 2026-09-24.
+
+`generate_lnode_sig_instantiations` as written in `Next_remaining.v` is
+therefore **not provable** and should not be attempted.  Item 1 was done with
+the satisfiable form instead: freshness against a scope `ns` that the run's
+actuals are scoped in (`call_subst_fresh_from_scope_fresh`), where
+`ns := decl ++ minted st0 st1`, and the program fold discharges `scope_fresh ns`
+against the accumulator by the counter.
+
+The repair for the older sections is the same move: replace the universal
+hypothesis by `scope_fresh scope sg` for the callees, and at each of its five
+use sites (`Calls.v:4570`, `Equations.v:4630/5380/5442`, `Streams.v:7334`)
+derive `call_subst_fresh` from the actuals being scoped in `scope`, which the
+context there already has (`source_types_scoped_upto`, `clk_types_scoped`, the
+reset's scoping).  `call_weakens` and the four step theorems then take the
+freshness *as a premise of the instantiation* instead of as a universal fact.
