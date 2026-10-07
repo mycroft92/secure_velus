@@ -4452,4 +4452,395 @@ Import SECMONADNotations.
       intros c (Hc1 & Hc2). exact Hc2.
   Qed.
 
+  (** * Item 3: what the naming pass delivers, node by node
+
+      Everything the signature fold needs of an environment, read off the run
+      that built it: the environment is injective, its values are [sec] names
+      allocated inside the node's own stretch of the counter, and the two
+      auxiliary names are the first two of that stretch. *)
+
+  Lemma generate_local_env_for_lnode_facts :
+    forall (n : node) st env rec st',
+      generate_local_env_for_lnode n st = OK ((env, rec), st') ->
+      env_injective env
+      /\ (forall x b, Env.find x env = Some b ->
+            exists k, b = Ids.gensym Ids.sec k
+                      /\ (st <= k)%positive /\ (k < st')%positive)
+      /\ rec.(nclk) = Ids.gensym Ids.sec st
+      /\ rec.(nrst) = Ids.gensym Ids.sec (Pos.succ st).
+  Proof.
+    intros n st env rec st' Hgen.
+    unfold generate_local_env_for_lnode in Hgen.
+    eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
+    eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
+    eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
+    unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
+    unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
+    unfold NMret in Hret. inversion Hret; subst env rec st'.
+    repeat split.
+    - destruct (fresh_map_list_env_props
+                  ([Ids.gensym Ids.sec st; Ids.gensym Ids.sec (Pos.succ st)]
+                     ++ List.map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))
+                  (Env.empty _) (Pos.succ (Pos.succ st)) env0 st3)
+        as [_ Hnodup].
+      + intros x ty Hfind. rewrite Env.gempty in Hfind. discriminate.
+      + constructor.
+      + exact Hmap.
+      + eapply env_values_nodup_injective; eauto.
+    - intros x b Hfind.
+      destruct (fresh_map_list_find_ge_start_from_empty _ _ _ _ _ _ Hmap Hfind)
+        as (k & Hk & Hlo & Hhi).
+      exists k. split; [exact Hk|]. split.
+      + eapply Pos.le_trans; [|exact Hlo].
+        eapply Pos.le_trans; apply Pos.lt_le_incl, Pos.lt_succ_diag_r.
+      + eapply Pos.lt_le_trans; [exact Hhi|].
+        eapply fresh_inst_map_list_state_monotone; eauto.
+  Qed.
+
+  Lemma generate_lnode_scoped_env'_state_mono :
+    forall ns envs acc st envs' aux st',
+      generate_lnode_scoped_env' ns envs acc st = OK ((envs', aux), st') ->
+      (st <= st')%positive.
+  Proof.
+    induction ns as [|n ns IH]; intros envs acc st envs' aux st' Hgen.
+    - cbn in Hgen. unfold NMret in Hgen. inversion Hgen; subst.
+      apply Pos.le_refl.
+    - cbn in Hgen.
+      eapply name_bind2_inv in Hgen as (local_env & rec & st1 & Hlocal & Hgen).
+      eapply name_bind_inv in Hgen as (envs1 & st2 & Hins & Hgen).
+      eapply name_bind2_inv in Hgen as (envs2 & aux2 & st3 & Hrec & Hret).
+      unfold NMret in Hret. inversion Hret; subst envs2 aux2 st3.
+      unfold fresh_insert_node_env in Hins.
+      destruct (Env.mem n.(n_name) envs); [discriminate Hins|].
+      unfold insert_node_env, NMret in Hins. inversion Hins; subst envs1 st2.
+      eapply Pos.le_trans;
+        [eapply generate_local_env_for_lnode_state_monotone; exact Hlocal
+        |eapply IH; exact Hrec].
+  Qed.
+
+  (** * Item 2: the program fold
+
+      The invariant of the accumulator, and the step that preserves it.  The
+      per-node theorems take a handful of facts about the node's environment;
+      each is read off the naming run here, and the three that are about the
+      accumulator -- scoped, rooted, duplicate-free -- are carried as
+      invariants.  What keeps a later node's names off an earlier node's scope
+      is the counter: the accumulator's scopes lie below the state the naming
+      pass was in when it reached this node, and this node's names lie above
+      it. *)
+
+  Definition secglobal_all (Q : signature -> Prop) (G : secglobal) : Prop :=
+    forall f sg, find_signature f G = Some sg -> Q sg.
+
+  Lemma secglobal_all_cons :
+    forall (Q : signature -> Prop) (sg : signature) (G : secglobal),
+      Q sg -> secglobal_all Q G -> secglobal_all Q (sg :: G).
+  Proof.
+    intros Q sg G Hq HG f sg' Hf. simpl in Hf.
+    destruct (ident_eqb sg.(s_name) f) eqn:E.
+    - inversion Hf; subst. exact Hq.
+    - eapply HG; eauto.
+  Qed.
+
+  Definition sig_nd (sg : signature) : Prop :=
+    NoDup (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)).
+
+  Definition sig_rt (sg : signature) : Prop :=
+    CALLS.all_sources_have sg.(s_clk) sg.(s_constraints)
+    /\ CALLS.all_sources_have sg.(s_reset) sg.(s_constraints).
+
+  Lemma sig_nd_of_scope :
+    forall sg, NoDup (signature_scope sg) -> sig_nd sg.
+  Proof.
+    intros sg H. unfold sig_nd. unfold signature_scope in H.
+    eapply Permutation_NoDup; [|exact H].
+    apply Permutation_app_head.
+    exact (Permutation_sym
+             (Permutation_app_comm [sg.(s_clk); sg.(s_reset)] sg.(s_out))).
+  Qed.
+
+  Lemma sec_of_In_intro :
+    forall env xs w b,
+      In w xs -> Env.find w env = Some b -> In b (CALLS.sec_of env xs).
+  Proof.
+    intros env xs w b Hw Hf. unfold CALLS.sec_of.
+    apply in_flat_map. exists w. split; [exact Hw|].
+    rewrite Hf. now left.
+  Qed.
+
+  Definition lsig_inv (stN low : positive) (acc : secglobal)
+    (st : sec_state) : Prop :=
+    secglobal_good acc /\ secglobal_scoped acc
+    /\ secglobal_all sig_nd acc /\ secglobal_all sig_rt acc
+    /\ secglobal_scope_bounded_above acc low
+    /\ sec_le stN st.
+
+  Lemma lsig_inv_nil :
+    forall stN low st, sec_le stN st -> lsig_inv stN low [] st.
+  Proof.
+    intros stN low st Hle. unfold lsig_inv.
+    refine (conj secglobal_good_nil (conj secglobal_scoped_nil
+              (conj _ (conj _ (conj (secglobal_scope_bounded_above_nil low)
+                                    Hle))))).
+    - intros f sg H. discriminate H.
+    - intros f sg H. discriminate H.
+  Qed.
+
+  Lemma sec_of_In_inv :
+    forall env xs b,
+      In b (CALLS.sec_of env xs) ->
+      exists x, In x xs /\ Env.find x env = Some b.
+  Proof.
+    intros env xs b Hb. unfold CALLS.sec_of in Hb.
+    apply in_flat_map in Hb as (x & Hx & Hb).
+    destruct (Env.find x env) as [b0|] eqn:Hf; [|contradiction].
+    destruct Hb as [Hb|[]]. subst b0. exists x. split; assumption.
+  Qed.
+
+  Lemma lsig_step :
+    forall (P : global) (all : list node) envs aux stN
+           (n : node) env (r : node_aux_names) st0 stl
+           acc st sg st1,
+      generate_lnode_scoped_env_st all = OK (envs, aux, stN) ->
+      find_node_env n.(n_name) envs = Some env ->
+      get_node_aux n.(n_name) aux = Some (r.(nclk), r.(nrst)) ->
+      generate_local_env_for_lnode n st0 = OK ((env, r), stl) ->
+      (st0 <= stN)%positive ->
+      wl_node P n ->
+      PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs) ->
+      lsig_inv stN st0 acc st ->
+      generate_lnode_sig acc n env aux st = OK (sg, st1) ->
+      lsig_inv stN stl (sg :: acc) st1.
+  Proof.
+    intros P all envs aux stN n env r st0 stl acc st sg st1
+           Hfull Hfind Haux Hloc Hst0 Hwl Hsub
+           (Hgood & Hsc & Hnd & Hroot & Hbd & Hle) Hsig.
+    destruct (generate_local_env_for_lnode_facts n st0 env r stl Hloc)
+      as (Hinj & Hrng & Hclk & Hrst).
+    assert (Hsep : forall x b, Env.find x env = Some b ->
+                               ~ In b (minted st st1))
+      by (intros x b Hb;
+          exact (env_apart_from_minted all envs aux stN n.(n_name) env st st1
+                   Hfull Hfind Hle x b Hb)).
+    assert (Hlev : forall ci ri,
+               get_node_aux n.(n_name) aux = Some (ci, ri) ->
+               ci = r.(nclk) /\ ri = r.(nrst)).
+    { intros ci ri Ha. rewrite Haux in Ha. inversion Ha. split; reflexivity. }
+    assert (Hrange : forall ct rt,
+               Env.find r.(nclk) env = Some ct ->
+               Env.find r.(nrst) env = Some rt ->
+               forall x b, Env.find x env = Some b ->
+                 In b (CALLS.sec_of env
+                         (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                       ++ [ct; rt])).
+    { intros ct rt Hct Hrt x b Hb.
+      destruct (generate_local_env_for_lnode_domain n st0 env r stl x b Hloc Hb)
+        as [Hx|[Hx|Hx]].
+      - subst x. rewrite Hct in Hb. inversion Hb; subst b.
+        apply in_or_app. right. now left.
+      - subst x. rewrite Hrt in Hb. inversion Hb; subst b.
+        apply in_or_app. right. right. now left.
+      - apply in_or_app. left. eapply sec_of_In_intro; [|exact Hb].
+        rewrite !map_app in Hx |- *.
+        apply in_app_or in Hx as [Hx|Hx]; [apply in_or_app; now left|].
+        apply in_app_or in Hx as [Hx|Hx]; apply in_or_app; right;
+          apply in_or_app; [now right|now left]. }
+    assert (Hfr : forall ct rt,
+               Env.find r.(nclk) env = Some ct ->
+               Env.find r.(nrst) env = Some rt ->
+               forall f sg0, find_signature f acc = Some sg0 ->
+                 scope_fresh
+                   ((CALLS.sec_of env
+                       (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                     ++ [ct; rt]) ++ minted st st1) sg0).
+    { intros ct rt Hct Hrt f sg0 Hf.
+      eapply scope_fresh_from_bounds; [|eapply Hbd; exact Hf].
+      intros ty Hty. apply in_app_or in Hty as [Hty|Hty].
+      - apply in_app_or in Hty as [Hty|Hty].
+        + apply sec_of_In_inv in Hty as (x & _ & Hx).
+          destruct (Hrng x ty Hx) as (k & Hk & Hlo & _). eauto.
+        + destruct Hty as [Hty|[Hty|[]]]; subst ty.
+          * destruct (Hrng _ _ Hct) as (k & Hk & Hlo & _). eauto.
+          * destruct (Hrng _ _ Hrt) as (k & Hk & Hlo & _). eauto.
+      - apply minted_spec in Hty as (k & Hlo & _ & Hk).
+        exists k. split; [exact Hk|].
+        eapply Pos.le_trans; [exact Hst0|].
+        eapply Pos.le_trans; [exact Hle|exact Hlo]. }
+    assert (Haux0 : forall ci ri,
+               get_node_aux n.(n_name) aux = Some (ci, ri) ->
+               ci <> ri
+               /\ ~ In ci (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+               /\ ~ In ri (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
+    { intros ci ri Ha. destruct (Hlev ci ri Ha) as (-> & ->).
+      rewrite Hclk, Hrst. repeat split.
+      - intros Heq. apply gensym_injective in Heq as [_ Heq].
+        exact (Pos.succ_discr st0 Heq).
+      - intros Hin. exact (lnode_var_not_sec n _ st0 Hsub Hin Logic.eq_refl).
+      - intros Hin. exact (lnode_var_not_sec n _ (Pos.succ st0) Hsub Hin
+                             Logic.eq_refl). }
+    assert (Hgd : signature_good sg)
+      by exact (generate_lnode_sig_good acc P n env aux sg st st1 Hinj Hwl
+                  Hsep Hsig).
+    assert (Hscd : signature_scoped sg).
+    { eapply generate_lnode_sig_scoped;
+        [exact Hinj|exact Hsc|exact Hwl|exact Hsep| |exact Hsig].
+      intros ci ri ct rt Ha Hct Hrt.
+      destruct (Hlev ci ri Ha) as (-> & ->).
+      exact (Hrange ct rt Hct Hrt). }
+    assert (Hnodup : NoDup (signature_scope sg)).
+    { eapply generate_lnode_sig_scope_nodup;
+        [exact Hinj| |exact Hsig].
+      exact Haux0. }
+    assert (Hrooted : sig_rt sg).
+    { eapply generate_lnode_sig_rooted;
+        [exact Hinj|exact Hsc|exact Hnd|exact Hroot|exact Hwl|exact Hsep| |
+         |exact Hsig].
+      - intros ci ri ct rt Ha Hct Hrt0.
+        destruct (Hlev ci ri Ha) as (-> & ->). split.
+        + exact (Hrange ct rt Hct Hrt0).
+        + exact (Hfr ct rt Hct Hrt0).
+      - intros ci ri Ha. destruct (Haux0 ci ri Ha) as (_ & H1 & H2).
+        split; assumption. }
+    destruct (lnode_sig_inv env acc n aux sg st st1 Hsig)
+      as (ci & ri & ct & rt & inp & out & locals & cns
+          & Haux' & Hct & Hrt' & Hinp & Hout & Hloc' & Hcns & Hsg).
+    destruct (Hlev ci ri Haux') as (-> & ->).
+    refine (conj (secglobal_good_cons sg acc Hgd Hgood)
+              (conj (secglobal_scoped_cons sg acc Hscd Hsc)
+                 (conj (secglobal_all_cons sig_nd sg acc
+                          (sig_nd_of_scope sg Hnodup) Hnd)
+                    (conj (secglobal_all_cons sig_rt sg acc Hrooted Hroot)
+                       (conj _ _))))).
+    - apply secglobal_scope_bounded_above_cons.
+      + intros ty Hty. subst sg. cbn [signature_scope s_in s_out s_clk s_reset]
+          in Hty.
+        assert (Hall : forall x b, Env.find x env = Some b ->
+                         exists k, b = Ids.gensym Ids.sec k
+                                   /\ (k < stl)%positive)
+          by (intros x b Hb; destruct (Hrng x b Hb) as (k & Hk & _ & Hhi);
+              eauto).
+        assert (inp = CALLS.sec_of env (List.map fst n.(n_in))) as Hi
+            by (eapply get_mappings_from_node_sec_of; exact Hinp).
+        assert (out = CALLS.sec_of env (List.map fst n.(n_out))) as Ho
+            by (eapply get_mappings_from_node_sec_of; exact Hout).
+        apply in_app_or in Hty as [Hty|Hty].
+        * rewrite Hi in Hty. apply sec_of_In_inv in Hty as (x & _ & Hx).
+          exact (Hall x ty Hx).
+        * apply in_app_or in Hty as [Hty|Hty].
+          -- rewrite Ho in Hty. apply sec_of_In_inv in Hty as (x & _ & Hx).
+             exact (Hall x ty Hx).
+          -- destruct Hty as [Hty|[Hty|[]]]; subst ty;
+               [exact (Hall _ _ Hct)|exact (Hall _ _ Hrt')].
+      + eapply secglobal_scope_bounded_above_monotone; [exact Hbd|].
+        eapply generate_local_env_for_lnode_state_monotone; exact Hloc.
+    - subst sg.
+      eapply Pos.le_trans; [exact Hle|].
+      eapply generate_leqns_constraints_sec_le; exact Hcns.
+  Qed.
+
+  Theorem generate_all_lsignatures'_inv :
+    forall (P : global) (all : list node) envsF auxF stN,
+      generate_lnode_scoped_env_st all = OK (envsF, auxF, stN) ->
+      forall ns envs0 acc0 st0,
+        NoDup (List.map n_name ns) ->
+        Forall (wl_node P) ns ->
+        Forall (fun n => PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs))
+          ns ->
+        generate_lnode_scoped_env' ns envs0 acc0 st0
+          = OK ((envsF, auxF), stN) ->
+        forall acc st G stf,
+          lsig_inv stN st0 acc st ->
+          generate_all_lsignatures' acc ns envsF auxF st = OK (G, stf) ->
+          lsig_inv stN stN G stf.
+  Proof.
+    intros P all envsF auxF stN Hfull.
+    induction ns as [|n ns IH];
+      intros envs0 acc0 st0 Hnd Hwl Hsub Hrun acc st G stf Hinv Hgen.
+    - cbn in Hrun. unfold NMret in Hrun. inversion Hrun; subst.
+      cbn in Hgen. inversion Hgen; subst. exact Hinv.
+    - cbn in Hrun.
+      apply name_bind_inv in Hrun as (p & stl & Hloc & Hrun).
+      destruct p as (le0 & r0).
+      apply name_bind_inv in Hrun as (envs1 & st2 & Hins & Hrun).
+      apply name_bind_inv in Hrun as (q & st3 & Hrec & Hret).
+      destruct q as (envs2 & aux2).
+      unfold NMret in Hret. inversion Hret; subst envs2 aux2 st3.
+      assert (envs1 = Env.add n.(n_name) le0 envs0 /\ st2 = stl)
+        as (? & ?).
+      { unfold fresh_insert_node_env in Hins.
+        destruct (Env.mem n.(n_name) envs0); [discriminate Hins|].
+        unfold insert_node_env, NMret in Hins.
+        inversion Hins; split; reflexivity. }
+      subst envs1 st2.
+      inversion Hnd as [|z zs Hnotin Hnd']; subst z zs.
+      inversion Hwl as [|n' ns' Hwln Hwl']; subst n' ns'.
+      inversion Hsub as [|n' ns' Hsubn Hsub']; subst n' ns'.
+      assert (Hrname : r0.(nname) = n.(n_name)).
+      { unfold generate_local_env_for_lnode in Hloc.
+        apply name_bind_inv in Hloc as (c1 & s1 & _ & Hl).
+        apply name_bind_inv in Hl as (c2 & s2 & _ & Hl).
+        apply name_bind_inv in Hl as (c3 & s3 & _ & Hl).
+        apply name_bind_inv in Hl as (c4 & s4 & _ & Hret0).
+        unfold NMret in Hret0. inversion Hret0. reflexivity. }
+      assert (Hfind : find_node_env n.(n_name) envsF = Some le0).
+      { eapply generate_lnode_scoped_env'_envs_mono;
+          [exact Hrec|exact Hnotin|].
+        unfold find_node_env. apply Env.gss. }
+      assert (Haux : get_node_aux n.(n_name) auxF
+                     = Some (r0.(nclk), r0.(nrst))).
+      { rewrite (generate_lnode_scoped_env'_aux_mono ns
+                   (Env.add n.(n_name) le0 envs0) (r0 :: acc0) stl
+                   envsF auxF stN n.(n_name) Hrec Hnotin).
+        unfold get_node_aux. cbn [find_node_names].
+        rewrite Hrname, ident_eqb_refl. reflexivity. }
+      assert (Hst0 : (st0 <= stN)%positive).
+      { eapply Pos.le_trans;
+          [eapply generate_local_env_for_lnode_state_monotone; exact Hloc
+          |eapply generate_lnode_scoped_env'_state_mono; exact Hrec]. }
+      cbn in Hgen.
+      destruct (generate_lnode_sig_scoped_env acc n envsF auxF st)
+        as [[sg stg]|e] eqn:Hs; [|discriminate Hgen].
+      unfold generate_lnode_sig_scoped_env in Hs. rewrite Hfind in Hs.
+      eapply (IH (Env.add n.(n_name) le0 envs0) (r0 :: acc0) stl Hnd' Hwl'
+                 Hsub' Hrec (sg :: acc) stg G stf); [|exact Hgen].
+      eapply lsig_step;
+        [exact Hfull|exact Hfind|exact Haux|exact Hloc|exact Hst0
+        |exact Hwln|exact Hsubn|exact Hinv|exact Hs].
+  Qed.
+
+  (** * The program, in the shape the consumers ask for
+
+      The four per-signature families -- [signature_good], scoped, the
+      duplicate-free scope, rooted -- for every signature the program driver
+      publishes, given the naming run and the node-level hygiene the pipeline
+      already establishes ([wl_node], the prefix inclusion). *)
+  Theorem generate_all_lsignatures_inv :
+    forall (P : global) ns envs aux stN st GL,
+      generate_lnode_scoped_env_st ns = OK (envs, aux, stN) ->
+      NoDup (List.map n_name ns) ->
+      Forall (wl_node P) ns ->
+      Forall (fun n => PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs)) ns ->
+      sec_le stN st ->
+      generate_all_lsignatures_scoped_env ns envs aux st = OK GL ->
+      secglobal_good GL /\ secglobal_scoped GL
+      /\ secglobal_all sig_nd GL /\ secglobal_all sig_rt GL.
+  Proof.
+    intros P ns envs aux stN st GL Hfull Hnd Hwl Hsub Hle Hgen.
+    pose proof Hfull as Hfull0.
+    unfold generate_all_lsignatures_scoped_env in Hgen.
+    destruct (generate_all_lsignatures' [] ns envs aux st)
+      as [[G stf]|e] eqn:Hall; [|discriminate Hgen].
+    inversion Hgen; subst G.
+    unfold generate_lnode_scoped_env_st in Hfull.
+    destruct (generate_lnode_scoped_env' ns (Env.empty _) [] init_state)
+      as [[[envs0 aux0] st0]|e] eqn:Hrun; [|discriminate Hfull].
+    inversion Hfull; subst envs0 aux0 st0.
+    destruct (generate_all_lsignatures'_inv P ns envs aux stN Hfull0 ns
+                (Env.empty _) [] init_state Hnd Hwl Hsub Hrun [] st GL stf
+                (lsig_inv_nil stN init_state st Hle) Hall)
+      as (Hg & Hs & Hn & Hr & _).
+    exact (conj Hg (conj Hs (conj Hn Hr))).
+  Qed.
+
 End SecLusTypingCorrectness.
