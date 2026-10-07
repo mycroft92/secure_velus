@@ -3264,10 +3264,17 @@ Import SECMONADNotations.
   (** * Item 1: every constraint of a published signature is rooted
 
       The carried half is the dichotomy's sibling and goes by the same
-      induction as [lexp_carried_singleton_all]: rootedness is a [Forall], so
-      it survives every [cmerge] and [ljoin] the typing performs, and the
-      only expression with content is the call, whose block is rooted by
-      [generate_constraints_rooted] against the callee's own rootedness. *)
+      induction as [lexp_carried_minted_all], window threaded: rootedness is a
+      [Forall], so it survives every [cmerge] and [ljoin] the typing performs,
+      and the only expression with content is the call, whose block is rooted
+      by [generate_constraints_rooted] against the callee's own rootedness.
+
+      That lemma needs the instantiation to be fresh against the callee's
+      scope, and it is stated here the way it can be true: about the call the
+      run actually makes.  Its actuals are scoped in [ns] -- the declared names
+      and what the window minted -- and [ns] is fresh against every callee.
+      (Freshness for *every* instantiation [generate_constraints] accepts is
+      not provable: it accepts an actual that contains a callee formal.) *)
 
   Section RawRooted.
 
@@ -3275,7 +3282,15 @@ Import SECMONADNotations.
     Variable env     : Env.t ident.
     Variable base_ty : ident.
     Variable rst_ty  : ident.
+    Variable decl    : list ident.
+    Variable ns      : list ident.
 
+    Hypothesis Hdk   : decl_ok env base_ty rst_ty decl.
+    Hypothesis Hclk  : clk_scoped env base_ty decl.
+    Hypothesis Hsgs  : secglobal_scoped G.
+    Hypothesis Hdns  : incl decl ns.
+    Hypothesis ns_fresh :
+      forall f sg, find_signature f G = Some sg -> scope_fresh ns sg.
     Hypothesis sig_nodup :
       forall f sg,
         find_signature f G = Some sg ->
@@ -3285,11 +3300,6 @@ Import SECMONADNotations.
         find_signature f G = Some sg ->
         CALLS.all_sources_have sg.(s_clk) sg.(s_constraints)
         /\ CALLS.all_sources_have sg.(s_reset) sg.(s_constraints).
-    Hypothesis sig_actuals_fresh :
-      forall f sg inp ck rst os cns sa sb,
-        find_signature f G = Some sg ->
-        generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
-        call_subst_fresh sg inp ck rst os.
 
     Lemma rooted_cmerge :
       forall c1 c2,
@@ -3321,75 +3331,130 @@ Import SECMONADNotations.
       - intros (H1 & H2). constructor; assumption.
     Qed.
 
-    Lemma lexps_carried_rooted_intro :
-      forall es,
-        Forall (lexp_carried_rooted G env base_ty rst_ty) es ->
-        forall ts st st',
-          assign_lexps G env base_ty rst_ty es st = OK (ts, st') ->
-          constraints_rooted base_ty rst_ty (carried ts).
+    Lemma tgt_names_incl_of_Forall :
+      forall cs, Forall (fun c => incl (snd c) ns) cs ->
+                 incl (tgt_names cs) ns.
     Proof.
-      intros es Hall ts st st' H.
-      apply carried_rooted_iff.
-      exact (assign_lexps_carried_rooted_of G env base_ty rst_ty es ts st st'
-               Hall H).
+      intros cs H d Hd. unfold tgt_names in Hd.
+      apply in_flat_map in Hd as (c & Hc & Hdc).
+      rewrite Forall_forall in H. exact (H c Hc d Hdc).
     Qed.
 
-    Theorem lexp_carried_rooted_all :
-      forall e, lexp_carried_rooted G env base_ty rst_ty e.
+    (** The window-bounded form of the rootedness contract. *)
+    Definition exp_rooted_win (e : exp) : Prop :=
+      forall ts s s',
+        incl (minted s s') ns ->
+        assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+        constraints_rooted base_ty rst_ty (carried ts).
+
+    Lemma lexps_rooted_win_intro :
+      forall es,
+        Forall exp_rooted_win es ->
+        forall ts s s',
+          incl (minted s s') ns ->
+          assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+          constraints_rooted base_ty rst_ty (carried ts).
+    Proof.
+      intros es Hall. induction Hall as [|e es He Hes IH];
+        intros ts s s' Hns H.
+      - apply (assign_lexps_carried_nil G env base_ty rst_ty) in H
+          as (? & _ & ?); subst ts. constructor.
+      - apply assign_lexps_carried_cons in H
+          as (t & r & sa & Ht & Hr & ? & _); subst ts.
+        rewrite carried_app. apply rooted_cmerge.
+        + apply (He t s sa); [|exact Ht].
+          apply (minted_incl_sub s s sa s' ns);
+            [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hr|exact Hns].
+        + apply (IH r sa s'); [|exact Hr].
+          apply (minted_incl_sub s sa s' s' ns);
+            [eapply assign_lexp_type_sec_le; exact Ht
+            |apply sec_le_refl|exact Hns].
+    Qed.
+
+    Theorem exp_rooted_win_all : forall e, exp_rooted_win e.
     Proof.
       intros e. induction e using exp_ind2;
-        intros ts st st' Hgen; apply carried_rooted_iff.
-      - rewrite assign_lexp_Econst in Hgen. unfold SC.ret in Hgen. inv Hgen.
+        intros ts s s' Hns Hgen.
+      - rewrite assign_lexp_Econst in Hgen. unfold SC.ret in Hgen.
+        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hts & _); subst ts.
         cbn [carried lbot snd]. constructor.
       - apply assign_lexp_Evar_inv in Hgen as (a0 & _ & Hts & _). subst ts.
         cbn [carried snd]. constructor.
-      - apply carried_rooted_iff. exact (IHe ts st st' Hgen).
+      - exact (IHe ts s s' Hns Hgen).
       - rewrite assign_lexp_Ebinop in Hgen.
         apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
         apply sec_bind_inv in Hgen as (t2 & s2 & Ht2 & Hgen).
         apply sec_bind_inv in Hgen as (a1 & s3 & Ha1 & Hgen).
         apply sec_bind_inv in Hgen as (a2 & s4 & Ha2 & Hret).
-        unfold SC.ret in Hret. inv Hret.
         apply single_inv in Ha1 as (? & ?); subst t1 s3.
-        apply single_inv in Ha2 as (? & ?); subst t2.
-        rewrite carried_single, snd_ljoin.
-        apply rooted_cmerge.
-        + rewrite <- carried_single. apply carried_rooted_iff.
-          exact (IHe1 [a1] st s1 Ht1).
-        + rewrite <- carried_single. apply carried_rooted_iff.
-          exact (IHe2 [a2] s1 s2 Ht2).
+        apply single_inv in Ha2 as (? & ?); subst t2 s4.
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Hts & ?); subst ts s'.
+        rewrite carried_single, snd_ljoin. apply rooted_cmerge.
+        + rewrite <- (carried_single a1).
+          apply (IHe1 [a1] s s1); [|exact Ht1].
+          apply (minted_incl_sub s s s1 s2 ns);
+            [apply sec_le_refl|eapply assign_lexp_type_sec_le; exact Ht2
+            |exact Hns].
+        + rewrite <- (carried_single a2).
+          apply (IHe2 [a2] s1 s2); [|exact Ht2].
+          apply (minted_incl_sub s s1 s2 s2 ns);
+            [eapply assign_lexp_type_sec_le; exact Ht1
+            |apply sec_le_refl|exact Hns].
       - rewrite assign_lexp_Efby in Hgen.
         apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
         apply sec_bind_inv in Hgen as (us & s2 & Hus & Hj).
-        rewrite (ljoin_list_carried ts0 us ts s2 st' Hj).
+        assert (s' = s2) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
+        rewrite (ljoin_list_carried ts0 us ts s2 s2 Hj).
         apply rooted_cmerge.
-        + eapply lexps_carried_rooted_intro; [exact H|exact Hts0].
-        + eapply lexps_carried_rooted_intro; [exact H0|exact Hus].
+        + apply (lexps_rooted_win_intro e0s H ts0 s s1); [|exact Hts0].
+          apply (minted_incl_sub s s s1 s2 ns);
+            [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hus
+            |exact Hns].
+        + apply (lexps_rooted_win_intro es H0 us s1 s2); [|exact Hus].
+          apply (minted_incl_sub s s1 s2 s2 ns);
+            [eapply assign_lexps_sec_le; exact Hts0
+            |apply sec_le_refl|exact Hns].
       - rewrite assign_lexp_Earrow in Hgen.
         apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
         apply sec_bind_inv in Hgen as (us & s2 & Hus & Hj).
-        rewrite (ljoin_list_carried ts0 us ts s2 st' Hj).
+        assert (s' = s2) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
+        rewrite (ljoin_list_carried ts0 us ts s2 s2 Hj).
         apply rooted_cmerge.
-        + eapply lexps_carried_rooted_intro; [exact H|exact Hts0].
-        + eapply lexps_carried_rooted_intro; [exact H0|exact Hus].
+        + apply (lexps_rooted_win_intro e0s H ts0 s s1); [|exact Hts0].
+          apply (minted_incl_sub s s s1 s2 ns);
+            [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hus
+            |exact Hns].
+        + apply (lexps_rooted_win_intro es H0 us s1 s2); [|exact Hus].
+          apply (minted_incl_sub s s1 s2 s2 ns);
+            [eapply assign_lexps_sec_le; exact Hts0
+            |apply sec_le_refl|exact Hns].
       - rewrite assign_lexp_Ewhen in Hgen.
         apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
         apply sec_bind_inv in Hgen as (g & s2 & Hg & Hret).
         apply find_env_inv in Hg as (_ & ?); subst s2.
-        unfold SC.ret in Hret. inv Hret.
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Hts & ?); subst ts s'.
         rewrite carried_map_when.
-        eapply lexps_carried_rooted_intro; [exact H|exact Hts0].
+        exact (lexps_rooted_win_intro es H ts0 s s1 Hns Hts0).
       - destruct a as (tys & cl).
         rewrite assign_lexp_Emerge in Hgen.
         apply sec_bind_inv in Hgen as (g & s1 & Hg & Hgen).
         apply find_env_inv in Hg as (_ & ?); subst s1.
         apply sec_bind_inv in Hgen as (ts0 & s2 & Hts0 & Hgen).
         apply sec_bind_inv in Hgen as (us & s3 & Hus & Hj).
-        rewrite (ljoin_list_carried _ us ts s3 st' Hj).
+        assert (s' = s3) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
+        rewrite (ljoin_list_carried _ us ts s3 s3 Hj).
         apply rooted_cmerge.
         + rewrite carried_map_merge_l.
-          eapply lexps_carried_rooted_intro; [exact H|exact Hts0].
-        + eapply lexps_carried_rooted_intro; [exact H0|exact Hus].
+          apply (lexps_rooted_win_intro ets H ts0 s s2); [|exact Hts0].
+          apply (minted_incl_sub s s s2 s3 ns);
+            [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hus
+            |exact Hns].
+        + apply (lexps_rooted_win_intro efs H0 us s2 s3); [|exact Hus].
+          apply (minted_incl_sub s s2 s3 s3 ns);
+            [eapply assign_lexps_sec_le; exact Hts0
+            |apply sec_le_refl|exact Hns].
       - destruct a as (tys & cl).
         rewrite assign_lexp_Eite in Hgen.
         apply sec_bind_inv in Hgen as (t0 & s1 & Ht0 & Hgen).
@@ -3397,92 +3462,284 @@ Import SECMONADNotations.
         apply single_inv in Hth as (? & ?); subst t0 s2.
         apply sec_bind_inv in Hgen as (ts0 & s3 & Hts0 & Hgen).
         apply sec_bind_inv in Hgen as (us & s4 & Hus & Hj).
-        rewrite (ljoin_list_carried _ us ts s4 st' Hj).
+        assert (s' = s4) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
+        rewrite (ljoin_list_carried _ us ts s4 s4 Hj).
         apply rooted_cmerge.
         + apply rooted_carried_map_ljoin.
-          * rewrite <- carried_single. apply carried_rooted_iff.
-            exact (IHe [th] st s1 Ht0).
-          * eapply lexps_carried_rooted_intro; [exact H|exact Hts0].
-        + eapply lexps_carried_rooted_intro; [exact H0|exact Hus].
-      - apply assign_lexp_Eapp_inv in Hgen
+          * assert (Hw : incl (minted s s1) ns).
+            { apply (minted_incl_sub s s s1 s3 ns);
+                [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hts0|].
+              apply (minted_incl_sub s s s3 s4 ns);
+                [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hus
+                |exact Hns]. }
+            pose proof (IHe [th] s s1 Hw Ht0) as Hth.
+            rewrite carried_single in Hth. exact Hth.
+          * apply (lexps_rooted_win_intro ets H ts0 s1 s3); [|exact Hts0].
+            apply (minted_incl_sub s1 s1 s3 s4 ns);
+              [apply sec_le_refl|eapply assign_lexps_sec_le; exact Hus|].
+            apply (minted_incl_sub s s1 s4 s4 ns);
+              [eapply assign_lexp_type_sec_le; exact Ht0
+              |apply sec_le_refl|exact Hns].
+        + apply (lexps_rooted_win_intro efs H0 us s3 s4); [|exact Hus].
+          apply (minted_incl_sub s s3 s4 s4 ns);
+            [eapply sec_le_trans;
+             [eapply assign_lexp_type_sec_le; exact Ht0
+             |eapply assign_lexps_sec_le; exact Hts0]
+            |apply sec_le_refl|exact Hns].
+      - (** the call *)
+        apply assign_lexp_Eapp_inv in Hgen
           as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
-              & Hargs & Hck & Hrst & Hsg & _ & Hcs & Hts).
+              & Hargs & Hck & Hrst & Hsg & Houts & Hcs & Hts).
+        destruct (assign_lexp_Eapp_stages_le G env base_ty rst_ty es ro _
+                    s s' sg argts rstty ckty outs cs sta stb stc
+                    Hargs Hrst Houts Hcs) as (Hlab & Hlbc & Hlcs).
+        assert (sec_le s sta) as Hlsa
+            by (eapply assign_lexps_sec_le; exact Hargs).
+        assert (sec_le s stb) as Hlsb by (eapply sec_le_trans; eauto).
+        (** what the actuals are scoped in *)
+        assert (Hwa : incl (minted s sta) ns).
+        { apply (minted_incl_sub s s sta s' ns);
+            [apply sec_le_refl
+            |eapply sec_le_trans; [exact Hlab|
+             eapply sec_le_trans; [exact Hlbc|exact Hlcs]]
+            |exact Hns]. }
+        assert (Hall : Forall (lexp_scoped_tgt G env base_ty rst_ty decl) es).
+        { apply Forall_forall. intros e0 _.
+          apply (lexp_scoped_tgt_all G env base_ty rst_ty decl Hdk Hclk Hsgs). }
+        destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl es Hall argts
+                    s sta Hargs) as (Hfa & _).
+        assert (Hmin : Forall (lexp_carried_minted G env base_ty rst_ty) es)
+          by (apply Forall_forall; intros e0 _;
+              apply (lexp_carried_minted_all G env base_ty rst_ty)).
+        assert (Hca : Forall (fun c => incl (snd c) ns) (carried argts))
+          by exact (lexps_carried_minted_of G env base_ty rst_ty es Hmin argts
+                      s sta ns Hwa Hargs).
+        assert (Htg : incl (tgt_names (carried argts)) ns)
+          by exact (tgt_names_incl_of_Forall _ Hca).
+        assert (Hinc : incl (decl ++ tgt_names (carried argts)) ns)
+          by (apply incl_app; assumption).
+        assert (Hargsc : Forall (st_scoped ns) (List.map fst argts)).
+        { apply Forall_forall. intros X HX.
+          apply in_map_iff in HX as (t & Ht & Htin); subst X.
+          rewrite Forall_forall in Hfa.
+          exact (st_scoped_weaken _ _ _ Hinc (Hfa t Htin)). }
+        assert (Hck' : st_scoped ns ckty)
+          by exact (st_scoped_weaken _ _ _ Hdns (Hclk _ _ Hck)).
+        assert (Hout' : Forall (fun x => In x ns) outs).
+        { apply Forall_forall. intros x Hx. apply 
+            (minted_incl_sub s stb stc s' ns Hlsb Hlcs Hns).
+          exact (fresh_idents_minted _ _ _ _ Houts x Hx). }
+        (** the reset's flow type: rooted, containing the level, scoped *)
+        assert (constraints_rooted base_ty rst_ty (snd rstty) /\
+                In rst_ty (fst rstty) /\ st_scoped ns (fst rstty))
+          as (Hrr & Hrin & Hrsc).
+        { destruct ro as [e1|].
+          - destruct Hrst as (t1 & a1 & rck & stm & Ht1 & Hsg1 & Hrck & Hr).
+            apply single_inv in Hsg1 as (? & ?); subst t1 stb.
+            assert (Hw1 : incl (minted sta stm) ns).
+            { apply (minted_incl_sub s sta stm s' ns);
+                [exact Hlsa
+                |eapply sec_le_trans; [exact Hlbc|exact Hlcs]|exact Hns]. }
+            destruct (lexp_scoped_tgt_all G env base_ty rst_ty decl Hdk Hclk
+                        Hsgs e1 [a1] sta stm Ht1) as (Hfa1 & _).
+            inversion Hfa1 as [|? ? Hsa1 ?]; subst.
+            pose proof (tgt_names_incl_of_Forall _
+                          (lexp_carried_minted_all G env base_ty rst_ty e1
+                             [a1] sta stm ns Hw1 Ht1)) as Htg1.
+            rewrite !snd_ljoin, snd_lvar, !fst_ljoin, fst_lvar.
+            cbn [snd]. rewrite cmerge_nil, cmerge_nil2. repeat split.
+            + rewrite <- (carried_single a1).
+              exact (H [a1] sta stm Hw1 Ht1).
+            + apply in_merge_left. now left.
+            + apply st_scoped_merge;
+                [intros y0 [Hy0|[]]; subst y0; apply Hdns; exact (proj1 (proj2 Hdk))|].
+              apply st_scoped_merge.
+              * eapply st_scoped_weaken;
+                  [apply incl_app; [exact Hdns|exact Htg1]|exact Hsa1].
+              * exact (st_scoped_weaken _ _ _ Hdns (Hclk _ _ Hrck)).
+          - destruct Hrst as (Hr & _). subst rstty.
+            rewrite snd_lvar, fst_lvar. repeat split.
+            + constructor.
+            + now left.
+            + intros y0 [Hy0|[]]; subst y0. apply Hdns.
+              exact (proj1 (proj2 Hdk)). }
         subst ts. rewrite carried_uniform.
         destruct outs as [|o os]; [constructor|].
-        assert (constraints_rooted base_ty rst_ty (snd rstty) /\
-                In rst_ty (fst rstty)) as (Hrr & Hrin).
-        { destruct ro as [e1|].
-          - destruct Hrst as (t1 & a1 & rck & stm & Ht1 & Hsg1 & _ & Hr).
-            apply single_inv in Hsg1 as (? & ?); subst t1 stb.
-            subst rstty. rewrite !snd_ljoin, snd_lvar, !fst_ljoin, fst_lvar.
-            cbn [snd]. rewrite cmerge_nil, cmerge_nil2. split.
-            + rewrite <- carried_single. apply carried_rooted_iff.
-              exact (H [a1] sta stm Ht1).
-            + apply in_merge_left. now left.
-          - destruct Hrst as (Hr & _). subst rstty.
-            rewrite snd_lvar, fst_lvar. split; [constructor|now left]. }
-        assert (In base_ty ckty) as Hbk
-            by exact (assign_clk_type_base env base_ty _ ckty Hck).
+        assert (Hbk : In base_ty ckty)
+          by exact (assign_clk_type_base env base_ty _ ckty Hck).
         apply rooted_cmerge.
         + exact (generate_constraints_rooted base_ty rst_ty sg
-                   (List.map fst argts) ckty (fst rstty) (o :: os) cs stc st'
+                   (List.map fst argts) ckty (fst rstty) (o :: os) cs stc s'
                    (sig_nodup _ _ Hsg)
-                   (sig_actuals_fresh _ _ _ _ _ _ _ _ _ Hsg Hcs)
+                   (call_subst_fresh_from_scope_fresh ns sg _ _ _ _
+                      (ns_fresh _ _ Hsg) Hargsc Hck' Hrsc Hout')
                    (proj1 (sig_rooted _ _ Hsg)) (proj2 (sig_rooted _ _ Hsg))
                    Hbk Hrin Hcs).
         + apply rooted_cmerge; [|exact Hrr].
-          eapply lexps_carried_rooted_intro; [exact H0|exact Hargs].
+          exact (lexps_rooted_win_intro es H0 argts s sta Hwa Hargs).
     Qed.
 
-    Lemma lexps_all_carried_rooted :
-      forall es, Forall (lexp_carried_rooted G env base_ty rst_ty) es.
+    (** The equation level.  The window of the whole rule bounds every
+        sub-run's, and the equation's left-hand names are in [ns]. *)
+
+    Lemma exp_rooted_win_list :
+      forall es, Forall exp_rooted_win es.
     Proof.
       intros es. induction es as [|e es IH]; constructor;
-        [exact (lexp_carried_rooted_all e)|exact IH].
+        [exact (exp_rooted_win_all e)|exact IH].
     Qed.
 
-    Lemma generate_lcall_constraint_rooted :
+    Lemma generate_lcall_constraint_rooted_win :
       forall xs f es rstty cs s s',
+        incl (minted s s') ns ->
+        incl (CALLS.sec_of env xs) ns ->
         constraints_rooted base_ty rst_ty (snd rstty) ->
         In rst_ty (fst rstty) ->
+        st_scoped ns (fst rstty) ->
         generate_lcall_constraint G env base_ty rst_ty xs f es rstty s
           = OK (cs, s') ->
         constraints_rooted base_ty rst_ty cs.
     Proof.
-      intros xs f es rstty cs s s' Hrr Hrin Hgen.
+      intros xs f es rstty cs s s' Hns Hxs Hrr Hrin Hrsc Hgen.
       apply generate_lcall_constraint_inv in Hgen
         as (sg & ckty & argts & outs & sti & cs0
             & Esg & Hck & Hargs & Houts & Hgc & Hcs).
-      assert (In base_ty ckty) as Hbk
-          by exact (assign_clk_type_base env base_ty _ ckty Hck).
+      assert (s' = sti) as ?
+          by (destruct (state_pure_generate_constraints sg
+                          (List.map fst argts) ckty (fst rstty) outs
+                          sti sti _ _ Hgc) as (Hp & _); exact Hp).
+      subst s'.
+      assert (Hall : Forall (lexp_scoped_tgt G env base_ty rst_ty decl) es).
+      { apply Forall_forall. intros e0 _.
+        apply (lexp_scoped_tgt_all G env base_ty rst_ty decl Hdk Hclk Hsgs). }
+      destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl es Hall argts
+                  s sti Hargs) as (Hfa & _).
+      assert (Hmin : Forall (lexp_carried_minted G env base_ty rst_ty) es)
+        by (apply Forall_forall; intros e0 _;
+            apply (lexp_carried_minted_all G env base_ty rst_ty)).
+      assert (Hca : Forall (fun c => incl (snd c) ns) (carried argts))
+        by exact (lexps_carried_minted_of G env base_ty rst_ty es Hmin argts
+                    s sti ns Hns Hargs).
+      assert (Htg : incl (tgt_names (carried argts)) ns)
+        by exact (tgt_names_incl_of_Forall _ Hca).
+      assert (Hinc : incl (decl ++ tgt_names (carried argts)) ns)
+        by (apply incl_app; assumption).
+      assert (Hargsc : Forall (st_scoped ns) (List.map fst argts)).
+      { apply Forall_forall. intros X HX.
+        apply in_map_iff in HX as (t & Ht & Htin); subst X.
+        rewrite Forall_forall in Hfa.
+        exact (st_scoped_weaken _ _ _ Hinc (Hfa t Htin)). }
+      assert (Hck' : st_scoped ns ckty)
+        by exact (st_scoped_weaken _ _ _ Hdns (Hclk _ _ Hck)).
+      assert (Hf2 : Forall2 (fun x b => Env.find x env = Some b) xs outs)
+        by (eapply CALLS.mmap_find_env_Forall2; exact Houts).
+      assert (Hout' : Forall (fun x => In x ns) outs).
+      { apply Forall_forall. intros x Hx. apply Hxs.
+        rewrite (Forall2_sec_of env xs outs Hf2). exact Hx. }
+      assert (Hbk : In base_ty ckty)
+        by exact (assign_clk_type_base env base_ty _ ckty Hck).
       rewrite Hcs. apply rooted_cmerge.
       - exact (generate_constraints_rooted base_ty rst_ty sg
-                 (List.map fst argts) ckty (fst rstty) outs cs0 sti s'
+                 (List.map fst argts) ckty (fst rstty) outs cs0 sti sti
                  (sig_nodup _ _ Esg)
-                 (sig_actuals_fresh _ _ _ _ _ _ _ _ _ Esg Hgc)
+                 (call_subst_fresh_from_scope_fresh ns sg _ _ _ _
+                    (ns_fresh _ _ Esg) Hargsc Hck' Hrsc Hout')
                  (proj1 (sig_rooted _ _ Esg)) (proj2 (sig_rooted _ _ Esg))
                  Hbk Hrin Hgc).
       - apply rooted_cmerge; [|exact Hrr].
-        eapply lexps_carried_rooted_intro;
-          [apply lexps_all_carried_rooted|exact Hargs].
+        exact (lexps_rooted_win_intro es (exp_rooted_win_list es) argts s sti
+                 Hns Hargs).
     Qed.
 
-    Lemma generate_lone_constraint_rooted :
+    Lemma generate_lgen_constraint_rooted_win :
+      forall ckenv xs es cs s s',
+        incl (minted s s') ns ->
+        generate_lgen_constraint G env base_ty rst_ty ckenv xs es s
+          = OK (cs, s') ->
+        constraints_rooted base_ty rst_ty cs.
+    Proof.
+      intros ckenv xs es cs s s' Hns H.
+      unfold generate_lgen_constraint in H.
+      apply sec_bind_inv in H as (ts & s1 & Hts & H).
+      apply sec_bind_inv in H as (bs & s2 & Hbs & H).
+      apply option_to_sec_inv in Hbs as (_ & ?); subst s2.
+      assert (Hl : sec_le s1 s')
+        by (eapply generate_lvars_constraints_sec_le; exact H).
+      eapply generate_lvars_constraints_rooted; [|exact H].
+      apply carried_rooted_iff.
+      apply (lexps_rooted_win_intro es (exp_rooted_win_list es) ts s s1);
+        [|exact Hts].
+      apply (minted_incl_sub s s s1 s' ns);
+        [apply sec_le_refl|exact Hl|exact Hns].
+    Qed.
+
+    Lemma generate_ldef_constraint_rooted_win :
+      forall ckenv x e cs s s',
+        incl (minted s s') ns ->
+        generate_ldef_constraint G env base_ty rst_ty ckenv x e s
+          = OK (cs, s') ->
+        constraints_rooted base_ty rst_ty cs.
+    Proof.
+      intros ckenv x e cs s s' Hns H.
+      apply generate_ldef_constraint_inv in H
+        as (ck & ckty & tf & b & s1 & Hfc & Hcka & Hte & Hb & Hs1 & Hcs).
+      subst s1. rewrite Hcs.
+      apply constraints_rooted_cmerge. split.
+      - constructor; [|constructor].
+        exact (constraint_rooted_head env base_ty rst_ty ck ckty tf [b] Hcka).
+      - pose proof (exp_rooted_win_all e [tf] s s' Hns Hte) as Hr.
+        rewrite carried_single in Hr. exact Hr.
+    Qed.
+
+    (** What the reset of a call contributes: rooted, at the level, scoped. *)
+    Lemma reset_facts :
+      forall e1 s s1 a1 rck,
+        incl (minted s s1) ns ->
+        assign_lexp_type G env base_ty rst_ty e1 s = OK ([a1], s1) ->
+        assign_clk_type env base_ty (hd Cbase (LSyn.clockof e1)) = Some rck ->
+        constraints_rooted base_ty rst_ty
+          (snd (ljoin (lvar rst_ty) (ljoin a1 (rck, []))))
+        /\ In rst_ty (fst (ljoin (lvar rst_ty) (ljoin a1 (rck, []))))
+        /\ st_scoped ns (fst (ljoin (lvar rst_ty) (ljoin a1 (rck, [])))).
+    Proof.
+      intros e1 s s1 a1 rck Hw1 Ht1 Hrck.
+      destruct (lexp_scoped_tgt_all G env base_ty rst_ty decl Hdk Hclk
+                  Hsgs e1 [a1] s s1 Ht1) as (Hfa1 & _).
+      inversion Hfa1 as [|? ? Hsa1 ?]; subst.
+      pose proof (tgt_names_incl_of_Forall _
+                    (lexp_carried_minted_all G env base_ty rst_ty e1
+                       [a1] s s1 ns Hw1 Ht1)) as Htg1.
+      rewrite !snd_ljoin, snd_lvar, !fst_ljoin, fst_lvar.
+      cbn [snd]. rewrite cmerge_nil, cmerge_nil2. repeat split.
+      - pose proof (exp_rooted_win_all e1 [a1] s s1 Hw1 Ht1) as Hr.
+        rewrite carried_single in Hr. exact Hr.
+      - apply in_merge_left. now left.
+      - apply st_scoped_merge;
+          [intros y0 [Hy0|[]]; subst y0; apply Hdns; exact (proj1 (proj2 Hdk))|].
+        apply st_scoped_merge.
+        + eapply st_scoped_weaken;
+            [apply incl_app; [exact Hdns|exact Htg1]|exact Hsa1].
+        + exact (st_scoped_weaken _ _ _ Hdns (Hclk _ _ Hrck)).
+    Qed.
+
+    Lemma rst_ty_in_ns : In rst_ty ns.
+    Proof. apply Hdns. exact (proj1 (proj2 Hdk)). Qed.
+
+    Lemma generate_lone_constraint_rooted_win :
       forall ckenv ys e cs s s',
+        incl (minted s s') ns ->
+        incl (CALLS.sec_of env ys) ns ->
         generate_lone_constraint G env base_ty rst_ty ckenv ys e s
           = OK (cs, s') ->
         constraints_rooted base_ty rst_ty cs.
     Proof.
-      intros ckenv ys e cs s s' Hgen.
+      intros ckenv ys e cs s s' Hns Hys Hgen.
       destruct e as [c0|x0 a0|op0 e0 a0|op0 e1 e2 a0|e0s es0 an0|e0s es0 an0
                     |es0 x0 b0 a0|x0 ets efs a0|e0 ets efs a0|f args ro anns].
       1-9: destruct ys as [|x [|y ys]];
-        [eapply generate_lgen_constraint_rooted;
-           [apply lexps_all_carried_rooted|exact Hgen]
-        |eapply generate_ldef_constraint_rooted;
-           [apply lexp_carried_rooted_all|exact Hgen]
-        |eapply generate_lgen_constraint_rooted;
-           [apply lexps_all_carried_rooted|exact Hgen]].
+        [eapply generate_lgen_constraint_rooted_win; [exact Hns|exact Hgen]
+        |eapply generate_ldef_constraint_rooted_win; [exact Hns|exact Hgen]
+        |eapply generate_lgen_constraint_rooted_win; [exact Hns|exact Hgen]].
       destruct ro as [e1|]; destruct ys as [|y ys].
       - unfold SC.ret in Hgen.
         destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _); subst cs. constructor.
@@ -3492,26 +3749,38 @@ Import SECMONADNotations.
         apply single_inv in Ha1 as (? & ?); subst t1 s2.
         apply sec_bind_inv in Hgen as (rck & s3 & Hrck & Hgen).
         apply option_to_sec_inv in Hrck as (Hrck & ?); subst s3.
-        pose proof (lexp_carried_rooted_all e1 [a1] s s1 Ht1) as Hr1.
-        inversion Hr1 as [|? ? Hr1' ?]; subst.
-        eapply generate_lcall_constraint_rooted; [| |exact Hgen].
-        + rewrite !snd_ljoin, snd_lvar. cbn [snd].
-          rewrite cmerge_nil, cmerge_nil2. exact Hr1'.
-        + rewrite !fst_ljoin, fst_lvar. apply in_merge_left. now left.
+        assert (Hl1 : sec_le s s1)
+          by (eapply assign_lexp_type_sec_le; exact Ht1).
+        assert (Hl2 : sec_le s1 s')
+          by (eapply generate_lcall_constraint_sec_le; exact Hgen).
+        assert (Hw1 : incl (minted s s1) ns)
+          by (apply (minted_incl_sub s s s1 s' ns);
+              [apply sec_le_refl|exact Hl2|exact Hns]).
+        assert (Hw2 : incl (minted s1 s') ns)
+          by (apply (minted_incl_sub s s1 s' s' ns);
+              [exact Hl1|apply sec_le_refl|exact Hns]).
+        destruct (reset_facts e1 s s1 a1 rck Hw1 Ht1 Hrck)
+          as (Hr1 & Hr2 & Hr3).
+        eapply generate_lcall_constraint_rooted_win;
+          [exact Hw2|exact Hys|exact Hr1|exact Hr2|exact Hr3|exact Hgen].
       - unfold SC.ret in Hgen.
         destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _); subst cs. constructor.
-      - eapply generate_lcall_constraint_rooted; [| |exact Hgen].
+      - eapply generate_lcall_constraint_rooted_win;
+          [exact Hns|exact Hys| | |  |exact Hgen].
         + rewrite snd_lvar. constructor.
         + rewrite fst_lvar. now left.
+        + rewrite fst_lvar. intros y0 [Hy0|[]]; subst y0. exact rst_ty_in_ns.
     Qed.
 
-    Lemma generate_lsplit_constraints_rooted :
+    Lemma generate_lsplit_constraints_rooted_win :
       forall ckenv es xs cs s s',
+        incl (minted s s') ns ->
+        incl (CALLS.sec_of env xs) ns ->
         generate_lsplit_constraints G env base_ty rst_ty ckenv xs es s
           = OK (cs, s') ->
         constraints_rooted base_ty rst_ty cs.
     Proof.
-      intros ckenv es. induction es as [|e es IH]; intros xs cs s s' Hgen.
+      intros ckenv es. induction es as [|e es IH]; intros xs cs s s' Hns Hxs Hgen.
       - cbn [generate_lsplit_constraints] in Hgen. unfold SC.ret in Hgen.
         destruct (OK_pair_inv _ _ _ _ Hgen) as (Hc & _); subst cs. constructor.
       - rewrite gen_lsplit_cons in Hgen.
@@ -3519,43 +3788,78 @@ Import SECMONADNotations.
         apply sec_bind_inv in Hgen as (cr & s2 & Hcr & Hret).
         unfold SC.ret in Hret.
         destruct (OK_pair_inv _ _ _ _ Hret) as (Heq & ?); subst cs s'.
-        apply constraints_rooted_app;
-          [exact (generate_lone_constraint_rooted _ _ _ _ _ _ Hc)
-          |exact (IH _ _ _ _ Hcr)].
+        assert (Hl1 : sec_le s s1)
+          by (eapply generate_lone_constraint_sec_le; exact Hc).
+        assert (Hl2 : sec_le s1 s2)
+          by (eapply generate_lsplit_constraints_sec_le; exact Hcr).
+        apply constraints_rooted_app.
+        + eapply generate_lone_constraint_rooted_win; [| |exact Hc].
+          * apply (minted_incl_sub s s s1 s2 ns);
+              [apply sec_le_refl|exact Hl2|exact Hns].
+          * eapply incl_tran; [|exact Hxs]. apply sec_of_incl.
+            intros y Hy. exact (In_firstn_any ident (numstreams e) xs y Hy).
+        + eapply IH; [| |exact Hcr].
+          * apply (minted_incl_sub s s1 s2 s2 ns);
+              [exact Hl1|apply sec_le_refl|exact Hns].
+          * eapply incl_tran; [|exact Hxs]. apply sec_of_incl.
+            intros y Hy. exact (In_skipn_any ident (numstreams e) xs y Hy).
     Qed.
 
-    Lemma generate_leqn_constraint_rooted :
+    Lemma generate_leqn_constraint_rooted_win :
       forall ckenv eqn cs s s',
+        incl (minted s s') ns ->
+        incl (CALLS.sec_of env (fst eqn)) ns ->
         generate_leqn_constraint G env base_ty rst_ty ckenv eqn s
           = OK (cs, s') ->
         constraints_rooted base_ty rst_ty cs.
     Proof.
-      intros ckenv eqn cs s s' Hgen.
-      destruct eqn as (xs & es).
+      intros ckenv eqn cs s s' Hns Hxs Hgen.
+      destruct eqn as (xs & es). cbn [fst] in Hxs.
       destruct es as [|e [|e2 es2]].
-      - eapply generate_lgen_constraint_rooted;
-          [apply lexps_all_carried_rooted|exact Hgen].
+      - eapply generate_lgen_constraint_rooted_win; [exact Hns|exact Hgen].
       - rewrite <- generate_lone_is_leqn in Hgen.
-        exact (generate_lone_constraint_rooted _ _ _ _ _ _ Hgen).
+        eapply generate_lone_constraint_rooted_win; [exact Hns|exact Hxs|exact Hgen].
       - destruct (has_lcall (e :: e2 :: es2)) eqn:Hh;
           cbn [generate_leqn_constraint] in Hgen; rewrite Hh in Hgen.
         + destruct e; try destruct o;
-            (eapply generate_lsplit_constraints_rooted; exact Hgen).
+            (eapply generate_lsplit_constraints_rooted_win;
+             [exact Hns|exact Hxs|exact Hgen]).
         + destruct e; try destruct o;
-            (eapply generate_lgen_constraint_rooted;
-             [apply lexps_all_carried_rooted|exact Hgen]).
+            (eapply generate_lgen_constraint_rooted_win;
+             [exact Hns|exact Hgen]).
     Qed.
 
-    Theorem generate_leqns_constraints_rooted_all :
+    Theorem generate_leqns_constraints_rooted_win :
       forall ckenv eqs cs s s',
+        incl (minted s s') ns ->
+        incl (CALLS.sec_of env (vars_defined eqs)) ns ->
         generate_leqns_constraints G env base_ty rst_ty ckenv eqs s
           = OK (cs, s') ->
         constraints_rooted base_ty rst_ty cs.
     Proof.
-      intros ckenv eqs cs s s' Hgen.
-      eapply generate_leqns_constraints_rooted; [|exact Hgen].
-      apply Forall_forall. intros eq Hin c s1 s2 Hc.
-      exact (generate_leqn_constraint_rooted _ _ _ _ _ Hc).
+      intros ckenv eqs. induction eqs as [|eqn eqs IH];
+        intros cs s s' Hns Hxs Hgen.
+      - apply generate_leqns_constraints_nil in Hgen as (Hc & _).
+        rewrite Hc. constructor.
+      - rewrite generate_leqns_constraints_cons in Hgen.
+        apply sec_bind_inv in Hgen as (c1 & s1 & Hc1 & Hgen).
+        apply sec_bind_inv in Hgen as (c2 & s2 & Hc2 & Hret).
+        unfold SC.ret in Hret.
+        destruct (OK_pair_inv _ _ _ _ Hret) as (Heq & ?); subst cs s'.
+        assert (Hl1 : sec_le s s1)
+          by (eapply generate_leqn_constraint_sec_le; exact Hc1).
+        assert (Hl2 : sec_le s1 s2)
+          by (eapply generate_leqns_constraints_sec_le; exact Hc2).
+        rewrite vars_defined_cons_eq, sec_of_app in Hxs.
+        apply constraints_rooted_app.
+        + eapply generate_leqn_constraint_rooted_win; [| |exact Hc1].
+          * apply (minted_incl_sub s s s1 s2 ns);
+              [apply sec_le_refl|exact Hl2|exact Hns].
+          * eapply incl_tran; [|exact Hxs]. apply incl_appl, incl_refl.
+        + eapply IH; [| |exact Hc2].
+          * apply (minted_incl_sub s s1 s2 s2 ns);
+              [exact Hl1|apply sec_le_refl|exact Hns].
+          * eapply incl_tran; [|exact Hxs]. apply incl_appr, incl_refl.
     Qed.
 
   End RawRooted.
@@ -4010,6 +4314,7 @@ Import SECMONADNotations.
   Theorem generate_lnode_sig_rooted :
     forall (G : secglobal) (P : global) (n : node) env aux sg st0 st1,
       env_injective env ->
+      secglobal_scoped G ->
       (forall f sg,
           find_signature f G = Some sg ->
           NoDup (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out))) ->
@@ -4017,12 +4322,22 @@ Import SECMONADNotations.
           find_signature f G = Some sg ->
           CALLS.all_sources_have sg.(s_clk) sg.(s_constraints)
           /\ CALLS.all_sources_have sg.(s_reset) sg.(s_constraints)) ->
-      (forall f sg inp ck rst os cns sa sb,
-          find_signature f G = Some sg ->
-          generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
-          call_subst_fresh sg inp ck rst os) ->
       wl_node P n ->
       (forall x b, Env.find x env = Some b -> ~ In b (minted st0 st1)) ->
+      (forall clk_id rst_id ct rt,
+          get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
+          Env.find clk_id env = Some ct ->
+          Env.find rst_id env = Some rt ->
+          (forall x b, Env.find x env = Some b ->
+             In b (CALLS.sec_of env
+                     (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                   ++ [ct; rt]))
+          /\ (forall f sg,
+                 find_signature f G = Some sg ->
+                 scope_fresh
+                   ((CALLS.sec_of env
+                       (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                     ++ [ct; rt]) ++ minted st0 st1) sg)) ->
       (forall clk_id rst_id,
           get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
           ~ In clk_id (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
@@ -4031,16 +4346,42 @@ Import SECMONADNotations.
       CALLS.all_sources_have sg.(s_clk) sg.(s_constraints)
       /\ CALLS.all_sources_have sg.(s_reset) sg.(s_constraints).
   Proof.
-    intros G P n env aux sg st0 st1 Hinj Hnd Hroot Hfresh Hwl Hsep Haux0 Hsig.
+    intros G P n env aux sg st0 st1 Hinj Hsgs Hnd Hroot Hwl Hsep Hrf Haux0 Hsig.
     destruct (lnode_sig_inv env G n aux sg st0 st1 Hsig)
       as (ci & ri & ct & rt & inp & out & locals & cns
           & Haux & Hct & Hrt & Hinp & Hout & Hloc & Hcns & ?); subst sg.
     destruct (Haux0 ci ri Haux) as (Hnc & Hnr).
+    destruct (Hrf ci ri ct rt Haux Hct Hrt) as (Hrg & Hnsf).
     assert (locals = CALLS.sec_of env (List.map fst n.(n_vars))) as Hl
         by (eapply get_mappings_from_node_sec_of; exact Hloc).
-    assert (Hcr : constraints_rooted ct rt cns)
-      by exact (generate_leqns_constraints_rooted_all G env ct rt Hnd Hroot
-                  Hfresh (lnode_clock_env n) n.(n_eqs) cns st0 st1 Hcns).
+    set (decl := CALLS.sec_of env
+                   (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                 ++ [ct; rt]).
+    assert (Hdk : decl_ok env ct rt decl).
+    { split; [|split].
+      - unfold decl. apply in_or_app. right. now left.
+      - unfold decl. apply in_or_app. right. right. now left.
+      - exact Hrg. }
+    assert (Hclk : clk_scoped env ct decl).
+    { intros ck ckty Hck.
+      eapply clk_scoped_of_env; [|exact Hrg|exact Hck].
+      unfold decl. apply in_or_app. right. now left. }
+    assert (Hdefd : incl (CALLS.sec_of env (vars_defined n.(n_eqs))) decl).
+    { unfold decl. eapply incl_tran; [|apply incl_appl, incl_refl].
+      apply sec_of_incl. intros y Hy.
+      assert (In y (List.map fst (n.(n_vars) ++ n.(n_out)))) as Hy'
+          by (eapply Permutation_in; [exact (n_defd n)|exact Hy]).
+      rewrite map_app in Hy' |- *. rewrite map_app.
+      apply in_app_or in Hy' as [Hy'|Hy'];
+        [apply in_or_app; right; apply in_or_app; now left
+        |apply in_or_app; right; apply in_or_app; now right]. }
+    assert (Hcr : constraints_rooted ct rt cns).
+    { eapply (generate_leqns_constraints_rooted_win G env ct rt decl
+                (decl ++ minted st0 st1) Hdk Hclk Hsgs);
+        [apply incl_appl, incl_refl|exact Hnsf|exact Hnd|exact Hroot
+        |apply incl_appr, incl_refl
+        |eapply incl_tran; [exact Hdefd|apply incl_appl, incl_refl]
+        |exact Hcns]. }
     (** the levels are neither declared names nor minted ones *)
     assert (Hav : forall y, In y (CALLS.sec_of env (List.map fst n.(n_vars)))
                             -> y <> ct /\ y <> rt).
