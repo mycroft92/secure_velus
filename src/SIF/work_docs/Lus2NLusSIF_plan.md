@@ -1005,6 +1005,83 @@ the locals half of premise 3 from item 7).  `clk_scoped_of_env`,
 `tgt_names_carried_minted`, `tgt_names_carried_minted_list` and
 `exps_scoped_in_of_decl` are drafted and independent of the blockage.
 
+### DONE 2026-10-07: the dichotomy at both levels, and three quarters of item 6
+
+The second pass turned out not to be a second dispatch.  Re-keying
+`exps_scoped_in` from `incl (minted s0 s1) S` to
+`incl (tgt_names (carried ts)) S` makes **one** dispatch serve both of
+`simplify_scoped_weak`'s premises: each rule supplies the new hypothesis
+from its own `incl (tgt_names c) S` together with the fact that its output
+contains what the flow carried (`generate_lvars_constraints_carried_in` for
+the general rule, the `cmerge` shape for the others).  Instantiate `S` at
+`decl ++ minted` for the second premise and at `decl ++ tgt_names cs` for
+the third -- where the window bound would have been false.  The window
+threading (`minted_sub_incl`) is gone from the dispatch.
+
+Landed, all admit-free and pushed:
+
+  * `lexp_scoped_tgt_all` -- the dichotomy at the expression level (ten
+    cases; the call case is `generate_constraints_scoped` against the
+    callee's `signature_scoped`).
+  * the equation dispatch `generate_{lvars,ldef,lgen,lcall,lone,lsplit,leqn,
+    leqns}_..._scoped`, keyed as above.
+  * `simplify_scoped_weak`, `subAll_occurs_mono`, `collapse_occurs_mono`,
+    and the window arithmetic (`minted_cons/_split/_NoDup`,
+    `fresh_idents_window`).
+  * **`generate_lnode_sig_good`** -- `signature_good` for a node (item 7
+    instantiated, with `n_defd`, `NoDup_vars_defined_n_eqs`, `wl_node` and
+    `generate_lnode_scoped_env_st_fresh_sec`).
+  * **`generate_lnode_sig_scoped`** -- `signature_scoped`.  Premise 3 splits
+    exactly as designed: a local is a target by item 7; a minted name is a
+    target if it occurs, because the dichotomy says an occurring name is
+    declared or a target and `clk_scoped_of_env` plus the separation premise
+    say a minted name is not declared.
+  * **`generate_lnode_sig_scope_nodup`** -- `NoDup (signature_scope sg)`.
+
+Three per-node premises are left abstract and are the naming pass's to
+discharge, stated so that `SecLNamingTotality.v` can: `env`'s range is the
+node's declared names plus the two auxiliary levels; the two auxiliary *ids*
+are distinct; and neither is a declared variable of the node.
+
+### What is left, with the recipe for each
+
+1. **`sig_rooted`** (`SecLusUnnestingNodes.v:1547`): every constraint of a
+   published signature has `s_clk` and `s_reset` among its sources.  True by
+   construction -- `lconstrain (ljoin (ambient ckty) t) b` has source
+   `merge (merge [rst_ty] ckty) (fst t)`, which contains `rst_ty`, and
+   `ckty` always contains `base_ty` (the `Cbase` case of
+   `assign_clk_type`).  Needs: an equation-level "rooted" induction of the
+   same shape as the dichotomy; that `collapse` keeps sources (it only joins
+   them); that `simplify` keeps them, because `subAll` substitutes an
+   eliminated name by its own source -- itself rooted -- and `base_ty`,
+   `rst_ty` are never in `ds`; and the program fold, since the carried
+   constraints inherit rootedness from the callee's signature.
+2. **`generate_lnode_sig_instantiations`** and the **program fold** --
+   `secglobal_good` / `secglobal_scoped` / the `NoDup` and `sig_rooted`
+   families as accumulator invariants over `Ordered_nodes`, on the template
+   of `generate_node_sig_scoped_env_scoped`.  Each is now one `Forall`-style
+   induction over `generate_all_lsignatures'` given the per-node theorems
+   above.
+3. **Items 2 and 3** -- the instantiation choices (`cenv`, `base_ty`,
+   `rst_ty`, `As := canonical_ambients`) and Velus' own facts
+   (`wl_node`/`wc_node`/`unnest_node_unnested_eq`, plus the arity list item 7
+   introduced).
+4. **Item 8**, `sig_inputs_ok GL P` -- the hardest remaining piece, and the
+   one whose per-equation input (`generate_leqns_constraints_clock_closed_plain`)
+   still covers only call-free equations.  It is a program-level induction
+   over `Ordered_nodes` with the call rule's closure as the step.
+5. The **composition theorem** chaining `normalize_signatures_weaken` with
+   `lnode_noninterference_outputs_generated`.
+
+  *One more Coq friction for the ledger, met four times today.*  `rewrite H`
+  fails between two facts that print identically whenever the two `snd`s
+  carry different (convertible) type arguments -- `ST` versus `list ident`.
+  The reliable move is to `destruct` the constraint into `(lhs, rhs)` and
+  `cbn [snd]`, which reduces both sides regardless, or to restate the fact
+  locally and prove it by `exact`.  And the bare `findST` in
+  `SecLusTypingCorrectness.v` is `SIG`'s, not `SymTypes`': a `destruct` or
+  `remember` of `simplify`'s scrutinee must qualify it.
+
 *6* -- `signature_good` for a node is now
 `generate_leqns_constraints_published_wf` instantiated at that node: what is
 left is to supply its three node-level premises from the node record and the
