@@ -3564,4 +3564,95 @@ Import SECMONADNotations.
              exact (In_tgt_names_target cns d Hlen1c Hin).
   Qed.
 
+  (** * Item 6: the published scope is duplicate-free
+
+      The interface names are distinct because the node's variables are
+      ([node_NoDup]) and [env] is injective; the two auxiliary levels are
+      distinct from them, and from each other, because their *ids* are --
+      which is what the naming pass gives -- and injectivity carries that to
+      the levels. *)
+
+  Lemma NoDup_app_mid :
+    forall {A : Type} (a b c : list A),
+      NoDup (a ++ b ++ c) -> NoDup (a ++ c).
+  Proof.
+    intros A a b c H.
+    eapply NoDup_app_r with (xs := b).
+    eapply Permutation_NoDup; [|exact H].
+    apply perm_mid3.
+  Qed.
+
+  Theorem generate_lnode_sig_scope_nodup :
+    forall (G : secglobal) (n : node) env aux sg st0 st1,
+      env_injective env ->
+      (forall clk_id rst_id,
+          get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
+          clk_id <> rst_id
+          /\ ~ In clk_id (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+          /\ ~ In rst_id (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))) ->
+      generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
+      NoDup (signature_scope sg).
+  Proof.
+    intros G n env aux sg st0 st1 Hinj Haux0 Hsig.
+    destruct (lnode_sig_inv env G n aux sg st0 st1 Hsig)
+      as (ci & ri & ct & rt & inp & out & locals & cns
+          & Haux & Hct & Hrt & Hinp & Hout & Hloc & Hcns & ?); subst sg.
+    destruct (Haux0 ci ri Haux) as (Hne & Hnc & Hnr).
+    assert (inp = CALLS.sec_of env (List.map fst n.(n_in))) as Hi
+        by (eapply get_mappings_from_node_sec_of; exact Hinp).
+    assert (out = CALLS.sec_of env (List.map fst n.(n_out))) as Ho
+        by (eapply get_mappings_from_node_sec_of; exact Hout).
+    assert (locals = CALLS.sec_of env (List.map fst n.(n_vars))) as Hl
+        by (eapply get_mappings_from_node_sec_of; exact Hloc).
+    (** the whole interface, as one duplicate-free list *)
+    assert (Hall : NoDup (inp ++ locals ++ out)).
+    { rewrite Hi, Hl, Ho, <- !sec_of_app, <- !map_app.
+      rewrite <- (get_mappings_from_node_sec_of
+                    (n.(n_in) ++ n.(n_vars) ++ n.(n_out)) env _
+                    (get_mappings_from_node_app _ _ _ _ _ _ Hinp
+                       (get_mappings_from_node_app _ _ _ _ _ _ Hloc Hout))).
+      eapply get_mappings_nodup_gen;
+        [apply node_NoDup|exact Hinj
+        |eapply get_mappings_from_node_eq;
+         exact (get_mappings_from_node_app _ _ _ _ _ _ Hinp
+                  (get_mappings_from_node_app _ _ _ _ _ _ Hloc Hout))]. }
+    assert (Hio : NoDup (inp ++ out))
+        by (eapply NoDup_app_mid; exact Hall).
+    (** and the two levels, which injectivity separates from the rest *)
+    assert (Hnotin : forall d, In d (inp ++ out) -> d <> ct /\ d <> rt).
+    { intros d Hd.
+      assert (exists x,
+                 In x (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                 /\ Env.find x env = Some d) as (x & Hx & Hxe).
+      { apply in_app_or in Hd as [Hd|Hd].
+        - rewrite Hi in Hd. unfold CALLS.sec_of in Hd.
+          apply in_flat_map in Hd as (x & Hx & Hdx).
+          destruct (Env.find x env) as [b|] eqn:Hxe; [|contradiction].
+          destruct Hdx as [Hdx|[]]; subst b.
+          exists x. split; [|exact Hxe].
+          rewrite !map_app. apply in_or_app. now left.
+        - rewrite Ho in Hd. unfold CALLS.sec_of in Hd.
+          apply in_flat_map in Hd as (x & Hx & Hdx).
+          destruct (Env.find x env) as [b|] eqn:Hxe; [|contradiction].
+          destruct Hdx as [Hdx|[]]; subst b.
+          exists x. split; [|exact Hxe].
+          rewrite !map_app. apply in_or_app. right.
+          apply in_or_app. now right. }
+      split; intros Heq; subst d.
+      - apply Hnc. replace ci with x;
+          [exact Hx|eapply Hinj; [exact Hxe|exact Hct|reflexivity]].
+      - apply Hnr. replace ri with x;
+          [exact Hx|eapply Hinj; [exact Hxe|exact Hrt|reflexivity]]. }
+    unfold signature_scope. cbn [s_in s_out s_clk s_reset].
+    rewrite app_assoc.
+    apply NoDup_app'; [exact Hio| |].
+    - constructor; [|constructor; [intros []|constructor]].
+      intros [Hc|[]]. apply Hne. symmetry in Hc.
+      eapply Hinj; [exact Hct|exact Hrt|exact Hc].
+    - apply Forall_forall. intros d Hd.
+      destruct (Hnotin d Hd) as (Hdc & Hdr).
+      intros [Hx|[Hx|[]]]; symmetry in Hx;
+        [exact (Hdc Hx)|exact (Hdr Hx)].
+  Qed.
+
 End SecLusTypingCorrectness.
