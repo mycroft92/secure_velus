@@ -4176,3 +4176,23 @@ signatures need); for the source signatures `generate_lnode_sig_good` and
 Not yet done: the guarded restatements, and checking `clk_types_defined`,
 `call_anon_not_env_key`, `clocks_covered`, `eqn_ambients` against the same
 test (they are existentials or already keyed on the run, so they look fine).
+
+#### DONE 2026-10-09: D1-D4 repaired (compiles through NonInterferenceStreams, admit-free)
+
+  * D1: `sig_actuals_fresh` is conditional on the actuals being caller-side
+    (`caller_name`/`caller_st`: in `scope` or an env image); use sites supply it.
+    `call_weakens`/`sig_call_weakens` carry `call_subst_fresh` and `NoDup outs`
+    as premises of the instantiation (and the interface-scope equality, so
+    `call_weakens_trans` still holds); the four universal step-theorem premises
+    are gone, replaced by `eapp_fresh_prop` / `lcall_fresh_prop` about the runs
+    (start state above `lo`, `NoDup` lhs, reset-shape restricted).
+  * D2: `env_range_scoped` guarded by `In x (map fst vars)`.
+  * D3: `clk_types_scoped` guarded by `wc_exp` of the expressions and `clk_src`
+    (or the clock of a source variable in `cenv`).
+  * D4: `source_*_scoped_upto` guarded by `wc_exp` and a start-state lower bound
+    `stLo`, threaded as `Hlow` through the contracts.
+  * Discharges, in `SecLusTypingCorrectness.v`: `eapp_fresh_prop_holds`,
+    `lcall_fresh_prop_holds` (callee scopes below `lo`, declared names above).
+
+Still to do: discharge the guarded Section hypotheses themselves at a node
+(the Block A instantiation), item 8, and the composition theorem.

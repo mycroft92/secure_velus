@@ -417,7 +417,9 @@ Import UNN.Fresh.Tactics.
       require. *)
 
   Definition sig_call_weakens (sg1 sg2 : signature) : Prop :=
-    forall inp ck rst outs cs1 st st1,
+    signature_scope sg2 = signature_scope sg1
+    /\ forall inp ck rst outs cs1 st st1,
+      call_subst_fresh sg1 inp ck rst outs -> NoDup outs ->
       generate_constraints sg1 inp ck rst outs st = OK (cs1, st1) ->
       exists cs2,
         generate_constraints sg2 inp ck rst outs st = OK (cs2, st)
@@ -426,9 +428,11 @@ Import UNN.Fresh.Tactics.
   Definition call_weakens (G1 G2 : secglobal) : Prop :=
     forall f sg1 inp ck rst outs cs1 st st1,
       find_signature f G1 = Some sg1 ->
+      call_subst_fresh sg1 inp ck rst outs -> NoDup outs ->
       generate_constraints sg1 inp ck rst outs st = OK (cs1, st1) ->
       exists sg2 cs2,
         find_signature f G2 = Some sg2
+        /\ signature_scope sg2 = signature_scope sg1
         /\ generate_constraints sg2 inp ck rst outs st = OK (cs2, st)
         /\ cs_entails cs1 cs2.
 
@@ -443,15 +447,17 @@ Import UNN.Fresh.Tactics.
       call_weakens (sg1 :: G1) (sg2 :: G2).
   Proof.
     intros sg1 sg2 G1 G2 Hname Hhead Htail
-      f sg inp ck rst outs cs1 st st1 Hf Hg.
+      f sg inp ck rst outs cs1 st st1 Hf Hfr Hnd Hg.
     simpl in Hf. simpl.
     destruct (ident_eqb sg1.(s_name) f) eqn:Hq.
     - inversion Hf; subst sg.
       rewrite <- Hname, Hq.
-      destruct (Hhead inp ck rst outs cs1 st st1 Hg) as (cs2 & Hg2 & Hce).
-      exists sg2, cs2. split; [reflexivity|split; [exact Hg2|exact Hce]].
+      destruct Hhead as (Hsc & Hhead).
+      destruct (Hhead inp ck rst outs cs1 st st1 Hfr Hnd Hg)
+        as (cs2 & Hg2 & Hce).
+      exists sg2, cs2. split; [reflexivity|split; [exact Hsc|split; [exact Hg2|exact Hce]]].
     - rewrite <- Hname, Hq.
-      exact (Htail f sg inp ck rst outs cs1 st st1 Hf Hg).
+      exact (Htail f sg inp ck rst outs cs1 st st1 Hf Hfr Hnd Hg).
   Qed.
 
   (** And how a node supplies it: the two signatures have the same interface,
@@ -469,16 +475,13 @@ Import UNN.Fresh.Tactics.
       signature_good sg2 ->
       signature_scoped sg2 ->
       SIGPROOFS.signatures_preserved sg1 sg2 ->
-      (forall inp ck rst os cns sa sb,
-          generate_constraints sg1 inp ck rst os sa = OK (cns, sb) ->
-          call_subst_fresh sg1 inp ck rst os /\ NoDup os) ->
       sig_call_weakens sg1 sg2.
   Proof.
-    intros sg1 sg2 Hgood1 Hnd1 Hgood2 Hsc2 Hpres Hinst
-      inp ck rst outs cs1 st st1 Hg1.
+    intros sg1 sg2 Hgood1 Hnd1 Hgood2 Hsc2 Hpres.
     pose proof Hpres as Hpres0. destruct Hpres0 as (Hfields & _).
     pose proof (signature_fields_agree_scope_eq _ _ Hfields) as Hscope.
-    destruct (Hinst inp ck rst outs cs1 st st1 Hg1) as (Hfresh & Hnd).
+    split; [symmetry; exact Hscope|].
+    intros inp ck rst outs cs1 st st1 Hfresh Hnd Hg1.
     destruct (SIGPROOFS.generate_constraints_lengths _ _ _ _ _ _ _ _ Hg1)
       as (Hleni & Hleno).
     pose proof Hfields as Hfields0.
@@ -504,6 +507,73 @@ Import UNN.Fresh.Tactics.
         |exact Hsc|exact Hfresh|exact Hg1|exact Hg2].
   Qed.
 
+  (** The instantiations the generator actually makes are fresh.  Stated
+      about the runs themselves, from a start state inside the window the
+      node's names live above: freshness for *every* instantiation the block
+      builder accepts is false, since it accepts an actual that contains a
+      callee formal. *)
+  Definition eapp_fresh_prop (G1 : secglobal) (env : Env.t ident)
+      (base_ty rst_ty : ident) (lo : sec_state) : Prop :=
+    forall f es er (anns : list LSyn.ann) s sg (argts : list LST)
+           (rstty : LST) ckty (outs : list ident) cs sta stb stc s',
+      sec_le lo s ->
+      assign_lexps G1 env base_ty rst_ty es s = OK (argts, sta) ->
+      assign_clk_type env base_ty (find_base_clock (LSyn.clocksof es))
+        = Some ckty ->
+      (match er with
+       | None => rstty = lvar rst_ty /\ stb = sta
+       | Some e1 =>
+           exists t1 a1 rck stm,
+             assign_lexp_type G1 env base_ty rst_ty e1 sta = OK (t1, stm)
+             /\ single t1 stm = OK (a1, stb)
+             /\ assign_clk_type env base_ty (hd Cbase (LSyn.clockof e1))
+                = Some rck
+             /\ rstty = ljoin (lvar rst_ty) (ljoin a1 (rck, []))
+       end) ->
+      find_signature f G1 = Some sg ->
+      fresh_idents (List.length anns) stb = OK (outs, stc) ->
+      generate_constraints sg (List.map fst argts) ckty (fst rstty) outs stc
+        = OK (cs, s') ->
+      call_subst_fresh sg (List.map fst argts) ckty (fst rstty) outs
+      /\ NoDup outs.
+
+  (** The reset type a call is generated against: the ambient level, or the
+      level joined with a reset expression's single stream and its clock. *)
+  Definition lcall_rst_shape (G1 : secglobal) (env : Env.t ident)
+      (base_ty rst_ty : ident) (lo : sec_state) (rstty : LST) : Prop :=
+    rstty = lvar rst_ty
+    \/ exists e1 t1 a1 rck s0 s0',
+         sec_le lo s0
+         /\ assign_lexp_type G1 env base_ty rst_ty e1 s0 = OK (t1, s0')
+         /\ single t1 s0' = OK (a1, s0')
+         /\ assign_clk_type env base_ty (hd Cbase (LSyn.clockof e1))
+            = Some rck
+         /\ rstty = ljoin (lvar rst_ty) (ljoin a1 (rck, [])).
+
+  Definition lcall_fresh_prop (G1 : secglobal) (env : Env.t ident)
+      (base_ty rst_ty : ident) (lo : sec_state) : Prop :=
+    forall xs f es (rstty : LST) s sg ckty (argts : list LST)
+           (outs : list ident) sti cs0 s',
+      NoDup xs ->
+      lcall_rst_shape G1 env base_ty rst_ty lo rstty ->
+      sec_le lo s ->
+      find_signature f G1 = Some sg ->
+      assign_clk_type env base_ty (find_base_clock (LSyn.clocksof es))
+        = Some ckty ->
+      assign_lexps G1 env base_ty rst_ty es s = OK (argts, sti) ->
+      SC.mmap (fun x => find_env x env) xs sti = OK (outs, sti) ->
+      generate_constraints sg (List.map fst argts) ckty (fst rstty) outs sti
+        = OK (cs0, s') ->
+      call_subst_fresh sg (List.map fst argts) ckty (fst rstty) outs
+      /\ NoDup outs.
+
+  Lemma NoDup_firstn_streams :
+    forall (xs : list ident) n, NoDup xs -> NoDup (firstn n xs).
+  Proof.
+    intros xs n H. rewrite <- (firstn_skipn n xs) in H.
+    eapply NoDup_app_l; exact H.
+  Qed.
+
   Section CalleeWeakening.
 
     Variable G1 G2   : secglobal.
@@ -512,6 +582,11 @@ Import UNN.Fresh.Tactics.
     Variable rst_ty  : ident.
 
     Hypothesis call_weaken : call_weakens G1 G2.
+
+    Variable lo : sec_state.
+    Hypothesis eapp_fresh : eapp_fresh_prop G1 env base_ty rst_ty lo.
+    Hypothesis lcall_fresh : lcall_fresh_prop G1 env base_ty rst_ty lo.
+
 
     Local Notation T1  := (assign_lexp_type G1 env base_ty rst_ty).
     Local Notation T2  := (assign_lexp_type G2 env base_ty rst_ty).
@@ -526,15 +601,36 @@ Import UNN.Fresh.Tactics.
     Lemma call_block_entails_G :
       forall f sg1 inp ck rst outs cs1 st st1,
         find_signature f G1 = Some sg1 ->
+        call_subst_fresh sg1 inp ck rst outs -> NoDup outs ->
         generate_constraints sg1 inp ck rst outs st = OK (cs1, st1) ->
         exists sg2 cs2,
           find_signature f G2 = Some sg2
           /\ generate_constraints sg2 inp ck rst outs st = OK (cs2, st)
           /\ cs_entails cs1 cs2.
-    Proof. exact call_weaken. Qed.
+    Proof.
+      intros f sg1 inp ck rst outs cs1 st st1 Hf Hfr Hnd Hg.
+      destruct (call_weaken f sg1 inp ck rst outs cs1 st st1 Hf Hfr Hnd Hg)
+        as (sg2 & cs2 & Hf2 & _ & Hg2 & Hce).
+      exists sg2, cs2. auto.
+    Qed.
+
+    Lemma lo_after_e :
+      forall e ts s s', sec_le lo s -> T1 e s = OK (ts, s') -> sec_le lo s'.
+    Proof.
+      intros e ts s s' Hlo H. eapply sec_le_trans; [exact Hlo|].
+      eapply assign_lexp_type_sec_le; exact H.
+    Qed.
+
+    Lemma lo_after_es :
+      forall es ts s s', sec_le lo s -> Ts1 es s = OK (ts, s') -> sec_le lo s'.
+    Proof.
+      intros es ts s s' Hlo H. eapply sec_le_trans; [exact Hlo|].
+      eapply assign_lexps_sec_le; exact H.
+    Qed.
 
     Definition lexp_entails_G (e : exp) : Prop :=
       forall ts1 s s1,
+        sec_le lo s ->
         T1 e s = OK (ts1, s1) ->
         exists ts2, T2 e s = OK (ts2, s1) /\ Forall2 lst_entails ts1 ts2.
 
@@ -542,18 +638,19 @@ Import UNN.Fresh.Tactics.
       forall es,
         Forall lexp_entails_G es ->
         forall ts1 s s1,
+          sec_le lo s ->
           Ts1 es s = OK (ts1, s1) ->
           exists ts2, Ts2 es s = OK (ts2, s1) /\ Forall2 lst_entails ts1 ts2.
     Proof.
-      intros es Hall. induction Hall as [|e es He Hes IH]; intros ts1 s s1 H.
+      intros es Hall. induction Hall as [|e es He Hes IH]; intros ts1 s s1 Hlo H.
       - rewrite assign_lexps_nil in H. unfold SC.ret in H. inversion H; subst.
         exists []. split; [rewrite assign_lexps_nil; reflexivity|constructor].
       - rewrite assign_lexps_cons in H.
         apply sec_bind_inv in H as (t & sa & Ht & H).
         apply sec_bind_inv in H as (r & sb & Hr & Hret).
         unfold SC.ret in Hret. inversion Hret; subst.
-        destruct (He t _ _ Ht) as (t2 & Ht2 & Het).
-        destruct (IH r _ _ Hr) as (r2 & Hr2 & Her).
+        destruct (He t _ _ Hlo Ht) as (t2 & Ht2 & Het).
+        destruct (IH r _ _ (lo_after_e _ _ _ _ Hlo Ht) Hr) as (r2 & Hr2 & Her).
         exists (t2 ++ r2). split.
         + rewrite assign_lexps_cons.
           eapply sec_bind_ok; [exact Ht2|].
@@ -566,14 +663,14 @@ Import UNN.Fresh.Tactics.
       intro e. induction e using exp_ind2.
 
       - (** Econst *)
-        intros ts1 s s1 Hrun. rewrite assign_lexp_Econst in Hrun.
+        intros ts1 s s1 Hlo Hrun. rewrite assign_lexp_Econst in Hrun.
         unfold SC.ret in Hrun. inversion Hrun; subst.
         exists [lbot]. split;
           [rewrite assign_lexp_Econst; reflexivity
           |constructor; [apply lst_entails_refl|constructor]].
 
       - (** Evar *)
-        intros ts1 s s1 Hrun. rewrite assign_lexp_Evar in Hrun.
+        intros ts1 s s1 Hlo Hrun. rewrite assign_lexp_Evar in Hrun.
         apply sec_bind_inv in Hrun as (b & sa & Hb & Hret).
         pose proof Hb as Hb0. apply find_env_inv in Hb0 as (_ & ?); subst sa.
         unfold SC.ret in Hret. inversion Hret; subst.
@@ -583,12 +680,12 @@ Import UNN.Fresh.Tactics.
         + constructor; [apply lst_entails_refl|constructor].
 
       - (** Eunop *)
-        intros ts1 s s1 Hrun. rewrite assign_lexp_Eunop in Hrun.
-        destruct (IHe ts1 _ _ Hrun) as (ts2 & Ht2 & Hr).
+        intros ts1 s s1 Hlo Hrun. rewrite assign_lexp_Eunop in Hrun.
+        destruct (IHe ts1 _ _ Hlo Hrun) as (ts2 & Ht2 & Hr).
         exists ts2. split; [rewrite assign_lexp_Eunop; exact Ht2|exact Hr].
 
       - (** Ebinop *)
-        intros ts1 s s1 Hrun. rewrite assign_lexp_Ebinop in Hrun.
+        intros ts1 s s1 Hlo Hrun. rewrite assign_lexp_Ebinop in Hrun.
         apply sec_bind_inv in Hrun as (t1 & sa & Ht1 & Hrun).
         apply sec_bind_inv in Hrun as (t2 & sb & Ht2 & Hrun).
         apply sec_bind_inv in Hrun as (a1 & sc & Ha1 & Hrun).
@@ -596,8 +693,9 @@ Import UNN.Fresh.Tactics.
         apply sec_bind_inv in Hrun as (a2 & sd & Ha2 & Hret).
         pose proof Ha2 as Ha2'. apply single_inv in Ha2' as (_ & ?); subst sd.
         unfold SC.ret in Hret. inversion Hret; subst.
-        destruct (IHe1 t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
-        destruct (IHe2 t2 _ _ Ht2) as (u2 & Hu2 & Hr2).
+        destruct (IHe1 t1 _ _ Hlo Ht1) as (u1 & Hu1 & Hr1).
+        destruct (IHe2 t2 _ _ (lo_after_e _ _ _ _ Hlo Ht1) Ht2)
+          as (u2 & Hu2 & Hr2).
         destruct (single_entails t1 u1 a1 _ _ Hr1 Ha1) as (b1 & Hb1 & Hrb1).
         destruct (single_entails t2 u2 a2 _ _ Hr2 Ha2) as (b2 & Hb2 & Hrb2).
         exists [ljoin b1 b2]. split.
@@ -610,13 +708,15 @@ Import UNN.Fresh.Tactics.
             [exact (lst_entails_ljoin _ _ _ _ Hrb1 Hrb2)|constructor].
 
       - (** Efby *)
-        intros ts1 s s1 Hrun. rewrite assign_lexp_Efby in Hrun.
+        intros ts1 s s1 Hlo Hrun. rewrite assign_lexp_Efby in Hrun.
         apply sec_bind_inv in Hrun as (t1 & sa & Ht1 & Hrun).
         apply sec_bind_inv in Hrun as (t2 & sb & Ht2 & Hj).
         assert (s1 = sb) as Hsb by (eapply ljoin_list_pure; exact Hj).
         subst s1.
-        destruct (assign_lexps_entails_of e0s H t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
-        destruct (assign_lexps_entails_of es H0 t2 _ _ Ht2) as (u2 & Hu2 & Hr2).
+        destruct (assign_lexps_entails_of e0s H t1 _ _ Hlo Ht1)
+          as (u1 & Hu1 & Hr1).
+        destruct (assign_lexps_entails_of es H0 t2 _ _
+                    (lo_after_es _ _ _ _ Hlo Ht1) Ht2) as (u2 & Hu2 & Hr2).
         destruct (ljoin_list_entails t1 u1 t2 u2 ts1 _ _ Hr1 Hr2 Hj)
           as (rs2 & Hrs2 & Hre).
         exists rs2. split; [|exact Hre].
@@ -625,13 +725,15 @@ Import UNN.Fresh.Tactics.
         eapply sec_bind_ok; [exact Hu2|exact Hrs2].
 
       - (** Earrow: the same body *)
-        intros ts1 s s1 Hrun. rewrite assign_lexp_Earrow in Hrun.
+        intros ts1 s s1 Hlo Hrun. rewrite assign_lexp_Earrow in Hrun.
         apply sec_bind_inv in Hrun as (t1 & sa & Ht1 & Hrun).
         apply sec_bind_inv in Hrun as (t2 & sb & Ht2 & Hj).
         assert (s1 = sb) as Hsb by (eapply ljoin_list_pure; exact Hj).
         subst s1.
-        destruct (assign_lexps_entails_of e0s H t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
-        destruct (assign_lexps_entails_of es H0 t2 _ _ Ht2) as (u2 & Hu2 & Hr2).
+        destruct (assign_lexps_entails_of e0s H t1 _ _ Hlo Ht1)
+          as (u1 & Hu1 & Hr1).
+        destruct (assign_lexps_entails_of es H0 t2 _ _
+                    (lo_after_es _ _ _ _ Hlo Ht1) Ht2) as (u2 & Hu2 & Hr2).
         destruct (ljoin_list_entails t1 u1 t2 u2 ts1 _ _ Hr1 Hr2 Hj)
           as (rs2 & Hrs2 & Hre).
         exists rs2. split; [|exact Hre].
@@ -640,12 +742,12 @@ Import UNN.Fresh.Tactics.
         eapply sec_bind_ok; [exact Hu2|exact Hrs2].
 
       - (** Ewhen *)
-        intros ts1 s s1 Hrun. rewrite assign_lexp_Ewhen in Hrun.
+        intros ts1 s s1 Hlo Hrun. rewrite assign_lexp_Ewhen in Hrun.
         apply sec_bind_inv in Hrun as (t1 & sa & Ht1 & Hrun).
         apply sec_bind_inv in Hrun as (g & sb & Hg & Hret).
         pose proof Hg as Hg0. apply find_env_inv in Hg0 as (_ & ?); subst sb.
         unfold SC.ret in Hret. inversion Hret; subst.
-        destruct (assign_lexps_entails_of es H t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
+        destruct (assign_lexps_entails_of es H t1 _ _ Hlo Ht1) as (u1 & Hu1 & Hr1).
         exists (List.map (fun t => ljoin t (lvar g)) u1). split.
         + rewrite assign_lexp_Ewhen.
           eapply sec_bind_ok; [exact Hu1|].
@@ -653,15 +755,17 @@ Import UNN.Fresh.Tactics.
         + apply Forall2_map_ljoin_r; [apply lst_entails_refl|exact Hr1].
 
       - (** Emerge *)
-        intros ts1 s s1 Hrun. rewrite assign_lexp_Emerge in Hrun.
+        intros ts1 s s1 Hlo Hrun. rewrite assign_lexp_Emerge in Hrun.
         apply sec_bind_inv in Hrun as (g & sa & Hg & Hrun).
         pose proof Hg as Hg0. apply find_env_inv in Hg0 as (_ & ?); subst sa.
         apply sec_bind_inv in Hrun as (t1 & sb & Ht1 & Hrun).
         apply sec_bind_inv in Hrun as (t2 & sc & Ht2 & Hj).
         assert (s1 = sc) as Hsc by (eapply ljoin_list_pure; exact Hj).
         subst s1.
-        destruct (assign_lexps_entails_of ets H t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
-        destruct (assign_lexps_entails_of efs H0 t2 _ _ Ht2) as (u2 & Hu2 & Hr2).
+        destruct (assign_lexps_entails_of ets H t1 _ _ Hlo Ht1)
+          as (u1 & Hu1 & Hr1).
+        destruct (assign_lexps_entails_of efs H0 t2 _ _
+                    (lo_after_es _ _ _ _ Hlo Ht1) Ht2) as (u2 & Hu2 & Hr2).
         destruct (ljoin_list_entails
                     (List.map (fun t => ljoin (lvar g) t) t1)
                     (List.map (fun t => ljoin (lvar g) t) u1)
@@ -676,7 +780,7 @@ Import UNN.Fresh.Tactics.
         eapply sec_bind_ok; [exact Hu2|exact Hrs2].
 
       - (** Eite *)
-        intros ts1 s s1 Hrun. rewrite assign_lexp_Eite in Hrun.
+        intros ts1 s s1 Hlo Hrun. rewrite assign_lexp_Eite in Hrun.
         apply sec_bind_inv in Hrun as (t0 & sa & Ht0 & Hrun).
         apply sec_bind_inv in Hrun as (th & sb & Hth & Hrun).
         pose proof Hth as Hth0. apply single_inv in Hth0 as (_ & ?); subst sb.
@@ -684,10 +788,13 @@ Import UNN.Fresh.Tactics.
         apply sec_bind_inv in Hrun as (t2 & sd & Ht2 & Hj).
         assert (s1 = sd) as Hsd by (eapply ljoin_list_pure; exact Hj).
         subst s1.
-        destruct (IHe t0 _ _ Ht0) as (u0 & Hu0 & Hr0).
+        destruct (IHe t0 _ _ Hlo Ht0) as (u0 & Hu0 & Hr0).
         destruct (single_entails t0 u0 th _ _ Hr0 Hth) as (vh & Hvh & Hrh).
-        destruct (assign_lexps_entails_of ets H t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
-        destruct (assign_lexps_entails_of efs H0 t2 _ _ Ht2) as (u2 & Hu2 & Hr2).
+        destruct (assign_lexps_entails_of ets H t1 _ _
+                    (lo_after_e _ _ _ _ Hlo Ht0) Ht1) as (u1 & Hu1 & Hr1).
+        destruct (assign_lexps_entails_of efs H0 t2 _ _
+                    (lo_after_es _ _ _ _ (lo_after_e _ _ _ _ Hlo Ht0) Ht1) Ht2)
+          as (u2 & Hu2 & Hr2).
         destruct (ljoin_list_entails
                     (List.map (fun t => ljoin th t) t1)
                     (List.map (fun t => ljoin vh t) u1)
@@ -702,7 +809,7 @@ Import UNN.Fresh.Tactics.
         eapply sec_bind_ok; [exact Hu2|exact Hrs2].
 
       - (** Eapp: the only case a signature is read at *)
-        intros ts1 s s1 Hrun.
+        intros ts1 s s1 Hlo Hrun.
         apply assign_lexp_Eapp_inv in Hrun
           as (sg1 & argts & rstty & ckty & outs & cs & sta & stb & stc
               & Hargs & Hck & Hrst & Hsg1 & Houts & Hcs & Hts1).
@@ -713,7 +820,7 @@ Import UNN.Fresh.Tactics.
           exact Hq. }
         subst s1.
         (** the arguments *)
-        destruct (assign_lexps_entails_of es H0 argts _ _ Hargs)
+        destruct (assign_lexps_entails_of es H0 argts _ _ Hlo Hargs)
           as (argts2 & Hargs2 & Hra).
         (** the reset actual, built as a run *)
         assert (exists rstty2,
@@ -732,7 +839,8 @@ Import UNN.Fresh.Tactics.
         { destruct ro as [e1|].
           - destruct Hrst as (t1 & a1 & rck & stm & Ht1 & Ha1 & Hrck & Hre).
             pose proof Ha1 as Ha1'. apply single_inv in Ha1' as (_ & ?); subst stb.
-            destruct (H t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
+            destruct (H t1 _ _ (lo_after_es _ _ _ _ Hlo Hargs) Ht1)
+              as (u1 & Hu1 & Hr1).
             destruct (single_entails t1 u1 a1 _ _ Hr1 Ha1) as (b1 & Hb1 & Hrb1).
             exists (ljoin (lvar rst_ty) (ljoin b1 (rck, []))). split.
             + eapply sec_bind_ok; [exact Hu1|].
@@ -746,8 +854,10 @@ Import UNN.Fresh.Tactics.
         (** the actuals coincide, so the two blocks are instantiated alike *)
         pose proof (lst_entails_fst _ _ Hra) as Hfa.
         pose proof Hrr as Hrr0. destruct Hrr0 as (Hfr & Hcr).
+        destruct (eapp_fresh f es ro a s sg1 argts rstty ckty outs cs sta stb
+                    stc stc Hlo Hargs Hck Hrst Hsg1 Houts Hcs) as (Hfresh0 & Hndo0).
         destruct (call_block_entails_G f sg1 (List.map fst argts) ckty
-                    (fst rstty) outs cs stc stc Hsg1 Hcs)
+                    (fst rstty) outs cs stc stc Hsg1 Hfresh0 Hndo0 Hcs)
           as (sg2 & cs2 & Hsg2 & Hg2 & Hce).
         exists (List.map
                   (fun o => (([o] : ST),
@@ -768,11 +878,12 @@ Import UNN.Fresh.Tactics.
 
     Corollary assign_lexps_entails_G :
       forall es ts1 s s1,
+        sec_le lo s ->
         Ts1 es s = OK (ts1, s1) ->
         exists ts2, Ts2 es s = OK (ts2, s1) /\ Forall2 lst_entails ts1 ts2.
     Proof.
-      intros es ts1 s s1 H.
-      eapply assign_lexps_entails_of; [|exact H].
+      intros es ts1 s s1 Hlo H.
+      eapply assign_lexps_entails_of; [|exact Hlo|exact H].
       apply Forall_forall. intros e _. exact (assign_lexp_type_entails_G e).
     Qed.
 
@@ -828,21 +939,24 @@ Import UNN.Fresh.Tactics.
 
     Lemma generate_ldef_constraint_entails_G :
       forall x e cs1 s s1,
+        sec_le lo s ->
         generate_ldef_constraint G1 env base_ty rst_ty cenv x e s = OK (cs1, s1) ->
         exists cs2,
           generate_ldef_constraint G2 env base_ty rst_ty cenv x e s
             = OK (cs2, s1)
           /\ cs_entails cs1 cs2.
     Proof.
-      intros x e cs1 s s1 H. unfold generate_ldef_constraint in H |- *.
+      intros x e cs1 s s1 Hlo H. unfold generate_ldef_constraint in H |- *.
       apply sec_bind_inv in H as (ckty & sa & Hck & H).
+      pose proof Hck as Hck0. apply eqn_clock_type_inv in Hck0 as (_ & _ & _ & ?);
+        subst sa.
       apply sec_bind_inv in H as (ts & sb & Hts & H).
       apply sec_bind_inv in H as (t & sc & Ht & H).
       pose proof Ht as Ht'. apply single_inv in Ht' as (_ & ?); subst sc.
       apply sec_bind_inv in H as (b & sd & Hb & Hret).
       pose proof Hb as Hb'. apply find_env_inv in Hb' as (_ & ?); subst sd.
       unfold SC.ret in Hret. inversion Hret; subst.
-      destruct (assign_lexp_type_entails_G e ts _ _ Hts) as (us & Hus & Hre).
+      destruct (assign_lexp_type_entails_G e ts _ _ Hlo Hts) as (us & Hus & Hre).
       destruct (single_entails ts us t _ _ Hre Ht) as (u & Hu & Hru).
       exists (lconstrain (ljoin (ambient rst_ty ckty) u) b). split.
       + eapply sec_bind_ok; [exact Hck|].
@@ -855,6 +969,8 @@ Import UNN.Fresh.Tactics.
 
     Lemma generate_lcall_constraint_entails_G :
       forall xs f es rstty1 rstty2 cs1 s s1,
+        NoDup xs -> lcall_rst_shape G1 env base_ty rst_ty lo rstty1 ->
+        sec_le lo s ->
         lst_entails rstty1 rstty2 ->
         generate_lcall_constraint G1 env base_ty rst_ty xs f es rstty1 s
           = OK (cs1, s1) ->
@@ -863,7 +979,7 @@ Import UNN.Fresh.Tactics.
             = OK (cs2, s1)
           /\ cs_entails cs1 cs2.
     Proof.
-      intros xs f es rstty1 rstty2 cs1 s s1 Hr H.
+      intros xs f es rstty1 rstty2 cs1 s s1 Hndx Hshape Hlo Hr H.
       unfold generate_lcall_constraint in H |- *.
       destruct (find_signature f G1) as [sg1|] eqn:Esg1;
         [|unfold SC.error in H; discriminate H].
@@ -883,12 +999,14 @@ Import UNN.Fresh.Tactics.
         exact Hq. }
       subst sd.
       unfold SC.ret in Hret. inversion Hret; subst.
-      destruct (assign_lexps_entails_G es argts _ _ Hargs)
+      destruct (assign_lexps_entails_G es argts _ _ Hlo Hargs)
         as (argts2 & Hargs2 & Hra).
       pose proof (lst_entails_fst _ _ Hra) as Hfa.
       pose proof Hr as Hr0. destruct Hr0 as (Hfr & Hcr).
+      destruct (lcall_fresh xs f es rstty1 s sg1 ckty argts outs _ cs0 _ Hndx Hshape Hlo
+                  Esg1 Hckv Hargs Houts Hgc) as (Hfresh & Hndo).
       destruct (call_block_entails_G f sg1 (List.map fst argts) ckty
-                  (fst rstty1) outs cs0 _ _ Esg1 Hgc)
+                  (fst rstty1) outs cs0 _ _ Esg1 Hfresh Hndo Hgc)
         as (sg2 & cs2 & Esg2 & Hgc2 & Hce).
       rewrite Esg2.
       exists (cmerge cs2 (cmerge (carried argts2) (snd rstty2))). split.
@@ -902,6 +1020,7 @@ Import UNN.Fresh.Tactics.
 
     Lemma generate_lgen_constraint_entails_G :
       forall xs es cs1 s s1,
+        sec_le lo s ->
         generate_lgen_constraint G1 env base_ty rst_ty cenv xs es s
           = OK (cs1, s1) ->
         exists cs2,
@@ -909,13 +1028,13 @@ Import UNN.Fresh.Tactics.
             = OK (cs2, s1)
           /\ cs_entails cs1 cs2.
     Proof.
-      intros xs es cs1 s s1 H.
+      intros xs es cs1 s s1 Hlo H.
       unfold generate_lgen_constraint in H |- *.
       apply sec_bind_inv in H as (ts & sa & Hts & H).
       apply sec_bind_inv in H as (bs & sb & Hbs & H).
       pose proof Hbs as Hbs'.
       apply option_to_sec_inv in Hbs' as (_ & ?); subst sb.
-      destruct (assign_lexps_entails_G es ts _ _ Hts) as (us & Hus & Hre).
+      destruct (assign_lexps_entails_G es ts _ _ Hlo Hts) as (us & Hus & Hre).
       destruct (generate_lvars_constraints_entails_G xs bs ts us cs1 _ _ Hre H)
         as (cs2 & Hcs2 & Hce).
       exists cs2. split; [|exact Hce].
@@ -925,6 +1044,7 @@ Import UNN.Fresh.Tactics.
 
     Lemma generate_lone_constraint_entails_G :
       forall ys e cs1 s s1,
+        NoDup ys -> sec_le lo s ->
         generate_lone_constraint G1 env base_ty rst_ty cenv ys e s
           = OK (cs1, s1) ->
         exists cs2,
@@ -932,12 +1052,12 @@ Import UNN.Fresh.Tactics.
             = OK (cs2, s1)
           /\ cs_entails cs1 cs2.
     Proof.
-      intros ys e cs1 s s1 H.
+      intros ys e cs1 s s1 Hndy Hlo H.
       destruct e as [| | | | | | | | |f args ro a].
       1-9: (destruct ys as [|x [|x2 xs2]];
-            [ eapply generate_lgen_constraint_entails_G; exact H
-            | eapply generate_ldef_constraint_entails_G; exact H
-            | eapply generate_lgen_constraint_entails_G; exact H ]).
+            [ eapply generate_lgen_constraint_entails_G; [exact Hlo|exact H]
+            | eapply generate_ldef_constraint_entails_G; [exact Hlo|exact H]
+            | eapply generate_lgen_constraint_entails_G; [exact Hlo|exact H] ]).
       destruct ro as [e1|]; destruct ys as [|x xs2].
       - unfold generate_lone_constraint, SC.ret in H |- *. inversion H; subst.
         exists []. split; [reflexivity|apply cs_entails_refl].
@@ -947,13 +1067,17 @@ Import UNN.Fresh.Tactics.
         pose proof Ha1 as Ha1'. apply single_inv in Ha1' as (_ & ?); subst sb.
         apply sec_bind_inv in H as (rck & sc & Hrck & H).
         pose proof Hrck as Hrck'.
-        apply option_to_sec_inv in Hrck' as (_ & ?); subst sc.
-        destruct (assign_lexp_type_entails_G e1 t1 _ _ Ht1) as (u1 & Hu1 & Hr1).
+        apply option_to_sec_inv in Hrck' as (Hrckv & ?); subst sc.
+        destruct (assign_lexp_type_entails_G e1 t1 _ _ Hlo Ht1) as (u1 & Hu1 & Hr1).
         destruct (single_entails t1 u1 a1 _ _ Hr1 Ha1) as (b1 & Hb1 & Hrb1).
         destruct (generate_lcall_constraint_entails_G (x :: xs2) f args
                     (ljoin (lvar rst_ty) (ljoin a1 (rck, [])))
                     (ljoin (lvar rst_ty) (ljoin b1 (rck, [])))
-                    cs1 _ _
+                    cs1 _ _ Hndy
+                    (or_intror (ex_intro _ e1 (ex_intro _ t1 (ex_intro _ a1
+                       (ex_intro _ rck (ex_intro _ s (ex_intro _ _
+                          (conj Hlo (conj Ht1 (conj Ha1 (conj Hrckv Logic.eq_refl)))))))))))
+                    (lo_after_e _ _ _ _ Hlo Ht1)
                     (lst_entails_ljoin _ _ _ _ (lst_entails_refl (lvar rst_ty))
                        (lst_entails_ljoin _ _ _ _ Hrb1
                           (lst_entails_refl (rck, []))))
@@ -966,11 +1090,13 @@ Import UNN.Fresh.Tactics.
       - unfold generate_lone_constraint, SC.ret in H |- *. inversion H; subst.
         exists []. split; [reflexivity|apply cs_entails_refl].
       - eapply generate_lcall_constraint_entails_G;
-          [apply lst_entails_refl|exact H].
+          [exact Hndy|left; reflexivity|exact Hlo
+          |apply lst_entails_refl|exact H].
     Qed.
 
     Lemma generate_lsplit_constraints_entails_G :
       forall es xs cs1 s s1,
+        NoDup xs -> sec_le lo s ->
         generate_lsplit_constraints G1 env base_ty rst_ty cenv xs es s
           = OK (cs1, s1) ->
         exists cs2,
@@ -978,7 +1104,7 @@ Import UNN.Fresh.Tactics.
             = OK (cs2, s1)
           /\ cs_entails cs1 cs2.
     Proof.
-      induction es as [|e es IH]; intros xs cs1 s s1 H.
+      induction es as [|e es IH]; intros xs cs1 s s1 Hndx Hlo H.
       - rewrite gen_lsplit_nil in H. unfold SC.ret in H. inversion H; subst.
         exists []. split;
           [rewrite gen_lsplit_nil; reflexivity|apply cs_entails_refl].
@@ -987,9 +1113,14 @@ Import UNN.Fresh.Tactics.
         apply sec_bind_inv in H as (ct & sb & Ht & Hret).
         unfold SC.ret in Hret. inversion Hret; subst.
         destruct (generate_lone_constraint_entails_G
-                    (firstn (numstreams e) xs) e ch _ _ Hh)
+                    (firstn (numstreams e) xs) e ch _ _
+                    (NoDup_firstn_streams _ _ Hndx) Hlo Hh)
           as (ch2 & Hh2 & Hceh).
-        destruct (IH (skipn (numstreams e) xs) ct _ _ Ht) as (ct2 & Ht2 & Hcet).
+        destruct (IH (skipn (numstreams e) xs) ct _ _
+                    (NoDup_skipn _ _ Hndx)
+                    (sec_le_trans _ _ _ Hlo
+                       (generate_lone_constraint_sec_le G1 env base_ty rst_ty
+                          cenv _ _ _ _ _ Hh)) Ht) as (ct2 & Ht2 & Hcet).
         exists (ch2 ++ ct2). split.
         + rewrite gen_lsplit_cons.
           eapply sec_bind_ok; [exact Hh2|].
@@ -999,23 +1130,25 @@ Import UNN.Fresh.Tactics.
 
     Lemma generate_leqn_constraint_entails_G :
       forall eq cs1 s s1,
+        NoDup (fst eq) -> sec_le lo s ->
         generate_leqn_constraint G1 env base_ty rst_ty cenv eq s = OK (cs1, s1) ->
         exists cs2,
           generate_leqn_constraint G2 env base_ty rst_ty cenv eq s
             = OK (cs2, s1)
           /\ cs_entails cs1 cs2.
     Proof.
-      intros (xs, es) cs1 s s1 H.
+      intros (xs, es) cs1 s s1 Hndx Hlo H. cbn [fst] in Hndx.
       destruct es as [|e [|e2 es2]].
-      - eapply generate_lgen_constraint_entails_G; exact H.
+      - eapply generate_lgen_constraint_entails_G; [exact Hlo|exact H].
       - rewrite <- generate_lone_is_leqn in H.
-        destruct (generate_lone_constraint_entails_G xs e cs1 _ _ H)
+        destruct (generate_lone_constraint_entails_G xs e cs1 _ _ Hndx Hlo H)
           as (cs2 & Hcs2 & Hce).
         exists cs2. split; [rewrite <- generate_lone_is_leqn; exact Hcs2|exact Hce].
       - rewrite gen_leqn_cons2 in H. rewrite gen_leqn_cons2.
         destruct (has_lcall (e :: e2 :: es2));
-          [eapply generate_lsplit_constraints_entails_G
-          |eapply generate_lgen_constraint_entails_G]; exact H.
+          [eapply generate_lsplit_constraints_entails_G;
+             [exact Hndx|exact Hlo|exact H]
+          |eapply generate_lgen_constraint_entails_G; [exact Hlo|exact H]].
     Qed.
 
     (** The statement the program level reads: a node's raw constraints,
@@ -1024,6 +1157,7 @@ Import UNN.Fresh.Tactics.
         same state, so the two [simplify] windows coincide as well. *)
     Theorem generate_leqns_constraints_entails_G :
       forall eqs cs1 s s1,
+        NoDup (vars_defined eqs) -> sec_le lo s ->
         generate_leqns_constraints G1 env base_ty rst_ty cenv eqs s
           = OK (cs1, s1) ->
         exists cs2,
@@ -1031,16 +1165,22 @@ Import UNN.Fresh.Tactics.
             = OK (cs2, s1)
           /\ cs_entails cs1 cs2.
     Proof.
-      induction eqs as [|eq eqs IH]; intros cs1 s s1 H.
+      induction eqs as [|eq eqs IH]; intros cs1 s s1 Hndv Hlo H.
       - apply generate_leqns_constraints_nil in H as (? & ?); subst.
         exists []. split; [reflexivity|apply cs_entails_refl].
       - rewrite generate_leqns_constraints_cons in H.
         apply sec_bind_inv in H as (ch & sa & Hh & H).
         apply sec_bind_inv in H as (ct & sb & Ht & Hret).
         unfold SC.ret in Hret. inversion Hret; subst.
-        destruct (generate_leqn_constraint_entails_G eq ch _ _ Hh)
+        assert (NoDup (fst eq ++ vars_defined eqs)) as Hndv'
+          by (rewrite vars_defined_cons_eq in Hndv; exact Hndv).
+        destruct (generate_leqn_constraint_entails_G eq ch _ _
+                    (@NoDup_app_l ident _ _ Hndv') Hlo Hh)
           as (ch2 & Hh2 & Hceh).
-        destruct (IH ct _ _ Ht) as (ct2 & Ht2 & Hcet).
+        destruct (IH ct _ _ (@NoDup_app_r ident _ _ Hndv')
+                    (sec_le_trans _ _ _ Hlo
+                       (generate_leqn_constraint_sec_le G1 env base_ty rst_ty
+                          cenv _ _ _ _ Hh)) Ht) as (ct2 & Ht2 & Hcet).
         exists (ch2 ++ ct2). split.
         + rewrite generate_leqns_constraints_cons.
           eapply sec_bind_ok; [exact Hh2|].
@@ -1050,8 +1190,11 @@ Import UNN.Fresh.Tactics.
   End CalleeWeakening.
 
   Corollary generate_leqns_constraints_weaken :
-    forall G1 G2 env base_ty rst_ty cenv eqs cs1 s s1,
+    forall G1 G2 env base_ty rst_ty cenv eqs cs1 s s1 lo,
       call_weakens G1 G2 ->
+      eapp_fresh_prop G1 env base_ty rst_ty lo ->
+      lcall_fresh_prop G1 env base_ty rst_ty lo ->
+      NoDup (vars_defined eqs) -> sec_le lo s ->
       generate_leqns_constraints G1 env base_ty rst_ty cenv eqs s
         = OK (cs1, s1) ->
       exists cs2,
@@ -1059,8 +1202,9 @@ Import UNN.Fresh.Tactics.
           = OK (cs2, s1)
         /\ cs_entails cs1 cs2.
   Proof.
-    intros G1 G2 env base_ty rst_ty cenv eqs cs1 s s1 Hw H.
-    eapply generate_leqns_constraints_entails_G; [exact Hw|exact H].
+    intros G1 G2 env base_ty rst_ty cenv eqs cs1 s s1 lo Hw Hef Hlf Hndv Hlo H.
+    eapply generate_leqns_constraints_entails_G;
+      [exact Hw|exact Hef|exact Hlf|exact Hndv|exact Hlo|exact H].
   Qed.
 
   Lemma preserves_on_trans :
@@ -1194,6 +1338,7 @@ Import UNN.Fresh.Tactics.
     Variable vars    : list (ident * clock).
     Variable cenv    : Env.t (type * clock).
     Variable scope   : list ident.
+    Variable stLo     : sec_state.
     Variable stF     : sec_state.
     Variable amb     : ST.
 
@@ -1204,22 +1349,30 @@ Import UNN.Fresh.Tactics.
     Hypothesis sig_nodup :
       forall f sg, find_signature f GL = Some sg -> NoDup (signature_scope sg).
     Hypothesis source_types_scoped :
-      source_types_scoped_upto GL env base_ty rst_ty scope stF.
+      source_types_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
     Hypothesis source_lexps_scoped :
-      source_lexps_scoped_upto GL env base_ty rst_ty scope stF.
+      source_lexps_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
     Hypothesis rst_ty_scoped : In rst_ty scope.
     Hypothesis clk_types_scoped :
-      forall ck ckty,
+      forall P es ck ckty,
+        Forall (wc_exp P vars) es ->
+        (clk_src vars es ck \/
+         exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
         assign_clk_type env base_ty ck = Some ckty -> st_scoped scope ckty.
     Hypothesis env_range_scoped :
-      forall x b, Env.find x env = Some b -> In b scope.
+      forall x b, In x (List.map fst vars) ->
+                  Env.find x env = Some b -> In b scope.
     Hypothesis source_lexps_carried_scoped :
-      source_lexps_carried_scoped_upto GL env base_ty rst_ty scope stF.
+      source_lexps_carried_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
     Hypothesis sig_scoped :
       forall f sg, find_signature f GL = Some sg -> signature_scoped sg.
     Hypothesis sig_actuals_fresh :
       forall f sg inp ck rst os cns sa sb,
         find_signature f GL = Some sg ->
+        Forall (caller_st env scope) inp ->
+        caller_st env scope ck ->
+        caller_st env scope rst ->
+        Forall (caller_name env scope) os ->
         generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
         call_subst_fresh sg inp ck rst os.
 
@@ -1287,7 +1440,7 @@ Import UNN.Fresh.Tactics.
         listSatisfiable dlt ce ->
         (** The checkmark bound: this run of the source generator, and
             every sub-run of it, finishes before [stF]. *)
-        sec_le xst' stF ->
+        sec_le xst' stF -> sec_le stLo xst ->
         exists dlt',
           agree_off (moved_by st st') dlt dlt'
           /\ listSatisfiable dlt' cet
@@ -1295,7 +1448,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       induction eqs as [|eq eqs IH];
         intros eqss st st' ce xst xst' cet yst yst' dlt
-        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd.
+        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd Hlow.
       - apply map_bind_unnest_equation_nil in Hun as (? & ?); subst.
         simpl in Hgent.
         destruct
@@ -1374,7 +1527,7 @@ Import UNN.Fresh.Tactics.
           eapply generate_leqns_constraints_sec_le; exact Hgen2. }
 
         edestruct
-          (eqn_carries_all GL env base_ty rst_ty vars cenv scope stF amb
+          (eqn_carries_all GL env base_ty rst_ty vars cenv scope stLo stF amb
              env_inj amb_scoped sig_good sig_nodup source_types_scoped
              source_lexps_scoped rst_ty_scoped clk_types_scoped
              env_range_scoped source_lexps_carried_scoped sig_scoped
@@ -1397,6 +1550,7 @@ Import UNN.Fresh.Tactics.
         { exact Hgt1. }
         { exact Hsat1. }
         { exact Hbh. }
+        { exact Hlow. }
 
         edestruct (IH eqsr st1 st' c2 xst1 xst' ct2 ystm yst' dlt1)
           as (dlt2 & Hoff2 & Hce2 & Hscope2).
@@ -1420,8 +1574,9 @@ Import UNN.Fresh.Tactics.
           { intros y Hy Hin. destruct Hy as [Hy|[]]. subst y.
             exact
               (Hmv b (eq_moved_by_prefix env st st1 st' Hf2 b Hin)
-                 (sec_of_scoped env scope env_range_scoped
-                    (vars_defined (eq :: eqs)) b Hb0)). }
+                 (sec_of_scoped env vars scope env_range_scoped
+                    (vars_defined (eq :: eqs)) b
+                    (wc_equations_vars_defined P vars _ Hwc) Hb0)). }
           exact
             (satisfiable_off amb [b] (moved_by st st1) dlt dlt1
                Hoff1 Hamboff Hboff (Hbs0 b Hb0)). }
@@ -1437,6 +1592,8 @@ Import UNN.Fresh.Tactics.
             (listSatisfiable_off scope c2 (moved_by st st1) dlt dlt1
                Hcesc2 Hprefixfresh Hoff1 Hsat2). }
         { exact Hbnd. }
+        { eapply sec_le_trans; [exact Hlow|].
+          eapply generate_leqn_constraint_sec_le; exact Hgen1. }
 
         assert (forall y, In y (moved_by st1 st') ->
                           ~ In y (scope ++ moved_by st st1)) as Hsep.
@@ -1502,6 +1659,7 @@ Import UNN.Fresh.Tactics.
     Variable vars    : list (ident * clock).
     Variable cenv    : Env.t (type * clock).
     Variable scope   : list ident.
+    Variable stLo     : sec_state.
     Variable stF     : sec_state.
 
     Hypothesis env_inj : env_injective env.
@@ -1510,22 +1668,30 @@ Import UNN.Fresh.Tactics.
     Hypothesis sig_nodup :
       forall f sg, find_signature f GL = Some sg -> NoDup (signature_scope sg).
     Hypothesis source_types_scoped :
-      source_types_scoped_upto GL env base_ty rst_ty scope stF.
+      source_types_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
     Hypothesis source_lexps_scoped :
-      source_lexps_scoped_upto GL env base_ty rst_ty scope stF.
+      source_lexps_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
     Hypothesis rst_ty_scoped : In rst_ty scope.
     Hypothesis clk_types_scoped :
-      forall ck ckty,
+      forall P es ck ckty,
+        Forall (wc_exp P vars) es ->
+        (clk_src vars es ck \/
+         exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
         assign_clk_type env base_ty ck = Some ckty -> st_scoped scope ckty.
     Hypothesis env_range_scoped :
-      forall x b, Env.find x env = Some b -> In b scope.
+      forall x b, In x (List.map fst vars) ->
+                  Env.find x env = Some b -> In b scope.
     Hypothesis source_lexps_carried_scoped :
-      source_lexps_carried_scoped_upto GL env base_ty rst_ty scope stF.
+      source_lexps_carried_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
     Hypothesis sig_scoped :
       forall f sg, find_signature f GL = Some sg -> signature_scoped sg.
     Hypothesis sig_actuals_fresh :
       forall f sg inp ck rst os cns sa sb,
         find_signature f GL = Some sg ->
+        Forall (caller_st env scope) inp ->
+        caller_st env scope ck ->
+        caller_st env scope rst ->
+        Forall (caller_name env scope) os ->
         generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
         call_subst_fresh sg inp ck rst os.
 
@@ -1582,7 +1748,7 @@ Import UNN.Fresh.Tactics.
         listSatisfiable dlt ce ->
         (** The checkmark bound: this run of the source generator, and
             every sub-run of it, finishes before [stF]. *)
-        sec_le xst' stF ->
+        sec_le xst' stF -> sec_le stLo xst ->
         exists dlt',
           agree_off (moved_by env st st') dlt dlt'
           /\ listSatisfiable dlt' cet
@@ -1590,7 +1756,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       induction eqs as [|eq eqs IH];
         intros eqss st st' ce xst xst' cet yst yst' dlt
-          Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd.
+          Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd Hlow.
       - apply map_bind_unnest_equation_nil in Hun as (Hq1 & Hq2); subst.
         simpl List.concat in Hgent.
         apply generate_leqns_constraints_nil in Hgent as (Hq3 & Hq4); subst.
@@ -1666,7 +1832,7 @@ Import UNN.Fresh.Tactics.
           eapply generate_leqns_constraints_sec_le; exact Hgen2. }
 
         edestruct
-          (eqn_carries_all GL env base_ty rst_ty vars cenv scope stF (A eq)
+          (eqn_carries_all GL env base_ty rst_ty vars cenv scope stLo stF (A eq)
              env_inj (A_scoped eq) sig_good sig_nodup source_types_scoped
              source_lexps_scoped rst_ty_scoped clk_types_scoped
              env_range_scoped source_lexps_carried_scoped sig_scoped
@@ -1689,6 +1855,7 @@ Import UNN.Fresh.Tactics.
         { exact Hgt1. }
         { exact Hsat1. }
         { exact Hbh. }
+        { exact Hlow. }
 
         edestruct (IH eqsr st1 st' c2 xst1 xst' ct2 ystm yst' dlt1)
           as (dlt2 & Hoff2 & Hce2 & Hscope2).
@@ -1701,11 +1868,15 @@ Import UNN.Fresh.Tactics.
           exact (Hamb eq' eqs1 s s' (or_intror Hin)). }
         { intros eq' b Hin Hb.
           assert (In b (sec_of env (fst eq'))) as Hb0 by exact Hb.
+          assert (incl (fst eq') (List.map fst vars)) as Hlhs.
+          { destruct eq' as (xs', es').
+            exact (wc_equation_lhs_vars P vars xs' es'
+                     (proj1 (Forall_forall _ _) Hwcr _ Hin)). }
           assert (In b scope) as Hbsc.
-          { unfold sec_of in Hb. apply in_flat_map in Hb as (x & _ & Hbx).
+          { unfold sec_of in Hb. apply in_flat_map in Hb as (x & Hxin & Hbx).
             destruct (Env.find x env) as [b0|] eqn:Hf; [|contradiction].
             destruct Hbx as [Hbx|[]]; subst b0.
-            exact (env_range_scoped x b Hf). }
+            exact (env_range_scoped x b (Hlhs x Hxin) Hf). }
           assert (forall y, In y (A eq') -> ~ In y (moved_by env st st1))
             as Hamboff.
           { intros y Hy Hin'.
@@ -1732,6 +1903,8 @@ Import UNN.Fresh.Tactics.
             (listSatisfiable_off scope c2 (moved_by env st st1) dlt dlt1
                Hcesc2 Hprefixfresh Hoff1 Hsat2). }
         { exact Hbnd. }
+        { eapply sec_le_trans; [exact Hlow|].
+          eapply generate_leqn_constraint_sec_le; exact Hgen1. }
 
         assert (forall y, In y (moved_by env st1 st') ->
                           ~ In y (scope ++ moved_by env st st1)) as Hsep.
@@ -1807,7 +1980,7 @@ Import UNN.Fresh.Tactics.
         generate_leqns_constraints GL env base_ty rst_ty cenv
           (List.concat eqss) yst = OK (cet, yst') ->
         listSatisfiable dlt ce ->
-        sec_le xst' stF ->
+        sec_le xst' stF -> sec_le stLo xst ->
         exists dlt',
           agree_off (moved_by env st st') dlt dlt'
           /\ listSatisfiable dlt' cet
@@ -1816,7 +1989,7 @@ Import UNN.Fresh.Tactics.
       induction eqs as [|eq eqs IH];
         intros eqss st st' ce xst xst' cet yst yst' dlt
           Hwcg Hsigin Hwl Hwc Hnd Hmv Hamb Hfound Hbs0 Hcesc
-          Hun Hgen Hgent Hsat Hbnd.
+          Hun Hgen Hgent Hsat Hbnd Hlow.
       - apply map_bind_unnest_equation_nil in Hun as (Hq1 & Hq2); subst.
         simpl List.concat in Hgent.
         apply generate_leqns_constraints_nil in Hgent as (Hq3 & Hq4); subst.
@@ -1893,7 +2066,7 @@ Import UNN.Fresh.Tactics.
 
         destruct (Hamb eq (or_introl Logic.eq_refl)) as (Hcov1 & Hlen1).
         edestruct
-          (eqn_carries_all_streams GL env base_ty rst_ty vars cenv scope stF
+          (eqn_carries_all_streams GL env base_ty rst_ty vars cenv scope stLo stF
              env_inj sig_good sig_nodup source_types_scoped
              source_lexps_scoped rst_ty_scoped clk_types_scoped
              env_range_scoped source_lexps_carried_scoped sig_scoped
@@ -1917,6 +2090,7 @@ Import UNN.Fresh.Tactics.
         { exact Hgt1. }
         { exact Hsat1. }
         { exact Hbh. }
+        { exact Hlow. }
 
         edestruct (IH eqsr st1 st' c2 xst1 xst' ct2 ystm yst' dlt1)
           as (dlt2 & Hoff2 & Hce2 & Hscope2).
@@ -1942,6 +2116,8 @@ Import UNN.Fresh.Tactics.
             (listSatisfiable_off scope c2 (moved_by env st st1) dlt dlt1
                Hcesc2 Hprefixfresh Hoff1 Hsat2). }
         { exact Hbnd. }
+        { eapply sec_le_trans; [exact Hlow|].
+          eapply generate_leqn_constraint_sec_le; exact Hgen1. }
 
         assert (forall y, In y (moved_by env st1 st') ->
                           ~ In y (scope ++ moved_by env st st1)) as Hsep.
@@ -2016,14 +2192,14 @@ Import UNN.Fresh.Tactics.
         listSatisfiable dlt ce ->
         (** The checkmark bound: this run of the source generator, and
             every sub-run of it, finishes before [stF]. *)
-        sec_le xst' stF ->
+        sec_le xst' stF -> sec_le stLo xst ->
         exists dlt',
           agree_off (moved_by env init_st st') dlt dlt'
           /\ listSatisfiable dlt' cet
           /\ constraints_scoped (scope ++ moved_by env init_st st') cet.
     Proof.
       intros P eqs eqs' st' ce xst xst' cet yst yst' dlt
-        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd.
+        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd Hlow.
       apply unnest_equations_inv in Hun as (eqss & Hmap & ?); subst.
       assert (NoDup
                 (vars_defined (List.concat eqss) ++
@@ -2034,7 +2210,7 @@ Import UNN.Fresh.Tactics.
       exact
         (eqns_carries_amb P eqs eqss (init_st : fresh_st (type * clock))
            st' ce xst xst' cet yst yst'
-           dlt Hwl Hwc Hnd0 Hmv Hamb Hbs0 Hcesc Hmap Hgen Hgent Hsat Hbnd).
+           dlt Hwl Hwc Hnd0 Hmv Hamb Hbs0 Hcesc Hmap Hgen Hgent Hsat Hbnd Hlow).
     Qed.
 
     (** The valuation produced by [node_carries] changes only the security
@@ -2066,15 +2242,15 @@ Import UNN.Fresh.Tactics.
           = OK (cet, yst') ->
         (** The checkmark bound: this run of the source generator, and
             every sub-run of it, finishes before [stF]. *)
-        sec_le xst' stF ->
+        sec_le xst' stF -> sec_le stLo xst ->
         preserves_on scope ce cet.
     Proof.
       intros P eqs eqs' st' ce xst xst' cet yst yst'
-        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hbnd dlt Hsat.
+        Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hbnd Hlow dlt Hsat.
       destruct
         (node_carries P eqs eqs' st' ce xst xst' cet yst yst' dlt
            Hwl Hwc Hnd Hmv Hamb (Hbs0 dlt Hsat) Hcesc Hun Hgen Hgent Hsat
-           Hbnd)
+           Hbnd Hlow)
         as (dlt' & Hoff & Hsat' & Hscoped).
       exists dlt'. split.
       - exact
@@ -2106,7 +2282,7 @@ Import UNN.Fresh.Tactics.
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
           = OK (cet, yst') ->
         listSatisfiable dlt ce ->
-        sec_le xst' stF ->
+        sec_le xst' stF -> sec_le stLo xst ->
         exists dlt',
           agree_off (moved_by env init_st st') dlt dlt'
           /\ listSatisfiable dlt' cet
@@ -2114,7 +2290,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P eqs eqs' st' ce xst xst' cet yst yst' dlt
         Hwcg Hsigin Hwl Hwc Hnd Hmv Hamb Hfound Hbs0 Hcesc Hun Hgen Hgent
-        Hsat Hbnd.
+        Hsat Hbnd Hlow.
       apply unnest_equations_inv in Hun as (eqss & Hmap & ?); subst.
       assert (NoDup
                 (vars_defined (List.concat eqss) ++
@@ -2125,7 +2301,7 @@ Import UNN.Fresh.Tactics.
       exact
         (eqns_carries_streams P eqs eqss (init_st : fresh_st (type * clock))
            st' ce xst xst' cet yst yst' dlt Hwcg Hsigin Hwl Hwc Hnd0 Hmv Hamb
-           Hfound Hbs0 Hcesc Hmap Hgen Hgent Hsat Hbnd).
+           Hfound Hbs0 Hcesc Hmap Hgen Hgent Hsat Hbnd Hlow).
     Qed.
 
     Theorem node_carries_preserves_streams :
@@ -2148,16 +2324,16 @@ Import UNN.Fresh.Tactics.
           = OK (ce, xst') ->
         generate_leqns_constraints GL env base_ty rst_ty cenv eqs' yst
           = OK (cet, yst') ->
-        sec_le xst' stF ->
+        sec_le xst' stF -> sec_le stLo xst ->
         preserves_on scope ce cet.
     Proof.
       intros P eqs eqs' st' ce xst xst' cet yst yst'
         Hwcg Hsigin Hwl Hwc Hnd Hmv Hamb Hfound Hbs0 Hcesc Hun Hgen Hgent
-        Hbnd dlt Hsat.
+        Hbnd Hlow dlt Hsat.
       destruct
         (node_carries_streams P eqs eqs' st' ce xst xst' cet yst yst' dlt
            Hwcg Hsigin Hwl Hwc Hnd Hmv Hamb Hfound Hbs0 Hcesc
-           Hun Hgen Hgent Hsat Hbnd)
+           Hun Hgen Hgent Hsat Hbnd Hlow)
         as (dlt' & Hoff & Hsat' & Hscoped).
       exists dlt'. split.
       - exact
@@ -2825,7 +3001,7 @@ Import UNN.Fresh.Tactics.
             forall eq b, In eq n.(n_eqs) -> In b (sec_of env (fst eq)) ->
               satisfiable dlt (A eq) [b]) ->
         constraints_scoped scope ce ->
-        sec_le ct1 stF ->
+        sec_le ct1 stF -> sec_le stLo st0 ->
         generate_leqns_constraints GL env base_ty rst_ty
           (lnode_clock_env n) n.(n_eqs) st0 = OK (ce, ct1) ->
         generate_leqns_constraints GL env base_ty rst_ty
@@ -2834,7 +3010,7 @@ Import UNN.Fresh.Tactics.
         preserves_on scope ce cet.
     Proof.
       intros P n Hwl Hpref ce cet st0 ct1 ct1' Hcenv Hwle Hwce Hmv Hamb Hbs
-        Hcesc Hbnd Hsrc Htgt.
+        Hcesc Hbnd Hlow Hsrc Htgt.
       (** the run, and the equation list it produced *)
       remember (unnest_equations P n.(n_eqs) init_st) as r eqn:Hr.
       destruct r as (eqs' & st').
@@ -2858,7 +3034,7 @@ Import UNN.Fresh.Tactics.
                   (@Coq.Init.Logic.eq_sym _ _ _ Hr))
         | |exact Hamb|exact Hbs|exact Hcesc
         |exact (@Coq.Init.Logic.eq_sym _ _ _ Hr)
-        |exact Hsrc'|exact Htgt'|exact Hbnd].
+        |exact Hsrc'|exact Htgt'|exact Hbnd|exact Hlow].
       intros x Hx. apply Hmv. cbn [snd]. exact Hx.
     Qed.
 
@@ -2888,7 +3064,7 @@ Import UNN.Fresh.Tactics.
         (forall eq, In eq n.(n_eqs) ->
             eqn_ambients env base_ty rst_ty cenv (fst eq) (As eq)) ->
         constraints_scoped scope ce ->
-        sec_le ct1 stF ->
+        sec_le ct1 stF -> sec_le stLo st0 ->
         generate_leqns_constraints GL env base_ty rst_ty
           (lnode_clock_env n) n.(n_eqs) st0 = OK (ce, ct1) ->
         generate_leqns_constraints GL env base_ty rst_ty
@@ -2897,7 +3073,7 @@ Import UNN.Fresh.Tactics.
         preserves_on scope ce cet.
     Proof.
       intros P n Hwl Hpref ce cet st0 ct1 ct1' Hwcg Hsigin Hcenv Hwle Hwce
-        Hmv Hamb Hbs Hcesc Hbnd Hsrc Htgt.
+        Hmv Hamb Hbs Hcesc Hbnd Hlow Hsrc Htgt.
       assert (state_clocks_found cenv
                 (snd (unnest_equations P n.(n_eqs) init_st))) as Hfound
           by (rewrite Hcenv;
@@ -2922,7 +3098,7 @@ Import UNN.Fresh.Tactics.
                   (@Coq.Init.Logic.eq_sym _ _ _ Hr))
         | |exact Hamb| |exact Hbs|exact Hcesc
         |exact (@Coq.Init.Logic.eq_sym _ _ _ Hr)
-        |exact Hsrc'|exact Htgt'|exact Hbnd].
+        |exact Hsrc'|exact Htgt'|exact Hbnd|exact Hlow].
       - intros x Hx. apply Hmv. cbn [snd]. exact Hx.
       - cbn [snd] in Hfound. exact Hfound.
     Qed.
@@ -3115,6 +3291,10 @@ Import UNN.Fresh.Tactics.
             /\ Env.find rst_id env = Some rst_ty) ->
         (** the target accumulator's callees are weaker *)
         call_weakens G1 G2 ->
+        (** and the source run's instantiations are fresh *)
+        eapp_fresh_prop G1 env base_ty rst_ty stLo ->
+        lcall_fresh_prop G1 env base_ty rst_ty stLo ->
+        sec_le stLo st0 ->
         (** the equation-level entailment, against the target accumulator *)
         (forall ce cet ct1 ct1',
             generate_leqns_constraints G2 env base_ty rst_ty
@@ -3145,7 +3325,7 @@ Import UNN.Fresh.Tactics.
         /\ preserves_on scope sg.(s_constraints) sg'.(s_constraints).
     Proof.
       intros P n Hwl Hpref G1 G2 aux st0 sg st1 sg' st1'
-        Haux Hacc Hpres Hwf Hdisj H H'.
+        Haux Hacc Hef Hlf Hlo Hpres Hwf Hdisj H H'.
       assert (s_name sg' = s_name sg
               /\ s_in sg' = s_in sg
               /\ s_out sg' = s_out sg
@@ -3172,7 +3352,8 @@ Import UNN.Fresh.Tactics.
       cbn [s_constraints].
       (** the source equations, read against the target accumulator *)
       destruct (generate_leqns_constraints_weaken G1 G2 env base_ty rst_ty
-                  (lnode_clock_env n) n.(n_eqs) cs1 st0 st1 Hacc Hcs1)
+                  (lnode_clock_env n) n.(n_eqs) cs1 st0 st1 stLo Hacc Hef Hlf
+                  (NoDup_vars_defined_n_eqs n) Hlo Hcs1)
         as (cs1' & Hcs1' & Hce).
       eapply preserves_on_simplify;
         [apply collapse_wf; exact (Hwf cs1 st1 Hcs1)
@@ -3215,6 +3396,10 @@ Import UNN.Fresh.Tactics.
         Forall (unnested_equation Q) (unnest_node P n Hwl Hpref).(n_eqs) ->
         (** the target accumulator's callees are weaker *)
         call_weakens G1 G2 ->
+        (** and the source run's instantiations are fresh *)
+        eapp_fresh_prop G1 env base_ty rst_ty stLo ->
+        lcall_fresh_prop G1 env base_ty rst_ty stLo ->
+        sec_le stLo stS ->
         (** the equation-level entailment, against the target accumulator, at
             the state the source run starts from *)
         (forall ce cet ct1 ct1',
@@ -3246,7 +3431,7 @@ Import UNN.Fresh.Tactics.
         /\ preserves_on scope sg.(s_constraints) sg'.(s_constraints).
     Proof.
       intros P Q n Hwl Hpref G1 G2 aux stS stT sg stS1 sg' stT1
-        Haux Hun Hw Hpres Hwf Hdisj H H'.
+        Haux Hun Hw Hef Hlf Hlo Hpres Hwf Hdisj H H'.
       assert (s_name sg' = s_name sg
               /\ s_in sg' = s_in sg
               /\ s_out sg' = s_out sg
@@ -3278,7 +3463,8 @@ Import UNN.Fresh.Tactics.
                   stT stS cs2 stT1 Hcs2) as (_ & Hcs2s).
       (** and the source equations, read against the target accumulator *)
       destruct (generate_leqns_constraints_weaken G1 G2 env base_ty rst_ty
-                  (lnode_clock_env n) n.(n_eqs) cs1 stS stS1 Hw Hcs1)
+                  (lnode_clock_env n) n.(n_eqs) cs1 stS stS1 stLo Hw Hef Hlf
+                  (NoDup_vars_defined_n_eqs n) Hlo Hcs1)
         as (cs1' & Hcs1' & Hce).
       eapply preserves_on_simplify;
         [apply collapse_wf; exact (Hwf cs1 stS1 Hcs1)
@@ -3336,6 +3522,8 @@ Import UNN.Fresh.Tactics.
             listSatisfiable dlt ce ->
             forall eq b, In eq n.(n_eqs) -> In b (sec_of env (fst eq)) ->
               satisfiable dlt (A eq) [b]) ->
+        (** the source run starts inside the window the scoping speaks of *)
+        sec_le stLo stS0 ->
         (** the runs against the target accumulator are scoped and bounded *)
         (forall ce ct1,
             generate_leqns_constraints GL env base_ty rst_ty
@@ -3357,9 +3545,8 @@ Import UNN.Fresh.Tactics.
         signature_good sgT ->
         signature_scoped sgT ->
         (forall z, In z (signature_scope sgS) -> In z scope) ->
-        (forall inp ck rst os cns sa sb,
-            generate_constraints sgS inp ck rst os sa = OK (cns, sb) ->
-            call_subst_fresh sgS inp ck rst os /\ NoDup os) ->
+        eapp_fresh_prop accS env base_ty rst_ty stLo ->
+        lcall_fresh_prop accS env base_ty rst_ty stLo ->
         call_weakens accS GL ->
         generate_lnode_sig_scoped_env accS n envs aux stS0 = OK (sgS, stS1) ->
         generate_lnode_sig_scoped_env GL (unnest_node P n Hwl Hpref)
@@ -3367,8 +3554,8 @@ Import UNN.Fresh.Tactics.
         sig_head_weakens sgS sgT.
     Proof.
       intros P Q n Hwl Hpref envs aux accS sgS stS0 stS1 sgT stT0 stT1
-        Hfind Haux Hcenv Hunt Hwle Hwce Hmv Hamb Hbs Htgtok Hwf Hdisj
-        Hgood1 Hnd1 Hgood2 Hsc2 Hincl Hinst Hw HS HT.
+        Hfind Haux Hcenv Hunt Hwle Hwce Hmv Hamb Hbs Hlow0 Htgtok Hwf Hdisj
+        Hgood1 Hnd1 Hgood2 Hsc2 Hincl Hef Hlf Hw HS HT.
       (** both drivers read the same node-local environment *)
       unfold generate_lnode_sig_scoped_env in HS, HT.
       rewrite Hfind in HS.
@@ -3376,14 +3563,14 @@ Import UNN.Fresh.Tactics.
       (** the node theorem, with the entailment supplied *)
       destruct (unnest_node_signatures_preserved_decoupled P Q n Hwl Hpref
                   accS GL aux stS0 stT0 sgS stS1 sgT stT1
-                  Haux Hunt Hw)
+                  Haux Hunt Hw Hef Hlf Hlow0)
         as (Hn & Hi & Ho & Hc & Hr & Hpres).
       - intros ce cet ct1 ct1' Hsrc Htgt.
         destruct (Htgtok ce ct1 Hsrc) as (Hcesc & Hbnd).
         eapply unnest_node_entailment;
           [exact Hcenv|exact Hwle|exact Hwce|exact Hmv|exact Hamb
           |intros dlt Hsat; exact (Hbs ce dlt Hsat)
-          |exact Hcesc|exact Hbnd|exact Hsrc|exact Htgt].
+          |exact Hcesc|exact Hbnd|exact Hlow0|exact Hsrc|exact Htgt].
       - exact Hwf.
       - exact Hdisj.
       - exact HS.
@@ -3391,7 +3578,7 @@ Import UNN.Fresh.Tactics.
       - (** and the pair, packaged *)
         split; [exact (@Coq.Init.Logic.eq_sym _ _ _ Hn)|].
         eapply sig_call_weakens_from_good;
-          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2| |exact Hinst].
+          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2| ].
         split.
         + repeat split;
             [exact (@Coq.Init.Logic.eq_sym _ _ _ Hi)
@@ -3441,6 +3628,8 @@ Import UNN.Fresh.Tactics.
             /\ List.length (As eq) = List.length (fst eq)) ->
         (forall eq, In eq n.(n_eqs) ->
             eqn_ambients env base_ty rst_ty cenv (fst eq) (As eq)) ->
+        (** the source run starts inside the window the scoping speaks of *)
+        sec_le stLo stS0 ->
         (** the runs against the target accumulator are scoped and bounded *)
         (forall ce ct1,
             generate_leqns_constraints GL env base_ty rst_ty
@@ -3462,9 +3651,8 @@ Import UNN.Fresh.Tactics.
         signature_good sgT ->
         signature_scoped sgT ->
         (forall z, In z (signature_scope sgS) -> In z scope) ->
-        (forall inp ck rst os cns sa sb,
-            generate_constraints sgS inp ck rst os sa = OK (cns, sb) ->
-            call_subst_fresh sgS inp ck rst os /\ NoDup os) ->
+        eapp_fresh_prop accS env base_ty rst_ty stLo ->
+        lcall_fresh_prop accS env base_ty rst_ty stLo ->
         call_weakens accS GL ->
         generate_lnode_sig_scoped_env accS n envs aux stS0 = OK (sgS, stS1) ->
         generate_lnode_sig_scoped_env GL (unnest_node P n Hwl Hpref)
@@ -3473,27 +3661,27 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P Q n Hwl Hpref envs aux accS sgS stS0 stS1 sgT stT0 stT1
         Hwcg Hsigin Hfind Haux Hcenv Hunt Hwle Hwce Hmv Hamb Hbs
-        Htgtok Hwf Hdisj Hgood1 Hnd1 Hgood2 Hsc2 Hincl Hinst Hw HS HT.
+        Hlow0 Htgtok Hwf Hdisj Hgood1 Hnd1 Hgood2 Hsc2 Hincl Hef Hlf Hw HS HT.
       unfold generate_lnode_sig_scoped_env in HS, HT.
       rewrite Hfind in HS.
       cbn [n_name unnest_node] in HT. rewrite Hfind in HT.
       destruct (unnest_node_signatures_preserved_decoupled P Q n Hwl Hpref
                   accS GL aux stS0 stT0 sgS stS1 sgT stT1
-                  Haux Hunt Hw)
+                  Haux Hunt Hw Hef Hlf Hlow0)
         as (Hn & Hi & Ho & Hc & Hr & Hpres).
       - intros ce cet ct1 ct1' Hsrc Htgt.
         destruct (Htgtok ce ct1 Hsrc) as (Hcesc & Hbnd).
         eapply unnest_node_entailment_streams;
           [exact Hwcg|exact Hsigin|exact Hcenv|exact Hwle|exact Hwce
           |exact Hmv|exact Hamb|exact Hbs
-          |exact Hcesc|exact Hbnd|exact Hsrc|exact Htgt].
+          |exact Hcesc|exact Hbnd|exact Hlow0|exact Hsrc|exact Htgt].
       - exact Hwf.
       - exact Hdisj.
       - exact HS.
       - exact HT.
       - split; [exact (@Coq.Init.Logic.eq_sym _ _ _ Hn)|].
         eapply sig_call_weakens_from_good;
-          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2| |exact Hinst].
+          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2| ].
         split.
         + repeat split;
             [exact (@Coq.Init.Logic.eq_sym _ _ _ Hi)

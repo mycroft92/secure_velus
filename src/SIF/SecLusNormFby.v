@@ -2217,7 +2217,7 @@ Import UNN.Fresh.Tactics.
       forall Q c (n : node) (Hunt : unnested_node Q n)
              (Hpref : n_prefixes n = norm1_prefs)
              (Q' : global) (G1 G2 : secglobal) (aux : list node_aux_names)
-             stS stT sg stS1 sg' stT1,
+             (lo : sec_state) stS stT sg stS1 sg' stT1,
         (forall clk_id rst_id,
             get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
             Env.find clk_id env = Some base_ty
@@ -2226,6 +2226,9 @@ Import UNN.Fresh.Tactics.
         Forall (unnested_equation Q')
           (normfby_node Q c n Hunt Hpref).(n_eqs) ->
         call_weakens G1 G2 ->
+        eapp_fresh_prop G1 env base_ty rst_ty lo ->
+        lcall_fresh_prop G1 env base_ty rst_ty lo ->
+        sec_le lo stS ->
         (forall ce cet ct1 ct1',
             generate_leqns_constraints G2 env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS = OK (ce, ct1) ->
@@ -2252,8 +2255,8 @@ Import UNN.Fresh.Tactics.
         /\ s_reset sg' = s_reset sg
         /\ preserves_on scope sg.(s_constraints) sg'.(s_constraints).
     Proof.
-      intros Q c n Hunt Hpref Q' G1 G2 aux stS stT sg stS1 sg' stT1
-        Haux Hun Hweak Hpres Hwf Hdisj HgenS HgenT.
+      intros Q c n Hunt Hpref Q' G1 G2 aux lo stS stT sg stS1 sg' stT1
+        Haux Hun Hweak Hef Hlf Hlo Hpres Hwf Hdisj HgenS HgenT.
       assert (Hiface :
           s_name sg' = s_name sg
           /\ s_in sg' = s_in sg
@@ -2283,7 +2286,8 @@ Import UNN.Fresh.Tactics.
                   (normfby_node Q c n Hunt Hpref).(n_eqs) Hun
                   stT stS cs2 stT1 Hcs2) as (_ & Hcs2s).
       destruct (generate_leqns_constraints_weaken G1 G2 env base_ty rst_ty
-                  (lnode_clock_env n) n.(n_eqs) cs1 stS stS1 Hweak Hcs1)
+                  (lnode_clock_env n) n.(n_eqs) cs1 stS stS1 lo Hweak Hef Hlf
+                  (NoDup_vars_defined_n_eqs n) Hlo Hcs1)
         as (cs1' & Hcs1' & Hentails).
       apply (preserves_on_simplify scope (collapse cs1) (collapse cs2)
                (l1 ++ minted stS stS1) (l2 ++ minted stT stT1)).
@@ -2324,29 +2328,25 @@ Import UNN.Fresh.Tactics.
         signature_good sgT ->
         signature_scoped sgT ->
         (forall z, In z (signature_scope sgS) -> In z scope) ->
-        (forall inp ck rst os cns sa sb,
-            generate_constraints sgS inp ck rst os sa = OK (cns, sb) ->
-            call_subst_fresh sgS inp ck rst os /\ NoDup os) ->
         generate_lnode_sig_scoped_env accS n envs aux stS0 = OK (sgS, stS1) ->
         generate_lnode_sig_scoped_env accT (normfby_node Q c n Hunt Hpref)
           envs aux stT0 = OK (sgT, stT1) ->
         sig_head_weakens sgS sgT.
     Proof.
       intros Q c n Hunt Hpref envs aux accS accT sgS stS0 stS1 sgT stT0 stT1
-        Henv Hacc Hfields HgoodS HndS HgoodT HscT Hscope Hfresh HrunS HrunT.
+        Henv Hacc Hfields HgoodS HndS HgoodT HscT Hscope HrunS HrunT.
       clear Henv Hacc HrunS HrunT.
       destruct Hfields as
         (Hname & Hin & Hout & Hclk & Hreset & Hpres).
       split.
       - symmetry. exact Hname.
       - apply (sig_call_weakens_from_good sgS sgT HgoodS HndS HgoodT HscT).
-        + split.
-          * repeat split; symmetry; assumption.
-          * intros dlt Hsat.
-            destruct (Hpres dlt Hsat) as (dlt' & Hagree & Hsat').
-            exists dlt'. split; [|exact Hsat'].
-            intros z Hz. apply Hagree. exact (Hscope z Hz).
-        + exact Hfresh.
+        split.
+        + repeat split; symmetry; assumption.
+        + intros dlt Hsat.
+          destruct (Hpres dlt Hsat) as (dlt' & Hagree & Hsat').
+          exists dlt'. split; [|exact Hsat'].
+          intros z Hz. apply Hagree. exact (Hscope z Hz).
     Qed.
 
     (** ** The whole program
@@ -2448,12 +2448,15 @@ Import UNN.Fresh.Tactics.
       forall G1 G2 G3,
         call_weakens G1 G2 -> call_weakens G2 G3 -> call_weakens G1 G3.
     Proof.
-      intros G1 G2 G3 H12 H23 f sg1 inp ck rst outs cs1 st st1 Hf1 Hg1.
-      destruct (H12 f sg1 inp ck rst outs cs1 st st1 Hf1 Hg1)
-        as (sg2 & cs2 & Hf2 & Hg2 & Hce12).
-      destruct (H23 f sg2 inp ck rst outs cs2 st st Hf2 Hg2)
-        as (sg3 & cs3 & Hf3 & Hg3 & Hce23).
-      exists sg3, cs3. split; [exact Hf3|split; [exact Hg3|]].
+      intros G1 G2 G3 H12 H23 f sg1 inp ck rst outs cs1 st st1 Hf1 Hfr Hnd Hg1.
+      destruct (H12 f sg1 inp ck rst outs cs1 st st1 Hf1 Hfr Hnd Hg1)
+        as (sg2 & cs2 & Hf2 & Hs12 & Hg2 & Hce12).
+      assert (call_subst_fresh sg2 inp ck rst outs) as Hfr2
+          by (unfold call_subst_fresh in *; rewrite Hs12; exact Hfr).
+      destruct (H23 f sg2 inp ck rst outs cs2 st st Hf2 Hfr2 Hnd Hg2)
+        as (sg3 & cs3 & Hf3 & Hs23 & Hg3 & Hce23).
+      exists sg3, cs3. split; [exact Hf3|split; [rewrite Hs23; exact Hs12|]].
+      split; [exact Hg3|].
       exact (cs_entails_trans _ _ _ Hce12 Hce23).
     Qed.
 
@@ -3196,7 +3199,7 @@ Import UNN.Fresh.Tactics.
       forall Q c (n : node) (Hunt : unnested_node Q n)
              (Hpref : n_prefixes n = norm1_prefs) (Q' : global)
              (envs : node_scoped_env) (aux : list node_aux_names)
-             accS sgS stS0 stS1 sgT stT0 stT1,
+             (lo : sec_state) accS sgS stS0 stS1 sgT stT0 stT1,
         find_node_env n.(n_name) envs = Some env ->
         (forall clk_id rst_id,
             get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
@@ -3255,18 +3258,18 @@ Import UNN.Fresh.Tactics.
         signature_good sgT ->
         signature_scoped sgT ->
         (forall z, In z (signature_scope sgS) -> In z scope) ->
-        (forall inp ck rst os cns sa sb,
-            generate_constraints sgS inp ck rst os sa = OK (cns, sb) ->
-            call_subst_fresh sgS inp ck rst os /\ NoDup os) ->
+        eapp_fresh_prop accS env base_ty rst_ty lo ->
+        lcall_fresh_prop accS env base_ty rst_ty lo ->
+        sec_le lo stS0 ->
         call_weakens accS G ->
         generate_lnode_sig_scoped_env accS n envs aux stS0 = OK (sgS, stS1) ->
         generate_lnode_sig_scoped_env G (normfby_node Q c n Hunt Hpref)
           envs aux stT0 = OK (sgT, stT1) ->
         sig_head_weakens sgS sgT.
     Proof.
-      intros Q c n Hunt Hpref Q' envs aux accS sgS stS0 stS1 sgT stT0 stT1
+      intros Q c n Hunt Hpref Q' envs aux lo accS sgS stS0 stS1 sgT stT0 stT1
         Hfind Haux Hcenv Hun Hinj Hrst Hstate Heqdat Htgtsc Hwf Hdisj
-        Hgood1 Hnd1 Hgood2 Hsc2 Hincl Hinst Hw HS HT.
+        Hgood1 Hnd1 Hgood2 Hsc2 Hincl Hef Hlf Hlo0 Hw HS HT.
       (** the assignment, from the run *)
       assert (Hpairs : forall eqs' stf,
                  map_bind (fby_equation
@@ -3317,8 +3320,8 @@ Import UNN.Fresh.Tactics.
       rewrite Hfind in HS.
       cbn [n_name normfby_node] in HT. rewrite Hfind in HT.
       destruct (normfby_node_signatures_preserved_decoupled Q c n Hunt Hpref
-                  Q' accS G aux stS0 stT0 sgS stS1 sgT stT1
-                  Haux Hun Hw)
+                  Q' accS G aux lo stS0 stT0 sgS stS1 sgT stT1
+                  Haux Hun Hw Hef Hlf Hlo0)
         as (Hn & Hi & Ho & Hc & Hr & Hpres).
       - intros ce cet ct1 ct1' Hsrc Htgt.
         remember (map_bind
@@ -3341,7 +3344,7 @@ Import UNN.Fresh.Tactics.
       - exact HT.
       - split; [exact (@Coq.Init.Logic.eq_sym _ _ _ Hn)|].
         eapply sig_call_weakens_from_good;
-          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2| |exact Hinst].
+          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2| ].
         split.
         + repeat split;
             [exact (@Coq.Init.Logic.eq_sym _ _ _ Hi)

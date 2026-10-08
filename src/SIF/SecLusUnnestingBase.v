@@ -347,26 +347,187 @@ Module SecLusUnnestingBase
       window (see [assign_lexp_type_sec_le]) and a [scope] containing
       [minted st0 stF] covers them. *)
 
+  (** A name the caller side may use in an actual: a name of the visible
+      scope, or the security name of some variable of the node (the images of
+      the variables unnesting creates are of the second kind). *)
+  Definition caller_name (env : Env.t ident) (scope : list ident)
+      (y : ident) : Prop :=
+    In y scope \/ exists x, Env.find x env = Some y.
+
+  Definition caller_st (env : Env.t ident) (scope : list ident)
+      (st : ST) : Prop :=
+    forall y, In y st -> caller_name env scope y.
+
+  (** * Source clocks
+
+      The clock types the node typer builds are built from the variables a
+      clock mentions.  [clk_src] says a clock mentions only variables of the
+      node, or variables mentioned by the clocks of the given expressions --
+      which is what a well-clocked source expression's clocks do, and what the
+      base clock of a call's arguments (a common suffix of their clocks) does.
+      A clock that mentions a variable unnesting created is not a source
+      clock, and the scoping hypotheses are not asked of it. *)
+  Fixpoint ck_vars (ck : clock) : list ident :=
+    match ck with
+    | Cbase => []
+    | Con ck' x _ => x :: ck_vars ck'
+    end.
+
+  Definition clk_src (vars : list (ident * clock)) (es : list exp)
+      (ck : clock) : Prop :=
+    incl (ck_vars ck) (List.map fst vars ++ flat_map ck_vars (clocksof es)).
+
+  Lemma clk_src_in :
+    forall vars es ck, In ck (clocksof es) -> clk_src vars es ck.
+  Proof.
+    intros vars es ck Hin x Hx. apply in_or_app. right.
+    apply in_flat_map. exists ck. split; assumption.
+  Qed.
+
+  Lemma wc_equation_lhs_vars :
+    forall P vars xs es,
+      wc_equation P vars (xs, es) -> incl xs (List.map fst vars).
+  Proof.
+    intros P vars xs es (_ & _ & H).
+    induction H as [|y ck xs cks Hy Hr IH]; intros x Hx; [contradiction|].
+    destruct Hx as [Hxy|Hx].
+    - subst. apply in_map_iff. exists (x, ck). split; [reflexivity|exact Hy].
+    - exact (IH x Hx).
+  Qed.
+
+  Lemma wc_equations_vars_defined :
+    forall P vars eqs,
+      Forall (wc_equation P vars) eqs ->
+      incl (vars_defined eqs) (List.map fst vars).
+  Proof.
+    intros P vars eqs. induction 1 as [|eq eqs Heq Hr IH]; intros x Hx.
+    - contradiction.
+    - unfold vars_defined in Hx. simpl in Hx. apply in_app_or in Hx as [Hx|Hx].
+      + destruct eq as (xs, es). exact (wc_equation_lhs_vars P vars xs es Heq x Hx).
+      + exact (IH x Hx).
+  Qed.
+
+  Lemma clk_src_clockof :
+    forall vars e ck, In ck (clockof e) -> clk_src vars [e] ck.
+  Proof.
+    intros vars e ck Hin. apply clk_src_in.
+    unfold clocksof. simpl. rewrite app_nil_r. exact Hin.
+  Qed.
+
+  Lemma clk_src_hd_clockof :
+    forall vars e, clk_src vars [e] (hd Cbase (clockof e)).
+  Proof.
+    intros vars e. destruct (clockof e) as [|ck cks] eqn:E.
+    - intros x []. 
+    - apply clk_src_clockof. rewrite E. now left.
+  Qed.
+
+  Lemma ck_vars_of_suffix :
+    forall sfx ck,
+      incl (ck_vars (clock_of_suffix sfx ck)) (List.map fst sfx ++ ck_vars ck).
+  Proof.
+    induction sfx as [|[x b] sfx IH]; intros ck y Hy.
+    - exact Hy.
+    - simpl in Hy. specialize (IH (Con ck x b) y Hy).
+      apply in_app_or in IH as [IH|IH]; [apply in_or_app; left; now right|].
+      simpl in IH. destruct IH as [->|IH];
+        [apply in_or_app; left; now left|apply in_or_app; now right].
+  Qed.
+
+  Lemma common_suffix_incl :
+    forall a b p, In p (common_suffix a b) -> In p a.
+  Proof.
+    induction a as [|[x1 b1] a IH]; intros [|[x2 b2] b] p Hp; simpl in Hp;
+      try contradiction.
+    destruct (Pos.eqb x1 x2 && (b1 ==b b2)); [|contradiction].
+    destruct Hp as [<-|Hp]; [now left|right; eapply IH; exact Hp].
+  Qed.
+
+  Lemma suffix_of_clock_vars :
+    forall ck acc,
+      incl (List.map fst (suffix_of_clock ck acc)) (ck_vars ck ++ List.map fst acc).
+  Proof.
+    induction ck as [|ck IH x b]; intros acc y Hy.
+    - exact Hy.
+    - simpl in Hy. specialize (IH ((x, b) :: acc) y Hy).
+      apply in_app_or in IH as [IH|IH]; [apply in_or_app; left; now right|].
+      simpl in IH. destruct IH as [->|IH];
+        [apply in_or_app; left; now left|apply in_or_app; now right].
+  Qed.
+
+  Lemma find_base_clock_vars :
+    forall cks,
+      incl (ck_vars (find_base_clock cks)) (flat_map ck_vars cks).
+  Proof.
+    intros [|ck cks]; [intros y []|].
+    unfold find_base_clock.
+    set (acc0 := suffix_of_clock ck []).
+    assert (forall cks0 sfx0,
+              (forall p, In p sfx0 -> In (fst p) (ck_vars ck)) ->
+              forall p, In p (fold_left
+                (fun sfx1 ck2 => common_suffix sfx1 (suffix_of_clock ck2 []))
+                cks0 sfx0) -> In (fst p) (ck_vars ck)) as Hfold.
+    { induction cks0 as [|c cks0 IH]; intros sfx0 Hs p Hp; simpl in Hp.
+      - exact (Hs p Hp).
+      - eapply IH; [|exact Hp]. intros q Hq.
+        apply Hs. eapply common_suffix_incl; exact Hq. }
+    intros y Hy.
+    pose proof (ck_vars_of_suffix
+                  (fold_left
+                     (fun sfx1 ck2 =>
+                        common_suffix sfx1 (suffix_of_clock ck2 []))
+                     cks acc0) Cbase y Hy) as Hy'.
+    simpl in Hy'. rewrite app_nil_r in Hy'.
+    apply in_map_iff in Hy' as (p & <- & Hp).
+    simpl. apply in_or_app. left.
+    refine (Hfold cks acc0 _ p Hp).
+    intros q Hq. subst acc0.
+    pose proof (suffix_of_clock_vars ck [] (fst q)
+                  (in_map fst _ _ Hq)) as H. simpl in H.
+    rewrite app_nil_r in H. exact H.
+  Qed.
+
+  Lemma clk_src_base :
+    forall vars es,
+      clk_src vars es (find_base_clock (clocksof es)).
+  Proof.
+    intros vars es x Hx. apply in_or_app. right.
+    exact (find_base_clock_vars _ x Hx).
+  Qed.
+
+  (** The three scoping statements speak about the runs the source
+      generator actually performs: source expressions (well clocked in the
+      node's variables, so a created variable's name never occurs) and start
+      states inside the window [stS, stF] the node's run lives in. *)
   Definition source_types_scoped_upto
       (GL : secglobal) (env : Env.t ident) (base_ty rst_ty : ident)
-      (scope : list ident) (stF : sec_state) : Prop :=
-    forall e ts s s',
+      (vars : list (ident * clock))
+      (scope : list ident) (stLo stF : sec_state) : Prop :=
+    forall P e ts s s',
+      wc_exp P vars e ->
+      sec_le stLo s ->
       assign_lexp_type GL env base_ty rst_ty e s = OK (ts, s') ->
       sec_le s' stF ->
       Forall (fun t => st_scoped scope (fst t)) ts.
 
   Definition source_lexps_scoped_upto
       (GL : secglobal) (env : Env.t ident) (base_ty rst_ty : ident)
-      (scope : list ident) (stF : sec_state) : Prop :=
-    forall es ts s s',
+      (vars : list (ident * clock))
+      (scope : list ident) (stLo stF : sec_state) : Prop :=
+    forall P es ts s s',
+      Forall (wc_exp P vars) es ->
+      sec_le stLo s ->
       assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
       sec_le s' stF ->
       Forall (fun t => st_scoped scope (fst t)) ts.
 
   Definition source_lexps_carried_scoped_upto
       (GL : secglobal) (env : Env.t ident) (base_ty rst_ty : ident)
-      (scope : list ident) (stF : sec_state) : Prop :=
-    forall es ts s s',
+      (vars : list (ident * clock))
+      (scope : list ident) (stLo stF : sec_state) : Prop :=
+    forall P es ts s s',
+      Forall (wc_exp P vars) es ->
+      sec_le stLo s ->
       assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
       sec_le s' stF ->
       constraints_scoped scope (carried ts).

@@ -4843,4 +4843,217 @@ Import SECMONADNotations.
     exact (conj Hg (conj Hs (conj Hn Hr))).
   Qed.
 
+  (** * Item 3: the instantiations a run makes are fresh
+
+      [call_weakens] and the Leg U step theorems used to ask for freshness of
+      *every* instantiation the block builder accepts, which is false.  They
+      now ask it of the instantiations a run makes, from a start state above
+      the node's naming state [lo].  This is that statement, proved: every name
+      in a run's actuals is above [lo] -- a declared name, or one the run
+      minted -- and every callee's scope is below it. *)
+
+  Definition name_above (lo : positive) (y : ident) : Prop :=
+    exists k, y = Ids.gensym Ids.sec k /\ (lo <= k)%positive.
+
+  Lemma name_above_minted :
+    forall lo s s' y,
+      (lo <= s)%positive -> In y (minted s s') -> name_above lo y.
+  Proof.
+    intros lo s s' y Hlo Hy. apply minted_spec in Hy as (k & Hsk & _ & Hk).
+    exists k. split; [exact Hk|]. eapply Pos.le_trans; [exact Hlo|exact Hsk].
+  Qed.
+
+  Lemma call_subst_fresh_of_above :
+    forall lo sg inp ck rst outs,
+      signature_scope_bounded_above sg lo ->
+      Forall (fun st => forall y, In y st -> name_above lo y) inp ->
+      (forall y, In y ck -> name_above lo y) ->
+      (forall y, In y rst -> name_above lo y) ->
+      Forall (name_above lo) outs ->
+      call_subst_fresh sg inp ck rst outs.
+  Proof.
+    intros lo sg inp ck rst outs Hb Hinp Hck Hrst Hout.
+    assert (Hfresh : forall y, name_above lo y ->
+                               ~ In y (signature_scope sg)).
+    { intros y (k & Hk & Hlo) Hin. destruct (Hb y Hin) as (k' & Hk' & Hlt).
+      rewrite Hk in Hk'. apply Ids.gensym_injective in Hk' as (_ & ->).
+      exact (Pos.lt_irrefl _ (Pos.lt_le_trans _ _ _ Hlt Hlo)). }
+    unfold call_subst_fresh, types_fresh, type_fresh, outputs_fresh.
+    repeat split.
+    - rewrite Forall_forall in Hinp |- *. intros st Hst.
+      rewrite Forall_forall. intros y Hy. exact (Hfresh y (Hinp st Hst y Hy)).
+    - rewrite Forall_forall. intros y Hy. exact (Hfresh y (Hck y Hy)).
+    - rewrite Forall_forall. intros y Hy. exact (Hfresh y (Hrst y Hy)).
+    - rewrite Forall_forall in Hout |- *. intros y Hy.
+      exact (Hfresh y (Hout y Hy)).
+  Qed.
+
+  Lemma NoDup_Forall2_inj :
+    forall (env : Env.t ident) xs bs,
+      env_injective env ->
+      NoDup xs ->
+      Forall2 (fun x b => Env.find x env = Some b) xs bs ->
+      NoDup bs.
+  Proof.
+    intros env xs bs Hinj Hnd Hf. induction Hf as [|x b xs bs Hxb Hf IH];
+      [constructor|].
+    inversion Hnd as [|? ? Hnin Hnd']; subst.
+    constructor; [|exact (IH Hnd')].
+    intros Hin.
+    destruct (Forall2_in_right (fun x b => Env.find x env = Some b) xs bs b Hf Hin) as (x' & Hx' & Hfx').
+    apply Hnin. replace x with x'; [exact Hx'|].
+    eapply Hinj; [exact Hfx'|exact Hxb|reflexivity].
+  Qed.
+
+  Section RawFresh.
+
+    Variable G       : secglobal.
+    Variable env     : Env.t ident.
+    Variable base_ty : ident.
+    Variable rst_ty  : ident.
+    Variable decl    : list ident.
+    Variable lo      : positive.
+
+    Hypothesis Hdk   : decl_ok env base_ty rst_ty decl.
+    Hypothesis Hclk  : clk_scoped env base_ty decl.
+    Hypothesis Hsgs  : secglobal_scoped G.
+    Hypothesis Hdecl : forall y, In y decl -> name_above lo y.
+    Hypothesis Hbelow :
+      forall f sg, find_signature f G = Some sg ->
+                   signature_scope_bounded_above sg lo.
+
+    (** the names of a typed expression run: declared, or minted by it *)
+    Lemma lexp_names_above :
+      forall e ts s s',
+        (lo <= s)%positive ->
+        assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+        Forall (fun t => forall y, In y (fst t) -> name_above lo y) ts.
+    Proof.
+      intros e ts s s' Hlo H.
+      destruct (lexp_scoped_tgt_all G env base_ty rst_ty decl Hdk Hclk Hsgs e
+                  ts s s' H) as (Hf & _).
+      pose proof (lexp_carried_minted_all G env base_ty rst_ty e
+                    ts s s' (decl ++ minted s s')
+                    (incl_appr _ (incl_refl _)) H) as Hc.
+      assert (incl (tgt_names (carried ts)) (decl ++ minted s s')) as Htg.
+      { intros d Hd. unfold tgt_names in Hd.
+        apply in_flat_map in Hd as (c & Hc1 & Hdc).
+        rewrite Forall_forall in Hc. exact (Hc c Hc1 d Hdc). }
+      eapply Forall_impl; [|exact Hf]. intros t Ht y Hy.
+      apply Ht in Hy. apply in_app_or in Hy as [Hy|Hy]; [exact (Hdecl y Hy)|].
+      apply Htg in Hy. apply in_app_or in Hy as [Hy|Hy];
+        [exact (Hdecl y Hy)|exact (name_above_minted lo s s' y Hlo Hy)].
+    Qed.
+
+    Lemma lexps_names_above :
+      forall es ts s s',
+        (lo <= s)%positive ->
+        assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+        Forall (fun t => forall y, In y (fst t) -> name_above lo y) ts.
+    Proof.
+      intros es ts s s' Hlo H.
+      assert (Hall : Forall (lexp_scoped_tgt G env base_ty rst_ty decl) es)
+        by (apply Forall_forall; intros e0 _;
+            apply (lexp_scoped_tgt_all G env base_ty rst_ty decl Hdk Hclk Hsgs)).
+      destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl es Hall ts s s'
+                  H) as (Hf & _).
+      assert (Hmin : Forall (lexp_carried_minted G env base_ty rst_ty) es)
+        by (apply Forall_forall; intros e0 _;
+            apply (lexp_carried_minted_all G env base_ty rst_ty)).
+      pose proof (lexps_carried_minted_of G env base_ty rst_ty es Hmin ts s s'
+                    (decl ++ minted s s') (incl_appr _ (incl_refl _)) H) as Hc.
+      assert (incl (tgt_names (carried ts)) (decl ++ minted s s')) as Htg.
+      { intros d Hd. unfold tgt_names in Hd.
+        apply in_flat_map in Hd as (c & Hc1 & Hdc).
+        rewrite Forall_forall in Hc. exact (Hc c Hc1 d Hdc). }
+      eapply Forall_impl; [|exact Hf]. intros t Ht y Hy.
+      apply Ht in Hy. apply in_app_or in Hy as [Hy|Hy]; [exact (Hdecl y Hy)|].
+      apply Htg in Hy. apply in_app_or in Hy as [Hy|Hy];
+        [exact (Hdecl y Hy)|exact (name_above_minted lo s s' y Hlo Hy)].
+    Qed.
+
+    Lemma clk_names_above :
+      forall ck ckty,
+        assign_clk_type env base_ty ck = Some ckty ->
+        forall y, In y ckty -> name_above lo y.
+    Proof.
+      intros ck ckty H y Hy. exact (Hdecl y (Hclk ck ckty H y Hy)).
+    Qed.
+
+    Lemma rst_names_above :
+      forall (rstty : LST),
+        lcall_rst_shape G env base_ty rst_ty lo rstty ->
+        forall y, In y (fst rstty) -> name_above lo y.
+    Proof.
+      intros rstty [-> | (e1 & t1 & a1 & rck & s0 & s0' & Hlo & Ht1 & Hsg
+                           & Hrck & ->)] y Hy.
+      - rewrite fst_lvar in Hy. destruct Hy as [<-|[]].
+        exact (Hdecl _ (proj1 (proj2 Hdk))).
+      - apply single_inv in Hsg as (-> & _).
+        pose proof (lexp_names_above e1 [a1] s0 s0' Hlo Ht1) as Hf.
+        pose proof (Forall_inv Hf) as Ha1.
+        rewrite !fst_ljoin, fst_lvar in Hy.
+        apply in_merge_inv in Hy as [Hy|Hy].
+        + destruct Hy as [<-|[]]. exact (Hdecl _ (proj1 (proj2 Hdk))).
+        + apply in_merge_inv in Hy as [Hy|Hy]; [exact (Ha1 y Hy)|].
+          exact (clk_names_above _ _ Hrck y Hy).
+    Qed.
+
+    Theorem eapp_fresh_prop_holds :
+      eapp_fresh_prop G env base_ty rst_ty lo.
+    Proof.
+      intros f es er anns s sg argts rstty ckty outs cs sta stb stc s'
+        Hlo Hargs Hck Hrst Hsg Houts Hcs.
+      destruct (assign_lexp_Eapp_stages_le G env base_ty rst_ty es er anns
+                  s s' sg argts rstty ckty outs cs sta stb stc
+                  Hargs Hrst Houts Hcs) as (Hlab & Hlbc & Hlcs).
+      assert (Hlsa : (lo <= sta)%positive).
+      { eapply Pos.le_trans; [exact Hlo|]. eapply assign_lexps_sec_le;
+          exact Hargs. }
+      assert (Hlsb : (lo <= stb)%positive)
+        by (eapply Pos.le_trans; [exact Hlsa|exact Hlab]).
+      split.
+      - eapply call_subst_fresh_of_above; [eapply Hbelow; exact Hsg| | | |].
+        + rewrite Forall_map. eapply Forall_impl;
+            [|exact (lexps_names_above es argts s sta Hlo Hargs)].
+          intros t Ht. exact Ht.
+        + exact (clk_names_above _ _ Hck).
+        + destruct er as [e1|].
+          * destruct Hrst as (t1 & a1 & rck & stm & Ht1 & Hsg1 & Hrck & Hr).
+            pose proof Hsg1 as Hs'. apply single_inv in Hs' as (_ & Hstb).
+            subst stb.
+            apply rst_names_above.
+            right. exists e1, t1, a1, rck, sta, stm.
+            repeat split; [exact Hlsa|exact Ht1|exact Hsg1|exact Hrck
+                          |exact Hr].
+          * destruct Hrst as (Hr & _). apply rst_names_above. left. exact Hr.
+        + apply Forall_forall. intros y Hy.
+          pose proof (fresh_idents_minted _ _ _ _ Houts y Hy) as Hm.
+          exact (name_above_minted lo stb stc y Hlsb Hm).
+      - exact (fresh_idents_NoDup _ _ _ _ Houts).
+    Qed.
+
+    Theorem lcall_fresh_prop_holds :
+      env_injective env ->
+      lcall_fresh_prop G env base_ty rst_ty lo.
+    Proof.
+      intros Hinj xs f es rstty s sg ckty argts outs sti cs0 s'
+        Hndx Hshape Hlo Hsg Hck Hargs Houts Hcs.
+      assert (Hf2 : Forall2 (fun x b => Env.find x env = Some b) xs outs)
+        by (eapply CALLS.mmap_find_env_Forall2; exact Houts).
+      split.
+      - eapply call_subst_fresh_of_above; [eapply Hbelow; exact Hsg| | | |].
+        + rewrite Forall_map. eapply Forall_impl;
+            [|exact (lexps_names_above es argts s sti Hlo Hargs)].
+          intros q Hq. exact Hq.
+        + exact (clk_names_above _ _ Hck).
+        + exact (rst_names_above rstty Hshape).
+        + apply Forall_forall. intros b Hb.
+          destruct (Forall2_in_right _ xs outs b Hf2 Hb) as (x & _ & Hx).
+          exact (Hdecl b ((proj2 (proj2 Hdk)) x b Hx)).
+      - exact (NoDup_Forall2_inj env xs outs Hinj Hndx Hf2).
+    Qed.
+
+  End RawFresh.
+
 End SecLusTypingCorrectness.

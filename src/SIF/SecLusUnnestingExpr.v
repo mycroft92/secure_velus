@@ -106,6 +106,7 @@ Import UNN.Fresh.Tactics.
         the source node's own variables, and the names the security monad
         mints for its nested calls. *)
     Variable scope   : list ident.
+    Variable stLo     : sec_state.
     Variable stF     : sec_state.
 
     (** The ambient every equation this expression gets lifted into sits
@@ -256,7 +257,7 @@ Import UNN.Fresh.Tactics.
         listSatisfiable dlt (carried ts) ->
         (** The checkmark bound: this run of the source generator, and
             every sub-run of it, finishes before [stF]. *)
-        sec_le sst' stF ->
+        sec_le sst' stF -> sec_le stLo sst ->
         exists dlt',
           agree_off (moved_by st st') dlt dlt'
           /\ listSatisfiable dlt' ce
@@ -328,7 +329,7 @@ Import UNN.Fresh.Tactics.
     Lemma carries_Econst : forall P c, carries P (Econst c).
     Proof.
       intros P c is_control es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst'
-        dlt _ _ _ _ _ Hsc _ Hun Has Hgen Has' _ _.
+        dlt _ _ _ _ _ Hsc _ Hun Has Hgen Has' _ _ _.
       rewrite unnest_exp_Econst in Hun. inv Hun.
       apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -340,7 +341,7 @@ Import UNN.Fresh.Tactics.
     Lemma carries_Evar : forall P x a, carries P (Evar x a).
     Proof.
       intros P x a is_control es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst'
-        dlt _ _ _ _ _ Hsc _ Hun Has Hgen Has' _ _.
+        dlt _ _ _ _ _ Hsc _ Hun Has Hgen Has' _ _ _.
       rewrite unnest_exp_Evar in Hun. inv Hun.
       apply generate_leqns_constraints_nil in Hgen as (? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -371,7 +372,7 @@ Import UNN.Fresh.Tactics.
       forall P op e a, carries P e -> carries P (Eunop op e a).
     Proof.
       intros P op e a IH is_control es' eqs st st' ts sst sst' ce xst xst' ts''
-        yst yst' dlt Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd.
+        yst yst' dlt Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd Hlow.
       inv Hwl. inv Hwc.
       apply unnest_exp_Eunop_inv in Hun as (e1' & st1 & Hun & ? & ?); subst.
       apply assign_lexps_single in Has'.
@@ -645,10 +646,10 @@ Import UNN.Fresh.Tactics.
         result types say nothing about. *)
 
     Hypothesis source_types_scoped :
-      source_types_scoped_upto GL env base_ty rst_ty scope stF.
+      source_types_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
 
     Hypothesis source_lexps_scoped :
-      source_lexps_scoped_upto GL env base_ty rst_ty scope stF.
+      source_lexps_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
 
     (** The node's reset name, and the types its clocks get, are in [scope]
         for the same reason the typer's outputs are. *)
@@ -656,14 +657,18 @@ Import UNN.Fresh.Tactics.
     Hypothesis rst_ty_scoped : In rst_ty scope.
 
     Hypothesis clk_types_scoped :
-      forall ck ckty,
+      forall P es ck ckty,
+        Forall (wc_exp P vars) es ->
+        (clk_src vars es ck \/
+         exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
         assign_clk_type env base_ty ck = Some ckty -> st_scoped scope ckty.
 
     Hypothesis env_range_scoped :
-      forall x b, Env.find x env = Some b -> In b scope.
+      forall x b, In x (List.map fst vars) ->
+                  Env.find x env = Some b -> In b scope.
 
     Hypothesis source_lexps_carried_scoped :
-      source_lexps_carried_scoped_upto GL env base_ty rst_ty scope stF.
+      source_lexps_carried_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
 
     Hypothesis sig_scoped :
       forall f sg, find_signature f GL = Some sg -> signature_scoped sg.
@@ -671,6 +676,10 @@ Import UNN.Fresh.Tactics.
     Hypothesis sig_actuals_fresh :
       forall f sg inp ck rst os cns sa sb,
         find_signature f GL = Some sg ->
+        Forall (caller_st env scope) inp ->
+        caller_st env scope ck ->
+        caller_st env scope rst ->
+        Forall (caller_name env scope) os ->
         generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
         call_subst_fresh sg inp ck rst os.
 
@@ -797,7 +806,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P op e1 e2 a IH1 IH2 is_control es' eqs st st' ts sst sst'
         ce xst xst' ts'' yst yst' dlt Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has
-        Hgen Has' Hcar Hbnd.
+        Hgen Has' Hcar Hbnd Hlow.
       inv Hwl. inv Hwc.
       apply unnest_exp_Ebinop_inv in Hun
         as (f1 & eqs1 & st1 & f2 & eqs2 & Hun1 & Hun2 & ? & ?); subst.
@@ -859,6 +868,7 @@ Import UNN.Fresh.Tactics.
       { rewrite Hone1 at 1. apply assign_lexps_single_intro. exact Hu1. }
       { now rewrite Hc1. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       (** the second, on top of the first: its obligations name only what the
           source can see, and the first witness left all of that alone *)
@@ -882,6 +892,7 @@ Import UNN.Fresh.Tactics.
         - exact Hoff1.
         - now rewrite Hc2. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       inversion Hrel1 as [|p q ps qs Hr1 Hrel1r]; subst.
       inversion Hrel2 as [|p q ps qs Hr2 Hrel2r]; subst.
@@ -1043,7 +1054,7 @@ Import UNN.Fresh.Tactics.
         listSatisfiable dlt (carried ts) ->
         (** The checkmark bound: this run of the source generator, and
             every sub-run of it, finishes before [stF]. *)
-        sec_le sst' stF ->
+        sec_le sst' stF -> sec_le stLo sst ->
         exists dlt',
           agree_off (moved_by st st') dlt dlt'
           /\ listSatisfiable dlt' ce
@@ -1059,7 +1070,7 @@ Import UNN.Fresh.Tactics.
       intros P es Hall.
       induction Hall as [|e es IHe IHes IH];
         intros ic es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-          Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd.
+          Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd Hlow.
 
       - (** nothing to unnest, nothing emitted *)
         apply map_bind2_unnest_nil in Hun as (? & ? & ?); subst.
@@ -1111,6 +1122,7 @@ Import UNN.Fresh.Tactics.
         { exact Hu. }
         { exact Hcar1. }
         { eauto 4 with sec. }
+        { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
         edestruct (IH ic fr eqsr st1 st' r sa sst' ce2 xst1 xst' v ya yst' dlt1)
           as (dlt2 & Hoff2 & Hce2 & Hrel2 & Hscope2 & Hts2).
@@ -1132,6 +1144,7 @@ Import UNN.Fresh.Tactics.
           - exact Hoff1.
           - exact Hcar2. }
         { eauto 4 with sec. }
+        { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
         exists dlt2. split; [|split; [|split; [|split]]].
         + eapply agree_off_trans.
@@ -1270,7 +1283,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P es x b [tys ck] Hall is_control es' eqs st st' ts sst sst'
         ce xst xst' ts'' yst yst' dlt Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has
-        Hgen Has' Hcar Hbnd.
+        Hgen Has' Hcar Hbnd Hlow.
       inv Hwl. inv Hwc.
       apply unnest_exp_Ewhen_inv in Hun as (es1 & Hunn & ?); subst.
       assert (List.length es1 = List.length tys) as Hlen
@@ -1505,7 +1518,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P ckid es1 es2 tys cl Hall1 Hall2
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd.
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd Hlow.
       inv Hwl. inv Hwc.
       apply unnest_exp_Emerge_control_inv in Hun
         as (f1 & eqs1 & st1 & f2 & eqs2 & Hun1 & Hun2 & ? & ?); subst.
@@ -1567,6 +1580,7 @@ Import UNN.Fresh.Tactics.
       { exact Ht1''. }
       { exact Hcar1. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       edestruct (carries_list_intro P es2 Hall2 true f2 eqs2 st1 st' tes2 sb sc
                    ce2 xst1 xst' tes2'' yst yst dlt1)
@@ -1589,6 +1603,7 @@ Import UNN.Fresh.Tactics.
         - exact Hoff1.
         - exact Hcar2. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       (** the first branch's bound survives the second's witness *)
       assert (Forall2 (fun t t'' => satisfiable dlt2 (fst t'') (merge amb (fst t)))
@@ -1715,7 +1730,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P e0 es1 es2 tys ck IH0 Hall1 Hall2
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd.
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd Hlow.
       inv Hwl. inv Hwc.
       apply unnest_exp_Eite_control_inv in Hun
         as (f0 & eqs0 & st0 & f1 & eqs1 & st1 & f2 & eqs2
@@ -1827,6 +1842,7 @@ Import UNN.Fresh.Tactics.
       { rewrite Hone0 at 1. now apply assign_lexps_single_intro. }
       { simpl. now rewrite cmerge_nil. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       (** the true branch, on top of it *)
       edestruct (carries_list_intro P es1 Hall1 true f1 eqs1 st0 st1
@@ -1850,6 +1866,7 @@ Import UNN.Fresh.Tactics.
         intros x Hx. apply Hmv.
         apply (moved_by_prefix st st0 st' Hf0'). exact Hx. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       (** and the false branch on top of that *)
       edestruct (carries_list_intro P es2 Hall2 true f2 eqs2 st1 st' tes2 sc sd
@@ -1876,6 +1893,7 @@ Import UNN.Fresh.Tactics.
           intros x Hx. apply Hmv.
           apply (moved_by_prefix st st0 st' Hf0'). exact Hx. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       (** the later witnesses do not undo the earlier ones *)
       assert (agree_off (moved_by st0 st') dlt0 dlt2) as Hoff02.
@@ -2866,7 +2884,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P ic e0s es anns Hall0 Hall1
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd.
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd Hlow.
       pose proof Hun as Hunfby. pose proof Hwl as Hwlfby.
       inv Hwl. inv Hwc.
       apply unnest_exp_Efby_inv in Hun
@@ -2993,6 +3011,7 @@ Import UNN.Fresh.Tactics.
       { exact Ht0y. }
       { exact Hcar0. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       edestruct (carries_list_intro P es Hall1 false ess1 eqss1 st1 st2 us
                    sa sb ce2 xstm xst' usx yst yst dlt1)
@@ -3016,6 +3035,7 @@ Import UNN.Fresh.Tactics.
         intros y Hy. apply Hmv.
         apply (moved_by_prefix st st1 st' Hf1'). exact Hy. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       (** the delays the pass built, and how they relate to the source *)
       assert (Forall2 (fun e t =>
@@ -3186,7 +3206,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P ic e0s es anns Hall0 Hall1
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd.
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd Hlow.
       pose proof Hun as Hunarrow. pose proof Hwl as Hwlarrow.
       inv Hwl. inv Hwc.
       apply unnest_exp_Earrow_inv in Hun
@@ -3313,6 +3333,7 @@ Import UNN.Fresh.Tactics.
       { exact Ht0y. }
       { exact Hcar0. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       edestruct (carries_list_intro P es Hall1 false ess1 eqss1 st1 st2 us
                    sa sb ce2 xstm xst' usx yst yst dlt1)
@@ -3336,6 +3357,7 @@ Import UNN.Fresh.Tactics.
         intros y Hy. apply Hmv.
         apply (moved_by_prefix st st1 st' Hf1'). exact Hy. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       (** the delays the pass built, and how they relate to the source *)
       assert (Forall2 (fun e t =>
@@ -3687,7 +3709,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P ckid es1 es2 tys cl Hall0 Hall1
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd.
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd Hlow.
       pose proof Hun as Hunm. pose proof Hwl as Hwlm.
       inv Hwl. apply wc_Emerge_inv in Hwc as (Hwc1 & Hwc2).
       apply unnest_exp_Emerge_inv in Hun
@@ -3807,6 +3829,7 @@ Import UNN.Fresh.Tactics.
       { exact Ht1y. }
       { exact Hcar0. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       edestruct (carries_list_intro P es2 Hall1 true ess1 eqss1 st1 st2 us
                    sa sb ce2 xstm xst' ts2x yst yst dlt1)
@@ -3830,6 +3853,7 @@ Import UNN.Fresh.Tactics.
         intros y Hy. apply Hmv.
         apply (moved_by_prefix st st1 st' Hf1'). exact Hy. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       (** the merges the pass built *)
       assert (Forall2 (fun e t =>
@@ -4200,7 +4224,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       intros P e0 es1 es2 tys ck IHe Hall0 Hall1
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd.
+        Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd Hlow.
       pose proof Hun as Hunm. pose proof Hwl as Hwlm.
       inv Hwl. apply wc_Eifte_inv in Hwc as (Hwc0 & Hwc1 & Hwc2 & Htys).
       apply unnest_exp_Eite_inv in Hun
@@ -4374,6 +4398,7 @@ Import UNN.Fresh.Tactics.
       { rewrite Hone0 at 1. apply assign_lexps_single_intro, Hthx. }
       { simpl. now rewrite cmerge_nil. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       (** the true branch *)
       edestruct (carries_list_intro P es1 Hall0 true ess0 eqss0 st0 st1
@@ -4399,6 +4424,7 @@ Import UNN.Fresh.Tactics.
         intros y Hy. apply Hmv.
         apply (moved_by_prefix st st0 st' Hf0'). exact Hy. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
       (** the false branch *)
       edestruct (carries_list_intro P es2 Hall1 true ess1 eqss1 st1 st2 ts2
                    sa sb ce2 xstm xst' ts2x yst yst dlt1)
@@ -4432,6 +4458,7 @@ Import UNN.Fresh.Tactics.
           + exact Hoff0.
           + exact Hcar2. }
       { eauto 4 with sec. }
+      { eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec. }
 
       (** the conditionals the pass built *)
       assert (Forall2 (fun e t =>
