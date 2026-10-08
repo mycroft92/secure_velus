@@ -4133,3 +4133,46 @@ derive `call_subst_fresh` from the actuals being scoped in `scope`, which the
 context there already has (`source_types_scoped_upto`, `clk_types_scoped`, the
 reset's scoping).  `call_weakens` and the four step theorems then take the
 freshness *as a premise of the instantiation* instead of as a universal fact.
+
+#### AUDIT 2026-10-08: the Leg U node-level Section hypotheses over-quantify over `env`
+
+Found while starting the repair of `sig_actuals_fresh` (above).  All of these
+are Section hypotheses of `SecLusUnnestingEquations/Streams/Nodes.v`
+(`NodeEquations`); each is *proved correct as a premise* and each is
+*unsatisfiable at the node level* for the same reason: the naming `env` that the
+source and target generators share has a key for every variable unnesting
+creates (the target's `generate_ldef_constraint` fails without it, and the
+Block B text says so: "the naming pass covers the variables the run created,
+outside the visible scope"), while `scope` must exclude their images (the
+`Hmv` premise, `moved_by ... -> ~ In scope`).  A hypothesis quantified over all
+keys of `env`, or over all clocks/expressions that type against `env`, then
+asks for a created variable's image to be in `scope`.
+
+  * D1 `sig_actuals_fresh` -- over every `inp` (see above).
+  * D2 `env_range_scoped : forall x b, Env.find x env = Some b -> In b scope`
+    -- false for a created key.  Every use is at a *source-defined* variable
+    (`sec_of_scoped` over `fst eq` / `vars_defined eqs`), so the guard
+    `In x (map fst vars)` is enough; `wc_equation` supplies it.
+  * D3 `clk_types_scoped : forall ck ckty, assign_clk_type env base_ty ck =
+    Some ckty -> st_scoped scope ckty` -- `Con Cbase v true` with `v` a
+    created key types, and its type holds `env v`.  Needs a guard "the clock's
+    variables are source variables".
+  * D4 `source_{types,lexps,lexps_carried}_scoped_upto` -- quantified over
+    every expression `e` (so `Evar v` for a created `v` gives `[env v]`) and
+    every start state `s` with only `s' <= stF` (so a call run from any small
+    `s` mints `gensym sec s`, which would put every low `sec` name, i.e. every
+    env image, in `scope`).  Needs a source-expression guard (`wc_exp P vars
+    e`) and a lower bound `stS <= s`.
+
+The same defect is in this session's `decl_ok` / `clk_scoped` when the node
+being typed is a *source* node whose `env` came from the naming of the
+normalized program: `env` then has keys the source node does not declare.  The
+fold theorems are correct for a node typed against the naming of its *own*
+program (which is what the NLustre-side global uses, and what the target
+signatures need); for the source signatures `generate_lnode_sig_good` and
+`generate_lnode_sig_scope_nodup` need no range premise and still apply, while
+`..._scoped` / `..._rooted` would need the guarded forms.
+
+Not yet done: the guarded restatements, and checking `clk_types_defined`,
+`call_anon_not_env_key`, `clocks_covered`, `eqn_ambients` against the same
+test (they are existentials or already keyed on the run, so they look fine).
