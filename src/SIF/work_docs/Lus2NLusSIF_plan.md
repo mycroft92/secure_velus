@@ -4215,3 +4215,20 @@ clock that mentions a nested call's anonymous output name -- needs either a
 program-level well-formedness assumption or a guarded restatement), `Hmv`,
 the ambients (`canonical_ambients`), the bounds `Htgtok`/`Hwf`/`Hdisj`,
 `sig_inputs_ok` (item 8), then the composition theorem.
+
+#### FINDING 2026-10-09 (D5): expression-universal and P-universal hypotheses
+
+`call_anon_not_env_key` and `clk_types_defined` (and the `Hanon` premise of
+`clk_types_scoped_holds`) quantify over every program `P` and every expression
+`e` with `wc_exp P vars e`.  An arbitrary such `e` can carry any anonymous name
+(a call's output annotation `Some w`, with `w` an env key) or a clock mentioning
+one, so the hypotheses are false as stated, for the same reason as D1-D4.  What
+is true is the node's own expressions: `env_key_not_anon` /
+`declared_not_anon` say the anon names *of the node's equations* are not env
+keys.  Proved so far: `clk_types_defined_holds` from an explicit program-level
+`no_anon_clocks P vars` (a clock of a well-clocked expression never mentions an
+anonymous name; a real restriction on programs, not derivable).
+
+The repair needs a "source expression" predicate (`e` occurs in the node's
+equations, closed under subexpressions) threaded through the pointwise
+contracts the way `Hlow` was, or the Section fixed at one program.  Not done.

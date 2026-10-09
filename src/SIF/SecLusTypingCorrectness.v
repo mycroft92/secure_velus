@@ -5611,4 +5611,44 @@ Import SECMONADNotations.
     - eapply Forall_impl; [|exact Hos]. intros y Hy. exact (Hn y Hy).
   Qed.
 
+  (** * Item 3: every source clock has a type
+
+      [clk_types_defined] holds exactly for the programs whose clocks never
+      mention the anonymous name of a nested call's result -- such a name is not
+      a key of [env], so the clock has no type.  That is a property of the
+      program, stated here as [no_anon_clocks] and assumed by the node theorem
+      rather than hidden in a hypothesis that is false for other programs. *)
+
+  Lemma assign_clk_type_total :
+    forall env base_ty ck,
+      (forall x, In x (clock_vars ck) -> exists g, Env.find x env = Some g) ->
+      exists ckty, assign_clk_type env base_ty ck = Some ckty.
+  Proof.
+    intros env base_ty ck. induction ck as [|ck IH x b]; intros H.
+    - exists [base_ty]. reflexivity.
+    - destruct (IH (fun y Hy => H y (or_intror Hy))) as (ckty0 & Hck0).
+      destruct (H x (or_introl Logic.eq_refl)) as (g & Hg).
+      exists (merge ckty0 [g]). simpl. rewrite Hck0, Hg. reflexivity.
+  Qed.
+
+  Definition no_anon_clocks (P : global) (vars : list (ident * clock)) : Prop :=
+    forall e nck,
+      wc_exp P vars e -> In nck (nclockof e) ->
+      forall x, In x (clock_vars (stripname nck)) ->
+                In x (List.map fst vars).
+
+  Theorem clk_types_defined_holds :
+    forall env base_ty vars,
+      (forall x, In x (List.map fst vars) -> exists g, Env.find x env = Some g) ->
+      forall (P : global),
+        no_anon_clocks P vars ->
+        forall e nck,
+          wc_exp P vars e -> In nck (nclockof e) ->
+          exists ckty, assign_clk_type env base_ty (stripname nck) = Some ckty.
+  Proof.
+    intros env base_ty vars Hkeys P Hna e nck Hwc Hin.
+    apply assign_clk_type_total. intros x Hx.
+    exact (Hkeys x (Hna e nck Hwc Hin x Hx)).
+  Qed.
+
 End SecLusTypingCorrectness.
