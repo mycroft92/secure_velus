@@ -5489,4 +5489,96 @@ Import SECMONADNotations.
 
   End SourceScoped.
 
+  (** * Item 3: the clock types of source clocks are scoped
+
+      A clock type is built from the base name and the images of the clock's
+      variables; a source clock mentions source variables, or names of nested
+      call results, which are not keys of [env]. *)
+
+  Lemma assign_clk_type_images :
+    forall env base_ty ck ckty,
+      assign_clk_type env base_ty ck = Some ckty ->
+      forall y, In y ckty ->
+        y = base_ty \/ exists x, In x (clock_vars ck) /\ Env.find x env = Some y.
+  Proof.
+    intros env base_ty ck. induction ck as [|ck IH x b]; intros ckty H y Hy.
+    - simpl in H. apply option_Some_inj in H. subst ckty.
+      destruct Hy as [Hy|[]]. left. now symmetry.
+    - apply assign_clk_type_Con_inv in H
+        as (ckty0 & g & Hck0 & Hg & ?); subst ckty.
+      apply in_merge_inv in Hy as [Hy|Hy].
+      + destruct (IH ckty0 Hck0 y Hy) as [E|(x' & Hx' & Hf)];
+          [now left|right; exists x'; split; [right; exact Hx'|exact Hf]].
+      + destruct Hy as [<-|[]]. right. exists x. split; [now left|exact Hg].
+  Qed.
+
+  Section ClkScoped.
+
+    Variable env     : Env.t ident.
+    Variable base_ty : ident.
+    Variable cenv    : Env.t (type * clock).
+    Variable vars    : list (ident * clock).
+    Variable decl    : list ident.
+    Variable scope   : list ident.
+
+    Hypothesis Hb : In base_ty decl.
+    Hypothesis Henv :
+      forall x b, In x (List.map fst vars) -> Env.find x env = Some b ->
+                  In b decl.
+    Hypothesis Hincl : incl decl scope.
+    Hypothesis Hwenv : wc_env vars.
+    Hypothesis Hanon :
+      forall (P : global) e x ck,
+        wc_exp P vars e -> In (x, ck) (idck (fresh_in e)) ->
+        forall g, Env.find x env <> Some g.
+    Hypothesis Hcenv :
+      forall x ck, In x (List.map fst vars) -> find_clock cenv x = OK ck ->
+                   incl (clock_vars ck) (List.map fst vars).
+
+    Lemma clk_vars_images_scoped :
+      forall ck ckty,
+        incl (clock_vars ck) (List.map fst vars) ->
+        assign_clk_type env base_ty ck = Some ckty ->
+        st_scoped scope ckty.
+    Proof.
+      intros ck ckty Hv H y Hy.
+      destruct (assign_clk_type_images env base_ty ck ckty H y Hy)
+        as [->|(x & Hx & Hf)]; apply Hincl;
+        [exact Hb|exact (Henv x y (Hv x Hx) Hf)].
+    Qed.
+
+    Theorem clk_types_scoped_holds :
+      forall (P : global) es ck ckty,
+        wc_global P ->
+        Forall (wc_exp P vars) es ->
+        (clk_src vars es ck \/
+         exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
+        assign_clk_type env base_ty ck = Some ckty ->
+        st_scoped scope ckty.
+    Proof.
+      intros P es ck ckty Hg Hwes Hsrc H.
+      destruct Hsrc as [Hs|(x & Hx & Hfc)].
+      - intros y Hy.
+        destruct (assign_clk_type_images env base_ty ck ckty H y Hy)
+          as [->|(x & Hx & Hf)]; [apply Hincl; exact Hb|].
+        unfold clk_src in Hs. rewrite ck_vars_eq in Hs.
+        apply Hs in Hx. apply in_app_or in Hx as [Hx|Hx];
+          [apply Hincl; exact (Henv x y Hx Hf)|].
+        apply in_flat_map in Hx as (c & Hc & Hxc).
+        rewrite ck_vars_eq in Hxc.
+        unfold clocksof in Hc. apply in_flat_map in Hc as (e & He & Hce).
+        rewrite Forall_forall in Hwes.
+        pose proof (wc_exp_clockof P vars e Hg Hwenv (Hwes e He)) as Hcl.
+        rewrite Forall_forall in Hcl.
+        destruct (clock_vars_wc _ c (Hcl c Hce) x Hxc) as (ckx & Hin).
+        apply in_app_or in Hin as [Hin|Hin].
+        + apply Hincl. apply (Henv x y).
+          * apply in_map_iff. exists (x, ckx). split; [reflexivity|exact Hin].
+          * exact Hf.
+        + exfalso. exact (Hanon P e x ckx (Hwes e He) Hin y Hf).
+      - exact (clk_vars_images_scoped ck ckty (Hcenv x ck Hx Hfc) H).
+    Qed.
+
+  End ClkScoped.
+
 End SecLusTypingCorrectness.

@@ -1307,6 +1307,7 @@ Section StreamAmbients.
 
     Hypothesis clk_types_scoped :
       forall P es ck ckty,
+        wc_global P ->
         Forall (wc_exp P vars) es ->
         (clk_src vars es ck \/
          exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
@@ -7018,7 +7019,7 @@ Section StreamAmbients.
       { subst ambs_arg.
         exact (call_arg_ambients_scoped_named scope sub bck ckty (nclocksof es)
                  (idck nd.(n_in)) argts rst_ty_scoped
-                 (fun z Hz => clk_types_scoped P es _ ckty Hwces
+                 (fun z Hz => clk_types_scoped P es _ ckty Hwcg Hwces
                                 (or_introl Hbcksrc) Hbckty z Hz)
                  Hwcin Hwi Hnamed Hscargts). }
       assert (clocks_covered (LSyn.clocksof es) ambs_arg) as Hccov.
@@ -7143,8 +7144,8 @@ Section StreamAmbients.
           { intros z Hz. apply in_merge_inv in Hz as [Hz|Hz].
             - apply in_merge_inv in Hz as [Hz|Hz].
               + destruct Hz as [Hz|[]]; subst z. exact rst_ty_scoped.
-              + exact (clk_types_scoped P es _ ckty Hwces (or_introl Hbcksrc) Hbckty z Hz).
-            - exact (clk_types_scoped P [e1] _ rck
+              + exact (clk_types_scoped P es _ ckty Hwcg Hwces (or_introl Hbcksrc) Hbckty z Hz).
+            - exact (clk_types_scoped P [e1] _ rck Hwcg
                        (Forall_cons _ Hwce1 (Forall_nil _))
                        (or_introl (clk_src_clockof vars e1 ckr0
                           ltac:(rewrite Hcl; now left))) Hrck0 z Hz). }
@@ -7216,7 +7217,7 @@ Section StreamAmbients.
                  apply (CALLS.moved_by_suffix_local env st st2 st3 Hf02).
                  exact Hinr.
               -- apply in_or_app. left.
-                 exact (clk_types_scoped P [e1] ckr0 rstck
+                 exact (clk_types_scoped P [e1] ckr0 rstck Hwcg
                           (Forall_cons _ Hwce1 (Forall_nil _))
                           (or_introl (clk_src_clockof vars e1 ckr0
                              ltac:(rewrite Hcl; now left))) Hrstck y Hy). }
@@ -7225,7 +7226,7 @@ Section StreamAmbients.
       assert (st_scoped scope (merge [rst_ty] ckty)) as Hambcsc.
       { intros z Hz. apply in_merge_inv in Hz as [Hz|Hz].
         - destruct Hz as [Hz|[]]; subst z. exact rst_ty_scoped.
-        - exact (clk_types_scoped P es _ ckty Hwces (or_introl Hbcksrc) Hbckty z Hz). }
+        - exact (clk_types_scoped P es _ ckty Hwcg Hwces (or_introl Hbcksrc) Hbckty z Hz). }
 
       (** the results, and the witness on them *)
       assert (Forall2 (fun x b => Env.find x env = Some b)
@@ -7406,7 +7407,7 @@ Section StreamAmbients.
             * assert (Forall (fun t => st_scoped scope (fst t)) [a1]) as Hf
                   by (exact (source_types_scoped P e1 [a1] sta stm Hwce1 Hlsa Hty1 Hbstb)).
               inv Hf. auto.
-            * exact (clk_types_scoped P [e1] _ rck
+            * exact (clk_types_scoped P [e1] _ rck Hwcg
                        (Forall_cons _ Hwce1 (Forall_nil _))
                        (or_introl (clk_src_hd_clockof vars e1)) Hrck y Hy).
         - destruct Hrst as (Hrstty & ?). subst rstty.
@@ -7424,7 +7425,7 @@ Section StreamAmbients.
         intros q Hq. exact (CALLS.caller_st_scoped env scope _ Hq). }
       assert (caller_st env scope ckty) as Hck_src
           by exact (CALLS.caller_st_scoped env scope _
-                      (fun z Hz => clk_types_scoped P es _ ckty Hwces
+                      (fun z Hz => clk_types_scoped P es _ ckty Hwcg Hwces
                                      (or_introl Hbcksrc) Hbckty z Hz)).
       assert (caller_st env scope (fst rstty)) as Hrs_src
           by exact (CALLS.caller_st_scoped env scope _ Hscrsty).
@@ -7586,7 +7587,7 @@ Section StreamAmbients.
             apply incl_appr, (CALLS.moved_by_prefix_local env st st2 st' Hf2').
           * rewrite Hckeq. eapply st_scoped_weaken;
               [apply incl_appl, incl_refl|].
-            intros y Hy. exact (clk_types_scoped P es _ ckty Hwces
+            intros y Hy. exact (clk_types_scoped P es _ ckty Hwcg Hwces
                                   (or_introl (clk_src_base vars es)) Hck y Hy).
           * eapply st_scoped_weaken; [|exact Hscrst'].
             apply incl_app; [apply incl_appl, incl_refl|].

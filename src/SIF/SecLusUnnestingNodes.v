@@ -1355,6 +1355,7 @@ Import UNN.Fresh.Tactics.
     Hypothesis rst_ty_scoped : In rst_ty scope.
     Hypothesis clk_types_scoped :
       forall P es ck ckty,
+        wc_global P ->
         Forall (wc_exp P vars) es ->
         (clk_src vars es ck \/
          exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
@@ -1375,6 +1376,7 @@ Import UNN.Fresh.Tactics.
         Forall (caller_name env scope) os ->
         generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
         call_subst_fresh sg inp ck rst os.
+    Hypothesis scalar_wcg : forall P : global, wc_global P.
 
     Local Notation moved_by := (EQ.moved_by env).
 
@@ -1531,7 +1533,7 @@ Import UNN.Fresh.Tactics.
              env_inj amb_scoped sig_good sig_nodup source_types_scoped
              source_lexps_scoped rst_ty_scoped clk_types_scoped
              env_range_scoped source_lexps_carried_scoped sig_scoped
-             sig_actuals_fresh P eq eq1 st st1 c1 xst xst1
+             sig_actuals_fresh scalar_wcg P eq eq1 st st1 c1 xst xst1
              ct1 yst ystm dlt)
           as (dlt1 & Hoff1 & Hce1 & Hscope1).
         { exact Hwl1. }
@@ -1674,6 +1676,7 @@ Import UNN.Fresh.Tactics.
     Hypothesis rst_ty_scoped : In rst_ty scope.
     Hypothesis clk_types_scoped :
       forall P es ck ckty,
+        wc_global P ->
         Forall (wc_exp P vars) es ->
         (clk_src vars es ck \/
          exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
@@ -1694,6 +1697,7 @@ Import UNN.Fresh.Tactics.
         Forall (caller_name env scope) os ->
         generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
         call_subst_fresh sg inp ck rst os.
+    Hypothesis scalar_wcg : forall P : global, wc_global P.
 
     (** The two the pointwise call case adds. *)
     Hypothesis clk_types_defined :
@@ -1836,7 +1840,7 @@ Import UNN.Fresh.Tactics.
              env_inj (A_scoped eq) sig_good sig_nodup source_types_scoped
              source_lexps_scoped rst_ty_scoped clk_types_scoped
              env_range_scoped source_lexps_carried_scoped sig_scoped
-             sig_actuals_fresh P eq eq1 st st1 c1 xst xst1
+             sig_actuals_fresh scalar_wcg P eq eq1 st st1 c1 xst xst1
              ct1 yst ystm dlt)
           as (dlt1 & Hoff1 & Hce1 & Hscope1).
         { exact Hwl1. }

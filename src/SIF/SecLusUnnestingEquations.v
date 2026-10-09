@@ -112,6 +112,7 @@ Import UNN.Fresh.Tactics.
     Hypothesis rst_ty_scoped : In rst_ty scope.
     Hypothesis clk_types_scoped :
       forall P es ck ckty,
+        wc_global P ->
         Forall (wc_exp P vars) es ->
         (clk_src vars es ck \/
          exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
@@ -155,6 +156,13 @@ Import UNN.Fresh.Tactics.
         find_signature f GL = Some sg ->
         CALLS.all_sources_have sg.(s_clk) sg.(s_constraints)
         /\ CALLS.all_sources_have sg.(s_reset) sg.(s_constraints).
+
+    (** The scalar contract's call case reads a clock type of a well-clocked
+        expression, which needs the program well clocked.  The scalar chain
+        quantifies over every program, so it carries this as a hypothesis it
+        can never discharge for all programs; the pointwise chain does not use
+        it, and takes [wc_global P] as the premise it already has. *)
+    Hypothesis scalar_wcg : forall P : global, wc_global P.
 
     Local Notation sec_of := (CALLS.sec_of env).
     Local Notation moved_by := (CALLS.moved_by env).
@@ -266,7 +274,7 @@ Import UNN.Fresh.Tactics.
           assumption.
       - destruct a as (tys & cl). destruct ic;
           [apply carries_Eite_control|apply carries_Eite_lift]; assumption.
-      - apply carries_Eapp_local; [assumption|].
+      - apply carries_Eapp_local; [exact (scalar_wcg P)|assumption|].
         intros e1 Her. subst ro. assumption.
     Qed.
 
@@ -3761,7 +3769,7 @@ Import UNN.Fresh.Tactics.
                     st_scoped_weaken scope (scope ++ moved_by st st') ckty
                       (@incl_appl ident scope (moved_by st st') scope
                          (incl_refl scope))
-                      (clk_types_scoped P [] ck ckty (Forall_nil _)
+                      (clk_types_scoped P [] ck ckty (scalar_wcg P) (Forall_nil _)
                          (or_intror (ex_intro _ x (conj (Hxv x Hx) Hfc))) Hck))
                  (@Forall_impl ident (fun b => In b scope)
                     (fun b => In b (scope ++ moved_by st st'))
@@ -3964,7 +3972,7 @@ Import UNN.Fresh.Tactics.
                     st_scoped_weaken scope (scope ++ moved_by st st') ckty
                       (@incl_appl ident scope (moved_by st st') scope
                          (incl_refl scope))
-                      (clk_types_scoped P [] ck ckty (Forall_nil _)
+                      (clk_types_scoped P [] ck ckty Hwcg (Forall_nil _)
                          (or_intror (ex_intro _ x (conj (Hxv x Hx) Hfc))) Hck))
                  (@Forall_impl ident (fun b => In b scope)
                     (fun b => In b (scope ++ moved_by st st'))
@@ -4495,7 +4503,7 @@ Import UNN.Fresh.Tactics.
                    apply in_or_app; [now left|].
                  right. apply (eq_moved_by_suffix st stb st1 Hf0b). exact Hinr.
               -- apply in_or_app. left.
-                 exact (clk_types_scoped P [e1] ckr0 rstck
+                 exact (clk_types_scoped P [e1] ckr0 rstck (scalar_wcg P)
                           (Forall_cons _ Hwce1 (Forall_nil _))
                           (or_introl (clk_src_clockof vars e1 ckr0 ltac:(assumption)))
                           Hrstck y Hy). }
@@ -4681,7 +4689,7 @@ Import UNN.Fresh.Tactics.
           + left. destruct Hy as [<-|[]]. exact rst_ty_scoped.
           + apply in_merge_inv in Hy as [Hy|Hy].
             * left. exact (Ha1' y Hy).
-            * left. exact (clk_types_scoped P [e1'] _ rck'
+            * left. exact (clk_types_scoped P [e1'] _ rck' (scalar_wcg P)
                              (Forall_cons _ Hw (Forall_nil _))
                              (or_introl (clk_src_hd_clockof vars e1')) Hrck' y Hy). }
       assert (caller_st env scope (fst rstty2)) as Hrs_tgt.
@@ -4709,7 +4717,7 @@ Import UNN.Fresh.Tactics.
           + left. destruct Hy as [<-|[]]. exact rst_ty_scoped.
           + apply in_merge_inv in Hy as [Hy|Hy].
             * destruct Hy as [<-|[]]. right. exists rv'. exact Hrv'.
-            * left. exact (clk_types_scoped P [e1'] ckr0' rstck'
+            * left. exact (clk_types_scoped P [e1'] ckr0' rstck' (scalar_wcg P)
                              (Forall_cons _ Hw (Forall_nil _))
                              (or_introl (clk_src_clockof vars e1' ckr0' Hcl'))
                              Hrstck' y Hy). }
@@ -4718,7 +4726,7 @@ Import UNN.Fresh.Tactics.
         intros q Hq. exact (CALLS.caller_st_scoped env scope _ Hq). }
       assert (caller_st env scope ckty) as Hck_src
           by exact (CALLS.caller_st_scoped env scope _
-                      (fun z Hz => clk_types_scoped P args _ ckty Hwces
+                      (fun z Hz => clk_types_scoped P args _ ckty (scalar_wcg P) Hwces
                                      (or_introl (clk_src_base vars args))
                                      Hck z Hz)).
       assert (Forall (caller_name env scope) outs) as Hos_src.
@@ -4801,7 +4809,7 @@ Import UNN.Fresh.Tactics.
             exact (st_scoped_weaken scope (scope ++ moved_by st st1) ckty
                      (@incl_appl ident scope (moved_by st st1) scope
                         (incl_refl scope))
-                     (clk_types_scoped P args _ ckty Hwces
+                     (clk_types_scoped P args _ ckty (scalar_wcg P) Hwces
                         (or_introl (clk_src_base vars args)) Hck)). }
           assert (Forall (fun b => In b (scope ++ moved_by st st1)) outs)
             as Houtsc.
@@ -5045,12 +5053,12 @@ Import UNN.Fresh.Tactics.
                         Hwcg Hfn Hwi).
         rewrite <- Hfb'. apply clk_src_base. }
       assert (st_scoped scope ckty) as Hambcsc'
-          by exact (clk_types_scoped P args _ ckty Hwces (or_introl Hbcksrc)
+          by exact (clk_types_scoped P args _ ckty Hwcg Hwces (or_introl Hbcksrc)
                       Hbckty).
       assert (st_scoped scope (merge [rst_ty] ckty)) as Hambcsc.
       { intros z Hz. apply in_merge_inv in Hz as [Hz|Hz].
         - destruct Hz as [Hz|[]]; subst z. exact rst_ty_scoped.
-        - exact (clk_types_scoped P args _ ckty Hwces (or_introl Hbcksrc)
+        - exact (clk_types_scoped P args _ ckty Hwcg Hwces (or_introl Hbcksrc)
                    Hbckty z Hz). }
 
       (** and the emitted call's, whose outputs are the same *)
@@ -5332,7 +5340,7 @@ Import UNN.Fresh.Tactics.
             as Hambrsc.
           { intros z Hz. apply in_merge_inv in Hz as [Hz|Hz].
             - exact (Hambcsc z Hz).
-            - exact (clk_types_scoped P [e1] _ rck
+            - exact (clk_types_scoped P [e1] _ rck Hwcg
                        (Forall_cons _ Hwce1 (Forall_nil _))
                        (or_introl (clk_src_clockof vars e1 ckr0
                                      ltac:(rewrite Hcl; now left)))
@@ -5403,7 +5411,7 @@ Import UNN.Fresh.Tactics.
                    apply in_or_app; [now left|].
                  right. apply (eq_moved_by_suffix st stb st1 Hf0b). exact Hinr.
               -- apply in_or_app. left.
-                 exact (clk_types_scoped P [e1] ckr0 rstck
+                 exact (clk_types_scoped P [e1] ckr0 rstck Hwcg
                           (Forall_cons _ Hwce1 (Forall_nil _))
                           (or_introl (clk_src_clockof vars e1 ckr0 ltac:(rewrite Hcl; now left)))
                           Hrstck y Hy). }
@@ -5518,7 +5526,7 @@ Import UNN.Fresh.Tactics.
           + left. destruct Hy as [<-|[]]. exact rst_ty_scoped.
           + apply in_merge_inv in Hy as [Hy|Hy].
             * left. exact (Ha1' y Hy).
-            * left. exact (clk_types_scoped P [e1'] _ rck'
+            * left. exact (clk_types_scoped P [e1'] _ rck' Hwcg
                              (Forall_cons _ Hw (Forall_nil _))
                              (or_introl (clk_src_hd_clockof vars e1')) Hrck' y Hy). }
       assert (caller_st env scope (fst rstty2)) as Hrs_tgt.
@@ -5546,7 +5554,7 @@ Import UNN.Fresh.Tactics.
           + left. destruct Hy as [<-|[]]. exact rst_ty_scoped.
           + apply in_merge_inv in Hy as [Hy|Hy].
             * destruct Hy as [<-|[]]. right. exists rv'. exact Hrv'.
-            * left. exact (clk_types_scoped P [e1'] ckr0' rstck'
+            * left. exact (clk_types_scoped P [e1'] ckr0' rstck' Hwcg
                              (Forall_cons _ Hw (Forall_nil _))
                              (or_introl (clk_src_clockof vars e1' ckr0' Hcl'))
                              Hrstck' y Hy). }
@@ -5555,7 +5563,7 @@ Import UNN.Fresh.Tactics.
         intros q Hq. exact (CALLS.caller_st_scoped env scope _ Hq). }
       assert (caller_st env scope ckty) as Hck_src
           by exact (CALLS.caller_st_scoped env scope _
-                      (fun z Hz => clk_types_scoped P args _ ckty Hwces
+                      (fun z Hz => clk_types_scoped P args _ ckty Hwcg Hwces
                                      (or_introl (clk_src_base vars args))
                                      Hck z Hz)).
       assert (Forall (caller_name env scope) outs) as Hos_src.
@@ -5747,7 +5755,7 @@ Import UNN.Fresh.Tactics.
           { rewrite Hckeq.
             eapply st_scoped_weaken;
               [apply incl_appl, incl_refl
-              |exact (clk_types_scoped P args _ ckty Hwces (or_introl Hbcksrc)
+              |exact (clk_types_scoped P args _ ckty Hwcg Hwces (or_introl Hbcksrc)
                         Hbckty)]. }
           assert (Forall (fun b => In b (scope ++ moved_by st st1)) outs)
             as Houtsc.

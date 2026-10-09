@@ -3957,6 +3957,9 @@ Module SecLusUnnestingBase
     | Con ck' x _ => x :: clock_vars ck'
     end.
 
+  Lemma ck_vars_eq : forall ck, ck_vars ck = clock_vars ck.
+  Proof. induction ck as [|ck IH x b]; simpl; [reflexivity|now rewrite IH]. Qed.
+
   Lemma assign_clk_type_instck :
     forall env base_ty bk sub ck ck' bkty ckty,
       instck bk sub ck = Some ck' ->

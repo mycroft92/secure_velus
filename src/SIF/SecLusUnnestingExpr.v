@@ -658,6 +658,7 @@ Import UNN.Fresh.Tactics.
 
     Hypothesis clk_types_scoped :
       forall P es ck ckty,
+        wc_global P ->
         Forall (wc_exp P vars) es ->
         (clk_src vars es ck \/
          exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->

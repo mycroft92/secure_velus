@@ -112,6 +112,7 @@ Import UNN.Fresh.Tactics.
     Hypothesis rst_ty_scoped : In rst_ty scope.
     Hypothesis clk_types_scoped :
       forall P es ck ckty,
+        wc_global P ->
         Forall (wc_exp P vars) es ->
         (clk_src vars es ck \/
          exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
@@ -4080,11 +4081,12 @@ Import UNN.Fresh.Tactics.
 
     Lemma carries_Eapp :
       forall P ic f es er anns,
+        wc_global P ->
         Forall (carries P) es ->
         (forall e1, er = Some e1 -> carries P e1) ->
         carries_at P ic (Eapp f es er anns).
     Proof.
-      intros P ic f es er anns Halls Hallr
+      intros P ic f es er anns Hwcg Halls Hallr
         es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
         Hwl Hwc Hnd Hmv Hsc Hsts Hamb Hun Has Hgen Has' Hcar Hbnd Hlow.
       pose proof Hwl as Hwl0. pose proof Hwc as Hwc0.
@@ -4431,7 +4433,7 @@ Import UNN.Fresh.Tactics.
                    apply in_or_app; [now left|].
                  right. apply (moved_by_suffix_local st st2 st3 Hf02). exact Hinr.
               -- apply in_or_app. left.
-                 exact (clk_types_scoped P [e1] ckr0 rstck (Forall_cons _ Hwce1 (Forall_nil _))
+                 exact (clk_types_scoped P [e1] ckr0 rstck Hwcg (Forall_cons _ Hwce1 (Forall_nil _))
                           (or_introl (clk_src_clockof vars e1 ckr0 (Hclin))) Hrstck y Hy). }
 
       (** the results, and the witness on them *)
@@ -4591,7 +4593,7 @@ Import UNN.Fresh.Tactics.
             * assert (Forall (fun t => st_scoped scope (fst t)) [a1]) as Hf
                   by (exact (source_types_scoped P e1 [a1] sta stm Hwce1 Hlsa Hty1 Hbstb)).
               inv Hf. auto.
-            * exact (clk_types_scoped P [e1] _ rck (Forall_cons _ Hwce1 (Forall_nil _))
+            * exact (clk_types_scoped P [e1] _ rck Hwcg (Forall_cons _ Hwce1 (Forall_nil _))
                           (or_introl (clk_src_hd_clockof vars e1)) Hrck y Hy).
         - destruct Hrst as (Hrstty & ?). subst rstty.
           rewrite fst_lvar. intros y Hy.
@@ -4603,7 +4605,7 @@ Import UNN.Fresh.Tactics.
         intros q Hq. exact (caller_st_scoped _ Hq). }
       assert (caller_st env scope ckty) as Hck_src
           by exact (caller_st_scoped _
-                      (clk_types_scoped P es _ ckty Hwces (or_introl (clk_src_base vars es))
+                      (clk_types_scoped P es _ ckty Hwcg Hwces (or_introl (clk_src_base vars es))
                          Hck)).
       assert (caller_st env scope (fst rstty)) as Hrs_src
           by exact (caller_st_scoped _ Hscrsty).
@@ -4707,7 +4709,7 @@ Import UNN.Fresh.Tactics.
             apply incl_appr, (moved_by_prefix_local st st2 st' Hf2').
           * rewrite Hckeq. eapply st_scoped_weaken;
               [apply incl_appl, incl_refl|].
-            intros y Hy. exact (clk_types_scoped P es _ ckty Hwces (or_introl (clk_src_base vars es)) Hck y Hy).
+            intros y Hy. exact (clk_types_scoped P es _ ckty Hwcg Hwces (or_introl (clk_src_base vars es)) Hck y Hy).
           * eapply st_scoped_weaken; [|exact Hscrst'].
             apply incl_app; [apply incl_appl, incl_refl|].
             apply incl_appr, (moved_by_prefix_local st st3 st' Hfd).
