@@ -5383,4 +5383,110 @@ Import SECMONADNotations.
 
   End RawFresh.
 
+  (** * Item 3: the source scoping hypotheses, discharged
+
+      [source_{types,lexps,lexps_carried}_scoped_upto] at
+      [scope := decl ++ minted stLo stF] hold for every well-clocked source
+      expression run inside the window: the types are scoped in [decl] and the
+      targets the run carried, and the targets are minted, hence in the
+      window. *)
+
+  Section SourceScoped.
+
+    Variable G       : secglobal.
+    Variable env     : Env.t ident.
+    Variable base_ty : ident.
+    Variable rst_ty  : ident.
+    Variable vars    : list (ident * clock).
+    Variable decl    : list ident.
+    Variable scope   : list ident.
+    Variable stLo stF : sec_state.
+
+    Hypothesis Hb : In base_ty decl.
+    Hypothesis Hr : In rst_ty decl.
+    Hypothesis Henv :
+      forall x b, In x (List.map fst vars) -> Env.find x env = Some b ->
+                  In b decl.
+    Hypothesis Hclk :
+      forall (P : global) es ck ckty,
+        Forall (wc_exp P vars) es -> clk_src vars es ck ->
+        assign_clk_type env base_ty ck = Some ckty -> st_scoped decl ckty.
+    Hypothesis Hsgs : secglobal_scoped G.
+    Hypothesis Hincl : incl decl scope.
+    Hypothesis Hwin :
+      forall s s', (stLo <= s)%positive -> (s' <= stF)%positive ->
+                   incl (minted s s') scope.
+
+    Lemma tgt_in_scope :
+      forall (cs : list SymTypes.constraint) s s',
+        (stLo <= s)%positive -> (s' <= stF)%positive ->
+        Forall (fun c => incl (snd c) (minted s s')) cs ->
+        incl (decl ++ tgt_names cs) scope.
+    Proof.
+      intros cs s s' Hlo Hhi Hc y Hy. apply in_app_or in Hy as [Hy|Hy];
+        [exact (Hincl y Hy)|].
+      unfold tgt_names in Hy. apply in_flat_map in Hy as (c & Hc1 & Hyc).
+      rewrite Forall_forall in Hc. apply (Hwin s s' Hlo Hhi).
+      exact (Hc c Hc1 y Hyc).
+    Qed.
+
+    Lemma source_types_scoped_upto_holds :
+      source_types_scoped_upto G env base_ty rst_ty vars scope stLo stF.
+    Proof.
+      intros P e ts s s' Hwc Hlo H Hhi.
+      destruct (lexp_scoped_tgt_all_wc G env base_ty rst_ty P vars decl Hb Hr
+                  Henv (Hclk P) Hsgs e Hwc ts s s' H) as (Hf & _).
+      pose proof (lexp_carried_minted_all G env base_ty rst_ty e ts s s'
+                    (minted s s') (fun y Hy => Hy) H) as Hm.
+      pose proof (tgt_in_scope (carried ts) s s' Hlo Hhi Hm) as Hs.
+      eapply Forall_impl; [|exact Hf]. intros t Ht.
+      eapply st_scoped_weaken; [exact Hs|exact Ht].
+    Qed.
+
+    Lemma source_lexps_pair :
+      forall P es ts s s',
+        Forall (wc_exp P vars) es ->
+        (stLo <= s)%positive ->
+        assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+        (s' <= stF)%positive ->
+        Forall (fun t => st_scoped scope (fst t)) ts
+        /\ constraints_scoped scope (carried ts).
+    Proof.
+      intros P es ts s s' Hwc Hlo H Hhi.
+      assert (Hall : Forall (lexp_scoped_tgt G env base_ty rst_ty decl) es).
+      { eapply Forall_wc_impl; [|exact Hwc].
+        apply Forall_forall. intros e _ Hw.
+        exact (lexp_scoped_tgt_all_wc G env base_ty rst_ty P vars decl Hb Hr
+                 Henv (Hclk P) Hsgs e Hw). }
+      destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl es Hall ts s s'
+                  H) as (Hf & Hc).
+      assert (Hmin : Forall (lexp_carried_minted G env base_ty rst_ty) es)
+        by (apply Forall_forall; intros e0 _;
+            apply (lexp_carried_minted_all G env base_ty rst_ty)).
+      pose proof (lexps_carried_minted_of G env base_ty rst_ty es Hmin ts s s'
+                    (minted s s') (fun y Hy => Hy) H) as Hm.
+      pose proof (tgt_in_scope (carried ts) s s' Hlo Hhi Hm) as Hs.
+      split.
+      - eapply Forall_impl; [|exact Hf]. intros t Ht.
+        eapply st_scoped_weaken; [exact Hs|exact Ht].
+      - eapply constraints_scoped_weaken; [exact Hs|exact Hc].
+    Qed.
+
+    Lemma source_lexps_scoped_upto_holds :
+      source_lexps_scoped_upto G env base_ty rst_ty vars scope stLo stF.
+    Proof.
+      intros P es ts s s' Hwc Hlo H Hhi.
+      exact (proj1 (source_lexps_pair P es ts s s' Hwc Hlo H Hhi)).
+    Qed.
+
+    Lemma source_lexps_carried_scoped_upto_holds :
+      source_lexps_carried_scoped_upto G env base_ty rst_ty vars scope
+        stLo stF.
+    Proof.
+      intros P es ts s s' Hwc Hlo H Hhi.
+      exact (proj2 (source_lexps_pair P es ts s s' Hwc Hlo H Hhi)).
+    Qed.
+
+  End SourceScoped.
+
 End SecLusTypingCorrectness.
