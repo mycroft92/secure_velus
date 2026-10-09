@@ -5581,4 +5581,34 @@ Import SECMONADNotations.
 
   End ClkScoped.
 
+  (** * Item 3: the conditional freshness hypothesis, discharged *)
+
+  Theorem sig_actuals_fresh_holds :
+    forall (G : secglobal) (env : Env.t ident) (scope : list ident)
+           (lo : positive),
+      (forall f sg, find_signature f G = Some sg ->
+                    signature_scope_bounded_above sg lo) ->
+      (forall y, In y scope -> name_above lo y) ->
+      (forall x b, Env.find x env = Some b -> name_above lo b) ->
+      forall f sg inp ck rst os cns sa sb,
+        find_signature f G = Some sg ->
+        Forall (caller_st env scope) inp ->
+        caller_st env scope ck ->
+        caller_st env scope rst ->
+        Forall (caller_name env scope) os ->
+        generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
+        call_subst_fresh sg inp ck rst os.
+  Proof.
+    intros G env scope lo Hb Hsc Henv f sg inp ck rst os cns sa sb Hf
+      Hinp Hck Hrst Hos _.
+    assert (Hn : forall y, caller_name env scope y -> name_above lo y).
+    { intros y [Hy|(x & Hx)]; [exact (Hsc y Hy)|exact (Henv x y Hx)]. }
+    eapply call_subst_fresh_of_above; [eapply Hb; exact Hf| | | |].
+    - eapply Forall_impl; [|exact Hinp]. intros st Hst y Hy.
+      exact (Hn y (Hst y Hy)).
+    - intros y Hy. exact (Hn y (Hck y Hy)).
+    - intros y Hy. exact (Hn y (Hrst y Hy)).
+    - eapply Forall_impl; [|exact Hos]. intros y Hy. exact (Hn y Hy).
+  Qed.
+
 End SecLusTypingCorrectness.

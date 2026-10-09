@@ -4196,3 +4196,22 @@ test (they are existentials or already keyed on the run, so they look fine).
 
 Still to do: discharge the guarded Section hypotheses themselves at a node
 (the Block A instantiation), item 8, and the composition theorem.
+
+#### DONE 2026-10-09 (later): discharges of the guarded Section hypotheses
+
+In `SecLusTypingCorrectness.v`, admit-free: `lexp_scoped_tgt_all_wc` (the
+dichotomy for well-clocked source expressions, hypotheses in the Sections'
+guarded forms), `source_{types,lexps,lexps_carried}_scoped_upto_holds` (scope =
+decl ++ window), `clk_types_scoped_holds` (needs `wc_global P`, `wc_env vars`,
+anonymous stream names not env keys, and a `cenv`/`vars` agreement),
+`sig_actuals_fresh_holds`, `eapp_fresh_prop_holds`, `lcall_fresh_prop_holds`.
+`clk_types_scoped` now takes `wc_global P`; the scalar chain, which quantifies
+over every program, carries `scalar_wcg : forall P, wc_global P` (unusable, the
+pointwise chain is the one to instantiate).
+
+Still open for the Block A instantiation: `clk_types_defined` and
+`call_anon_not_env_key` (the latter is `env_key_not_anon`; the former FAILS for a
+clock that mentions a nested call's anonymous output name -- needs either a
+program-level well-formedness assumption or a guarded restatement), `Hmv`,
+the ambients (`canonical_ambients`), the bounds `Htgtok`/`Hwf`/`Hdisj`,
+`sig_inputs_ok` (item 8), then the composition theorem.
