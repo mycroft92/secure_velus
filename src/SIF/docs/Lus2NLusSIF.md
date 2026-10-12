@@ -101,8 +101,12 @@ is the one to instantiate.
 4. **`sig_inputs_ok GL P`** — a callee's signature inputs line up with its node's
    inputs and its constraints are closed under the declared clocks.  The
    per-equation input covers call-free equations only.
-5. **Composition theorem** chaining `normalize_signatures_weaken` with
-   `lnode_noninterference_outputs_generated`.
+5. **Composition theorem**, noninterference half: chaining the result below with
+   `lnode_noninterference_outputs_generated`.  The signature half is
+   `Check.source_signature_entails` (`SecLusConstraintExport.v`): from
+   `sigs_preserved GS GT` (both Lustre legs), `Signature_entails GT GN`
+   (`to_global_signatures_entail`), and per-signature facts (source good with
+   duplicate-free scope, NLustre scoped) it gives `Signature_entails GS GN`.
 6. The signature-fold facts assume each node is typed against the naming of its
    own program.  For source nodes typed against the normalised program's naming
    only `good` and the duplicate-free scope carry over; scoped and rooted would

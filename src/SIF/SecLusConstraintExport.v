@@ -211,4 +211,32 @@ Module Check (Lat : Lattice).
       SIGPROOFS ConcreteNameGen CE.IsF CE.Clo ConcreteSecCETyping TR.Tr
       ConcreteSecLTyping L.Norm.Norm.Unnesting.
 
+  (** The signature side of the composition.  The two Lustre-to-Lustre legs
+      give [sigs_preserved] from the source global to the transcribed one; the
+      translation leg gives [Signature_entails] from there to NLustre.  The
+      source signature's call clause is then read off the composed
+      [signatures_preserved], so what it needs is only the node-local facts
+      about the source (good, duplicate-free scope) and about the NLustre
+      signature (scoped). *)
+  Lemma source_signature_entails :
+    forall GS GT GN,
+      LegU.sigs_preserved GS GT ->
+      Leg.Signature_entails GT GN ->
+      (forall f sg, SIG.find_signature f GS = Some sg ->
+          SIG.signature_good sg /\ NoDup (SIG.signature_scope sg)) ->
+      (forall f sg, SIG.find_signature f GN = Some sg -> SIG.signature_scoped sg) ->
+      Leg.Signature_entails GS GN.
+  Proof.
+    intros GS GT GN Hsp Hent Hsrc Hsc f n1 Hf.
+    destruct (Hsp f n1 Hf) as (t & Hft & Hname1 & Hp1).
+    destruct (Hent f t Hft) as (n2 & Hfn & Hn2 & Hp2 & _).
+    destruct (Hsrc f n1 Hf) as [Hgood Hnd].
+    exists n2. split; [exact Hfn|].
+    assert (Hpres : SIGPROOFS.signatures_preserved n1 n2)
+      by (eapply LegU.signatures_preserved_trans; eauto).
+    unfold Leg.Signature_head_entails. split; [|split; [exact Hpres|]].
+    - congruence.
+    - eapply Leg.Signature_call_entails_from_preserved; eauto.
+  Qed.
+
 End Check.
