@@ -1317,27 +1317,19 @@ Section StreamAmbients.
       forall x b, In x (List.map fst vars) ->
                   Env.find x env = Some b -> In b scope.
 
-    (** The clocks the argument ambients are built from have types.  Like the
-        [assign_clk_type] premises of the node level, this is a totality fact
-        about [env]: every variable a well-clocked expression can sample on is
-        declared, and every declared variable has a security name.  It is a
-        hypothesis for the same reason the ten above are -- it is discharged
-        once, at the node, and no constructor but the call reads it. *)
-    Hypothesis clk_types_defined :
-      forall (P : global) (e : exp) nck,
-        wc_exp P vars e -> In nck (nclockof e) ->
-        exists ckty, assign_clk_type env base_ty (stripname nck) = Some ckty.
+    (** The clocks the argument ambients are built from have types.  Every
+        declared variable has a security name; a source call's arguments are
+        clocked over the declared variables ([src_exp]), so their clocks are
+        typed. *)
+    Variable AN : list ident.
 
-    (** A nested call's output names are anonymous, hence not keys of [env].
-        This is the premise [assign_lexp_named_covered] documents as
-        [call_arg_fresh_not_env_key]: it cannot be proved where [env] is
-        abstract, and at the node level it is [n_nodup] together with the
-        naming pass's domain. *)
-    Hypothesis call_anon_not_env_key :
-      forall (P : global) f es' ro (anns : list LSyn.ann),
-        wc_exp P vars (Eapp f es' ro anns) ->
-        forall w g, In (Some w) (List.map stream_name anns) ->
-                    Env.find w env <> Some g.
+    Hypothesis env_total :
+      forall x ck, In (x, ck) vars -> exists b, Env.find x env = Some b.
+
+    (** A nested call's output names are the node's anonymous streams, which
+        the naming pass never put in the environment. *)
+    Hypothesis env_anon :
+      forall w b, Env.find w env = Some b -> ~ In w AN.
 
     (** The expression contract with one clock ambient per source stream.
         [clocks_covered] fixes the positional meaning of [ambs], while
@@ -1349,6 +1341,7 @@ Section StreamAmbients.
              ce xst xst' ts'' yst yst' dlt,
         wl_exp P e ->
         wc_exp P vars e ->
+        src_exp vars AN e ->
         NoDup (vars_defined eqs ++ st_ids st) ->
         (forall x,
             In x (CALLS.moved_by env st st') -> ~ In x scope) ->
@@ -1392,7 +1385,7 @@ Section StreamAmbients.
     Proof.
       intros P c is_control ambs es' eqs st st' ts sst sst'
         ce xst xst' ts'' yst yst' dlt
-        _ _ _ _ _ Htsc _ _ Hlen _ Hun Has Hgen Has' _ _ _.
+        _ _ _ _ _ _ Htsc _ _ Hlen _ Hun Has Hgen Has' _ _ _.
       rewrite unnest_exp_Econst in Hun. inversion Hun; subst; clear Hun.
       destruct
         (CALLS.generate_leqns_constraints_nil
@@ -1415,7 +1408,7 @@ Section StreamAmbients.
     Proof.
       intros P x a is_control ambs es' eqs st st' ts sst sst'
         ce xst xst' ts'' yst yst' dlt
-        _ _ _ _ _ Htsc _ _ Hlen _ Hun Has Hgen Has' _ _ _.
+        _ _ _ _ _ _ Htsc _ _ Hlen _ Hun Has Hgen Has' _ _ _.
       rewrite unnest_exp_Evar in Hun. inversion Hun; subst; clear Hun.
       destruct
         (CALLS.generate_leqns_constraints_nil
@@ -1442,8 +1435,9 @@ Section StreamAmbients.
     Proof.
       intros P op e a IH is_control ambs es' eqs st st' ts sst sst'
         ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
+        Hwl Hwc Hsx Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
         Hun Has Hgen Has' Hsat Hbnd Hlow.
+      pose proof (src_exp_imm vars AN _ _ (imm_Eunop op e a) Hsx) as Hsrc1.
       inversion Hwl; subst.
       inversion Hwc; subst.
       apply unnest_exp_Eunop_inv in Hun as (e1' & st1 & Hun & Hst & Hes').
@@ -1465,7 +1459,7 @@ Section StreamAmbients.
       exact
         (IH false ambs e1' eqs st st1 ts sst sst'
            ce xst xst' ts'' yst yst' dlt
-           H2 H1 Hnd Hmv Hcsc Htsc Hambsc Hcovered1 Hlen Hfound
+           H2 H1 Hsrc1 Hnd Hmv Hcsc Htsc Hambsc Hcovered1 Hlen Hfound
            Hun Has Hgen Has1' Hsat Hbnd Hlow).
     Qed.
 
@@ -1477,8 +1471,12 @@ Section StreamAmbients.
     Proof.
       intros P op e1 e2 a IH1 IH2 is_control
         ambs es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
+        Hwl Hwc Hsx Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
         Hun Has Hgen Has' Hsat Hbnd Hlow.
+      pose proof (src_exp_imm vars AN _ _ (imm_Ebinop_l op e1 e2 a) Hsx)
+        as Hs1.
+      pose proof (src_exp_imm vars AN _ _ (imm_Ebinop_r op e1 e2 a) Hsx)
+        as Hs2.
       inversion Hwl; subst.
       inversion Hwc; subst.
       apply unnest_exp_Ebinop_inv in Hun
@@ -1593,7 +1591,7 @@ Section StreamAmbients.
       destruct
         (IH1 false [amb] f1 eqs1 st st1 [a1] sst sa
            ce1 xst xst1 [b1] yst ya dlt
-           H4 H3 Hnd1 Hmv1
+           H4 H3 Hs1 Hnd1 Hmv1
            (eq_ind_r (fun cs => constraints_scoped scope cs) Hcsc1 Hcar1)
            Ha1scs Hambscs
            Hcovered1 (@Coq.Init.Logic.eq_refl nat 1) Hfound1
@@ -1617,7 +1615,7 @@ Section StreamAmbients.
       destruct
         (IH2 false [amb] f2 eqs2 st1 st' [a2] sa sb
            ce2 xst1 xst' [b2] ya yb dlt1
-           H5 H8 Hnd2 Hmv2
+           H5 H8 Hs2 Hnd2 Hmv2
            (eq_ind_r (fun cs => constraints_scoped scope cs) Hcsc2 Hcar2)
            Ha2scs Hambscs
            Hcovered2 (@Coq.Init.Logic.eq_refl nat 1) Hfound
@@ -1730,6 +1728,7 @@ Section StreamAmbients.
              ce xst xst' ts'' yst yst' dlt,
         Forall (wl_exp P) es ->
         Forall (wc_exp P vars) es ->
+        Forall (src_exp vars AN) es ->
         NoDup (vars_defined (List.concat eqs) ++ st_ids st) ->
         (forall x,
             In x (CALLS.moved_by env st st') -> ~ In x scope) ->
@@ -1771,7 +1770,7 @@ Section StreamAmbients.
       induction Hall as [|e es IHe IHes IH];
         intros ic ambs es' eqs st st' ts sst sst'
           ce xst xst' ts'' yst yst' dlt
-          Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
+          Hwl Hwc Hsx Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
           Hun Has Hgen Has' Hsat Hbnd Hlow.
       - destruct
           (CALLS.map_bind2_unnest_nil P ic es' eqs st st' Hun)
@@ -1800,6 +1799,7 @@ Section StreamAmbients.
              (@Coq.Init.Logic.eq_refl (list constraint) []) Hlen Htsc).
       - inversion Hwl as [|e0 es0 Hwle Hwles]; subst.
         inversion Hwc as [|e0 es0 Hwce Hwces]; subst.
+        inversion Hsx as [|e0' es0' Hsrce Hsrces]; subst.
         destruct
           (CALLS.map_bind2_unnest_cons P ic e es es' eqs st st' Hun)
           as (f1 & eq1 & st1 & fr & eqsr & Hun1 & Hunr & Hes' & Heqs).
@@ -1890,7 +1890,7 @@ Section StreamAmbients.
         destruct
           (IHe ic ambs1 f1 eq1 st st1 t sst sa
              ce1 xst xst1 u yst ya dlt
-             Hwle Hwce Hnd1 Hmv1 Hcsc1 Htsc1 Hambsc1 Hcovered1
+             Hwle Hwce Hsrce Hnd1 Hmv1 Hcsc1 Htsc1 Hambsc1 Hcovered1
              Hambs1len Hfound1 Hun1 Ht Hgen1 Hu Hsat1
              ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
@@ -1909,7 +1909,7 @@ Section StreamAmbients.
         destruct
           (IH ic ambs2 fr eqsr st1 st' r sa sst'
              ce2 xst1 xst' v ya yst' dlt1
-             Hwles Hwces Hnd2 Hmv2 Hcsc2 Htsc2 Hambsc2 Hcovered2
+             Hwles Hwces Hsrces Hnd2 Hmv2 Hcsc2 Htsc2 Hambsc2 Hcovered2
              Hambs2len Hfound Hunr Hr Hgen2 Hv Hsat2' Hbnd
              ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 10 with sec))
           as (dlt2 & Hres2).
@@ -2255,6 +2255,7 @@ Section StreamAmbients.
                         = Some ckty) ->
         Forall (wl_exp P) es ->
         Forall (wc_exp P vars) es ->
+        Forall (src_exp vars AN) es ->
         NoDup (vars_defined (List.concat eqs) ++ st_ids st) ->
         (forall x, In x (CALLS.moved_by env st st') -> ~ In x scope) ->
         constraints_scoped scope (carried ts) ->
@@ -2277,11 +2278,11 @@ Section StreamAmbients.
     Proof.
       intros P es ins bck sub bckty ic es' eqs st st' ts sst sst'
         ce xst xst' ts'' yst yst' dlt
-        Hall Hbk Hwi Hdef Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hlen Hfound
+        Hall Hbk Hwi Hdef Hwl Hwc Hsx Hnd Hmv Hcsc Htsc Hambsc Hlen Hfound
         Hun Has Hgen Has' Hsat Hbnd Hlow.
       eapply (carries_list_streams_intro P es Hall ic
                 (call_arg_ambients sub bckty (nclocksof es) ins));
-        [exact Hwl|exact Hwc|exact Hnd|exact Hmv|exact Hcsc|exact Htsc
+        [exact Hwl|exact Hwc|exact Hsx|exact Hnd|exact Hmv|exact Hcsc|exact Htsc
         |exact Hambsc| | |exact Hfound|exact Hun|exact Has|exact Hgen
         |exact Has'|exact Hsat|exact Hbnd|exact Hlow].
       - (** the arguments' clocks are the instantiated formals' *)
@@ -2301,8 +2302,11 @@ Section StreamAmbients.
     Proof.
       intros P es x b [tys ck] Hall is_control
         ambs es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
+        Hwl Hwc Hsx Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
         Hun Has Hgen Has' Hsat Hbnd Hlow.
+      pose proof (src_exp_imm_forall vars AN es (Ewhen es x b (tys, ck))
+                    (fun e' He' => imm_Ewhen es x b (tys, ck) e' He') Hsx)
+        as Hsrces.
       inversion Hwl; subst.
       inversion Hwc; subst.
       apply unnest_exp_Ewhen_inv in Hun as (es1 & Hunn & Hes').
@@ -2355,7 +2359,7 @@ Section StreamAmbients.
       destruct
         (carries_list_streams_intro P es Hall false ambs ess eqss st st'
            tes sst sa ce xst xst' tes'' yst yst' dlt
-           H2 H4 Hnd Hmv Hcsc Htes_scoped Hambsc Hcovered_es Hlen_tes
+           H2 H4 Hsrces Hnd Hmv Hcsc Htes_scoped Hambsc Hcovered_es Hlen_tes
            Hfound Hmap Htes Hgen Htes'' Hsat
            ltac:(rewrite <- Hstate; exact Hbnd) Hlow)
         as (dlt' & Hres).
@@ -2670,8 +2674,14 @@ Section StreamAmbients.
     Proof.
       intros P ckid es1 es2 tys cl Hall1 Hall2
         ambs es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
+        Hwl Hwc Hsx Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
         Hun Has Hgen Has' Hsat Hbnd Hlow.
+      pose proof (src_exp_imm_forall vars AN es1 (Emerge ckid es1 es2 (tys, cl))
+                    (fun e' He' => imm_Emerge_t ckid es1 es2 (tys, cl) e' He') Hsx)
+        as Hsrc1.
+      pose proof (src_exp_imm_forall vars AN es2 (Emerge ckid es1 es2 (tys, cl))
+                    (fun e' He' => imm_Emerge_f ckid es1 es2 (tys, cl) e' He') Hsx)
+        as Hsrc2.
       inversion Hwl; subst.
       inversion Hwc; subst.
       apply unnest_exp_Emerge_control_inv in Hun
@@ -2820,7 +2830,7 @@ Section StreamAmbients.
       destruct
         (carries_list_streams_intro P es1 Hall1 true on_ambs
            f1 eqs1 st st1 tes1 sst sb ce1 xst xst1 tes1'' yst yst dlt
-           H4 H5 Hnd1 Hmv1 Hcsc1 Htsc1 Hon_scoped Hcovered1 Hon_len1
+           H4 H5 Hsrc1 Hnd1 Hmv1 Hcsc1 Htsc1 Hon_scoped Hcovered1 Hon_len1
            Hfound1 Hun1 Htes1 Hgen1 Htes1'' Hsat1 ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
         as (dlt1 & Hres1).
@@ -2839,7 +2849,7 @@ Section StreamAmbients.
       destruct
         (carries_list_streams_intro P es2 Hall2 true on_ambs
            f2 eqs2 st1 st' tes2 sb sc ce2 xst1 xst' tes2'' yst yst dlt1
-           H6 H9 Hnd2 Hmv2 Hcsc2 Htsc2 Hon_scoped Hcovered2 Hon_len2
+           H6 H9 Hsrc2 Hnd2 Hmv2 Hcsc2 Htsc2 Hon_scoped Hcovered2 Hon_len2
            Hfound Hun2 Htes2 Hgen2 Htes2'' Hsat2' ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
         as (dlt2 & Hres2).
@@ -2996,8 +3006,16 @@ Section StreamAmbients.
     Proof.
       intros P e0 es1 es2 tys ck IH0 Hall1 Hall2
         ambs es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
+        Hwl Hwc Hsx Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
         Hun Has Hgen Has' Hsat Hbnd Hlow.
+      pose proof (src_exp_imm vars AN e0 (Eite e0 es1 es2 (tys, ck))
+                    (imm_Eite_c e0 es1 es2 (tys, ck)) Hsx) as Hsrc0.
+      pose proof (src_exp_imm_forall vars AN es1 (Eite e0 es1 es2 (tys, ck))
+                    (fun e' He' => imm_Eite_t e0 es1 es2 (tys, ck) e' He') Hsx)
+        as Hsrc1.
+      pose proof (src_exp_imm_forall vars AN es2 (Eite e0 es1 es2 (tys, ck))
+                    (fun e' He' => imm_Eite_f e0 es1 es2 (tys, ck) e' He') Hsx)
+        as Hsrc2.
       inversion Hwl; subst.
       inversion Hwc; subst.
       apply unnest_exp_Eite_control_inv in Hun
@@ -3216,7 +3234,7 @@ Section StreamAmbients.
       destruct
         (IH0 false [clock_amb] f0 eqs0 st st0 [th] sst sa
            ce0 xst xst0 [th''] yst yst dlt
-           H4 H5 Hnd0a Hmv0
+           H4 H5 Hsrc0 Hnd0a Hmv0
            (eq_ind_r (fun cs => constraints_scoped scope cs) Hcsc0
               (CALLS.carried_single th))
            Hth_scopeds Hclock_amb_scopeds He0_covered
@@ -3274,7 +3292,7 @@ Section StreamAmbients.
         (carries_list_streams_intro P es1 Hall1 true (amb :: ambs0)
            f1 eqs1 st0 st1 (tf :: tes1r) sa sc
            ce1 xst0 xst1 tes1'' yst yst dlt0
-           H6 H11 Hnd1 Hmv1 Hcsc1 Htsc1
+           H6 H11 Hsrc1 Hnd1 Hmv1 Hcsc1 Htsc1
            Hambsc Hbranch_covered1 Hbranch_len1
            Hfound1 Hun1 Htes1 Hgen1 Htes1'' Hsat1' ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
@@ -3297,7 +3315,7 @@ Section StreamAmbients.
       destruct
         (carries_list_streams_intro P es2 Hall2 true (amb :: ambs0)
            f2 eqs2 st1 st' tes2 sc sd ce2 xst1 xst' tes2'' yst yst dlt1
-           H7 H12 Hnd2 Hmv2 Hcsc2 Htsc2
+           H7 H12 Hsrc2 Hnd2 Hmv2 Hcsc2 Htsc2
            Hambsc Hbranch_covered2 Hbranch_len2
            Hfound Hun2 Htes2 Hgen2 Htes2'' Hsat2' ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
@@ -3563,8 +3581,14 @@ Section StreamAmbients.
     Proof.
       intros P ckid es1 es2 tys cl Hall1 Hall2
         ambs es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
+        Hwl Hwc Hsx Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
         Hun Has Hgen Has' Hsat Hbnd Hlow.
+      pose proof (src_exp_imm_forall vars AN es1 (Emerge ckid es1 es2 (tys, cl))
+                    (fun e' He' => imm_Emerge_t ckid es1 es2 (tys, cl) e' He') Hsx)
+        as Hsrc1.
+      pose proof (src_exp_imm_forall vars AN es2 (Emerge ckid es1 es2 (tys, cl))
+                    (fun e' He' => imm_Emerge_f ckid es1 es2 (tys, cl) e' He') Hsx)
+        as Hsrc2.
       inversion Hwl; subst.
       inversion Hwc; subst.
       pose proof Hun as Hunm. pose proof Hnd as Hnd0.
@@ -3771,7 +3795,7 @@ Section StreamAmbients.
       destruct
         (carries_list_streams_intro P es1 Hall1 true on_ambs
            f1 eqs1 st st1 tes1 sst sb ce1 xstd xstm ts1x yst yst dlt
-           H4 H5 Hnd1 Hmv1 Hcsc1 Htsc1 Hon_scoped Hcovered1 Hon_len1
+           H4 H5 Hsrc1 Hnd1 Hmv1 Hcsc1 Htsc1 Hon_scoped Hcovered1 Hon_len1
            Hfound1 Hun1 Htes1 Hgen1 Ht1y Hsat1 ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
         as (dlt1 & Hres1).
@@ -3786,7 +3810,7 @@ Section StreamAmbients.
       destruct
         (carries_list_streams_intro P es2 Hall2 true on_ambs
            f2 eqs2 st1 st2 tes2 sb sc ce2 xstm xst' ts2x yst yst dlt1
-           H6 H9 Hnd2 Hmv2 Hcsc2 Htsc2 Hon_scoped Hcovered2 Hon_len2
+           H6 H9 Hsrc2 Hnd2 Hmv2 Hcsc2 Htsc2 Hon_scoped Hcovered2 Hon_len2
            Hfound2 Hun2 Htes2 Hgen2 Ht2y Hsat2' ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
         as (dlt2 & Hres2).
@@ -4259,8 +4283,16 @@ Section StreamAmbients.
     Proof.
       intros P e0 es1 es2 tys ck IH0 Hall1 Hall2
         ambs es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
+        Hwl Hwc Hsx Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
         Hun Has Hgen Has' Hsat Hbnd Hlow.
+      pose proof (src_exp_imm vars AN e0 (Eite e0 es1 es2 (tys, ck))
+                    (imm_Eite_c e0 es1 es2 (tys, ck)) Hsx) as Hsrc0.
+      pose proof (src_exp_imm_forall vars AN es1 (Eite e0 es1 es2 (tys, ck))
+                    (fun e' He' => imm_Eite_t e0 es1 es2 (tys, ck) e' He') Hsx)
+        as Hsrc1.
+      pose proof (src_exp_imm_forall vars AN es2 (Eite e0 es1 es2 (tys, ck))
+                    (fun e' He' => imm_Eite_f e0 es1 es2 (tys, ck) e' He') Hsx)
+        as Hsrc2.
       inversion Hwl; subst.
       inversion Hwc; subst.
       pose proof Hun as Hunm. pose proof Hnd as Hnd0.
@@ -4533,7 +4565,7 @@ Section StreamAmbients.
       destruct
         (IH0 false [clock_amb] f0 eqs0 st st0 [th] sst sa
            ce0 xstd xst0s [th''] yst yst dlt
-           H4 H5 Hnd0a Hmv0
+           H4 H5 Hsrc0 Hnd0a Hmv0
            (eq_ind_r (fun cs => constraints_scoped scope cs) Hcsc0
               (CALLS.carried_single th))
            Hth_scopeds Hclock_amb_scopeds He0_covered
@@ -4589,7 +4621,7 @@ Section StreamAmbients.
         (carries_list_streams_intro P es1 Hall1 true (amb :: ambs0)
            f1 eqs1 st0 st1 (tf :: tes1r) sa sc
            ce1 xst0s xstm ts1x yst yst dlt0
-           H6 H11 Hnd1 Hmv1 Hcsc1 Htsc1
+           H6 H11 Hsrc1 Hnd1 Hmv1 Hcsc1 Htsc1
            Hambsc Hbranch_covered1 Hbranch_len1
            Hfound1 Hun1 Htes1 Hgen1 Ht1y Hsat1' ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
@@ -4612,7 +4644,7 @@ Section StreamAmbients.
       destruct
         (carries_list_streams_intro P es2 Hall2 true (amb :: ambs0)
            f2 eqs2 st1 st2 tes2 sc sd ce2 xstm xst' ts2x yst yst dlt1
-           H7 H12 Hnd2 Hmv2 Hcsc2 Htsc2
+           H7 H12 Hsrc2 Hnd2 Hmv2 Hcsc2 Htsc2
            Hambsc Hbranch_covered2 Hbranch_len2
            Hfound2 Hun2 Htes2 Hgen2 Ht2y Hsat2' ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
@@ -5198,8 +5230,14 @@ Section StreamAmbients.
     Proof.
       intros P ic e0s es anns Hall0 Hall1
         ambs es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
+        Hwl Hwc Hsx Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
         Hun Has Hgen Has' Hsat Hbnd Hlow.
+      pose proof (src_exp_imm_forall vars AN e0s (Efby e0s es anns)
+                    (fun e' He' => imm_Efby_0 e0s es anns e' He') Hsx)
+        as Hsrc1.
+      pose proof (src_exp_imm_forall vars AN es (Efby e0s es anns)
+                    (fun e' He' => imm_Efby_1 e0s es anns e' He') Hsx)
+        as Hsrc2.
       inversion Hwl; subst.
       inversion Hwc; subst.
       pose proof Hun as Hunm. pose proof Hnd as Hnd0.
@@ -5382,7 +5420,7 @@ Section StreamAmbients.
       destruct
         (carries_list_streams_intro P e0s Hall0 false ambs
            ess0 eqss0 st st1 ts0 sst sa ce1 xstd xstm ts0x yst yst dlt
-           H2 H3 Hnd1 Hmv1 Hcsc0 Htsc0 Hambsc Hcov0 Hlen0
+           H2 H3 Hsrc1 Hnd1 Hmv1 Hcsc0 Htsc0 Hambsc Hcov0 Hlen0
            Hfound1 Hmap0 Hts0 Hgen1 Ht0y Hsat0 ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
         as (dlt1 & Hres1).
@@ -5397,7 +5435,7 @@ Section StreamAmbients.
       destruct
         (carries_list_streams_intro P es Hall1 false ambs
            ess1 eqss1 st1 st2 us sa sb ce2 xstm xst' usx yst yst dlt1
-           H4 H7 Hnd2 Hmv2 Hcsc1 Htsc1 Hambsc Hcov1 Hlen1
+           H4 H7 Hsrc2 Hnd2 Hmv2 Hcsc1 Htsc1 Hambsc Hcov1 Hlen1
            Hfound2 Hmap1 Hus Hgen2 Huy Hsat1' ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
         as (dlt2 & Hres2).
@@ -5842,8 +5880,14 @@ Section StreamAmbients.
     Proof.
       intros P ic e0s es anns Hall0 Hall1
         ambs es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
+        Hwl Hwc Hsx Hnd Hmv Hcsc Htsc Hambsc Hcovered Hlen Hfound
         Hun Has Hgen Has' Hsat Hbnd Hlow.
+      pose proof (src_exp_imm_forall vars AN e0s (Earrow e0s es anns)
+                    (fun e' He' => imm_Earrow_0 e0s es anns e' He') Hsx)
+        as Hsrc1.
+      pose proof (src_exp_imm_forall vars AN es (Earrow e0s es anns)
+                    (fun e' He' => imm_Earrow_1 e0s es anns e' He') Hsx)
+        as Hsrc2.
       inversion Hwl; subst.
       inversion Hwc; subst.
       pose proof Hun as Hunm. pose proof Hnd as Hnd0.
@@ -6026,7 +6070,7 @@ Section StreamAmbients.
       destruct
         (carries_list_streams_intro P e0s Hall0 false ambs
            ess0 eqss0 st st1 ts0 sst sa ce1 xstd xstm ts0x yst yst dlt
-           H2 H3 Hnd1 Hmv1 Hcsc0 Htsc0 Hambsc Hcov0 Hlen0
+           H2 H3 Hsrc1 Hnd1 Hmv1 Hcsc0 Htsc0 Hambsc Hcov0 Hlen0
            Hfound1 Hmap0 Hts0 Hgen1 Ht0y Hsat0 ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
         as (dlt1 & Hres1).
@@ -6041,7 +6085,7 @@ Section StreamAmbients.
       destruct
         (carries_list_streams_intro P es Hall1 false ambs
            ess1 eqss1 st1 st2 us sa sb ce2 xstm xst' usx yst yst dlt1
-           H4 H7 Hnd2 Hmv2 Hcsc1 Htsc1 Hambsc Hcov1 Hlen1
+           H4 H7 Hsrc2 Hnd2 Hmv2 Hcsc1 Htsc1 Hambsc Hcov1 Hlen1
            Hfound2 Hmap1 Hus Hgen2 Huy Hsat1' ltac:(eauto 4 with sec)
            ltac:(eapply sec_le_trans; [exact Hlow|]; eauto 6 with sec))
         as (dlt2 & Hres2).
@@ -6506,7 +6550,8 @@ Section StreamAmbients.
         st_scoped scope amb ->
         clocks_covered (clockof e1) [amb] ->
         state_clocks_found st' ->
-        wl_exp P e1 -> wc_exp P vars e1 -> numstreams e1 = 1 ->
+        wl_exp P e1 -> wc_exp P vars e1 -> src_exp vars AN e1 ->
+        numstreams e1 = 1 ->
         unnest_reset (unnest_exp P true) (Some e1) st
           = ((Some (Evar r an), eqs3), st') ->
         Env.find r env = Some rty ->
@@ -6527,7 +6572,7 @@ Section StreamAmbients.
           /\ constraints_scoped (scope ++ CALLS.moved_by env st st') ce.
     Proof.
       intros P e1 r an rty eqs3 st st' a1 sst sst' ce xst xst' yst amb dlt
-        Hcar Hambsc Hcov Hfound Hwl Hwc Hns Hun Hr Hnd Hmv Hty Hsc Hsct
+        Hcar Hambsc Hcov Hfound Hwl Hwc Hsx Hns Hun Hr Hnd Hmv Hty Hsc Hsct
         Hgen Hsat Hbnd Hlow.
       pose proof Hun as Hun0.
       destruct (unnest_exp P true e1 st) as [[es' eqs1] st1] eqn:Hk.
@@ -6552,7 +6597,7 @@ Section StreamAmbients.
             by (constructor; [exact Hambsc|constructor]).
         pose proof (Hcar true [amb] [Evar r an] eqs3 st st' [a1] sst sst'
                       ce xst xst' [(([rty] : ST), [])] yst yst dlt
-                      Hwl Hwc Hnd Hmv Hsc Hsts Hamb1 Hcov
+                      Hwl Hwc Hsx Hnd Hmv Hsc Hsts Hamb1 Hcov
                       ltac:(reflexivity) Hfound Hk0 Hty Hgen Hasr Hsat Hbnd Hlow)
           as Hres.
         destruct Hres as (dlt' & Hoff & Hce & Hrel & Hscope & Hts).
@@ -6616,6 +6661,7 @@ Section StreamAmbients.
           as (dlt1 & Hoff1 & Hce1 & Hrel1 & Hscope1 & Hts1).
         { exact Hwl. }
         { exact Hwc. }
+        { exact Hsx. }
         { exact Hnd1. }
         { intros y Hy. apply Hmv.
           apply (CALLS.moved_by_prefix_local env st st1 st' Hf1). exact Hy. }
@@ -6748,7 +6794,7 @@ Section StreamAmbients.
     Proof.
       intros P ic f es er anns Hwcg Hsigin Halls Hallr
         ambs es' eqs st st' ts sst sst' ce xst xst' ts'' yst yst' dlt
-        Hwl Hwc Hnd Hmv Hsc Hsts Hambsc Hcovered Hlen Hfound
+        Hwl Hwc Hsx Hnd Hmv Hsc Hsts Hambsc Hcovered Hlen Hfound
         Hun Has Hgen Has' Hcar Hbnd Hlow.
       pose proof Hwl as Hwl0. pose proof Hwc as Hwc0.
       assert (anns <> []) as Hanne.
@@ -6757,6 +6803,11 @@ Section StreamAmbients.
             pose proof (n_outgt0 nn); simpl in H; lia end. }
       assert (Forall (wl_exp P) es) as Hwles by (inv Hwl0; assumption).
       assert (Forall (wc_exp P vars) es) as Hwces by (inv Hwc0; assumption).
+      assert (Forall (src_exp vars AN) es) as Hsrces
+        by (eapply src_exp_imm_forall; [|exact Hsx];
+            intros e' He'; exact (imm_Eapp_arg f es er anns e' He')).
+      destruct (src_exp_loc vars AN _ Hsx) as (Hanon & Hargcl).
+      cbn in Hargcl.
 
       (** the clocking data the ambients are built from *)
       assert (exists nd bck sub,
@@ -6995,8 +7046,9 @@ Section StreamAmbients.
         as Hdef.
       { intros nck Hnck. unfold nclocksof in Hnck.
         apply in_flat_map in Hnck as (e & He & Hne).
-        eapply clk_types_defined; [|exact Hne].
-        rewrite Forall_forall in Hwces. exact (Hwces e He). }
+        rewrite Forall_forall in Hargcl.
+        exact (nclockof_types_defined env base_ty vars e (Hargcl e He)
+                 env_total nck Hne). }
 
       (** and each named argument stream carries its own security name, which
           is what makes the augmentation's actuals cover the callee's clocks *)
@@ -7007,8 +7059,13 @@ Section StreamAmbients.
       { eapply (assign_lexps_named_covered P GL env base_ty rst_ty vars es
                   Hwles Hwces); [|exact Hargs].
         intros e f0 es0 ro0 anns0 He Heq w g Hw.
-        rewrite Forall_forall in Hwces. subst e.
-        exact (call_anon_not_env_key P f0 es0 ro0 anns0 (Hwces _ He) w g Hw). }
+        subst e.
+        destruct (anon_streams_name w anns0 Hw) as (a & Ha).
+        intro Hf.
+        exact (env_anon w g Hf
+                 (Hanon w a
+                    (nested_call_name_in_anon_in f es er anns _ f0 es0 ro0
+                       anns0 w a He (@Coq.Init.Logic.eq_refl _ _) Ha))). }
       assert (List.length argts = List.length (nclocksof es)) as Hlargts
           by exact (Forall2_length _ _ _ Hnamed).
 
@@ -7038,6 +7095,7 @@ Section StreamAmbients.
       { exact Hdef. }
       { exact Hwles. }
       { exact Hwces. }
+      { exact Hsrces. }
       { exact Hnd1. }
       { intros y Hy. apply Hmv.
         apply (CALLS.moved_by_prefix_local env st st1 st' Hf1'). exact Hy. }
@@ -7123,6 +7181,8 @@ Section StreamAmbients.
           apply single_inv in Hsg1 as (? & ?); subst t1 stb.
           assert (wl_exp P e1) as Hwle1 by (inv Hwl0; assumption).
           assert (wc_exp P vars e1) as Hwce1 by (inv Hwc0; assumption).
+          assert (src_exp vars AN e1) as Hsrce1
+            by (eapply src_exp_imm; [apply imm_Eapp_rst|exact Hsx]).
           assert (numstreams e1 = 1) as Hns1 by (inv Hwl0; assumption).
           assert (st_scoped scope (fst a1)) as Hsca1'.
           { assert (Forall (fun t => st_scoped scope (fst t)) [a1]) as Hf
@@ -7168,6 +7228,7 @@ Section StreamAmbients.
           { exact Hfound3. }
           { exact Hwle1. }
           { exact Hwce1. }
+          { exact Hsrce1. }
           { exact Hns1. }
           { exact Hunr. }
           { exact Hrty. }

@@ -1772,6 +1772,16 @@ Import UNN.Fresh.Tactics.
         forall w g, In (Some w) (List.map stream_name anns) ->
                     Env.find w env <> Some g.
 
+    (** The source-expression facts the pointwise call case reads
+        ([src_exp]). *)
+    Variable AN : list ident.
+
+    Hypothesis env_total :
+      forall x ck, In (x, ck) vars -> exists b, Env.find x env = Some b.
+
+    Hypothesis env_anon :
+      forall w b, Env.find w env = Some b -> ~ In w AN.
+
     (** Every signature's clock and reset formals are sources of all of its
         constraints -- what makes a satisfied instantiation bound the call's
         outputs, so the call rule derives that bound instead of assuming it. *)
@@ -2030,6 +2040,7 @@ Import UNN.Fresh.Tactics.
         CALLS.sig_inputs_ok GL P ->
         Forall (wl_equation P) eqs ->
         Forall (wc_equation P vars) eqs ->
+        Forall (fun eq => Forall (src_exp vars AN) (snd eq)) eqs ->
         NoDup (vars_defined (List.concat eqss) ++ st_ids st) ->
         (forall x, In x (moved_by env st st') -> ~ In x scope) ->
         (forall eq, In eq eqs ->
@@ -2053,7 +2064,7 @@ Import UNN.Fresh.Tactics.
     Proof.
       induction eqs as [|eq eqs IH];
         intros eqss st st' ce xst xst' cet yst yst' dlt
-          Hwcg Hsigin Hwl Hwc Hnd Hmv Hamb Hfound Hbs0 Hcesc
+          Hwcg Hsigin Hwl Hwc Hsx Hnd Hmv Hamb Hfound Hbs0 Hcesc
           Hun Hgen Hgent Hsat Hbnd Hlow.
       - apply map_bind_unnest_equation_nil in Hun as (Hq1 & Hq2); subst.
         simpl List.concat in Hgent.
@@ -2062,6 +2073,7 @@ Import UNN.Fresh.Tactics.
         split; constructor.
       - inversion Hwl as [|eqa eqsa Hwl1 Hwlr]; subst.
         inversion Hwc as [|eqb eqsb Hwc1 Hwcr]; subst.
+        inversion Hsx as [|eqc eqsc Hsx1 Hsxr]; subst.
         apply map_bind_unnest_equation_cons in Hun
           as (eq1 & st1 & eqsr & Hun1 & Hunr & ?); subst.
         assert (st_follows st st1) as Hf1
@@ -2135,12 +2147,13 @@ Import UNN.Fresh.Tactics.
              env_inj sig_good sig_nodup source_types_scoped
              source_lexps_scoped rst_ty_scoped clk_types_scoped
              env_range_scoped source_lexps_carried_scoped sig_scoped
-             sig_actuals_fresh clk_types_defined call_anon_not_env_key
+             sig_actuals_fresh AN env_total env_anon
              sig_rooted P eq Hwcg Hsigin
              (As eq) eq1 st st1 c1 xst xst1 ct1 yst ystm dlt)
           as (dlt1 & Hoff1 & Hce1 & Hscope1).
         { exact Hwl1. }
         { exact Hwc1. }
+        { exact Hsx1. }
         { exact Hndh. }
         { intros y Hy.
           exact (Hmv y (moved_by_prefix env st st1 st' Hf2 y Hy)). }
@@ -2163,6 +2176,7 @@ Import UNN.Fresh.Tactics.
         { exact Hsigin. }
         { exact Hwlr. }
         { exact Hwcr. }
+        { exact Hsxr. }
         { exact Hndt. }
         { intros y Hy.
           exact (Hmv y (moved_by_suffix env st st1 st' Hf1 y Hy)). }
@@ -2332,6 +2346,7 @@ Import UNN.Fresh.Tactics.
         CALLS.sig_inputs_ok GL P ->
         Forall (wl_equation P) eqs ->
         Forall (wc_equation P vars) eqs ->
+        Forall (fun eq => Forall (src_exp vars AN) (snd eq)) eqs ->
         NoDup (vars_defined eqs') ->
         (forall x, In x (moved_by env init_st st') -> ~ In x scope) ->
         (forall eq, In eq eqs ->
@@ -2354,7 +2369,7 @@ Import UNN.Fresh.Tactics.
           /\ constraints_scoped (scope ++ moved_by env init_st st') cet.
     Proof.
       intros P eqs eqs' st' ce xst xst' cet yst yst' dlt
-        Hwcg Hsigin Hwl Hwc Hnd Hmv Hamb Hfound Hbs0 Hcesc Hun Hgen Hgent
+        Hwcg Hsigin Hwl Hwc Hsx Hnd Hmv Hamb Hfound Hbs0 Hcesc Hun Hgen Hgent
         Hsat Hbnd Hlow.
       apply unnest_equations_inv in Hun as (eqss & Hmap & ?); subst.
       assert (NoDup
@@ -2365,7 +2380,7 @@ Import UNN.Fresh.Tactics.
         exact Hnd. }
       exact
         (eqns_carries_streams P eqs eqss (init_st : fresh_st (type * clock))
-           st' ce xst xst' cet yst yst' dlt Hwcg Hsigin Hwl Hwc Hnd0 Hmv Hamb
+           st' ce xst xst' cet yst yst' dlt Hwcg Hsigin Hwl Hwc Hsx Hnd0 Hmv Hamb
            Hfound Hbs0 Hcesc Hmap Hgen Hgent Hsat Hbnd Hlow).
     Qed.
 
@@ -2375,6 +2390,7 @@ Import UNN.Fresh.Tactics.
         CALLS.sig_inputs_ok GL P ->
         Forall (wl_equation P) eqs ->
         Forall (wc_equation P vars) eqs ->
+        Forall (fun eq => Forall (src_exp vars AN) (snd eq)) eqs ->
         NoDup (vars_defined eqs') ->
         (forall x, In x (moved_by env init_st st') -> ~ In x scope) ->
         (forall eq, In eq eqs ->
@@ -2393,11 +2409,11 @@ Import UNN.Fresh.Tactics.
         preserves_on scope ce cet.
     Proof.
       intros P eqs eqs' st' ce xst xst' cet yst yst'
-        Hwcg Hsigin Hwl Hwc Hnd Hmv Hamb Hfound Hbs0 Hcesc Hun Hgen Hgent
+        Hwcg Hsigin Hwl Hwc Hsx Hnd Hmv Hamb Hfound Hbs0 Hcesc Hun Hgen Hgent
         Hbnd Hlow dlt Hsat.
       destruct
         (node_carries_streams P eqs eqs' st' ce xst xst' cet yst yst' dlt
-           Hwcg Hsigin Hwl Hwc Hnd Hmv Hamb Hfound Hbs0 Hcesc
+           Hwcg Hsigin Hwl Hwc Hsx Hnd Hmv Hamb Hfound Hbs0 Hcesc
            Hun Hgen Hgent Hsat Hbnd Hlow)
         as (dlt' & Hoff & Hsat' & Hscoped).
       exists dlt'. split.
@@ -3119,6 +3135,7 @@ Import UNN.Fresh.Tactics.
         cenv = lnode_clock_env (unnest_node P n Hwl Hpref) ->
         Forall (wl_equation P) n.(n_eqs) ->
         Forall (wc_equation P vars) n.(n_eqs) ->
+        Forall (fun eq => Forall (src_exp vars AN) (snd eq)) n.(n_eqs) ->
         (forall x,
             In x (moved_by env init_st
                     (snd (unnest_equations P n.(n_eqs) init_st))) ->
@@ -3137,7 +3154,7 @@ Import UNN.Fresh.Tactics.
           (unnest_node P n Hwl Hpref).(n_eqs) st0 = OK (cet, ct1') ->
         preserves_on scope ce cet.
     Proof.
-      intros P n Hwl Hpref ce cet st0 ct1 ct1' Hwcg Hsigin Hcenv Hwle Hwce
+      intros P n Hwl Hpref ce cet st0 ct1 ct1' Hwcg Hsigin Hcenv Hwle Hwce Hsxn
         Hmv Hamb Hbs Hcesc Hbnd Hlow Hsrc Htgt.
       assert (state_clocks_found cenv
                 (snd (unnest_equations P n.(n_eqs) init_st))) as Hfound
@@ -3158,7 +3175,7 @@ Import UNN.Fresh.Tactics.
                 eqs' st0 = OK (cet, ct1')) as Htgt'
           by (rewrite Hcenv, <- Heqs'; exact Htgt).
       eapply node_carries_preserves_streams;
-        [exact Hwcg|exact Hsigin|exact Hwle|exact Hwce
+        [exact Hwcg|exact Hsigin|exact Hwle|exact Hwce|exact Hsxn
         |exact (unnest_node_equations_nodup P n Hwl Hpref eqs' st'
                   (@Coq.Init.Logic.eq_sym _ _ _ Hr))
         | |exact Hamb| |exact Hbs|exact Hcesc
@@ -3685,6 +3702,7 @@ Import UNN.Fresh.Tactics.
         Forall (unnested_equation Q) (unnest_node P n Hwl Hpref).(n_eqs) ->
         Forall (wl_equation P) n.(n_eqs) ->
         Forall (wc_equation P vars) n.(n_eqs) ->
+        Forall (fun eq => Forall (src_exp vars AN) (snd eq)) n.(n_eqs) ->
         (forall y,
             In y (moved_by env init_st
                     (snd (unnest_equations P n.(n_eqs) init_st))) ->
@@ -3727,7 +3745,7 @@ Import UNN.Fresh.Tactics.
         sig_head_weakens sgS sgT.
     Proof.
       intros P Q n Hwl Hpref envs aux accS sgS stS0 stS1 sgT stT0 stT1
-        Hwcg Hsigin Hfind Haux Hcenv Hunt Hwle Hwce Hmv Hamb Hbs
+        Hwcg Hsigin Hfind Haux Hcenv Hunt Hwle Hwce Hsxn Hmv Hamb Hbs
         Hlow0 Htgtok Hwf Hdisj Hgood1 Hnd1 Hgood2 Hsc2 Hincl Hef Hlf Hw HS HT.
       unfold generate_lnode_sig_scoped_env in HS, HT.
       rewrite Hfind in HS.
@@ -3739,7 +3757,7 @@ Import UNN.Fresh.Tactics.
       - intros ce cet ct1 ct1' Hsrc Htgt.
         destruct (Htgtok ce ct1 Hsrc) as (Hcesc & Hbnd).
         eapply unnest_node_entailment_streams;
-          [exact Hwcg|exact Hsigin|exact Hcenv|exact Hwle|exact Hwce
+          [exact Hwcg|exact Hsigin|exact Hcenv|exact Hwle|exact Hwce|exact Hsxn
           |exact Hmv|exact Hamb|exact Hbs
           |exact Hcesc|exact Hbnd|exact Hlow0|exact Hsrc|exact Htgt].
       - exact Hwf.

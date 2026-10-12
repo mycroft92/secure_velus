@@ -85,16 +85,20 @@ is the one to instantiate.
 
 ## Assumptions and open items
 
-1. **`no_anon_clocks P vars`** (program-level, accepted): no clock of a well-clocked
-   source expression mentions the anonymous name of a nested call's result.
-   Such a name is not an environment key, so the clock would have no type.
-2. **Expression- and program-universal Section hypotheses.**
-   `call_anon_not_env_key`, `clk_types_defined` and the anonymity premise of
-   `clk_types_scoped_holds` are stated for every `P` and every well-clocked `e`;
-   the true statement is about the node's own expressions (`env_key_not_anon`,
-   `declared_not_anon` give it).  Closing it means a "source expression"
-   predicate threaded through the pointwise contracts (as the start-state bound
-   `Hlow` was), or fixing the Section at one program.
+1. **Source expressions (`src_exp vars AN`).**  The call case reads two facts that are
+   properties of the elaborated program, not of every well-clocked expression: a nested
+   call's output names are the node's anonymous streams (`AN`, i.e. `anon_in_eqs`; `n_nodup`
+   keeps them off the declared variables, `env_key_not_anon` off the environment), and a
+   call's arguments are clocked over the declared variables.  `src_exp` is a predicate on
+   the expression, closed under subexpressions (`imm_sub`, `src_exp_imm`), threaded through
+   the pointwise expression and equation chains (`carries_at_streams`, `rhs_carries_streams`,
+   `eqn_carries_*_streams`, `eqns_carries_streams`, `node_carries_streams`,
+   `unnest_node_step_streams`).  The Section hypotheses it replaces (`clk_types_defined`,
+   `call_anon_not_env_key`, universal over expressions and programs) were unsatisfiable;
+   what remains are the satisfiable `env_total` and `env_anon`.  The scalar chain
+   (`carries_exp`, `unnest_node_step`) still carries the old universal hypotheses and is
+   kept only for its shared lemmas.
+2. (merged into 1.)
 3. **Node instantiation of Leg U** (the remaining Section hypotheses: moved names
    outside `scope`, the canonical ambients, the generation bounds) is not
    written.

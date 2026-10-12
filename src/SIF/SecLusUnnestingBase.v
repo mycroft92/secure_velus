@@ -4735,4 +4735,108 @@ Module SecLusUnnestingBase
                   (@Coq.Init.Logic.eq_refl _ (simplify cet Ds')))).
   Qed.
 
+  (** * Source expressions
+
+      Two facts the call case needs about an expression are properties of
+      the elaborated program, not of every well-clocked expression: the output
+      names of a nested call are the node's anonymous streams -- [n_nodup]
+      keeps them off its declared variables, hence off the environment -- and
+      the clocks of a call's arguments are clocks over the declared variables.
+      Neither follows from [wc_exp], so they are carried as a predicate on the
+      expression, closed under taking subexpressions, and the expression
+      induction threads it where it threaded the start-state bound.
+
+      [AN] is the node's anonymous names ([anon_in_eqs]). *)
+
+  Inductive imm_sub : exp -> exp -> Prop :=
+  | imm_Eunop : forall op e a, imm_sub e (Eunop op e a)
+  | imm_Ebinop_l : forall op e1 e2 a, imm_sub e1 (Ebinop op e1 e2 a)
+  | imm_Ebinop_r : forall op e1 e2 a, imm_sub e2 (Ebinop op e1 e2 a)
+  | imm_Efby_0 : forall e0s es a e, In e e0s -> imm_sub e (Efby e0s es a)
+  | imm_Efby_1 : forall e0s es a e, In e es -> imm_sub e (Efby e0s es a)
+  | imm_Earrow_0 : forall e0s es a e, In e e0s -> imm_sub e (Earrow e0s es a)
+  | imm_Earrow_1 : forall e0s es a e, In e es -> imm_sub e (Earrow e0s es a)
+  | imm_Ewhen : forall es x b a e, In e es -> imm_sub e (Ewhen es x b a)
+  | imm_Emerge_t : forall x ets efs a e, In e ets -> imm_sub e (Emerge x ets efs a)
+  | imm_Emerge_f : forall x ets efs a e, In e efs -> imm_sub e (Emerge x ets efs a)
+  | imm_Eite_c : forall c ets efs a, imm_sub c (Eite c ets efs a)
+  | imm_Eite_t : forall c ets efs a e, In e ets -> imm_sub e (Eite c ets efs a)
+  | imm_Eite_f : forall c ets efs a e, In e efs -> imm_sub e (Eite c ets efs a)
+  | imm_Eapp_arg : forall f es ro anns e, In e es -> imm_sub e (Eapp f es ro anns)
+  | imm_Eapp_rst : forall f es r anns, imm_sub r (Eapp f es (Some r) anns).
+
+  Inductive sub_exp : exp -> exp -> Prop :=
+  | sub_refl : forall e, sub_exp e e
+  | sub_step : forall e'' e' e, imm_sub e' e -> sub_exp e'' e' -> sub_exp e'' e.
+
+  (** What one expression must satisfy: its anonymous streams are among the
+      node's, and a call's arguments are clocked over the declared variables. *)
+  Definition src_loc (vars : list (ident * clock)) (AN : list ident)
+      (e : exp) : Prop :=
+    (forall w a, In (w, a) (anon_in e) -> In w AN)
+    /\ match e with
+       | Eapp _ es _ _ =>
+           Forall (fun e' => Forall (wc_clock vars) (clockof e')) es
+       | _ => True
+       end.
+
+  Definition src_exp (vars : list (ident * clock)) (AN : list ident)
+      (e : exp) : Prop :=
+    forall e', sub_exp e' e -> src_loc vars AN e'.
+
+  Lemma src_exp_loc :
+    forall vars AN e, src_exp vars AN e -> src_loc vars AN e.
+  Proof. intros vars AN e H. apply H, sub_refl. Qed.
+
+  Lemma src_exp_imm :
+    forall vars AN e' e,
+      imm_sub e' e -> src_exp vars AN e -> src_exp vars AN e'.
+  Proof.
+    intros vars AN e' e Himm H e'' Hsub. apply H.
+    eapply sub_step; eassumption.
+  Qed.
+
+  Lemma src_exp_imm_forall :
+    forall vars AN (l : list exp) e,
+      (forall e', In e' l -> imm_sub e' e) ->
+      src_exp vars AN e -> Forall (src_exp vars AN) l.
+  Proof.
+    intros vars AN l e Himm H. apply Forall_forall. intros e' He'.
+    exact (src_exp_imm vars AN e' e (Himm e' He') H).
+  Qed.
+
+  Lemma anon_streams_name :
+    forall w (anns : list LSyn.ann),
+      In (Some w) (List.map stream_name anns) ->
+      exists a, In (w, a) (LSyn.anon_streams anns).
+  Proof.
+    intros w anns. induction anns as [|[ty [cl name]] anns IH]; simpl.
+    - intros [].
+    - intros [H|H].
+      + unfold stream_name in H. simpl in H. subst name.
+        exists (ty, cl). now left.
+      + destruct (IH H) as (a & Ha). exists a.
+        destruct name; [right; exact Ha|exact Ha].
+  Qed.
+
+  (** A nested call's output names are anonymous streams of the call that
+      contains it. *)
+  Lemma nested_call_name_in_anon_in :
+    forall f es er anns e g gs gr ganns w a,
+      In e es -> e = Eapp g gs gr ganns ->
+      In (w, a) (LSyn.anon_streams ganns) ->
+      In (w, a) (anon_in (Eapp f es er anns)).
+  Proof.
+    intros f es er anns e g gs gr ganns w a He Heq Hw. subst e.
+    assert (In (w, a) (fresh_in (Eapp g gs gr ganns))) as Hf.
+    { destruct gr as [r|]; simpl.
+      - apply in_or_app. right. apply in_or_app. now right.
+      - apply in_or_app. now right. }
+    assert (In (w, a) (fresh_ins es)) as Hins.
+    { unfold fresh_ins. apply in_concat.
+      exists (fresh_in (Eapp g gs gr ganns)). split;
+        [exact Hf|exact (in_map fresh_in es _ He)]. }
+    destruct er as [r|]; simpl; [apply in_or_app; now left|exact Hins].
+  Qed.
+
 End SecLusUnnestingBase.
