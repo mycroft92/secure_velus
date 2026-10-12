@@ -2338,15 +2338,16 @@ Import UNN.Fresh.Tactics.
       clear Henv Hacc HrunS HrunT.
       destruct Hfields as
         (Hname & Hin & Hout & Hclk & Hreset & Hpres).
-      split.
-      - symmetry. exact Hname.
-      - apply (sig_call_weakens_from_good sgS sgT HgoodS HndS HgoodT HscT).
-        split.
-        + repeat split; symmetry; assumption.
-        + intros dlt Hsat.
+      assert (Hsp : SIGPROOFS.signatures_preserved sgS sgT).
+      { split.
+        - repeat split; symmetry; assumption.
+        - intros dlt Hsat.
           destruct (Hpres dlt Hsat) as (dlt' & Hagree & Hsat').
           exists dlt'. split; [|exact Hsat'].
-          intros z Hz. apply Hagree. exact (Hscope z Hz).
+          intros z Hz. apply Hagree. exact (Hscope z Hz). }
+      split; [symmetry; exact Hname|].
+      split; [exact Hsp|].
+      exact (sig_call_weakens_from_good sgS sgT HgoodS HndS HgoodT HscT Hsp).
     Qed.
 
     (** ** The whole program
@@ -2372,7 +2373,7 @@ Import UNN.Fresh.Tactics.
         generate_all_lsignatures_scoped_env (rev P) envs aux stS = OK GSout ->
         generate_all_lsignatures_scoped_env
           (rev (normfby_global P Hunt Hprefs)) envs aux stT = OK GTout ->
-        call_weakens GSout GTout.
+        call_weakens GSout GTout /\ sigs_preserved GSout GTout.
     Proof.
       intros P Hunt Hprefs envs aux stS stT GSout GTout Hstep Hsrc Htgt.
       set (R := fun n m =>
@@ -2422,7 +2423,7 @@ Import UNN.Fresh.Tactics.
         generate_all_lsignatures_scoped_env (rev P) envs aux stS = OK GSout ->
         generate_all_lsignatures_scoped_env
           (rev (unnest_global P Hwl Hprefs)) envs aux stT = OK GTout ->
-        call_weakens GSout GTout.
+        call_weakens GSout GTout /\ sigs_preserved GSout GTout.
     Proof.
       intros P Hwl Hprefs envs aux stS stT GSout GTout Hstep Hsrc Htgt.
       eapply generate_all_lsignatures_weakens;
@@ -2492,16 +2493,18 @@ Import UNN.Fresh.Tactics.
         generate_all_lsignatures_scoped_env
           (rev (normfby_global (unnest_global P Hwl Hprefs) Hunt Hprefs'))
           envs aux stT = OK GT ->
-        call_weakens GS GT.
+        call_weakens GS GT /\ sigs_preserved GS GT.
     Proof.
       intros P Hwl Hprefs Hunt Hprefs' envs aux stS stM stT GS GM GT
         Hstepu Hstepn Hsrc Hmid Htgt.
-      eapply call_weakens_trans.
-      - exact (unnest_global_signatures_weaken P Hwl Hprefs envs aux stS stM
-                 GS GM Hstepu Hsrc Hmid).
-      - exact (normfby_global_signatures_weaken
-                 (unnest_global P Hwl Hprefs) Hunt Hprefs' envs aux stM stT
-                 GM GT Hstepn Hmid Htgt).
+      destruct (unnest_global_signatures_weaken P Hwl Hprefs envs aux stS stM
+                  GS GM Hstepu Hsrc Hmid) as (Hc1 & Hp1).
+      destruct (normfby_global_signatures_weaken
+                  (unnest_global P Hwl Hprefs) Hunt Hprefs' envs aux stM stT
+                  GM GT Hstepn Hmid Htgt) as (Hc2 & Hp2).
+      split.
+      - exact (call_weakens_trans _ _ _ Hc1 Hc2).
+      - exact (sigs_preserved_trans _ _ _ Hp1 Hp2).
     Qed.
 
 
@@ -3342,16 +3345,18 @@ Import UNN.Fresh.Tactics.
       - exact Hdisj.
       - exact HS.
       - exact HT.
-      - split; [exact (@Coq.Init.Logic.eq_sym _ _ _ Hn)|].
+      - assert (Hsp : SIGPROOFS.signatures_preserved sgS sgT).
+        { split.
+          - repeat split;
+              [exact (@Coq.Init.Logic.eq_sym _ _ _ Hi)
+              |exact (@Coq.Init.Logic.eq_sym _ _ _ Ho)
+              |exact (@Coq.Init.Logic.eq_sym _ _ _ Hr)
+              |exact (@Coq.Init.Logic.eq_sym _ _ _ Hc)].
+          - eapply preserves_on_weaken; [exact Hincl|exact Hpres]. }
+        split; [exact (@Coq.Init.Logic.eq_sym _ _ _ Hn)|].
+        split; [exact Hsp|].
         eapply sig_call_weakens_from_good;
-          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2| ].
-        split.
-        + repeat split;
-            [exact (@Coq.Init.Logic.eq_sym _ _ _ Hi)
-            |exact (@Coq.Init.Logic.eq_sym _ _ _ Ho)
-            |exact (@Coq.Init.Logic.eq_sym _ _ _ Hr)
-            |exact (@Coq.Init.Logic.eq_sym _ _ _ Hc)].
-        + eapply preserves_on_weaken; [exact Hincl|exact Hpres].
+          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2|exact Hsp].
     Qed.
   End NormFbyNode.
 

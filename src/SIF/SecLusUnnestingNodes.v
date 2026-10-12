@@ -1236,7 +1236,64 @@ Import UNN.Fresh.Tactics.
       through [call_weakens], which says nothing about states. *)
 
   Definition sig_head_weakens (sg1 sg2 : signature) : Prop :=
-    s_name sg1 = s_name sg2 /\ sig_call_weakens sg1 sg2.
+    s_name sg1 = s_name sg2
+    /\ SIGPROOFS.signatures_preserved sg1 sg2
+    /\ sig_call_weakens sg1 sg2.
+
+  (** The head constraints, program-wide: every signature of the source
+      global has a same-named one in the target global that its constraints
+      are preserved into. *)
+  Definition sigs_preserved (G1 G2 : secglobal) : Prop :=
+    forall f sg1,
+      find_signature f G1 = Some sg1 ->
+      exists sg2,
+        find_signature f G2 = Some sg2
+        /\ s_name sg1 = s_name sg2
+        /\ SIGPROOFS.signatures_preserved sg1 sg2.
+
+  Lemma sigs_preserved_nil : sigs_preserved [] [].
+  Proof. intros f sg1 H. discriminate H. Qed.
+
+  Lemma sigs_preserved_cons :
+    forall sg1 sg2 G1 G2,
+      s_name sg1 = s_name sg2 ->
+      SIGPROOFS.signatures_preserved sg1 sg2 ->
+      sigs_preserved G1 G2 ->
+      sigs_preserved (sg1 :: G1) (sg2 :: G2).
+  Proof.
+    intros sg1 sg2 G1 G2 Hn Hp Hg f sg Hf. simpl in Hf. simpl.
+    destruct (ident_eqb sg1.(s_name) f) eqn:Hq.
+    - inversion Hf; subst sg. rewrite <- Hn, Hq.
+      exists sg2. split; [reflexivity|split; assumption].
+    - rewrite <- Hn, Hq. exact (Hg f sg Hf).
+  Qed.
+
+  Lemma signatures_preserved_trans :
+    forall a b c,
+      SIGPROOFS.signatures_preserved a b ->
+      SIGPROOFS.signatures_preserved b c ->
+      SIGPROOFS.signatures_preserved a c.
+  Proof.
+    intros a b c (Fab & Pab) (Fbc & Pbc). split.
+    - destruct Fab as (E1 & E2 & E3 & E4), Fbc as (F1 & F2 & F3 & F4).
+      repeat split; congruence.
+    - pose proof (signature_fields_agree_scope_eq _ _ Fab) as Hsc.
+      eapply preserves_on_trans; [exact Pab|].
+      change (preserves_on (signature_scope b) (s_constraints b) (s_constraints c))
+        in Pbc.
+      rewrite <- Hsc in Pbc. exact Pbc.
+  Qed.
+
+  Lemma sigs_preserved_trans :
+    forall G1 G2 G3,
+      sigs_preserved G1 G2 -> sigs_preserved G2 G3 -> sigs_preserved G1 G3.
+  Proof.
+    intros G1 G2 G3 H12 H23 f sg1 Hf1.
+    destruct (H12 f sg1 Hf1) as (sg2 & Hf2 & Hn12 & Hp12).
+    destruct (H23 f sg2 Hf2) as (sg3 & Hf3 & Hn23 & Hp23).
+    exists sg3. split; [exact Hf3|split;
+      [rewrite Hn12; exact Hn23|exact (signatures_preserved_trans _ _ _ Hp12 Hp23)]].
+  Qed.
 
   Theorem generate_all_lsignatures_weakens' :
     forall (R : node -> node -> Prop) envs aux nsS nsT,
@@ -1249,23 +1306,26 @@ Import UNN.Fresh.Tactics.
           sig_head_weakens sgS sgT) ->
       forall accS accT stS stT GSout stfS GTout stfT,
         call_weakens accS accT ->
+        sigs_preserved accS accT ->
         generate_all_lsignatures' accS nsS envs aux stS = OK (GSout, stfS) ->
         generate_all_lsignatures' accT nsT envs aux stT = OK (GTout, stfT) ->
-        call_weakens GSout GTout.
+        call_weakens GSout GTout /\ sigs_preserved GSout GTout.
   Proof.
     intros R envs aux nsS nsT HR Hstep.
     induction HR as [|nS nT nsS nsT Hn HR IH];
-      intros accS accT stS stT GSout stfS GTout stfT Hw Hl Hr.
-    - simpl in Hl, Hr. inversion Hl; subst. inversion Hr; subst. exact Hw.
+      intros accS accT stS stT GSout stfS GTout stfT Hw Hp Hl Hr.
+    - simpl in Hl, Hr. inversion Hl; subst. inversion Hr; subst.
+      split; assumption.
     - simpl in Hl, Hr.
       destruct (generate_lnode_sig_scoped_env accS nS envs aux stS)
         as [[sgS stS1]|] eqn:ES; [|discriminate Hl].
       destruct (generate_lnode_sig_scoped_env accT nT envs aux stT)
         as [[sgT stT1]|] eqn:ET; [|discriminate Hr].
       destruct (Hstep accS accT nS nT sgS stS stS1 sgT stT stT1 Hn Hw ES ET)
-        as (Hname & Hcall).
-      eapply IH; [|exact Hl|exact Hr].
-      exact (call_weakens_cons sgS sgT accS accT Hname Hcall Hw).
+        as (Hname & Hpres & Hcall).
+      eapply IH; [| |exact Hl|exact Hr].
+      + exact (call_weakens_cons sgS sgT accS accT Hname Hcall Hw).
+      + exact (sigs_preserved_cons sgS sgT accS accT Hname Hpres Hp).
   Qed.
 
   (** From the empty accumulator, which is the shape the entry points have. *)
@@ -1281,7 +1341,7 @@ Import UNN.Fresh.Tactics.
       forall stS stT GSout GTout,
         generate_all_lsignatures_scoped_env nsS envs aux stS = OK GSout ->
         generate_all_lsignatures_scoped_env nsT envs aux stT = OK GTout ->
-        call_weakens GSout GTout.
+        call_weakens GSout GTout /\ sigs_preserved GSout GTout.
   Proof.
     intros R envs aux nsS nsT HR Hstep stS stT GSout GTout Hl Hr.
     unfold generate_all_lsignatures_scoped_env in Hl, Hr.
@@ -1291,7 +1351,8 @@ Import UNN.Fresh.Tactics.
       as [[sigsT stfT]|] eqn:ET; [|discriminate Hr].
     inversion Hl; subst sigsS. inversion Hr; subst sigsT.
     eapply generate_all_lsignatures_weakens';
-      [exact HR|exact Hstep|apply call_weakens_nil|exact ES|exact ET].
+      [exact HR|exact Hstep|apply call_weakens_nil|apply sigs_preserved_nil
+      |exact ES|exact ET].
   Qed.
 
   (** * The node lists the two drivers walk
@@ -3580,16 +3641,18 @@ Import UNN.Fresh.Tactics.
       - exact HS.
       - exact HT.
       - (** and the pair, packaged *)
+        assert (Hsp : SIGPROOFS.signatures_preserved sgS sgT).
+        { split.
+          - repeat split;
+              [exact (@Coq.Init.Logic.eq_sym _ _ _ Hi)
+              |exact (@Coq.Init.Logic.eq_sym _ _ _ Ho)
+              |exact (@Coq.Init.Logic.eq_sym _ _ _ Hr)
+              |exact (@Coq.Init.Logic.eq_sym _ _ _ Hc)].
+          - eapply preserves_on_weaken; [exact Hincl|exact Hpres]. }
         split; [exact (@Coq.Init.Logic.eq_sym _ _ _ Hn)|].
+        split; [exact Hsp|].
         eapply sig_call_weakens_from_good;
-          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2| ].
-        split.
-        + repeat split;
-            [exact (@Coq.Init.Logic.eq_sym _ _ _ Hi)
-            |exact (@Coq.Init.Logic.eq_sym _ _ _ Ho)
-            |exact (@Coq.Init.Logic.eq_sym _ _ _ Hr)
-            |exact (@Coq.Init.Logic.eq_sym _ _ _ Hc)].
-        + eapply preserves_on_weaken; [exact Hincl|exact Hpres].
+          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2|exact Hsp].
     Qed.
 
     (** * Leg U's per-node step, on the pointwise contract
@@ -3683,16 +3746,18 @@ Import UNN.Fresh.Tactics.
       - exact Hdisj.
       - exact HS.
       - exact HT.
-      - split; [exact (@Coq.Init.Logic.eq_sym _ _ _ Hn)|].
+      - assert (Hsp : SIGPROOFS.signatures_preserved sgS sgT).
+        { split.
+          - repeat split;
+              [exact (@Coq.Init.Logic.eq_sym _ _ _ Hi)
+              |exact (@Coq.Init.Logic.eq_sym _ _ _ Ho)
+              |exact (@Coq.Init.Logic.eq_sym _ _ _ Hr)
+              |exact (@Coq.Init.Logic.eq_sym _ _ _ Hc)].
+          - eapply preserves_on_weaken; [exact Hincl|exact Hpres]. }
+        split; [exact (@Coq.Init.Logic.eq_sym _ _ _ Hn)|].
+        split; [exact Hsp|].
         eapply sig_call_weakens_from_good;
-          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2| ].
-        split.
-        + repeat split;
-            [exact (@Coq.Init.Logic.eq_sym _ _ _ Hi)
-            |exact (@Coq.Init.Logic.eq_sym _ _ _ Ho)
-            |exact (@Coq.Init.Logic.eq_sym _ _ _ Hr)
-            |exact (@Coq.Init.Logic.eq_sym _ _ _ Hc)].
-        + eapply preserves_on_weaken; [exact Hincl|exact Hpres].
+          [exact Hgood1|exact Hnd1|exact Hgood2|exact Hsc2|exact Hsp].
     Qed.
 
   End NodeEquations.
