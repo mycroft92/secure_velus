@@ -21,6 +21,7 @@ the generated signatures across the two normalisation passes (unnesting, then
 | `SecLusUnnestingExpr.v` … `SecLusUnnestingNodes.v`, `SecLusUnnesting.v` | Leg U: the unnesting pass preserves the generated constraints (`preserves_on`), expression → right-hand side → equation → node; `call_weakens` and the lockstep induction over a program |
 | `SecLusNormFby.v` | Leg I: the same for `fby` normalisation, and `normalize_signatures_weaken` composing the two legs |
 | `SecLusTypingCorrectness.v` | structural facts about generated Lustre signatures (below) |
+| `SecLusNormalization.v` | node instances of both legs against the naming of the largest program, the program-level lockstep, and `normalization_signatures_preserved` (below) |
 | `SecLusNLusTranslation.v` | Lustre signatures entail the NLustre ones of the transcribed program |
 | `SecLusConstraintExport.v`, `SecLusNonInterference.v`, `SecLusNonInterferenceStreams.v` | the dump driver and the noninterference corollaries |
 
@@ -83,38 +84,69 @@ program and carries `scalar_wcg : forall P, wc_global P`; it is kept for the
 lemmas it shares, but the pointwise chain (`*_streams`, `unnest_node_step_streams`)
 is the one to instantiate.
 
+## The program level (`SecLusNormalization.v`)
+
+The source program `G`, its unnesting `G1 = unnest_global G` and its
+normalisation `G2 = normfby_global G1` are all typed against the naming run of
+`rev G2`, the program that declares the most variables.  A node of a smaller
+program then meets an environment with extra keys, so the fold facts that read
+the environment's whole range (scoped, rooted) are redone against the node's own
+variables, guarded by clocking (`lsig_step_ext`).
+
+- `lsig_inv`, `lsig_step_ext`, `generate_all_lsignatures_weakens_ext` — the
+  lockstep.  Its relation `R P nS nM nall` carries the callee program `P` (the
+  source nodes already processed, `Forall3P`) and an invariant `Jinv` of the
+  target accumulator against it.
+- `unnest_instance`, `normfby_instance` — one node of each leg.  Unnesting is
+  stated with `scope`/`scope0` (raw entailment versus interface) and the
+  extended-environment trick: freshness and rootedness are read against
+  `env_images env`, not the node's declared variables.
+- `normfby_clocks_pass_fact` — the clocks of the variables `fby` normalisation
+  creates are over declared variables.
+- `anon_names_unnested`, `anon_names_normalized`, `unnested_node_src`,
+  `normalized_node_src` — the pass outputs have no anonymous streams and satisfy
+  `src_exp`.
+- `RU`, `RI`, `RU_facts`, `RI_facts`, `stepU`, `stepI`, `build_U`, `build_I` —
+  the node relations of the two legs, one lockstep step each, and the builders of
+  `Forall3P` from the structure of `unnest_global`/`normfby_global`.
+- `normalization_signatures_preserved` — `call_weakens GS GM /\ sigs_preserved GS GM`.
+- `source_signatures_good` — every source signature is good with a
+  duplicate-free scope.
+- `Check.source_signatures_entail_nlustre` (`SecLusConstraintExport.v`) — the
+  signature half of the composition: `Signature_entails GS GN`.
+
 ## Assumptions and open items
 
-1. **Source expressions (`src_exp vars AN`).**  The call case reads two facts that are
-   properties of the elaborated program, not of every well-clocked expression: a nested
-   call's output names are the node's anonymous streams (`AN`, i.e. `anon_in_eqs`; `n_nodup`
-   keeps them off the declared variables, `env_key_not_anon` off the environment), and a
-   call's arguments are clocked over the declared variables.  `src_exp` is a predicate on
-   the expression, closed under subexpressions (`imm_sub`, `src_exp_imm`), threaded through
-   the pointwise expression and equation chains (`carries_at_streams`, `rhs_carries_streams`,
-   `eqn_carries_*_streams`, `eqns_carries_streams`, `node_carries_streams`,
-   `unnest_node_step_streams`).  The Section hypotheses it replaces (`clk_types_defined`,
-   `call_anon_not_env_key`, universal over expressions and programs) were unsatisfiable;
-   what remains are the satisfiable `env_total` and `env_anon`.  The scalar chain
-   (`carries_exp`, `unnest_node_step`) still carries the old universal hypotheses and is
-   kept only for its shared lemmas.
+1. **Source expressions (`src_exp vars AN`) and nested calls.**  The call case
+   reads two facts that are properties of the elaborated program: a nested call's
+   output names are the node's anonymous streams (`AN`), kept off the
+   environment, and a call's arguments are clocked over the declared variables.
+   `src_exp` carries them through the pointwise chain.  **Limitation:** unnesting
+   *reuses* a nested call's anonymous name as a declared variable of the unnested
+   node, so under the shared naming (of the normalised program) the environment
+   has a key for it and `env_anon` cannot hold when a node has nested calls.  The
+   program theorem is therefore stated for sources with `anon_names = []` (no
+   nested calls; `source_guard`).  Lifting this needs the "named argument carries
+   its own name" fact (`assign_lexps_named_covered`, `augment_actuals_fresh`) to
+   be asked only of names that occur in clocks.
 2. (merged into 1.)
-3. **Node instantiation of Leg U** (the remaining Section hypotheses: moved names
-   outside `scope`, the canonical ambients, the generation bounds) is not
-   written.
-4. **`sig_inputs_ok GL P`** — a callee's signature inputs line up with its node's
-   inputs and its constraints are closed under the declared clocks.  The
-   per-equation input covers call-free equations only.
-5. **Composition theorem**, noninterference half: chaining the result below with
-   `lnode_noninterference_outputs_generated`.  The signature half is
-   `Check.source_signature_entails` (`SecLusConstraintExport.v`): from
-   `sigs_preserved GS GT` (both Lustre legs), `Signature_entails GT GN`
-   (`to_global_signatures_entail`), and per-signature facts (source good with
-   duplicate-free scope, NLustre scoped) it gives `Signature_entails GS GN`.
-6. The signature-fold facts assume each node is typed against the naming of its
-   own program.  For source nodes typed against the normalised program's naming
-   only `good` and the duplicate-free scope carry over; scoped and rooted would
-   need the guarded forms.
+3. **Node instantiation of both legs** is done (`unnest_instance`,
+   `normfby_instance`).
+4. **`sig_inputs_ok GL P`** (a callee's signature inputs line up with its node's
+   inputs and its constraints are closed under the declared clocks) is a
+   hypothesis `HJU` of the program theorem.  The expression level is proved
+   (`assign_lexp_type_clock_closed`); what is missing is the equation level for
+   top-level calls, the preservation through `collapse`/`simplify` (including the
+   removal of a constraint's own target, which is only harmless for a causal
+   node), and the induction over the program.
+5. **Composition theorem.**  Signature half: `Check.source_signatures_entail_nlustre`.
+   Noninterference half: transporting `lnode_security` from the source to the
+   normalised program needs the raw-constraint data of each node and the callee
+   clauses, not only the stored signatures; this is not done.
+6. The signature-fold facts for source nodes typed against the naming of the
+   normalised program carry only `good` and the duplicate-free scope
+   (`source_signatures_good`); scoped and rooted are used for the unnested and
+   normalised programs, whose naming is their own or a superset.
 
 ## Pitfalls that cost time
 

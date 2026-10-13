@@ -30,6 +30,9 @@ From Velus Require Import SIF.SecNLusTypingCorrectness.
 From Velus Require Import SIF.SecLusNLusTranslation.
 From Velus Require Import SIF.SecLusTypes.
 From Velus Require Import SIF.SecLusUnnesting.
+From Velus Require Import SIF.SecNamingTotality.
+From Velus Require Import SIF.SecLNamingTotality.
+From Velus Require Import SIF.SecLusNormalization.
 
 From Coq Require Import String List.
 From compcert Require Import common.Errors.
@@ -211,6 +214,19 @@ Module Check (Lat : Lattice).
       SIGPROOFS ConcreteNameGen CE.IsF CE.Clo ConcreteSecCETyping TR.Tr
       ConcreteSecLTyping L.Norm.Norm.Unnesting.
 
+  (** And the normalization legs: unnesting, then [fby] normalisation, as one
+      program-level lockstep. *)
+  Module SECNT := SecNamingTotality Ids Op CE.Syn NL.Syn NL.Mem NL.IsD NL.Ord
+                    ConcreteNameGen.
+  Module SECLNT :=
+    SecLNamingTotality Ids Op OpAux L.Syn CE.Syn NL.Syn NL.Mem NL.IsD NL.Ord
+      ConcreteNameGen TR.Tr ConcreteSecLNameGen SECNT L.Ord.
+  Module LegN :=
+    SecLusNormalization Ids Op OpAux Lat SecT SLT SC L.Syn L.Clo CE.Syn NL.Syn
+      NL.Mem NL.IsD NL.Ord STEP SIG SIGPROOFS ConcreteNameGen CE.IsF CE.Clo
+      ConcreteSecCETyping TR.Tr ConcreteSecLTyping L.Cau L.Typ L.Norm.Norm
+      ConcreteSecLNameGen SECNT L.Ord SECLNT.
+
   (** The signature side of the composition.  The two Lustre-to-Lustre legs
       give [sigs_preserved] from the source global to the transcribed one; the
       translation leg gives [Signature_entails] from there to NLustre.  The
@@ -237,6 +253,76 @@ Module Check (Lat : Lattice).
     unfold Leg.Signature_head_entails. split; [|split; [exact Hpres|]].
     - congruence.
     - eapply Leg.Signature_call_entails_from_preserved; eauto.
+  Qed.
+
+  (** The whole signature half: the source program's security signatures,
+      generated against the naming of its normalised form, are entailed by the
+      NLustre signatures of the transcription of that form.  The two
+      Lustre-to-Lustre legs are [LegN.normalization_signatures_preserved];
+      what is assumed beyond the program's typing and clocking is the source
+      guard (the call-argument clocks are over declared variables, and the
+      program has no nested calls) and [HJU], the closure of generated callee
+      signatures under the declared clocks. *)
+  Module U := L.Norm.Norm.Unnesting.
+  Module NFm := L.Norm.Norm.NormFby.
+
+  Theorem source_signatures_entail_nlustre :
+    forall (G : L.Syn.global) (Hwl : L.Syn.wl_global G)
+           (Hpr : Forall (fun n => L.Syn.n_prefixes n = U.elab_prefs) G)
+           (Hunt : U.unnested_global (U.unnest_global G Hwl Hpr))
+           (Hpref1 : Forall (fun n => L.Syn.n_prefixes n = NFm.norm1_prefs)
+                       (U.unnest_global G Hwl Hpr)),
+      L.Clo.wc_global G -> L.Typ.wt_global G ->
+      Forall LegN.source_guard G ->
+      (forall P nS nM nN accT sgT envsF auxF stT0 stT1,
+          LegN.RU P nS nM nN ->
+          LegN.CALLS.sig_inputs_ok accT P ->
+          ConcreteSecLTyping.generate_lnode_sig_scoped_env accT nM envsF auxF
+            stT0 = OK (sgT, stT1) ->
+          LegN.CALLS.sig_inputs_ok (sgT :: accT) (nS :: P)) ->
+      forall envs aux stN st GS GT GM P Hp GN,
+        ConcreteSecLNameGen.generate_lnode_scoped_env_st
+          (rev (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1))
+          = OK (envs, aux, stN) ->
+        LegN.sec_le stN st ->
+        L.Ord.Ordered_nodes
+          (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1) ->
+        ConcreteSecLTyping.generate_all_lsignatures_scoped_env (rev G) envs aux
+          st = OK GS ->
+        ConcreteSecLTyping.generate_all_lsignatures_scoped_env
+          (rev (U.unnest_global G Hwl Hpr)) envs aux st = OK GT ->
+        ConcreteSecLTyping.generate_all_lsignatures_scoped_env
+          (rev (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1))
+          envs aux st = OK GM ->
+        TR.Tr.to_global
+          (rev (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1)) Hp
+          = OK P ->
+        ConcreteNameGen.generate_node_scoped_env P = OK (envs, aux) ->
+        NL.Clo.wc_global P ->
+        SECNLUSTYPING.generate_all_signatures_scoped_env P envs aux = OK GN ->
+        Leg.Signature_entails GS GN.
+  Proof.
+    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard HJU envs aux stN st GS GT GM P
+      Hp GN Hnaming Hle Hord HgS HgT HgM Htr Hnames Hwcp HgN.
+    destruct (LegN.normalization_signatures_preserved G Hwl Hpr Hunt Hpref1
+                Hwc Hwt Hguard HJU envs aux stN st GS GT GM Hnaming Hle HgS HgT
+                HgM) as (_ & Hsp).
+    assert (Hnotself :
+              Forall (fun m => ~ L.Ord.Is_node_in m.(L.Syn.n_name)
+                                  m.(L.Syn.n_eqs))
+                (rev (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt
+                        Hpref1))).
+    { pose proof (Leg.Ordered_nodes_not_self _ Hord) as Hns.
+      rewrite Forall_forall in Hns |- *. intros x Hx.
+      apply in_rev in Hx. exact (Hns x Hx). }
+    destruct (Leg.generate_all_signatures_entails_scoped_inv _ P Hp envs aux st
+                GM GN Htr Hnotself Hnames Hwcp HgM HgN)
+      as (Hent & Hsc & _ & _).
+    eapply source_signature_entails;
+      [exact (fun f sg1 Hf => Hsp f sg1 Hf)|exact Hent
+      |exact (LegN.source_signatures_good G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard
+                envs aux stN st GS Hnaming Hle HgS)
+      |exact Hsc].
   Qed.
 
 End Check.

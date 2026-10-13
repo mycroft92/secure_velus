@@ -4116,4 +4116,88 @@ Import SECMONADNotations.
     - exact (sigs_preserved_trans _ _ _ Hp1 Hp2).
   Qed.
 
+
+  (** * The source signatures are good
+
+      The invariants the lockstep keeps on the source accumulator, read off at
+      the end: every source signature is [signature_good] with a duplicate-free
+      scope.  This is what the composition with the translation leg asks of the
+      source side. *)
+
+  Lemma Forall3P_Forall2_13 :
+    forall {A B C : Type} (R : list A -> A -> B -> C -> Prop) P0 l1 l2 l3,
+      Forall3P R P0 l1 l2 l3 ->
+      Forall2 (fun a c => exists P b, R P a b c) l1 l3.
+  Proof.
+    intros A B C R P0 l1 l2 l3 H.
+    induction H as [P|P a b c l1 l2 l3 Hr Hrest IH]; constructor;
+      [eauto|exact IH].
+  Qed.
+
+  Lemma lsig_inv_find_good :
+    forall stN low acc st f sg,
+      lsig_inv stN low acc st ->
+      find_signature f acc = Some sg ->
+      signature_good sg /\ NoDup (signature_scope sg).
+  Proof.
+    intros stN low acc st f sg (Hg & Hs & Hnd & _) Hf.
+    split; [exact (Hg _ _ Hf)|].
+    pose proof (Hnd _ _ Hf) as H. unfold sig_nd in H.
+    unfold signature_scope. eapply Permutation_NoDup; [|exact H].
+    apply Permutation_app_head.
+    exact (Permutation_app_comm [sg.(s_clk); sg.(s_reset)] sg.(s_out)).
+  Qed.
+
+  Theorem source_signatures_good :
+    forall (G : global) (Hwl : wl_global G)
+           (Hpr : Forall (fun n => n_prefixes n = elab_prefs) G)
+           (Hunt : unnested_global (unnest_global G Hwl Hpr))
+           (Hpref1 : Forall (fun n => n_prefixes n = norm1_prefs)
+                       (unnest_global G Hwl Hpr)),
+      wc_global G -> wt_global G -> Forall source_guard G ->
+      forall envsF auxF stN st GS,
+        generate_lnode_scoped_env_st
+          (List.rev (normfby_global (unnest_global G Hwl Hpr) Hunt Hpref1))
+          = OK (envsF, auxF, stN) ->
+        sec_le stN st ->
+        generate_all_lsignatures_scoped_env (List.rev G) envsF auxF st = OK GS ->
+        forall f sg, find_signature f GS = Some sg ->
+          signature_good sg /\ NoDup (signature_scope sg).
+  Proof.
+    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard envsF auxF stN st GS
+      Hnaming Hle HgS f sg Hf.
+    set (G1 := unnest_global G Hwl Hpr) in *.
+    set (G2 := normfby_global G1 Hunt Hpref1) in *.
+    assert (Hnd : NoDup (List.map n_name (List.rev G2))).
+    { rewrite List.map_rev.
+      apply (Permutation_NoDup (Permutation_rev _)).
+      unfold G2. rewrite normfby_global_map_names. unfold G1.
+      rewrite unnest_global_map_names. exact (wc_global_names_nodup G Hwc). }
+    pose proof (Forall3P_Forall2_13 RU [] _ _ _
+                  (build_U G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard)) as HF2.
+    unfold generate_all_lsignatures_scoped_env in HgS.
+    destruct (generate_all_lsignatures' [] (List.rev G) envsF auxF st)
+      as [[GS' stf]|e] eqn:HallS; [|discriminate HgS].
+    inversion HgS; subst GS'.
+    pose proof Hnaming as Hnaming0.
+    unfold generate_lnode_scoped_env_st in Hnaming.
+    destruct (generate_lnode_scoped_env' (List.rev G2) (Env.empty _) []
+                init_state) as [[[envs0 aux0] st0]|e] eqn:Hrun;
+      [|discriminate Hnaming].
+    inversion Hnaming; subst envs0 aux0 st0.
+    pose proof (generate_all_lsignatures'_inv_ext (List.rev G2) envsF auxF stN
+                Hnaming0 (fun n nall => exists P b, RU P n b nall)
+                (fun n nall HR =>
+                   match HR with
+                   | ex_intro P (ex_intro b HRU) =>
+                     match RU_facts P n b nall HRU with
+                     | conj Hn1 (conj _ (conj tfS _)) => conj Hn1 tfS
+                     end
+                   end)
+                (List.rev G) (List.rev G2) (Env.empty _) [] init_state HF2 Hnd
+                Hrun [] st GS stf (lsig_inv_nil stN init_state st Hle) HallS)
+      as Hinv.
+    exact (lsig_inv_find_good _ _ _ _ f sg Hinv Hf).
+  Qed.
+
 End SecLusNormalization.
