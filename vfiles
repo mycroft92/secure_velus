@@ -159,6 +159,7 @@ src/SIF/SecLusUnnestingNodes.v
 src/SIF/SecLusUnnesting.v
 src/SIF/SecLusNormFby.v
 src/SIF/SecLusTypingCorrectness.v
+src/SIF/SecLusNormalization.v
 src/SIF/SecLusNLusTranslation.v
 src/SIF/SecLusConstraintExport.v
 src/SIF/SecLusNonInterference.v

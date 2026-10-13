@@ -1722,6 +1722,12 @@ Import UNN.Fresh.Tactics.
     Variable vars    : list (ident * clock).
     Variable cenv    : Env.t (type * clock).
     Variable scope   : list ident.
+    (** The part of [scope] the published signature mentions.  What the
+        signature eliminates -- locals and minted names -- lies in [scope]
+        (the raw constraints mention it) but outside [scope0]; the raw
+        entailment is at [scope], the elimination at [scope0]. *)
+    Variable scope0  : list ident.
+    Hypothesis scope0_sub : incl scope0 scope.
     Variable stLo     : sec_state.
     Variable stF     : sec_state.
 
@@ -1739,6 +1745,15 @@ Import UNN.Fresh.Tactics.
       forall P es ck ckty,
         wc_global P ->
         Forall (wc_exp P vars) es ->
+        (clk_src vars es ck \/
+         exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
+        assign_clk_type env base_ty ck = Some ckty -> st_scoped scope ckty.
+    Variable AN : list ident.
+    Hypothesis clk_types_scoped_g :
+      forall P es ck ckty,
+        wc_global P ->
+        Forall (wc_exp P vars) es ->
+        Forall (nested_src vars AN) es ->
         (clk_src vars es ck \/
          exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
         assign_clk_type env base_ty ck = Some ckty -> st_scoped scope ckty.
@@ -1774,8 +1789,6 @@ Import UNN.Fresh.Tactics.
 
     (** The source-expression facts the pointwise call case reads
         ([src_exp]). *)
-    Variable AN : list ident.
-
     Hypothesis env_total :
       forall x ck, In (x, ck) vars -> exists b, Env.find x env = Some b.
 
@@ -2145,9 +2158,9 @@ Import UNN.Fresh.Tactics.
         edestruct
           (eqn_carries_all_streams GL env base_ty rst_ty vars cenv scope stLo stF
              env_inj sig_good sig_nodup source_types_scoped
-             source_lexps_scoped rst_ty_scoped clk_types_scoped
+             source_lexps_scoped rst_ty_scoped AN clk_types_scoped_g
              env_range_scoped source_lexps_carried_scoped sig_scoped
-             sig_actuals_fresh AN env_total env_anon
+             sig_actuals_fresh env_total env_anon
              sig_rooted P eq Hwcg Hsigin
              (As eq) eq1 st st1 c1 xst xst1 ct1 yst ystm dlt)
           as (dlt1 & Hoff1 & Hce1 & Hscope1).
@@ -3299,7 +3312,7 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints G env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) st0 = OK (cns, ct1) ->
-            forall x, In x (locals ++ minted st0 ct1) -> ~ In x scope) ->
+            forall x, In x (locals ++ minted st0 ct1) -> ~ In x scope0) ->
         generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
         generate_lnode_sig G (unnest_node P n Hwl Hpref) env aux st0
           = OK (sg', st1') ->
@@ -3308,7 +3321,7 @@ Import UNN.Fresh.Tactics.
         /\ s_out sg' = s_out sg
         /\ s_clk sg' = s_clk sg
         /\ s_reset sg' = s_reset sg
-        /\ preserves_on scope sg.(s_constraints) sg'.(s_constraints).
+        /\ preserves_on scope0 sg.(s_constraints) sg'.(s_constraints).
     Proof.
       intros P n Hwl Hpref G aux st0 sg st1 sg' st1' Haux Hpres Hwf Hdisj H H'.
       assert (s_name sg' = s_name sg
@@ -3340,7 +3353,8 @@ Import UNN.Fresh.Tactics.
         [apply collapse_wf; exact (Hwf cs1 st1 Hcs1)
         |exact (Hdisj l1 cs1 st1 Hl1 Hcs1)
         |apply preserves_on_collapse2;
-         exact (Hpres cs1 cs2 st1 st1' Hcs1 Hcs2)].
+         eapply preserves_on_weaken;
+           [exact scope0_sub|exact (Hpres cs1 cs2 st1 st1' Hcs1 Hcs2)]].
     Qed.
 
 
@@ -3395,7 +3409,7 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints G1 env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) st0 = OK (cns, ct1) ->
-            forall x, In x (locals ++ minted st0 ct1) -> ~ In x scope) ->
+            forall x, In x (locals ++ minted st0 ct1) -> ~ In x scope0) ->
         generate_lnode_sig G1 n env aux st0 = OK (sg, st1) ->
         generate_lnode_sig G2 (unnest_node P n Hwl Hpref) env aux st0
           = OK (sg', st1') ->
@@ -3404,7 +3418,7 @@ Import UNN.Fresh.Tactics.
         /\ s_out sg' = s_out sg
         /\ s_clk sg' = s_clk sg
         /\ s_reset sg' = s_reset sg
-        /\ preserves_on scope sg.(s_constraints) sg'.(s_constraints).
+        /\ preserves_on scope0 sg.(s_constraints) sg'.(s_constraints).
     Proof.
       intros P n Hwl Hpref G1 G2 aux st0 sg st1 sg' st1'
         Haux Hacc Hef Hlf Hlo Hpres Hwf Hdisj H H'.
@@ -3444,7 +3458,8 @@ Import UNN.Fresh.Tactics.
       apply preserves_on_collapse2.
       eapply preserves_on_trans;
         [apply preserves_on_from_entailment; exact Hce
-        |exact (Hpres cs1' cs2 st1 st1' Hcs1' Hcs2)].
+        |eapply preserves_on_weaken;
+           [exact scope0_sub|exact (Hpres cs1' cs2 st1 st1' Hcs1' Hcs2)]].
     Qed.
 
 
@@ -3501,7 +3516,7 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints G1 env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS = OK (cns, ct1) ->
-            forall x, In x (locals ++ minted stS ct1) -> ~ In x scope) ->
+            forall x, In x (locals ++ minted stS ct1) -> ~ In x scope0) ->
         generate_lnode_sig G1 n env aux stS = OK (sg, stS1) ->
         generate_lnode_sig G2 (unnest_node P n Hwl Hpref) env aux stT
           = OK (sg', stT1) ->
@@ -3510,7 +3525,7 @@ Import UNN.Fresh.Tactics.
         /\ s_out sg' = s_out sg
         /\ s_clk sg' = s_clk sg
         /\ s_reset sg' = s_reset sg
-        /\ preserves_on scope sg.(s_constraints) sg'.(s_constraints).
+        /\ preserves_on scope0 sg.(s_constraints) sg'.(s_constraints).
     Proof.
       intros P Q n Hwl Hpref G1 G2 aux stS stT sg stS1 sg' stT1
         Haux Hun Hw Hef Hlf Hlo Hpres Hwf Hdisj H H'.
@@ -3555,7 +3570,8 @@ Import UNN.Fresh.Tactics.
       apply preserves_on_collapse2.
       eapply preserves_on_trans;
         [apply preserves_on_from_entailment; exact Hce
-        |exact (Hpres cs1' cs2 stS1 stS Hcs1' Hcs2s)].
+        |eapply preserves_on_weaken;
+           [exact scope0_sub|exact (Hpres cs1' cs2 stS1 stS Hcs1' Hcs2s)]].
     Qed.
 
 
@@ -3620,13 +3636,13 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints accS env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS0 = OK (cns, ct1) ->
-            forall y, In y (locals ++ minted stS0 ct1) -> ~ In y scope) ->
+            forall y, In y (locals ++ minted stS0 ct1) -> ~ In y scope0) ->
         (** the program-level facts about the published pair *)
         signature_good sgS ->
         NoDup (signature_scope sgS) ->
         signature_good sgT ->
         signature_scoped sgT ->
-        (forall z, In z (signature_scope sgS) -> In z scope) ->
+        (forall z, In z (signature_scope sgS) -> In z scope0) ->
         eapp_fresh_prop accS env base_ty rst_ty stLo ->
         lcall_fresh_prop accS env base_ty rst_ty stLo ->
         call_weakens accS GL ->
@@ -3729,13 +3745,13 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints accS env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS0 = OK (cns, ct1) ->
-            forall y, In y (locals ++ minted stS0 ct1) -> ~ In y scope) ->
+            forall y, In y (locals ++ minted stS0 ct1) -> ~ In y scope0) ->
         (** the program-level facts about the published pair *)
         signature_good sgS ->
         NoDup (signature_scope sgS) ->
         signature_good sgT ->
         signature_scoped sgT ->
-        (forall z, In z (signature_scope sgS) -> In z scope) ->
+        (forall z, In z (signature_scope sgS) -> In z scope0) ->
         eapp_fresh_prop accS env base_ty rst_ty stLo ->
         lcall_fresh_prop accS env base_ty rst_ty stLo ->
         call_weakens accS GL ->

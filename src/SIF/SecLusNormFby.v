@@ -134,6 +134,11 @@ Import UNN.Fresh.Tactics.
     Variable base_ty : ident.
     Variable rst_ty  : ident.
     Variable scope   : list ident.
+    (** The part of [scope] the published signature mentions: the raw
+        entailment is at [scope], the elimination of locals and minted names
+        at [scope0], which they avoid. *)
+    Variable scope0  : list ident.
+    Hypothesis scope0_sub : incl scope0 scope.
 
     (** * What the pass does to a node's record
 
@@ -2244,7 +2249,7 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints G1 env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS = OK (cns, ct1) ->
-            forall x, In x (locals ++ minted stS ct1) -> ~ In x scope) ->
+            forall x, In x (locals ++ minted stS ct1) -> ~ In x scope0) ->
         generate_lnode_sig G1 n env aux stS = OK (sg, stS1) ->
         generate_lnode_sig G2 (normfby_node Q c n Hunt Hpref) env aux stT
           = OK (sg', stT1) ->
@@ -2253,7 +2258,7 @@ Import UNN.Fresh.Tactics.
         /\ s_out sg' = s_out sg
         /\ s_clk sg' = s_clk sg
         /\ s_reset sg' = s_reset sg
-        /\ preserves_on scope sg.(s_constraints) sg'.(s_constraints).
+        /\ preserves_on scope0 sg.(s_constraints) sg'.(s_constraints).
     Proof.
       intros Q c n Hunt Hpref Q' G1 G2 aux lo stS stT sg stS1 sg' stT1
         Haux Hun Hweak Hef Hlf Hlo Hpres Hwf Hdisj HgenS HgenT.
@@ -2289,15 +2294,16 @@ Import UNN.Fresh.Tactics.
                   (lnode_clock_env n) n.(n_eqs) cs1 stS stS1 lo Hweak Hef Hlf
                   (NoDup_vars_defined_n_eqs n) Hlo Hcs1)
         as (cs1' & Hcs1' & Hentails).
-      apply (preserves_on_simplify scope (collapse cs1) (collapse cs2)
+      apply (preserves_on_simplify scope0 (collapse cs1) (collapse cs2)
                (l1 ++ minted stS stS1) (l2 ++ minted stT stT1)).
       - apply collapse_wf. exact (Hwf cs1 stS1 Hcs1).
       - exact (Hdisj l1 cs1 stS1 Hl1 Hcs1).
       - apply preserves_on_collapse2.
-        apply (preserves_on_trans scope cs1 cs1' cs2).
-        + apply (preserves_on_from_entailment scope cs1 cs1').
+        apply (preserves_on_trans scope0 cs1 cs1' cs2).
+        + apply (preserves_on_from_entailment scope0 cs1 cs1').
           exact Hentails.
-        + exact (Hpres cs1' cs2 stS1 stS Hcs1' Hcs2s).
+        + eapply preserves_on_weaken;
+            [exact scope0_sub|exact (Hpres cs1' cs2 stS1 stS Hcs1' Hcs2s)].
     Qed.
 
     (** ** The per-node step the shared lockstep consumes
@@ -2321,13 +2327,13 @@ Import UNN.Fresh.Tactics.
          /\ s_out sgT = s_out sgS
          /\ s_clk sgT = s_clk sgS
          /\ s_reset sgT = s_reset sgS
-         /\ preserves_on scope sgS.(s_constraints) sgT.(s_constraints)) ->
+         /\ preserves_on scope0 sgS.(s_constraints) sgT.(s_constraints)) ->
         (** and what the program level knows about the published pair *)
         signature_good sgS ->
         NoDup (signature_scope sgS) ->
         signature_good sgT ->
         signature_scoped sgT ->
-        (forall z, In z (signature_scope sgS) -> In z scope) ->
+        (forall z, In z (signature_scope sgS) -> In z scope0) ->
         generate_lnode_sig_scoped_env accS n envs aux stS0 = OK (sgS, stS1) ->
         generate_lnode_sig_scoped_env accT (normfby_node Q c n Hunt Hpref)
           envs aux stT0 = OK (sgT, stT1) ->
@@ -3254,13 +3260,13 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints accS env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS0 = OK (cns, ct1) ->
-            forall y, In y (locals ++ minted stS0 ct1) -> ~ In y scope) ->
+            forall y, In y (locals ++ minted stS0 ct1) -> ~ In y scope0) ->
         (** the program-level facts about the published pair *)
         signature_good sgS ->
         NoDup (signature_scope sgS) ->
         signature_good sgT ->
         signature_scoped sgT ->
-        (forall z, In z (signature_scope sgS) -> In z scope) ->
+        (forall z, In z (signature_scope sgS) -> In z scope0) ->
         eapp_fresh_prop accS env base_ty rst_ty lo ->
         lcall_fresh_prop accS env base_ty rst_ty lo ->
         sec_le lo stS0 ->

@@ -4839,4 +4839,40 @@ Module SecLusUnnestingBase
     destruct er as [r|]; simpl; [apply in_or_app; now left|exact Hins].
   Qed.
 
+  (** A subexpression of a call carries its own anonymous names too: the
+      streams of a call's arguments, or of its reset, are the node's
+      anonymous streams.  This is what the clock scoping of a call's actuals
+      reads. *)
+  Definition nested_src (vars : list (ident * clock)) (AN : list ident)
+      (e : exp) : Prop :=
+    src_exp vars AN e
+    /\ (forall w a, In (w, a) (fresh_in e) -> In w AN).
+
+  Lemma nested_src_args :
+    forall vars AN f es r anns,
+      src_exp vars AN (Eapp f es r anns) ->
+      Forall (nested_src vars AN) es.
+  Proof.
+    intros vars AN f es r anns H. apply Forall_forall. intros e He.
+    split.
+    - exact (src_exp_imm vars AN e _ (imm_Eapp_arg f es r anns e He) H).
+    - intros w a Hw. destruct (src_exp_loc vars AN _ H) as (Hanon & _).
+      apply (Hanon w a).
+      assert (In (w, a) (fresh_ins es)) as Hins.
+      { unfold fresh_ins. apply in_concat.
+        exists (fresh_in e). split; [exact Hw|exact (in_map fresh_in es e He)]. }
+      destruct r as [r|]; simpl; [apply in_or_app; now left|exact Hins].
+  Qed.
+
+  Lemma nested_src_reset :
+    forall vars AN f es r anns,
+      src_exp vars AN (Eapp f es (Some r) anns) ->
+      nested_src vars AN r.
+  Proof.
+    intros vars AN f es r anns H. split.
+    - exact (src_exp_imm vars AN r _ (imm_Eapp_rst f es r anns) H).
+    - intros w a Hw. destruct (src_exp_loc vars AN _ H) as (Hanon & _).
+      apply (Hanon w a). simpl. apply in_or_app. right. exact Hw.
+  Qed.
+
 End SecLusUnnestingBase.
