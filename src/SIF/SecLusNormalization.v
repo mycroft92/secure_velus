@@ -23,8 +23,14 @@ From Velus Require Import Clocks.
 From Velus Require Import Lustre.LSyntax.
 From Velus Require Import Lustre.LClocking.
 From Velus Require Import Lustre.LOrdered.
+From Velus Require Import Lustre.LCausality.
+From Velus Require Import Lustre.LTyping.
+From Velus Require Import Lustre.Normalization.Fresh.
 From Velus Require Import Lustre.Normalization.Unnesting.
 From Velus Require Import Lustre.Normalization.NormFby.
+From Velus Require Import Lustre.Normalization.Normalization.
+From Velus Require Import Lustre.Normalization.NClocking.
+From Velus Require Import Lustre.Normalization.NTyping.
 From Velus Require Import CoreExpr.CESyntax.
 From Velus Require Import CoreExpr.CEIsFree.
 From Velus Require Import CoreExpr.CEClocking.
@@ -78,14 +84,20 @@ Module SecLusNormalization
   (Import TR      : TR Ids Op OpAux LSyn CESyn NLSyn)
   (Import SECL    : SECLTYPING Ids Op OpAux SC LSyn CESyn NLSyn SIG NAMEGEN
                       CEIsF CEClo SECCET TR)
-  (Import UNN     : UNNESTING Ids Op OpAux LSyn)
-  (Import NF      : NORMFBY Ids Op OpAux LSyn UNN)
+  (Caus           : LCAUSALITY Ids Op LSyn)
+  (Import Typ     : LTYPING Ids Op LSyn)
+  (Import Norm    : NORMALIZATION Ids Op OpAux LSyn Caus)
   (Import SECLNG  : SECLNAMEGEN Ids Op OpAux LSyn CESyn NLSyn NAMEGEN TR)
   (Import SECNT   : SECNAMINGTOTALITY Ids Op CESyn NLSyn Mem IsD NLOrd NAMEGEN)
   (Import LOrd    : LORDERED Ids Op LSyn)
   (Import SECLNT  : SECLNAMINGTOTALITY Ids Op OpAux LSyn CESyn NLSyn Mem IsD
                       NLOrd NAMEGEN TR SECLNG SECNT LOrd)
 .
+
+Module UNN := Norm.Unnesting.
+Module NF := Norm.NormFby.
+Module NClo := NClockingFun Ids Op OpAux LSyn Caus LClo Norm.
+Module NTyp := NTypingFun Ids Op OpAux LSyn Caus Typ Norm.
 
 Module TC := SecLusTypingCorrectness Ids Op OpAux Lat SecT SLT SC LSyn LClo CESyn NLSyn
                Mem IsD NLOrd STEP SIG SIGPROOFS NAMEGEN CEIsF CEClo SECCET TR SECL UNN NF
@@ -1679,22 +1691,35 @@ Import SECMONADNotations.
       state.  The invariants are re-established after each node by
       [lsig_step_ext]. *)
 
-  Inductive Forall3 {A B C : Type} (R : A -> B -> C -> Prop)
-    : list A -> list B -> list C -> Prop :=
-  | Forall3_nil : Forall3 R [] [] []
-  | Forall3_cons : forall a b c l1 l2 l3,
-      R a b c -> Forall3 R l1 l2 l3 -> Forall3 R (a :: l1) (b :: l2) (c :: l3).
+  (** The lockstep relation also records the callee program the node is
+      read against: the source nodes already processed, so that at the node
+      the program [P] is the rest of the source program.  [Jinv] is an
+      invariant of the target accumulator against that program, extended by
+      every node. *)
+  Inductive Forall3P {A B C : Type} (R : list A -> A -> B -> C -> Prop)
+    : list A -> list A -> list B -> list C -> Prop :=
+  | Forall3P_nil : forall P, Forall3P R P [] [] []
+  | Forall3P_cons : forall P a b c l1 l2 l3,
+      R P a b c -> Forall3P R (a :: P) l1 l2 l3 ->
+      Forall3P R P (a :: l1) (b :: l2) (c :: l3).
 
   Theorem generate_all_lsignatures_weakens_ext :
     forall (all : list node) envsF auxF stN,
       generate_lnode_scoped_env_st all = OK (envsF, auxF, stN) ->
-      forall (R : node -> node -> node -> Prop),
-        (forall nS nM nall, R nS nM nall ->
+      forall (R : global -> node -> node -> node -> Prop)
+             (Jinv : secglobal -> global -> Prop),
+        (forall P nS nM nall, R P nS nM nall ->
            n_name nS = n_name nall /\ node_typed_facts nS nall
            /\ n_name nM = n_name nall /\ node_typed_facts nM nall) ->
-        (forall nS nM nall (env : Env.t ident) (r : node_aux_names) st0 stl
+        (forall P nS nM nall accT sgT stT0 stT1,
+            R P nS nM nall ->
+            Jinv accT P ->
+            generate_lnode_sig_scoped_env accT nM envsF auxF stT0
+              = OK (sgT, stT1) ->
+            Jinv (sgT :: accT) (nS :: P)) ->
+        (forall P nS nM nall (env : Env.t ident) (r : node_aux_names) st0 stl
                 accS accT sgS stS0 stS1 sgT stT0 stT1,
-            R nS nM nall ->
+            R P nS nM nall ->
             generate_local_env_for_lnode nall st0 = OK ((env, r), stl) ->
             find_node_env nall.(n_name) envsF = Some env ->
             get_node_aux nall.(n_name) auxF = Some (r.(nclk), r.(nrst)) ->
@@ -1702,13 +1727,14 @@ Import SECMONADNotations.
             lsig_inv stN st0 accS stS0 ->
             lsig_inv stN st0 accT stT0 ->
             call_weakens accS accT ->
+            Jinv accT P ->
             generate_lnode_sig_scoped_env accS nS envsF auxF stS0
               = OK (sgS, stS1) ->
             generate_lnode_sig_scoped_env accT nM envsF auxF stT0
               = OK (sgT, stT1) ->
             sig_head_weakens sgS sgT) ->
-        forall nsS nsM alls envs0 acc0 st0,
-          Forall3 R nsS nsM alls ->
+        forall P0 nsS nsM alls envs0 acc0 st0,
+          Forall3P R P0 nsS nsM alls ->
           NoDup (List.map n_name alls) ->
           generate_lnode_scoped_env' alls envs0 acc0 st0
             = OK ((envsF, auxF), stN) ->
@@ -1717,19 +1743,22 @@ Import SECMONADNotations.
             lsig_inv stN st0 accT stT ->
             call_weakens accS accT ->
             sigs_preserved accS accT ->
+            Jinv accT P0 ->
             generate_all_lsignatures' accS nsS envsF auxF stS = OK (GS, stfS) ->
             generate_all_lsignatures' accT nsM envsF auxF stT = OK (GT, stfT) ->
-            call_weakens GS GT /\ sigs_preserved GS GT.
+            call_weakens GS GT /\ sigs_preserved GS GT /\ Jinv GT
+              (List.rev nsS ++ P0).
   Proof.
-    intros all envsF auxF stN Hfull R HR Hstep.
-    intros nsS nsM alls. revert nsS nsM.
+    intros all envsF auxF stN Hfull R Jinv HR HJ Hstep.
+    intros P0 nsS nsM alls. revert P0 nsS nsM.
     induction alls as [|nall alls IH];
-      intros nsS nsM envs0 acc0 st0 HF3 Hnd Hrun accS accT stS stT GS GT stfS stfT
-        HinvS HinvT Hw Hp HgS HgT.
+      intros P0 nsS nsM envs0 acc0 st0 HF3 Hnd Hrun accS accT stS stT GS GT
+        stfS stfT HinvS HinvT Hw Hp Hj HgS HgT.
     - inversion HF3; subst. cbn in HgS, HgT.
-      inversion HgS; subst. inversion HgT; subst. split; assumption.
-    - inversion HF3 as [|nS nM nall0 nsS' nsM' alls0 HRn HF3']; subst.
-      destruct (HR nS nM nall HRn) as (HnameS & (PS & HwlS & HwcgS & HwcnS
+      inversion HgS; subst. inversion HgT; subst. cbn.
+      repeat split; assumption.
+    - inversion HF3 as [|P1 nS nM nall0 nsS' nsM' alls0 HRn HF3']; subst.
+      destruct (HR P0 nS nM nall HRn) as (HnameS & (PS & HwlS & HwcgS & HwcnS
                                          & HsrcS & HdisjS & HsubS)
                                          & HnameM & (PM & HwlM & HwcgM & HwcnM
                                          & HsrcM & HdisjM & HsubM)).
@@ -1741,14 +1770,18 @@ Import SECMONADNotations.
         as [[sgS stS1]|e] eqn:HsS; [|discriminate HgS].
       destruct (generate_lnode_sig_scoped_env accT nM envsF auxF stT)
         as [[sgT stT1]|e] eqn:HsT; [|discriminate HgT].
-      destruct (Hstep nS nM nall le0 r0 st0 stl accS accT sgS stS stS1 sgT
-                  stT stT1 HRn Hloc Hfind Haux Hst0 HinvS HinvT Hw HsS HsT)
+      destruct (Hstep P0 nS nM nall le0 r0 st0 stl accS accT sgS stS stS1 sgT
+                  stT stT1 HRn Hloc Hfind Haux Hst0 HinvS HinvT Hw Hj HsS HsT)
         as (Hname & Hpres & Hcall).
+      pose proof (HJ P0 nS nM nall accT sgT stT stT1 HRn Hj HsT) as Hj'.
       unfold generate_lnode_sig_scoped_env in HsS, HsT.
       rewrite HnameS, Hfind in HsS. rewrite HnameM, Hfind in HsT.
-      eapply (IH nsS' nsM' (Env.add nall.(n_name) le0 envs0) (r0 :: acc0) stl
-                 HF3' Hnd' Hrec (sgS :: accS) (sgT :: accT) stS1 stT1 GS GT
-                 stfS stfT); try assumption.
+      assert (Hrev : List.rev (nS :: nsS') ++ P0 = List.rev nsS' ++ (nS :: P0)).
+      { cbn [List.rev]. rewrite <- app_assoc. reflexivity. }
+      rewrite Hrev.
+      eapply (IH (nS :: P0) nsS' nsM' (Env.add nall.(n_name) le0 envs0)
+                 (r0 :: acc0) stl HF3' Hnd' Hrec (sgS :: accS) (sgT :: accT)
+                 stS1 stT1 GS GT stfS stfT); try assumption.
       + eapply lsig_step_ext;
           [exact Hfull|rewrite HnameS; exact Hfind|rewrite HnameS; exact Haux
           |exact Hloc|exact Hst0|exact HwlS|exact HwcgS|exact HwcnS|exact HsrcS
@@ -2011,6 +2044,308 @@ Import SECMONADNotations.
     - exact (arrow_operands_pure G env base_ty rst_ty ckenv Q eqs cs s s' x e0 e a
                Hgen Hun Hin).
   Qed.
+
+  Section PassFacts.
+  Import UNN.Fresh.Facts.
+  Import UNN.Fresh.Tactics.
+
+  (** * Pass fact: the clocks of the variables fby normalisation creates
+
+      Every variable the pass adds is annotated with the clock of a [fby] or
+      [->] it rewrites, so its clock mentions only the variables that clock
+      already mentioned. *)
+
+  Definition anns_clocks_in (V : list ident)
+             (l : list (ident * ((type * clock) * bool))) : Prop :=
+    forall y a, In (y, a) l -> incl (clock_vars (snd (fst a))) V.
+
+  Definition eq_ann_clock_in (V : list ident) (eq : equation) : Prop :=
+    forall e0 e ann,
+      (snd eq = [Efby [e0] [e] [ann]] \/ snd eq = [Earrow [e0] [e] [ann]]) ->
+      incl (clock_vars (fst (snd ann))) V.
+
+  Lemma fresh_ident_anns_clocks_in :
+    forall V b id st st',
+      fresh_ident norm2 b st = (id, st') ->
+      anns_clocks_in V (st_anns st) ->
+      incl (clock_vars (snd (fst b))) V ->
+      anns_clocks_in V (st_anns st').
+  Proof.
+    intros V b id st st' Hf Hst Hb.
+    rewrite (fresh_ident_anns _ _ _ _ _ Hf).
+    intros y a [H|H]; [inversion H; subst; exact Hb|exact (Hst y a H)].
+  Qed.
+
+  Lemma init_var_anns_clocks_in :
+    forall V cl res st st',
+      init_var_for_clock cl st = (res, st') ->
+      incl (clock_vars cl) V ->
+      anns_clocks_in V (st_anns st) ->
+      anns_clocks_in V (st_anns st').
+  Proof.
+    intros V cl res st st' Hinit Hcl Hst.
+    unfold init_var_for_clock in Hinit. repeat inv_bind.
+    destruct (find _ _) as [p|].
+    - destruct p. inversion Hinit; subst. exact Hst.
+    - destruct (fresh_ident _ _ _) eqn:Hf. inversion Hinit; subst.
+      eapply fresh_ident_anns_clocks_in; [exact Hf|exact Hst|exact Hcl].
+  Qed.
+
+  Lemma fby_iteexp_anns_clocks_in :
+    forall V e0 e ann e' eqs' st st',
+      fby_iteexp e0 e ann st = (e', eqs', st') ->
+      incl (clock_vars (fst (snd ann))) V ->
+      anns_clocks_in V (st_anns st) ->
+      anns_clocks_in V (st_anns st').
+  Proof.
+    intros V e0 e (ty & ck & nm) e' eqs' st st' Hf Hck Hst. cbn in Hck.
+    unfold fby_iteexp in Hf. repeat inv_bind.
+    eapply fresh_ident_anns_clocks_in;
+      [eassumption| |exact Hck].
+    eapply init_var_anns_clocks_in; [eassumption|exact Hck|exact Hst].
+  Qed.
+
+  Lemma arrow_iteexp_anns_clocks_in :
+    forall V e0 e ann e' eqs' st st',
+      arrow_iteexp e0 e ann st = (e', eqs', st') ->
+      incl (clock_vars (fst (snd ann))) V ->
+      anns_clocks_in V (st_anns st) ->
+      anns_clocks_in V (st_anns st').
+  Proof.
+    intros V e0 e (ty & ck & nm) e' eqs' st st' Hf Hck Hst. cbn in Hck.
+    unfold arrow_iteexp in Hf. repeat inv_bind.
+    eapply init_var_anns_clocks_in; [eassumption|exact Hck|exact Hst].
+  Qed.
+
+  Lemma fby_equation_anns_clocks_in :
+    forall V to_cut eq eqs' st st',
+      eq_ann_clock_in V eq ->
+      anns_clocks_in V (st_anns st) ->
+      fby_equation to_cut eq st = (eqs', st') ->
+      anns_clocks_in V (st_anns st').
+  Proof.
+    intros V to_cut eq eqs' st st' Hann Hst Hfby.
+    inv_fby_equation Hfby to_cut eq.
+    - destruct x2 as (ty & ck & nm).
+      pose proof (Hann x0 x1 (ty, (ck, nm)) (or_introl Logic.eq_refl)) as Hck.
+      cbn in Hck.
+      destruct (PS.mem _ _); repeat inv_bind; auto.
+      eapply fresh_ident_anns_clocks_in; [eassumption|exact Hst|exact Hck].
+    - eapply fby_iteexp_anns_clocks_in; [eassumption| |exact Hst].
+      exact (Hann _ _ _ (or_introl Logic.eq_refl)).
+    - eapply arrow_iteexp_anns_clocks_in; [eassumption| |exact Hst].
+      exact (Hann _ _ _ (or_intror Logic.eq_refl)).
+  Qed.
+
+  Lemma map_bind_fby_anns_clocks_in :
+    forall V to_cut eqs eqs' st st',
+      Forall (eq_ann_clock_in V) eqs ->
+      anns_clocks_in V (st_anns st) ->
+      map_bind (fby_equation to_cut) eqs st = (eqs', st') ->
+      anns_clocks_in V (st_anns st').
+  Proof.
+    intros V to_cut. induction eqs as [|eq eqs IH]; intros eqs' st st' Hf Hst Hm;
+      cbn [map_bind] in Hm; repeat inv_bind; auto.
+    inversion Hf; subst.
+    eapply IH; [assumption| |eassumption].
+    eapply fby_equation_anns_clocks_in; eassumption.
+  Qed.
+
+  Lemma normalized_lexp_fresh_in :
+    forall e, normalized_lexp e -> fresh_in e = [].
+  Proof.
+    intros e H. induction H; cbn [fresh_in]; try reflexivity.
+    - exact IHnormalized_lexp.
+    - rewrite IHnormalized_lexp1, IHnormalized_lexp2. reflexivity.
+    - cbn [map concat]. rewrite app_nil_r. exact IHnormalized_lexp.
+  Qed.
+
+  Lemma eq_ann_clock_in_of_wc :
+    forall Q vars eq,
+      wc_global Q ->
+      wc_env vars ->
+      unnested_equation Q eq ->
+      wc_equation Q vars eq ->
+      eq_ann_clock_in (List.map fst vars) eq.
+  Proof.
+    intros Q vars (xs, es) Hg Hwe Hun Hwc e0 e ann Hs.
+    destruct Hwc as (Hwc & _ & _). cbn [snd] in Hs.
+    assert (Hn0 : normalized_lexp e0).
+    { destruct Hs as [Hs|Hs]; subst es; inversion Hun; subst;
+        first [assumption
+              |(match goal with
+                | H : normalized_cexp (Efby _ _ _) |- _ =>
+                  exfalso; inversion H as [| |e1 Hl]; inversion Hl
+                | H : normalized_cexp (Earrow _ _ _) |- _ =>
+                  exfalso; inversion H as [| |e1 Hl]; inversion Hl
+                end)]. }
+    assert (Hck : Forall2 (@Logic.eq clock) (List.map clock_of_nclock [ann]) (clocksof [e0])).
+    { destruct Hs as [Hs|Hs]; subst es;
+        inversion Hwc as [|? ? Hw _]; subst; inversion Hw; subst; assumption. }
+    rewrite Forall2_eq in Hck.
+    unfold clocksof in Hck. cbn [flat_map] in Hck. rewrite app_nil_r in Hck.
+    assert (Hw0 : wc_exp Q vars e0).
+    { destruct Hs as [Hs|Hs]; subst es;
+        inversion Hwc as [|? ? Hw _]; subst; inversion Hw; subst;
+        match goal with H : Forall (wc_exp _ _) [_] |- _ =>
+          exact (Forall_inv H) end. }
+    pose proof (wc_exp_clockof Q vars e0 Hg Hwe Hw0) as Hcl.
+    rewrite (normalized_lexp_fresh_in e0 Hn0) in Hcl.
+    cbn [idck map app] in Hcl. rewrite app_nil_r in Hcl.
+    assert (Hin : In (clock_of_nclock ann) (clockof e0)).
+    { cbn [List.map] in Hck. rewrite <- Hck. left. reflexivity. }
+    rewrite Forall_forall in Hcl.
+    intros y Hy.
+    destruct (clock_vars_wc vars _ (Hcl _ Hin) y) as (cky & Hyv).
+    - exact Hy.
+    - apply in_map_iff. exists (y, cky). split; [reflexivity|exact Hyv].
+  Qed.
+
+  Lemma normfby_clocks_pass_fact :
+    forall Q c (n : node),
+      wc_global Q ->
+      wc_node Q n ->
+      unnested_node Q n ->
+      forall eqs' stf,
+        map_bind (fby_equation
+                    (PS.union c (ps_from_list (List.map fst (n_out n)))))
+          n.(n_eqs) init_st = (eqs', stf) ->
+        forall y a, In (y, a) (st_anns stf) ->
+          incl (clock_vars (snd (fst a)))
+            (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out))).
+  Proof.
+    intros Q c n Hg Hwcn Hun eqs' stf Hrun y a Hya.
+    destruct (node_wc_clock_facts Q n Hwcn) as (Hwenv & _).
+    destruct Hwcn as (_ & _ & _ & Hweqs).
+    assert (Hvm : List.map fst (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                  = List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+      by (unfold idck; rewrite map_map; reflexivity).
+    rewrite <- Hvm.
+    refine (map_bind_fby_anns_clocks_in _ _ _ _ init_st stf _ _ Hrun y a Hya).
+    - unfold unnested_node in Hun.
+      rewrite Forall_forall in Hun, Hweqs |- *. intros eq Hin.
+      exact (eq_ann_clock_in_of_wc Q _ eq Hg Hwenv (Hun eq Hin) (Hweqs eq Hin)).
+    - rewrite init_st_anns. intros y0 a0 [].
+  Qed.
+
+  End PassFacts.
+
+  (** * Unnested and normalised nodes have no anonymous streams
+
+      Nested calls are what carry anonymous names; the operands of an
+      unnested equation contain none. *)
+
+  Lemma normalized_cexp_fresh_in :
+    forall e, normalized_cexp e -> fresh_in e = [].
+  Proof.
+    intros e H. induction H; cbn [fresh_in].
+    - cbn [map concat]. rewrite !app_nil_r, IHnormalized_cexp1,
+        IHnormalized_cexp2. reflexivity.
+    - cbn [map concat]. rewrite !app_nil_r, IHnormalized_cexp1,
+        IHnormalized_cexp2, (normalized_lexp_fresh_in _ H). reflexivity.
+    - exact (normalized_lexp_fresh_in _ H).
+  Qed.
+
+  Lemma normalized_constant_fresh_in :
+    forall e, normalized_constant e -> fresh_in e = [].
+  Proof.
+    intros e H. induction H; cbn [fresh_in]; [reflexivity|].
+    cbn [map concat]. rewrite app_nil_r. exact IHnormalized_constant.
+  Qed.
+
+  Lemma anon_in_nil_of_fresh_in :
+    forall e, fresh_in e = [] -> (forall f es r a, e <> Eapp f es r a) ->
+              anon_in e = [].
+  Proof.
+    intros e H Hne. destruct e; cbn [anon_in]; try exact H.
+    exfalso. eapply Hne. reflexivity.
+  Qed.
+
+  Lemma normalized_lexps_fresh_ins :
+    forall es, Forall normalized_lexp es -> concat (List.map fresh_in es) = [].
+  Proof.
+    intros es H. induction H as [|e0 es0 He Hes IH]; [reflexivity|].
+    cbn [List.map concat]. rewrite (normalized_lexp_fresh_in _ He), IH.
+    reflexivity.
+  Qed.
+
+  Lemma normalized_lexp_anon_in :
+    forall e, normalized_lexp e -> anon_in e = [].
+  Proof.
+    intros e H. pose proof (normalized_lexp_fresh_in e H) as Hf.
+    destruct H; exact Hf.
+  Qed.
+
+  Lemma normalized_cexp_anon_in :
+    forall e, normalized_cexp e -> anon_in e = [].
+  Proof.
+    intros e H. pose proof (normalized_cexp_fresh_in e H) as Hf.
+    destruct H; [exact Hf|exact Hf|exact (normalized_lexp_anon_in _ H)].
+  Qed.
+
+  Lemma unnested_equation_anon_in :
+    forall G eq, unnested_equation G eq -> anon_in_eq eq = [].
+  Proof.
+    intros G eq H. unfold anon_in_eq, anon_ins.
+    inversion H as [xs0 f0 n0 es0 lann0 Hn Hf Hk
+                   | xs0 f0 n0 es0 x0 ty0 cl0 lann0 Hn Hf Hk
+                   | x0 e0 e1 ann0 H0 H1 | x0 e0 e1 ann0 H0 H1 | x0 e0 Hc];
+      subst; cbn [snd List.map concat]; rewrite app_nil_r.
+    - exact (normalized_lexps_fresh_ins _ Hn).
+    - change (fresh_ins es0 ++ fresh_in (Evar x0 (ty0, cl0)) = []).
+      cbn [fresh_in]. rewrite app_nil_r.
+      exact (normalized_lexps_fresh_ins _ Hn).
+    - cbn [anon_in fresh_in List.map concat].
+      rewrite !app_nil_r, (normalized_lexp_fresh_in _ H0),
+        (normalized_lexp_fresh_in _ H1). reflexivity.
+    - cbn [anon_in fresh_in List.map concat].
+      rewrite !app_nil_r, (normalized_lexp_fresh_in _ H0),
+        (normalized_lexp_fresh_in _ H1). reflexivity.
+    - exact (normalized_cexp_anon_in _ Hc).
+  Qed.
+
+  Lemma normalized_equation_anon_in :
+    forall G out eq, normalized_equation G out eq -> anon_in_eq eq = [].
+  Proof.
+    intros G out eq H. unfold anon_in_eq, anon_ins.
+    inversion H as [out0 xs0 f0 n0 es0 lann0 Hn Hf Hk
+                   | out0 xs0 f0 n0 es0 x0 ty0 cl0 lann0 Hn Hf Hk
+                   | out0 x0 e0 e1 ann0 Hno H0 H1 | out0 x0 e0 Hc];
+      subst; cbn [snd List.map concat]; rewrite app_nil_r.
+    - exact (normalized_lexps_fresh_ins _ Hn).
+    - change (fresh_ins es0 ++ fresh_in (Evar x0 (ty0, cl0)) = []).
+      cbn [fresh_in]. rewrite app_nil_r.
+      exact (normalized_lexps_fresh_ins _ Hn).
+    - cbn [anon_in fresh_in List.map concat].
+      rewrite !app_nil_r, (normalized_constant_fresh_in _ H0),
+        (normalized_lexp_fresh_in _ H1). reflexivity.
+    - exact (normalized_cexp_anon_in _ Hc).
+  Qed.
+
+  Lemma anon_names_unnested :
+    forall G (n : node), unnested_node G n -> anon_names n = [].
+  Proof.
+    intros G n H. unfold anon_names, anon_in_eqs.
+    assert (Hz : concat (List.map anon_in_eq (n_eqs n)) = []).
+    { unfold unnested_node in H.
+      induction (n_eqs n) as [|eq eqs IH]; [reflexivity|].
+      inversion H as [|? ? He Hes]; subst. cbn [List.map concat].
+      rewrite (unnested_equation_anon_in _ _ He), (IH Hes). reflexivity. }
+    rewrite Hz. reflexivity.
+  Qed.
+
+  Lemma anon_names_normalized :
+    forall G (n : node), normalized_node G n -> anon_names n = [].
+  Proof.
+    intros G n H. unfold anon_names, anon_in_eqs.
+    assert (Hz : concat (List.map anon_in_eq (n_eqs n)) = []).
+    { unfold normalized_node in H.
+      induction (n_eqs n) as [|eq eqs IH]; [reflexivity|].
+      inversion H as [|? ? He Hes]; subst. cbn [List.map concat].
+      rewrite (normalized_equation_anon_in _ _ _ He), (IH Hes). reflexivity. }
+    rewrite Hz. reflexivity.
+  Qed.
+
 
   Lemma normfby_instance :
     forall (all : list node) envsF auxF stN
@@ -3021,6 +3356,764 @@ Import SECMONADNotations.
              Hwcg Hinputs Hfind Haux' Logic.eq_refl Hunn Hwl Hweqs HsrcS Hmv
              Hamb1 Hamb2 (Pos.le_refl stS0) Htgtok Hwf Hdisj' Hgs Hnds Hgt Hsct Hincl Hef1 Hlf1
              Hw HsS0 HsT0).
+  Qed.
+
+
+  (** * The program level
+
+      Source expressions of the pass outputs, and the prefix facts the node
+      hypotheses ask for. *)
+
+  Lemma imm_sub_normalized_lexp :
+    forall e e1, normalized_lexp e -> imm_sub e1 e -> normalized_lexp e1.
+  Proof.
+    intros e e1 H Himm. inversion H; subst; inversion Himm; subst;
+      first [assumption
+            |(match goal with
+              | Hin : In _ [_] |- _ =>
+                destruct Hin as [<-|[]]; assumption
+              end)].
+  Qed.
+
+  Lemma sub_exp_normalized_lexp :
+    forall e' e, sub_exp e' e -> normalized_lexp e -> normalized_lexp e'.
+  Proof.
+    intros e' e Hs. induction Hs as [e|e'' e' e Himm Hs IH]; intro H;
+      [exact H|].
+    exact (IH (imm_sub_normalized_lexp _ _ H Himm)).
+  Qed.
+
+  Lemma sub_exp_inv :
+    forall e' e, sub_exp e' e ->
+                 e' = e \/ exists e1, imm_sub e1 e /\ sub_exp e' e1.
+  Proof.
+    intros e' e H. inversion H; subst; [left; reflexivity|right; eauto].
+  Qed.
+
+  Lemma src_exp_lexp :
+    forall vars e, normalized_lexp e -> src_exp vars [] e.
+  Proof.
+    intros vars e H e' Hs.
+    pose proof (sub_exp_normalized_lexp _ _ Hs H) as H'.
+    split.
+    - intros w a Hin. rewrite (normalized_lexp_anon_in _ H') in Hin.
+      destruct Hin.
+    - destruct H'; exact I.
+  Qed.
+
+  Lemma normalized_constant_lexp :
+    forall e, normalized_constant e -> normalized_lexp e.
+  Proof.
+    intros e H. induction H; constructor; assumption.
+  Qed.
+
+  Lemma imm_sub_normalized_cexp :
+    forall e e1, normalized_cexp e -> imm_sub e1 e -> normalized_cexp e1.
+  Proof.
+    intros e e1 H Himm. inversion H; subst.
+    - inversion Himm; subst;
+        match goal with
+        | Hin : In _ [_] |- _ => destruct Hin as [<-|[]]; assumption
+        end.
+    - inversion Himm; subst;
+        first [(apply normalized_lexp_cexp; assumption)
+              |(match goal with
+                | Hin : In _ [_] |- _ => destruct Hin as [<-|[]]; assumption
+                end)].
+    - apply normalized_lexp_cexp. exact (imm_sub_normalized_lexp _ _ H0 Himm).
+  Qed.
+
+  Lemma sub_exp_normalized_cexp :
+    forall e' e, sub_exp e' e -> normalized_cexp e -> normalized_cexp e'.
+  Proof.
+    intros e' e Hs. induction Hs as [e|e'' e' e Himm Hs IH]; intro H;
+      [exact H|].
+    exact (IH (imm_sub_normalized_cexp _ _ H Himm)).
+  Qed.
+
+  Lemma src_exp_cexp :
+    forall vars e, normalized_cexp e -> src_exp vars [] e.
+  Proof.
+    intros vars e H e' Hs.
+    pose proof (sub_exp_normalized_cexp _ _ Hs H) as H'.
+    split.
+    - intros w a Hin. rewrite (normalized_cexp_anon_in _ H') in Hin.
+      destruct Hin.
+    - destruct H' as [x et ef ty cl|e0 et ef ty cl|e0 Hl]; try exact I.
+      destruct Hl; exact I.
+  Qed.
+
+  Lemma src_exp_Eapp :
+    forall vars f es ro anns,
+      Forall normalized_lexp es ->
+      (match ro with None => True | Some r => normalized_lexp r end) ->
+      Forall (fun e' => Forall (wc_clock vars) (clockof e')) es ->
+      src_exp vars [] (Eapp f es ro anns).
+  Proof.
+    intros vars f es ro anns Hn Hr Hclk e' Hs.
+    apply sub_exp_inv in Hs as [->|(e1 & Himm & Hs1)].
+    - split.
+      + intros w a Hin. exfalso. destruct ro as [r|]; cbn [anon_in] in Hin.
+        * unfold fresh_ins in Hin.
+          rewrite (normalized_lexps_fresh_ins _ Hn),
+            (normalized_lexp_fresh_in _ Hr) in Hin. destruct Hin.
+        * unfold fresh_ins in Hin.
+          rewrite (normalized_lexps_fresh_ins _ Hn) in Hin. destruct Hin.
+      + exact Hclk.
+    - inversion Himm; subst.
+      + match goal with
+        | Hin : In _ es |- _ =>
+          exact (src_exp_lexp vars _
+                   (proj1 (Forall_forall _ _) Hn _ Hin) _ Hs1)
+        end.
+      + exact (src_exp_lexp vars _ Hr _ Hs1).
+  Qed.
+
+  Lemma src_exp_Efby :
+    forall vars e0 e ann,
+      normalized_lexp e0 -> normalized_lexp e ->
+      src_exp vars [] (Efby [e0] [e] [ann]).
+  Proof.
+    intros vars e0 e ann H0 H1 e' Hs.
+    apply sub_exp_inv in Hs as [->|(e1 & Himm & Hs1)].
+    - split.
+      + intros w a Hin. cbn [anon_in fresh_in List.map concat] in Hin.
+        rewrite !app_nil_r, (normalized_lexp_fresh_in _ H0),
+          (normalized_lexp_fresh_in _ H1) in Hin. destruct Hin.
+      + exact I.
+    - inversion Himm; subst;
+        match goal with
+        | Hin : In _ [_] |- _ =>
+          destruct Hin as [<-|[]];
+          first [exact (src_exp_lexp vars _ H0 _ Hs1)
+                |exact (src_exp_lexp vars _ H1 _ Hs1)]
+        end.
+  Qed.
+
+  Lemma src_exp_Earrow :
+    forall vars e0 e ann,
+      normalized_lexp e0 -> normalized_lexp e ->
+      src_exp vars [] (Earrow [e0] [e] [ann]).
+  Proof.
+    intros vars e0 e ann H0 H1 e' Hs.
+    apply sub_exp_inv in Hs as [->|(e1 & Himm & Hs1)].
+    - split.
+      + intros w a Hin. cbn [anon_in fresh_in List.map concat] in Hin.
+        rewrite !app_nil_r, (normalized_lexp_fresh_in _ H0),
+          (normalized_lexp_fresh_in _ H1) in Hin. destruct Hin.
+      + exact I.
+    - inversion Himm; subst;
+        match goal with
+        | Hin : In _ [_] |- _ =>
+          destruct Hin as [<-|[]];
+          first [exact (src_exp_lexp vars _ H0 _ Hs1)
+                |exact (src_exp_lexp vars _ H1 _ Hs1)]
+        end.
+  Qed.
+
+  (** The arguments of a call in a well-clocked equation are clocked over the
+      declared variables. *)
+  Lemma wc_args_clocks :
+    forall Q vars es,
+      wc_global Q -> wc_env vars ->
+      Forall (wc_exp Q vars) es ->
+      Forall normalized_lexp es ->
+      Forall (fun e' => Forall (wc_clock vars) (clockof e')) es.
+  Proof.
+    intros Q vars es Hg Hwe Hw Hn.
+    rewrite Forall_forall in Hw, Hn |- *. intros e He.
+    pose proof (wc_exp_clockof Q vars e Hg Hwe (Hw e He)) as Hc.
+    rewrite (normalized_lexp_fresh_in _ (Hn e He)) in Hc.
+    cbn [idck List.map] in Hc. rewrite app_nil_r in Hc. exact Hc.
+  Qed.
+
+  Lemma unnested_node_src :
+    forall Q (X : node),
+      wc_global Q -> wc_node Q X -> unnested_node Q X ->
+      Forall (fun eq =>
+                Forall (src_exp (idck (X.(n_in) ++ X.(n_vars) ++ X.(n_out)))
+                          []) (snd eq)) X.(n_eqs).
+  Proof.
+    intros Q X Hg Hwcn Hun.
+    destruct (node_wc_clock_facts Q X Hwcn) as (Hwenv & _).
+    destruct Hwcn as (_ & _ & _ & Hweqs).
+    unfold unnested_node in Hun.
+    rewrite Forall_forall in Hun, Hweqs |- *. intros eq Hin.
+    pose proof (Hun eq Hin) as Hu. pose proof (Hweqs eq Hin) as Hw.
+    destruct eq as [xs es]. cbn in Hw.
+    destruct Hw as (Hwe & _ & _).
+    inversion Hu as [xs0 f0 n0 es0 lann0 Hn Hf Hk
+                    | xs0 f0 n0 es0 x0 ty0 cl0 lann0 Hn Hf Hk
+                    | x0 e0 e1 ann0 H0 H1 | x0 e0 e1 ann0 H0 H1 | x0 e0 Hc];
+      subst; cbn [snd]; (apply Forall_cons; [|apply Forall_nil]).
+    - apply src_exp_Eapp; [exact Hn|exact I| ].
+      exact (wc_args_clocks Q _ _ Hg Hwenv
+               (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
+    - apply src_exp_Eapp; [exact Hn|constructor| ].
+      exact (wc_args_clocks Q _ _ Hg Hwenv
+               (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
+    - exact (src_exp_Efby _ _ _ _ H0 H1).
+    - exact (src_exp_Earrow _ _ _ _ H0 H1).
+    - exact (src_exp_cexp _ _ Hc).
+  Qed.
+
+  Lemma normalized_node_src :
+    forall Q (X : node),
+      wc_global Q -> wc_node Q X -> normalized_node Q X ->
+      Forall (fun eq =>
+                Forall (src_exp (idck (X.(n_in) ++ X.(n_vars) ++ X.(n_out)))
+                          []) (snd eq)) X.(n_eqs).
+  Proof.
+    intros Q X Hg Hwcn Hun.
+    destruct (node_wc_clock_facts Q X Hwcn) as (Hwenv & _).
+    destruct Hwcn as (_ & _ & _ & Hweqs).
+    unfold normalized_node in Hun.
+    rewrite Forall_forall in Hun, Hweqs |- *. intros eq Hin.
+    pose proof (Hun eq Hin) as Hu. pose proof (Hweqs eq Hin) as Hw.
+    destruct eq as [xs es]. cbn in Hw.
+    destruct Hw as (Hwe & _ & _).
+    inversion Hu as [out0 xs0 f0 n0 es0 lann0 Hn Hf Hk
+                    | out0 xs0 f0 n0 es0 x0 ty0 cl0 lann0 Hn Hf Hk
+                    | out0 x0 e0 e1 ann0 Hno H0 H1 | out0 x0 e0 Hc];
+      subst; cbn [snd]; (apply Forall_cons; [|apply Forall_nil]).
+    - apply src_exp_Eapp; [exact Hn|exact I| ].
+      exact (wc_args_clocks Q _ _ Hg Hwenv
+               (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
+    - apply src_exp_Eapp; [exact Hn|constructor| ].
+      exact (wc_args_clocks Q _ _ Hg Hwenv
+               (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
+    - exact (src_exp_Efby _ _ _ _ (normalized_constant_lexp _ H0) H1).
+    - exact (src_exp_cexp _ _ Hc).
+  Qed.
+
+  Lemma prefs_subset_gensym :
+    forall x, In x gensym_prefs -> PS.In x (PSP.of_list gensym_prefs).
+  Proof.
+    intros x Hx. apply PSP.of_list_1. apply SetoidList.InA_alt. exists x. split;
+      [reflexivity|exact Hx].
+  Qed.
+
+  Lemma elab_prefs_subset : PS.Subset elab_prefs (PSP.of_list gensym_prefs).
+  Proof.
+    intros x Hx. unfold elab_prefs in Hx. apply PS.singleton_spec in Hx.
+    subst x. apply prefs_subset_gensym. cbn. auto.
+  Qed.
+
+  Lemma norm1_prefs_subset : PS.Subset norm1_prefs (PSP.of_list gensym_prefs).
+  Proof.
+    intros x Hx. unfold norm1_prefs in Hx. apply PS.add_spec in Hx as [Hx|Hx].
+    - subst x. apply prefs_subset_gensym. cbn. auto.
+    - exact (elab_prefs_subset x Hx).
+  Qed.
+
+  Lemma norm2_prefs_subset :
+    PS.Subset (PS.add norm2 norm1_prefs) (PSP.of_list gensym_prefs).
+  Proof.
+    intros x Hx. apply PS.add_spec in Hx as [Hx|Hx].
+    - subst x. apply prefs_subset_gensym. cbn. auto.
+    - exact (norm1_prefs_subset x Hx).
+  Qed.
+
+
+
+  (** * The two legs' node relations *)
+
+  Definition source_guard (n : node) : Prop :=
+    anon_names n = []
+    /\ Forall (fun eq =>
+                 Forall (src_exp (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                           []) (snd eq)) n.(n_eqs).
+
+  (** Leg U: [P] is the source program the node is read against. *)
+  Definition RU (P : global) (nS nM nN : node) : Prop :=
+    exists (Hwl : wl_node P nS) (Hpref : n_prefixes nS = elab_prefs)
+           (Q : global) (Hunt : unnested_node Q nM)
+           (Hpref1 : n_prefixes nM = norm1_prefs),
+      nM = unnest_node P nS Hwl Hpref
+      /\ nN = normfby_node Q PS.empty nM Hunt Hpref1
+      /\ wc_global P /\ wt_node P nS /\ wc_node P nS
+      /\ global_iface_eq P Q /\ wc_global Q
+      /\ source_guard nS.
+
+  (** Leg I: [Q] is the unnested program the node is read against. *)
+  Definition RI (Q : global) (nM nN nall : node) : Prop :=
+    exists (Hunt : unnested_node Q nM) (Hpref1 : n_prefixes nM = norm1_prefs),
+      nN = normfby_node Q PS.empty nM Hunt Hpref1
+      /\ nall = nN
+      /\ wc_global Q /\ wt_node Q nM /\ wc_node Q nM.
+
+  Lemma typed_facts_unnested :
+    forall Q (M nall : node),
+      unnested_node Q M -> wc_global Q -> wt_node Q M -> wc_node Q M ->
+      n_prefixes M = norm1_prefs ->
+      node_typed_facts M nall.
+  Proof.
+    intros Q M nall Hunt Hgq Hwt Hwc Hpref.
+    exists Q. refine (conj (wt_node_wl_node _ _ Hwt) (conj Hgq (conj Hwc _))).
+    rewrite (anon_names_unnested Q M Hunt).
+    refine (conj (unnested_node_src Q M Hgq Hwc Hunt) (conj _ _)).
+    - intros w Hw. destruct Hw.
+    - rewrite Hpref. exact norm1_prefs_subset.
+  Qed.
+
+  Lemma typed_facts_normfby :
+    forall Q (M nall : node) (Hunt : unnested_node Q M)
+           (Hpref : n_prefixes M = norm1_prefs),
+      wc_global Q -> wt_node Q M -> wc_node Q M ->
+      node_typed_facts (normfby_node Q PS.empty M Hunt Hpref) nall.
+  Proof.
+    intros Q M nall Hunt Hpref Hgq Hwt Hwc.
+    set (N := normfby_node Q PS.empty M Hunt Hpref).
+    assert (HwtN : wt_node Q N)
+      by exact (NTyp.normfby_node_wt Q PS.empty M Hunt Hpref Hwt).
+    assert (HwcN : wc_node Q N)
+      by exact (NClo.normfby_node_wc Q PS.empty M Hunt Hpref Hwc).
+    assert (HnN : normalized_node Q N)
+      by exact (normfby_node_normalized_node Q M PS.empty Hunt Hpref).
+    exists Q. refine (conj (wt_node_wl_node _ _ HwtN) (conj Hgq (conj HwcN _))).
+    rewrite (anon_names_normalized Q N HnN).
+    refine (conj (normalized_node_src Q N Hgq HwcN HnN) (conj _ _)).
+    - intros w Hw. destruct Hw.
+    - intros x Hx. apply norm2_prefs_subset. cbn in Hx.
+      rewrite Hpref in Hx. exact Hx.
+  Qed.
+
+  Lemma typed_facts_source :
+    forall P (nS nall : node),
+      wl_node P nS -> wc_global P -> wc_node P nS ->
+      n_prefixes nS = elab_prefs -> source_guard nS ->
+      node_typed_facts nS nall.
+  Proof.
+    intros P nS nall Hwl Hgp Hwc Hpref (Hanon & Hsrc).
+    exists P. refine (conj Hwl (conj Hgp (conj Hwc _))).
+    rewrite Hanon.
+    refine (conj Hsrc (conj _ _)).
+    - intros w Hw. destruct Hw.
+    - rewrite Hpref. exact elab_prefs_subset.
+  Qed.
+
+  Lemma normfby_vars_incl :
+    forall Q (M : node) (Hunt : unnested_node Q M)
+           (Hpref : n_prefixes M = norm1_prefs),
+      incl (n_in M ++ n_vars M ++ n_out M)
+           (n_in (normfby_node Q PS.empty M Hunt Hpref)
+            ++ n_vars (normfby_node Q PS.empty M Hunt Hpref)
+            ++ n_out (normfby_node Q PS.empty M Hunt Hpref)).
+  Proof.
+    intros Q M Hunt Hpref x Hx.
+    assert (Hi : n_in (normfby_node Q PS.empty M Hunt Hpref) = n_in M)
+      by reflexivity.
+    assert (Ho : n_out (normfby_node Q PS.empty M Hunt Hpref) = n_out M)
+      by reflexivity.
+    assert (Hv : exists l, n_vars (normfby_node Q PS.empty M Hunt Hpref)
+                           = n_vars M ++ l) by (eexists; reflexivity).
+    destruct Hv as (l & Hv). rewrite Hi, Hv, Ho.
+    apply in_app_or in Hx as [H|H].
+    - apply in_or_app. left. exact H.
+    - apply in_app_or in H as [H|H]; apply in_or_app; right.
+      + apply in_or_app. left. apply in_or_app. left. exact H.
+      + apply in_or_app. right. exact H.
+  Qed.
+
+  Lemma normalized_vars_nodup :
+    forall Q (N : node),
+      normalized_node Q N ->
+      NoDupMembers (n_in N ++ n_vars N ++ n_out N).
+  Proof.
+    intros Q N Hn.
+    pose proof (n_nodup N) as H.
+    assert (Hz : anon_in_eqs (n_eqs N) = []).
+    { pose proof (anon_names_normalized Q N Hn) as Ha.
+      unfold anon_names in Ha. apply map_eq_nil in Ha. exact Ha. }
+    rewrite Hz, app_nil_r in H. exact H.
+  Qed.
+
+  Lemma unnested_vars_incl :
+    forall P (nS : node) (Hwl : wl_node P nS) (Hpref : n_prefixes nS = elab_prefs)
+           Q (Hunt : unnested_node Q (unnest_node P nS Hwl Hpref))
+           (Hpref1 : n_prefixes (unnest_node P nS Hwl Hpref) = norm1_prefs),
+      incl (n_in (unnest_node P nS Hwl Hpref)
+            ++ n_vars (unnest_node P nS Hwl Hpref)
+            ++ n_out (unnest_node P nS Hwl Hpref))
+           (n_in (normfby_node Q PS.empty (unnest_node P nS Hwl Hpref) Hunt Hpref1)
+            ++ n_vars (normfby_node Q PS.empty (unnest_node P nS Hwl Hpref)
+                         Hunt Hpref1)
+            ++ n_out (normfby_node Q PS.empty (unnest_node P nS Hwl Hpref)
+                        Hunt Hpref1)).
+  Proof.
+    intros. apply normfby_vars_incl.
+  Qed.
+
+  Lemma RU_facts :
+    forall P nS nM nN, RU P nS nM nN ->
+      n_name nS = n_name nN /\ n_name nM = n_name nN
+      /\ node_typed_facts nS nN /\ node_typed_facts nM nN
+      /\ node_typed_facts nN nN.
+  Proof.
+    intros P nS nM nN
+      (Hwl & Hpref & Q & Hunt & Hpref1 & HM & HN & Hgp & Hwtn & Hwcn & Hif
+       & Hgq & Hguard).
+    subst nM nN.
+    set (M := unnest_node P nS Hwl Hpref) in *.
+    assert (HwtM : wt_node P M)
+      by exact (NTyp.unnest_node_wt P nS Hwl Hpref Hwtn).
+    assert (HwcM : wc_node P M)
+      by exact (NClo.unnest_node_wc P nS Hwl Hpref Hgp Hwcn).
+    assert (HwtMQ : wt_node Q M) by exact (iface_eq_wt_node P Q M Hif HwtM).
+    assert (HwcMQ : wc_node Q M) by exact (iface_eq_wc_node P Q M Hif HwcM).
+    refine (conj Logic.eq_refl (conj Logic.eq_refl (conj _ (conj _ _)))).
+    - exact (typed_facts_source P nS _ Hwl Hgp Hwcn Hpref Hguard).
+    - exact (typed_facts_unnested Q M _ Hunt Hgq HwtMQ HwcMQ Hpref1).
+    - exact (typed_facts_normfby Q M _ Hunt Hpref1 Hgq HwtMQ HwcMQ).
+  Qed.
+
+  Lemma RI_facts :
+    forall Q nM nN nall, RI Q nM nN nall ->
+      n_name nM = n_name nall /\ n_name nN = n_name nall
+      /\ node_typed_facts nM nall /\ node_typed_facts nN nall.
+  Proof.
+    intros Q nM nN nall (Hunt & Hpref1 & HN & Hall & Hgq & Hwt & Hwc).
+    subst nN nall.
+    refine (conj Logic.eq_refl (conj Logic.eq_refl (conj _ _))).
+    - exact (typed_facts_unnested Q nM _ Hunt Hgq Hwt Hwc Hpref1).
+    - exact (typed_facts_normfby Q nM _ Hunt Hpref1 Hgq Hwt Hwc).
+  Qed.
+
+  (** * One node of each leg, in the lockstep's shape *)
+
+  Lemma stepU :
+    forall (all : list node) envsF auxF stN,
+      generate_lnode_scoped_env_st all = OK (envsF, auxF, stN) ->
+      forall P nS nM nall (env : Env.t ident) (r : node_aux_names) st0 stl
+             accS accT sgS stS0 stS1 sgT stT0 stT1,
+        RU P nS nM nall ->
+        generate_local_env_for_lnode nall st0 = OK ((env, r), stl) ->
+        find_node_env nall.(n_name) envsF = Some env ->
+        get_node_aux nall.(n_name) auxF = Some (r.(nclk), r.(nrst)) ->
+        (st0 <= stN)%positive ->
+        lsig_inv stN st0 accS stS0 ->
+        lsig_inv stN st0 accT stT0 ->
+        call_weakens accS accT ->
+        CALLS.sig_inputs_ok accT P ->
+        generate_lnode_sig_scoped_env accS nS envsF auxF stS0
+          = OK (sgS, stS1) ->
+        generate_lnode_sig_scoped_env accT nM envsF auxF stT0
+          = OK (sgT, stT1) ->
+        sig_head_weakens sgS sgT.
+  Proof.
+    intros all envsF auxF stN Hfull P nS nM nall env r st0 stl accS accT sgS
+      stS0 stS1 sgT stT0 stT1 HRU Hloc Hfind Haux Hst0 HinvS HinvT Hw Hj HsS HsT.
+    destruct (RU_facts P nS nM nall HRU) as (Hn1 & Hn2 & tfS & tfM & tfN).
+    destruct HRU as (Hwl & Hpref & Q & Hunt & Hpref1 & HM & HN & Hgp & Hwtn
+                     & Hwcn & Hif & Hgq & Hguard).
+    subst nM nall.
+    rewrite <- Hn1 in Hfind, Haux.
+    exact (unnest_instance all envsF auxF stN P nS Hwl Hpref _ env r st0 stl
+             accS accT sgS stS0 stS1 sgT stT0 stT1 Hfull Hloc Hfind Haux Hst0
+             HinvS HinvT Hw tfS tfM
+             (normfby_vars_incl Q _ Hunt Hpref1)
+             (normalized_vars_nodup Q _
+                (normfby_node_normalized_node Q _ PS.empty Hunt Hpref1))
+             Hgp Hwcn Hj HsS HsT).
+  Qed.
+
+  Lemma stepI :
+    forall (all : list node) envsF auxF stN,
+      generate_lnode_scoped_env_st all = OK (envsF, auxF, stN) ->
+      forall Q nM nN nall (env : Env.t ident) (r : node_aux_names) st0 stl
+             accS accT sgS stS0 stS1 sgT stT0 stT1,
+        RI Q nM nN nall ->
+        generate_local_env_for_lnode nall st0 = OK ((env, r), stl) ->
+        find_node_env nall.(n_name) envsF = Some env ->
+        get_node_aux nall.(n_name) auxF = Some (r.(nclk), r.(nrst)) ->
+        (st0 <= stN)%positive ->
+        lsig_inv stN st0 accS stS0 ->
+        lsig_inv stN st0 accT stT0 ->
+        call_weakens accS accT ->
+        True ->
+        generate_lnode_sig_scoped_env accS nM envsF auxF stS0
+          = OK (sgS, stS1) ->
+        generate_lnode_sig_scoped_env accT nN envsF auxF stT0
+          = OK (sgT, stT1) ->
+        sig_head_weakens sgS sgT.
+  Proof.
+    intros all envsF auxF stN Hfull Q nM nN nall env r st0 stl accS accT sgS
+      stS0 stS1 sgT stT0 stT1 HRI Hloc Hfind Haux Hst0 HinvS HinvT Hw _ HsS HsT.
+    destruct (RI_facts Q nM nN nall HRI) as (Hn1 & Hn2 & tfM & tfN).
+    destruct HRI as (Hunt & Hpref1 & HN & Hall & Hgq & Hwt & Hwc).
+    subst nN nall.
+    rewrite <- Hn1 in Hfind, Haux.
+    exact (normfby_instance all envsF auxF stN Q PS.empty nM Hunt Hpref1 env r
+             st0 stl accS accT sgS stS0 stS1 sgT stT0 stT1 Hfull Hloc Hfind
+             Haux Hst0 HinvS HinvT Hw tfM tfN
+             (normfby_clocks_pass_fact Q PS.empty nM Hgq Hwc Hunt) HsS HsT).
+  Qed.
+
+  (** * The builders of the lockstep relation *)
+
+  Lemma Forall3P_snoc :
+    forall {A B C : Type} (R : list A -> A -> B -> C -> Prop) P0 l1 l2 l3 a b c,
+      Forall3P R P0 l1 l2 l3 ->
+      R (List.rev l1 ++ P0) a b c ->
+      Forall3P R P0 (l1 ++ [a]) (l2 ++ [b]) (l3 ++ [c]).
+  Proof.
+    intros A B C R P0 l1 l2 l3 a b c H. revert a b c.
+    induction H as [P|P a0 b0 c0 l1 l2 l3 Hr Hrest IH]; intros a b c HR.
+    - cbn in HR. cbn [app]. exact (Forall3P_cons R P a b c [] [] []
+                                     HR (Forall3P_nil R (a :: P))).
+    - cbn [app]. apply Forall3P_cons; [exact Hr|].
+      apply IH. cbn [List.rev] in HR. rewrite <- app_assoc in HR.
+      exact HR.
+  Qed.
+
+  Lemma RU_intro :
+    forall P nS (Hwl : wl_node P nS) (Hpref : n_prefixes nS = elab_prefs)
+           Q (Hunt : unnested_node Q (unnest_node P nS Hwl Hpref))
+           (Hpref1 : n_prefixes (unnest_node P nS Hwl Hpref) = norm1_prefs),
+      wc_global P -> wt_node P nS -> wc_node P nS ->
+      global_iface_eq P Q -> wc_global Q -> source_guard nS ->
+      RU P nS (unnest_node P nS Hwl Hpref)
+         (normfby_node Q PS.empty (unnest_node P nS Hwl Hpref) Hunt Hpref1).
+  Proof.
+    intros P nS Hwl Hpref Q Hunt Hpref1 Hg Hwt Hwc Hif Hgq Hguard.
+    exists Hwl, Hpref, Q, Hunt, Hpref1.
+    refine (conj Logic.eq_refl (conj Logic.eq_refl _)).
+    exact (conj Hg (conj Hwt (conj Hwc (conj Hif (conj Hgq Hguard))))).
+  Qed.
+
+  Lemma RI_intro :
+    forall Q nM (Hunt : unnested_node Q nM)
+           (Hpref1 : n_prefixes nM = norm1_prefs),
+      wc_global Q -> wt_node Q nM -> wc_node Q nM ->
+      RI Q nM (normfby_node Q PS.empty nM Hunt Hpref1)
+         (normfby_node Q PS.empty nM Hunt Hpref1).
+  Proof.
+    intros Q nM Hunt Hpref1 Hg Hwt Hwc.
+    exists Hunt, Hpref1.
+    exact (conj Logic.eq_refl (conj Logic.eq_refl (conj Hg (conj Hwt Hwc)))).
+  Qed.
+
+  Lemma build_U :
+    forall G (Hwl : wl_global G)
+           (Hpr : Forall (fun n => n_prefixes n = elab_prefs) G)
+           (Hunt : unnested_global (unnest_global G Hwl Hpr))
+           (Hpref1 : Forall (fun n => n_prefixes n = norm1_prefs)
+                       (unnest_global G Hwl Hpr)),
+      wc_global G -> wt_global G -> Forall source_guard G ->
+      Forall3P RU []
+        (List.rev G) (List.rev (unnest_global G Hwl Hpr))
+        (List.rev (normfby_global (unnest_global G Hwl Hpr) Hunt Hpref1)).
+  Proof.
+    induction G as [|a tl IH]; intros Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard.
+    - cbn. constructor.
+    - inversion Hwc as [|? ? Hwc' Hwcn Hnm]; subst.
+      inversion Hwt as [|? ? Hwt' Hwtn Hnm']; subst.
+      inversion Hguard as [|? ? Hga Hgt]; subst.
+      cbn [unnest_global normfby_global List.rev].
+      apply Forall3P_snoc.
+      + eapply IH; assumption.
+      + rewrite List.rev_involutive, app_nil_r.
+        eapply RU_intro; try assumption.
+        * exact (unnest_global_eq _ _ _).
+        * exact (NClo.unnest_global_wc _ _ _ Hwc').
+  Qed.
+
+  Lemma build_I :
+    forall G1 (Hunt : unnested_global G1)
+           (Hp : Forall (fun n => n_prefixes n = norm1_prefs) G1),
+      wc_global G1 -> wt_global G1 ->
+      Forall3P RI []
+        (List.rev G1) (List.rev (normfby_global G1 Hunt Hp))
+        (List.rev (normfby_global G1 Hunt Hp)).
+  Proof.
+    induction G1 as [|a tl IH]; intros Hunt Hp Hwc Hwt.
+    - cbn. constructor.
+    - inversion Hwc as [|? ? Hwc' Hwcn Hnm]; subst.
+      inversion Hwt as [|? ? Hwt' Hwtn Hnm']; subst.
+      cbn [normfby_global List.rev].
+      apply Forall3P_snoc.
+      + eapply IH; assumption.
+      + rewrite List.rev_involutive, app_nil_r.
+        eapply RI_intro; assumption.
+  Qed.
+
+  (** * The program driver, with the invariants *)
+
+  Theorem generate_all_lsignatures_weakens_ext_driver :
+    forall (all : list node) envsF auxF stN st,
+      generate_lnode_scoped_env_st all = OK (envsF, auxF, stN) ->
+      forall (R : global -> node -> node -> node -> Prop)
+             (Jinv : secglobal -> global -> Prop),
+        (forall P nS nM nall, R P nS nM nall ->
+           n_name nS = n_name nall /\ node_typed_facts nS nall
+           /\ n_name nM = n_name nall /\ node_typed_facts nM nall) ->
+        (forall P nS nM nall accT sgT stT0 stT1,
+            R P nS nM nall ->
+            Jinv accT P ->
+            generate_lnode_sig_scoped_env accT nM envsF auxF stT0
+              = OK (sgT, stT1) ->
+            Jinv (sgT :: accT) (nS :: P)) ->
+        (forall P nS nM nall (env : Env.t ident) (r : node_aux_names) st0 stl
+                accS accT sgS stS0 stS1 sgT stT0 stT1,
+            R P nS nM nall ->
+            generate_local_env_for_lnode nall st0 = OK ((env, r), stl) ->
+            find_node_env nall.(n_name) envsF = Some env ->
+            get_node_aux nall.(n_name) auxF = Some (r.(nclk), r.(nrst)) ->
+            (st0 <= stN)%positive ->
+            lsig_inv stN st0 accS stS0 ->
+            lsig_inv stN st0 accT stT0 ->
+            call_weakens accS accT ->
+            Jinv accT P ->
+            generate_lnode_sig_scoped_env accS nS envsF auxF stS0
+              = OK (sgS, stS1) ->
+            generate_lnode_sig_scoped_env accT nM envsF auxF stT0
+              = OK (sgT, stT1) ->
+            sig_head_weakens sgS sgT) ->
+        forall nsS nsM,
+          Forall3P R [] nsS nsM all ->
+          NoDup (List.map n_name all) ->
+          sec_le stN st ->
+          Jinv [] [] ->
+          forall GS GT,
+            generate_all_lsignatures_scoped_env nsS envsF auxF st = OK GS ->
+            generate_all_lsignatures_scoped_env nsM envsF auxF st = OK GT ->
+            call_weakens GS GT /\ sigs_preserved GS GT
+            /\ Jinv GT (List.rev nsS).
+  Proof.
+    intros all envsF auxF stN st Hfull R Jinv HR HJ Hstep nsS nsM HF3 Hnd Hle
+      Hj0 GS GT HgS HgT.
+    unfold generate_all_lsignatures_scoped_env in HgS, HgT.
+    destruct (generate_all_lsignatures' [] nsS envsF auxF st)
+      as [[GS' stfS]|e] eqn:HallS; [|discriminate HgS].
+    destruct (generate_all_lsignatures' [] nsM envsF auxF st)
+      as [[GT' stfT]|e] eqn:HallT; [|discriminate HgT].
+    inversion HgS; subst GS'. inversion HgT; subst GT'.
+    pose proof Hfull as Hfull0.
+    unfold generate_lnode_scoped_env_st in Hfull.
+    destruct (generate_lnode_scoped_env' all (Env.empty _) [] init_state)
+      as [[[envs0 aux0] st0]|e] eqn:Hrun; [|discriminate Hfull].
+    inversion Hfull; subst envs0 aux0 st0.
+    destruct (generate_all_lsignatures_weakens_ext all envsF auxF stN Hfull0
+                R Jinv HR HJ Hstep [] nsS nsM all (Env.empty _) [] init_state
+                HF3 Hnd Hrun [] [] st st GS GT stfS stfT
+                (lsig_inv_nil stN init_state st Hle)
+                (lsig_inv_nil stN init_state st Hle)
+                call_weakens_nil sigs_preserved_nil Hj0 HallS HallT)
+      as (Hc & Hp & Hj).
+    rewrite app_nil_r in Hj. auto.
+  Qed.
+
+  Lemma sig_inputs_ok_nil : CALLS.sig_inputs_ok [] [].
+  Proof. intros f n sg Hf. simpl in Hf. discriminate Hf. Qed.
+
+  (** * The program theorem for both legs *)
+
+  Lemma unnest_global_map_names :
+    forall G (Hwl : wl_global G)
+           (Hpr : Forall (fun n => n_prefixes n = elab_prefs) G),
+      List.map n_name (unnest_global G Hwl Hpr) = List.map n_name G.
+  Proof.
+    induction G as [|a tl IH]; intros Hwl Hpr; [reflexivity|].
+    simpl. f_equal. apply IH.
+  Qed.
+
+  Lemma normfby_global_map_names :
+    forall G (Hunt : unnested_global G)
+           (Hp : Forall (fun n => n_prefixes n = norm1_prefs) G),
+      List.map n_name (normfby_global G Hunt Hp) = List.map n_name G.
+  Proof.
+    induction G as [|a tl IH]; intros Hunt Hp; [reflexivity|].
+    simpl. f_equal. apply IH.
+  Qed.
+
+  Lemma wc_global_names_nodup :
+    forall G, wc_global G -> NoDup (List.map n_name G).
+  Proof.
+    intros G H. induction H as [|n ns Hg IH Hwc Hnm]; cbn [List.map];
+      [constructor|].
+    constructor; [|exact IH].
+    intro Hin. apply in_map_iff in Hin as (n' & Hn' & Hin').
+    rewrite Forall_forall in Hnm. exact (Hnm n' Hin' (@Logic.eq_sym _ _ _ Hn')).
+  Qed.
+
+  Theorem normalization_signatures_preserved :
+    forall (G : global) (Hwl : wl_global G)
+           (Hpr : Forall (fun n => n_prefixes n = elab_prefs) G)
+           (Hunt : unnested_global (unnest_global G Hwl Hpr))
+           (Hpref1 : Forall (fun n => n_prefixes n = norm1_prefs)
+                       (unnest_global G Hwl Hpr)),
+      wc_global G -> wt_global G -> Forall source_guard G ->
+      (forall P nS nM nN accT sgT envsF auxF stT0 stT1,
+          RU P nS nM nN ->
+          CALLS.sig_inputs_ok accT P ->
+          generate_lnode_sig_scoped_env accT nM envsF auxF stT0
+            = OK (sgT, stT1) ->
+          CALLS.sig_inputs_ok (sgT :: accT) (nS :: P)) ->
+      forall envsF auxF stN st GS GT GM,
+        generate_lnode_scoped_env_st
+          (List.rev (normfby_global (unnest_global G Hwl Hpr) Hunt Hpref1))
+          = OK (envsF, auxF, stN) ->
+        sec_le stN st ->
+        generate_all_lsignatures_scoped_env (List.rev G) envsF auxF st = OK GS ->
+        generate_all_lsignatures_scoped_env
+          (List.rev (unnest_global G Hwl Hpr)) envsF auxF st = OK GT ->
+        generate_all_lsignatures_scoped_env
+          (List.rev (normfby_global (unnest_global G Hwl Hpr) Hunt Hpref1))
+          envsF auxF st = OK GM ->
+        call_weakens GS GM /\ sigs_preserved GS GM.
+  Proof.
+    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard HJU envsF auxF stN st GS GT GM
+      Hnaming Hle HgS HgT HgM.
+    set (G1 := unnest_global G Hwl Hpr) in *.
+    set (G2 := normfby_global G1 Hunt Hpref1) in *.
+    assert (Hwc1 : wc_global G1) by exact (NClo.unnest_global_wc G Hwl Hpr Hwc).
+    assert (Hwt1 : wt_global G1) by exact (NTyp.unnest_global_wt G Hwl Hpr Hwt).
+    assert (Hnd : NoDup (List.map n_name (List.rev G2))).
+    { rewrite List.map_rev.
+      apply (Permutation_NoDup (Permutation_rev _)).
+      unfold G2. rewrite normfby_global_map_names. unfold G1.
+      rewrite unnest_global_map_names. exact (wc_global_names_nodup G Hwc). }
+    (** the unnesting leg *)
+    destruct (generate_all_lsignatures_weakens_ext_driver
+                (List.rev G2) envsF auxF stN st Hnaming RU
+                (fun acc P => CALLS.sig_inputs_ok acc P)
+                (fun P nS nM nall HR =>
+                   match RU_facts P nS nM nall HR with
+                   | conj Hn1 (conj Hn2 (conj tfS (conj tfM _))) =>
+                     conj Hn1 (conj tfS (conj Hn2 tfM))
+                   end)
+                (fun P nS nM nall accT sgT stT0 stT1 HR Hj Hs =>
+                   HJU P nS nM nall accT sgT envsF auxF stT0 stT1 HR Hj Hs)
+                (fun P nS nM nall env r st0 stl accS accT sgS stS0 stS1 sgT
+                     stT0 stT1 HR Hloc Hfind Haux Hst0 HiS HiT Hw Hj HsS HsT =>
+                   stepU (List.rev G2) envsF auxF stN Hnaming P nS nM nall env r
+                     st0 stl accS accT sgS stS0 stS1 sgT stT0 stT1 HR Hloc
+                     Hfind Haux Hst0 HiS HiT Hw Hj HsS HsT)
+                (List.rev G) (List.rev G1)
+                (build_U G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard) Hnd Hle
+                sig_inputs_ok_nil GS GT HgS HgT)
+      as (Hc1 & Hp1 & _).
+    (** the [fby] leg *)
+    destruct (generate_all_lsignatures_weakens_ext_driver
+                (List.rev G2) envsF auxF stN st Hnaming RI
+                (fun _ _ => True)
+                (fun P nS nM nall HR =>
+                   match RI_facts P nS nM nall HR with
+                   | conj Hn1 (conj Hn2 (conj tfM tfN)) =>
+                     conj Hn1 (conj tfM (conj Hn2 tfN))
+                   end)
+                (fun _ _ _ _ _ _ _ _ _ _ _ => I)
+                (fun P nS nM nall env r st0 stl accS accT sgS stS0 stS1 sgT
+                     stT0 stT1 HR Hloc Hfind Haux Hst0 HiS HiT Hw Hj HsS HsT =>
+                   stepI (List.rev G2) envsF auxF stN Hnaming P nS nM nall env r
+                     st0 stl accS accT sgS stS0 stS1 sgT stT0 stT1 HR Hloc
+                     Hfind Haux Hst0 HiS HiT Hw Hj HsS HsT)
+                (List.rev G1) (List.rev G2)
+                (build_I G1 Hunt Hpref1 Hwc1 Hwt1) Hnd Hle I GT GM HgT HgM)
+      as (Hc2 & Hp2 & _).
+    split.
+    - exact (call_weakens_trans _ _ _ Hc1 Hc2).
+    - exact (sigs_preserved_trans _ _ _ Hp1 Hp2).
   Qed.
 
 End SecLusNormalization.
