@@ -4875,4 +4875,46 @@ Module SecLusUnnestingBase
       apply (Hanon w a). simpl. apply in_or_app. right. exact Hw.
   Qed.
 
+  (** The same three statements, about source expressions only ([src_exp]):
+      against an environment with extra keys they fail for an expression that
+      names a stream after a variable the node does not declare. *)
+  Definition source_types_scoped_upto_g
+      (GL : secglobal) (env : Env.t ident) (base_ty rst_ty : ident)
+      (vars : list (ident * clock)) (AN : list ident)
+      (scope : list ident) (stLo stF : sec_state) : Prop :=
+    forall P e ts s s',
+      wc_global P ->
+      wc_exp P vars e ->
+      src_exp vars AN e ->
+      sec_le stLo s ->
+      assign_lexp_type GL env base_ty rst_ty e s = OK (ts, s') ->
+      sec_le s' stF ->
+      Forall (fun t => st_scoped scope (fst t)) ts.
+
+  Definition source_lexps_scoped_upto_g
+      (GL : secglobal) (env : Env.t ident) (base_ty rst_ty : ident)
+      (vars : list (ident * clock)) (AN : list ident)
+      (scope : list ident) (stLo stF : sec_state) : Prop :=
+    forall P es ts s s',
+      wc_global P ->
+      Forall (wc_exp P vars) es ->
+      Forall (src_exp vars AN) es ->
+      sec_le stLo s ->
+      assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
+      sec_le s' stF ->
+      Forall (fun t => st_scoped scope (fst t)) ts.
+
+  Definition source_lexps_carried_scoped_upto_g
+      (GL : secglobal) (env : Env.t ident) (base_ty rst_ty : ident)
+      (vars : list (ident * clock)) (AN : list ident)
+      (scope : list ident) (stLo stF : sec_state) : Prop :=
+    forall P es ts s s',
+      wc_global P ->
+      Forall (wc_exp P vars) es ->
+      Forall (src_exp vars AN) es ->
+      sec_le stLo s ->
+      assign_lexps GL env base_ty rst_ty es s = OK (ts, s') ->
+      sec_le s' stF ->
+      constraints_scoped scope (carried ts).
+
 End SecLusUnnestingBase.

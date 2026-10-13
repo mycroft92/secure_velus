@@ -1296,13 +1296,13 @@ Section StreamAmbients.
         call_subst_fresh sg inp ck rst os.
 
     Hypothesis source_types_scoped :
-      CALLS.source_types_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
+      CALLS.source_types_scoped_upto_g GL env base_ty rst_ty vars AN scope stLo stF.
 
     Hypothesis source_lexps_scoped :
-      CALLS.source_lexps_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
+      CALLS.source_lexps_scoped_upto_g GL env base_ty rst_ty vars AN scope stLo stF.
 
     Hypothesis source_lexps_carried_scoped :
-      CALLS.source_lexps_carried_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
+      CALLS.source_lexps_carried_scoped_upto_g GL env base_ty rst_ty vars AN scope stLo stF.
 
     Hypothesis rst_ty_scoped : In rst_ty scope.
 
@@ -7018,7 +7018,7 @@ Section StreamAmbients.
       apply listSatisfiable_cmerge in Hcar as (Hcarcs & Hcarr).
       apply listSatisfiable_cmerge in Hcarr as (Hcararg & Hcarrst).
       assert (Forall (fun t => st_scoped scope (fst t)) argts) as Hscargts
-          by (exact (source_lexps_scoped P es argts sst sta Hwces Hlow Hargs Hbsta)).
+          by (exact (source_lexps_scoped P es argts sst sta Hwcg Hwces Hsrces Hlow Hargs Hbsta)).
 
       (** the arguments, as the pass left them *)
       assert (Forall normalized_lexp (List.concat ess)) as Hnorm1
@@ -7190,7 +7190,7 @@ Section StreamAmbients.
           assert (numstreams e1 = 1) as Hns1 by (inv Hwl0; assumption).
           assert (st_scoped scope (fst a1)) as Hsca1'.
           { assert (Forall (fun t => st_scoped scope (fst t)) [a1]) as Hf
-                by (exact (source_types_scoped P e1 [a1] sta stm Hwce1 Hlsa Hty1 Hbstb)).
+                by (exact (source_types_scoped P e1 [a1] sta stm Hwcg Hwce1 Hsrce1 Hlsa Hty1 Hbstb)).
             now inv Hf. }
           assert (snd rstty = snd a1) as Hsndr.
           { subst rstty. rewrite !snd_ljoin, snd_lvar.
@@ -7476,7 +7476,7 @@ Section StreamAmbients.
           + destruct Hy as [Hy|[]]; subst y. exact rst_ty_scoped.
           + apply in_merge_inv in Hy as [Hy|Hy].
             * assert (Forall (fun t => st_scoped scope (fst t)) [a1]) as Hf
-                  by (exact (source_types_scoped P e1 [a1] sta stm Hwce1 Hlsa Hty1 Hbstb)).
+                  by (exact (source_types_scoped P e1 [a1] sta stm Hwcg Hwce1 Hsrce1 Hlsa Hty1 Hbstb)).
               inv Hf. auto.
             * exact (clk_types_scoped P [e1] _ rck Hwcg
                        (Forall_cons _ Hwce1 (Forall_nil _))

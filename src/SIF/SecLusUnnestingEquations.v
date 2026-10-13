@@ -97,6 +97,7 @@ Import UNN.Fresh.Tactics.
     Variable scope   : list ident.
     Variable stLo     : sec_state.
     Variable stF     : sec_state.
+    Variable AN      : list ident.
     Variable amb     : ST.
 
     Hypothesis env_inj : env_injective env.
@@ -109,6 +110,10 @@ Import UNN.Fresh.Tactics.
       source_types_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
     Hypothesis source_lexps_scoped :
       source_lexps_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
+    Hypothesis source_types_scoped_g :
+      source_types_scoped_upto_g GL env base_ty rst_ty vars AN scope stLo stF.
+    Hypothesis source_lexps_scoped_g :
+      source_lexps_scoped_upto_g GL env base_ty rst_ty vars AN scope stLo stF.
     Hypothesis rst_ty_scoped : In rst_ty scope.
     Hypothesis clk_types_scoped :
       forall P es ck ckty,
@@ -117,7 +122,6 @@ Import UNN.Fresh.Tactics.
         (clk_src vars es ck \/
          exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
         assign_clk_type env base_ty ck = Some ckty -> st_scoped scope ckty.
-    Variable AN : list ident.
     (** The pointwise chain's version: only source expressions. *)
     Hypothesis clk_types_scoped_g :
       forall P es ck ckty,
@@ -132,6 +136,9 @@ Import UNN.Fresh.Tactics.
                   Env.find x env = Some b -> In b scope.
     Hypothesis source_lexps_carried_scoped :
       source_lexps_carried_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
+    Hypothesis source_lexps_carried_scoped_g :
+      source_lexps_carried_scoped_upto_g GL env base_ty rst_ty vars AN scope
+        stLo stF.
     Hypothesis sig_scoped :
       forall f sg, find_signature f GL = Some sg -> signature_scoped sg.
     Hypothesis sig_actuals_fresh :
@@ -235,8 +242,8 @@ Import UNN.Fresh.Tactics.
       (carries_list_streams GL env base_ty rst_ty cenv vars scope stLo stF AN).
     Local Notation carries_exp_streams_local :=
       (carries_exp_streams GL env base_ty rst_ty cenv env_inj vars scope stLo stF AN
-         sig_good sig_nodup sig_scoped sig_actuals_fresh source_types_scoped
-         source_lexps_scoped rst_ty_scoped clk_types_scoped_g
+         sig_good sig_nodup sig_scoped sig_actuals_fresh source_types_scoped_g
+         source_lexps_scoped_g rst_ty_scoped clk_types_scoped_g
          env_total env_anon).
     Local Notation call_args_streams_local :=
       (call_args_streams GL env base_ty rst_ty cenv env_inj vars scope stLo stF AN).
@@ -247,8 +254,8 @@ Import UNN.Fresh.Tactics.
     Local Notation call_arg_ambients_local := (call_arg_ambients env rst_ty).
     Local Notation carries_exps_streams_local :=
       (carries_exps_streams GL env base_ty rst_ty cenv env_inj vars scope stLo stF AN
-         sig_good sig_nodup sig_scoped sig_actuals_fresh source_types_scoped
-         source_lexps_scoped rst_ty_scoped clk_types_scoped_g
+         sig_good sig_nodup sig_scoped sig_actuals_fresh source_types_scoped_g
+         source_lexps_scoped_g rst_ty_scoped clk_types_scoped_g
          env_total env_anon).
 
     Local Lemma eq_moved_by_prefix :
@@ -3951,8 +3958,8 @@ Import UNN.Fresh.Tactics.
       { exact (@NoDup_app_r ident xs
                  (vars_defined (List.concat eqss) ++ st_ids st) Hnd). }
       { exact Hmv. }
-      { exact (source_lexps_carried_scoped P es ts xst si Hwc Hlow Hts Hbsi). }
-      { exact (source_lexps_scoped P es ts xst si Hwc Hlow Hts Hbsi). }
+      { exact (source_lexps_carried_scoped_g P es ts xst si Hwcg Hwc Hsx Hlow Hts Hbsi). }
+      { exact (source_lexps_scoped_g P es ts xst si Hwcg Hwc Hsx Hlow Hts Hbsi). }
       { exact Hambsc. }
       { exact Hcovered. }
       { exact Hlents. }
@@ -5262,7 +5269,7 @@ Import UNN.Fresh.Tactics.
         exact (call_arg_ambients_scoped_named env rst_ty scope sub bck ckty
                  (nclocksof args) (idck nd.(n_in)) argts rst_ty_scoped
                  Hambcsc' Hwcin Hwi Hnamed
-                 (source_lexps_scoped P args argts stm sti Hwces Hlsm Hargs Hbsti)). }
+                 (source_lexps_scoped_g P args argts stm sti Hwcg Hwces Hsrces Hlsm Hargs Hbsti)). }
       assert (clocks_covered_local (LSyn.clocksof args) ambs_arg) as Hccov.
       { subst ambs_arg. rewrite clocksof_nclocksof.
         exact (clocks_covered_call_args env base_ty rst_ty bck sub
@@ -5287,7 +5294,7 @@ Import UNN.Fresh.Tactics.
       { intros y Hy. apply Hmv.
         exact (eq_moved_by_prefix st sta st1 Hfa1 y Hy). }
       { exact Hcargsc. }
-      { exact (source_lexps_scoped P args argts stm sti Hwces Hlsm Hargs Hbsti). }
+      { exact (source_lexps_scoped_g P args argts stm sti Hwcg Hwces Hsrces Hlsm Hargs Hbsti). }
       { rewrite <- Eambs. exact Hambargsc. }
       { exact Hlargts. }
       { exact Hfounda. }
@@ -5380,7 +5387,7 @@ Import UNN.Fresh.Tactics.
           assert (numstreams e1 = 1) as Hns1 by (inv Hwl0; assumption).
           assert (st_scoped scope (fst a1)) as Hsca1'.
           { assert (Forall (fun t => st_scoped scope (fst t)) [a1]) as Hf
-                by exact (source_types_scoped P e1 [a1] xst stm Hwce1 Hlow Hty1 Hbstm).
+                by exact (source_types_scoped_g P e1 [a1] xst stm Hwcg Hwce1 Hsrce1 Hlow Hty1 Hbstm).
             now inv Hf. }
           assert (snd rstty = snd a1) as Hsndr.
           { rewrite Hr1. rewrite !snd_ljoin, snd_lvar. simpl snd.
@@ -5518,7 +5525,7 @@ Import UNN.Fresh.Tactics.
         eapply Forall_impl; [|exact Hambargsc]. intros q Hq.
         eapply st_scoped_weaken; [exact Hinc0b|exact Hq]. }
       assert (Forall (fun t => st_scoped scope (fst t)) argts) as Hscargts
-          by exact (source_lexps_scoped P args argts stm sti Hwces Hlsm Hargs Hbsti).
+          by exact (source_lexps_scoped_g P args argts stm sti Hwcg Hwces Hsrces Hlsm Hargs Hbsti).
       assert (Forall (fun t => st_scoped (scope ++ moved_by st sta) (fst t))
                 argts) as Hsc_argtsa.
       { eapply Forall_impl; [|exact Hscargts]. intros q Hq.
@@ -5583,7 +5590,7 @@ Import UNN.Fresh.Tactics.
             by (pose proof Hsx0 as Hsx0'; rewrite Her in Hsx0';
                 eapply nested_src_reset; exact Hsx0').
           assert (Forall (fun t => st_scoped scope (fst t)) [a1']) as Hf
-            by exact (source_types_scoped P e1' [a1'] xst stm Hw Hlow Hty' Hbstm).
+            by exact (source_types_scoped_g P e1' [a1'] xst stm Hwcg Hw Hsw Hlow Hty' Hbstm).
           pose proof (Forall_inv Hf) as Ha1'.
           rewrite Hr', !fst_ljoin, fst_lvar. cbn [fst].
           intros y Hy. apply in_merge_inv in Hy as [Hy|Hy].

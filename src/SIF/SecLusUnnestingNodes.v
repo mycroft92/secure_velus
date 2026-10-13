@@ -1730,6 +1730,7 @@ Import UNN.Fresh.Tactics.
     Hypothesis scope0_sub : incl scope0 scope.
     Variable stLo     : sec_state.
     Variable stF     : sec_state.
+    Variable AN      : list ident.
 
     Hypothesis env_inj : env_injective env.
     Hypothesis sig_good :
@@ -1740,6 +1741,10 @@ Import UNN.Fresh.Tactics.
       source_types_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
     Hypothesis source_lexps_scoped :
       source_lexps_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
+    Hypothesis source_types_scoped_g :
+      source_types_scoped_upto_g GL env base_ty rst_ty vars AN scope stLo stF.
+    Hypothesis source_lexps_scoped_g :
+      source_lexps_scoped_upto_g GL env base_ty rst_ty vars AN scope stLo stF.
     Hypothesis rst_ty_scoped : In rst_ty scope.
     Hypothesis clk_types_scoped :
       forall P es ck ckty,
@@ -1748,7 +1753,6 @@ Import UNN.Fresh.Tactics.
         (clk_src vars es ck \/
          exists x, In x (List.map fst vars) /\ find_clock cenv x = OK ck) ->
         assign_clk_type env base_ty ck = Some ckty -> st_scoped scope ckty.
-    Variable AN : list ident.
     Hypothesis clk_types_scoped_g :
       forall P es ck ckty,
         wc_global P ->
@@ -1762,6 +1766,9 @@ Import UNN.Fresh.Tactics.
                   Env.find x env = Some b -> In b scope.
     Hypothesis source_lexps_carried_scoped :
       source_lexps_carried_scoped_upto GL env base_ty rst_ty vars scope stLo stF.
+    Hypothesis source_lexps_carried_scoped_g :
+      source_lexps_carried_scoped_upto_g GL env base_ty rst_ty vars AN scope
+        stLo stF.
     Hypothesis sig_scoped :
       forall f sg, find_signature f GL = Some sg -> signature_scoped sg.
     Hypothesis sig_actuals_fresh :
@@ -2157,9 +2164,9 @@ Import UNN.Fresh.Tactics.
         destruct (Hamb eq (or_introl Logic.eq_refl)) as (Hcov1 & Hlen1).
         edestruct
           (eqn_carries_all_streams GL env base_ty rst_ty vars cenv scope stLo stF
-             env_inj sig_good sig_nodup source_types_scoped
-             source_lexps_scoped rst_ty_scoped AN clk_types_scoped_g
-             env_range_scoped source_lexps_carried_scoped sig_scoped
+             AN env_inj sig_good sig_nodup source_types_scoped_g
+             source_lexps_scoped_g rst_ty_scoped clk_types_scoped_g
+             env_range_scoped source_lexps_carried_scoped_g sig_scoped
              sig_actuals_fresh env_total env_anon
              sig_rooted P eq Hwcg Hsigin
              (As eq) eq1 st st1 c1 xst xst1 ct1 yst ystm dlt)

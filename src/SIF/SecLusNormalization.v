@@ -2454,4 +2454,573 @@ Import SECMONADNotations.
              HsT0).
   Qed.
 
+  (** * Leg U, one node *)
+
+  Lemma sig_nd_scope_nodup :
+    forall sg, sig_nd sg -> NoDup (signature_scope sg).
+  Proof.
+    intros sg H. unfold sig_nd in H. unfold signature_scope.
+    eapply Permutation_NoDup; [|exact H].
+    apply Permutation_app_head.
+    exact (Permutation_app_comm [sg.(s_clk); sg.(s_reset)] sg.(s_out)).
+  Qed.
+
+  Section SourceScopedG.
+
+    Variable G       : secglobal.
+    Variable env     : Env.t ident.
+    Variable base_ty : ident.
+    Variable rst_ty  : ident.
+    Variable vars    : list (ident * clock).
+    Variable AN      : list ident.
+    Variable decl    : list ident.
+    Variable scope   : list ident.
+    Variable stLo stF : sec_state.
+
+    Hypothesis Hb : In base_ty decl.
+    Hypothesis Hr : In rst_ty decl.
+    Hypothesis Henv :
+      forall x b, In x (List.map fst vars) -> Env.find x env = Some b ->
+                  In b decl.
+    Hypothesis Hclk :
+      forall (P : global) es ck ckty,
+        wc_global P ->
+        Forall (wc_exp P vars) es -> Forall (nested_src vars AN) es ->
+        clk_src vars es ck ->
+        assign_clk_type env base_ty ck = Some ckty -> st_scoped decl ckty.
+    Hypothesis Hsgs : secglobal_scoped G.
+    Hypothesis Hincl : incl decl scope.
+    Hypothesis Hwin :
+      forall s s', (stLo <= s)%positive -> (s' <= stF)%positive ->
+                   incl (minted s s') scope.
+
+    Lemma tgt_in_scope_g :
+      forall (cs : list SymTypes.constraint) s s',
+        (stLo <= s)%positive -> (s' <= stF)%positive ->
+        Forall (fun c => incl (snd c) (minted s s')) cs ->
+        incl (decl ++ tgt_names cs) scope.
+    Proof.
+      intros cs s s' Hlo Hhi Hc y Hy. apply in_app_or in Hy as [Hy|Hy];
+        [exact (Hincl y Hy)|].
+      unfold tgt_names in Hy. apply in_flat_map in Hy as (c & Hc1 & Hyc).
+      rewrite Forall_forall in Hc. apply (Hwin s s' Hlo Hhi).
+      exact (Hc c Hc1 y Hyc).
+    Qed.
+
+    Lemma source_types_scoped_upto_g_holds :
+      source_types_scoped_upto_g G env base_ty rst_ty vars AN scope stLo stF.
+    Proof.
+      intros P e ts s s' Hg Hwc Hsx Hlo H Hhi.
+      destruct (lexp_scoped_tgt_all_src G env base_ty rst_ty P vars AN decl Hb
+                  Hr Henv (fun es0 ck0 ckty0 Hw0 Hn0 Hs0 Hc0 => Hclk P es0 ck0 ckty0 Hg Hw0 Hn0 Hs0 Hc0) Hsgs e (conj Hwc Hsx) ts s s' H)
+        as (Hf & _).
+      pose proof (lexp_carried_minted_all G env base_ty rst_ty e ts s s'
+                    (minted s s') (fun y Hy => Hy) H) as Hm.
+      pose proof (tgt_in_scope_g (carried ts) s s' Hlo Hhi Hm) as Hs.
+      eapply Forall_impl; [|exact Hf]. intros t Ht.
+      eapply st_scoped_weaken; [exact Hs|exact Ht].
+    Qed.
+
+    Lemma source_lexps_pair_g :
+      forall P es ts s s',
+        wc_global P ->
+        Forall (wc_exp P vars) es ->
+        Forall (src_exp vars AN) es ->
+        (stLo <= s)%positive ->
+        assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+        (s' <= stF)%positive ->
+        Forall (fun t => st_scoped scope (fst t)) ts
+        /\ constraints_scoped scope (carried ts).
+    Proof.
+      intros P es ts s s' Hg Hwc Hsx Hlo H Hhi.
+      assert (Hall : Forall (lexp_scoped_tgt G env base_ty rst_ty decl) es).
+      { rewrite Forall_forall in Hwc, Hsx |- *. intros e He.
+        exact (lexp_scoped_tgt_all_src G env base_ty rst_ty P vars AN decl Hb
+                 Hr Henv (fun es0 ck0 ckty0 Hw0 Hn0 Hs0 Hc0 => Hclk P es0 ck0 ckty0 Hg Hw0 Hn0 Hs0 Hc0) Hsgs e (conj (Hwc e He) (Hsx e He))). }
+      destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl es Hall ts s s'
+                  H) as (Hf & Hc).
+      assert (Hmin : Forall (lexp_carried_minted G env base_ty rst_ty) es)
+        by (apply Forall_forall; intros e0 _;
+            apply (lexp_carried_minted_all G env base_ty rst_ty)).
+      pose proof (lexps_carried_minted_of G env base_ty rst_ty es Hmin ts s s'
+                    (minted s s') (fun y Hy => Hy) H) as Hm.
+      pose proof (tgt_in_scope_g (carried ts) s s' Hlo Hhi Hm) as Hs.
+      split.
+      - eapply Forall_impl; [|exact Hf]. intros t Ht.
+        eapply st_scoped_weaken; [exact Hs|exact Ht].
+      - eapply constraints_scoped_weaken; [exact Hs|exact Hc].
+    Qed.
+
+    Lemma source_lexps_scoped_upto_g_holds :
+      source_lexps_scoped_upto_g G env base_ty rst_ty vars AN scope stLo stF.
+    Proof.
+      intros P es ts s s' Hg Hwc Hsx Hlo H Hhi.
+      exact (proj1 (source_lexps_pair_g P es ts s s' Hg Hwc Hsx Hlo H Hhi)).
+    Qed.
+
+    Lemma source_lexps_carried_scoped_upto_g_holds :
+      source_lexps_carried_scoped_upto_g G env base_ty rst_ty vars AN scope
+        stLo stF.
+    Proof.
+      intros P es ts s s' Hg Hwc Hsx Hlo H Hhi.
+      exact (proj2 (source_lexps_pair_g P es ts s s' Hg Hwc Hsx Hlo H Hhi)).
+    Qed.
+
+  End SourceScopedG.
+
+  Lemma unnest_instance :
+    forall (all : list node) envsF auxF stN
+           (P : global) (n : node) (Hwl : wl_node P n)
+           (Hpref : n_prefixes n = elab_prefs) (nall : node)
+           (env : Env.t ident) (r : node_aux_names) st0 stl
+           accS accT sgS stS0 stS1 sgT stT0 stT1,
+      generate_lnode_scoped_env_st all = OK (envsF, auxF, stN) ->
+      generate_local_env_for_lnode nall st0 = OK ((env, r), stl) ->
+      find_node_env n.(n_name) envsF = Some env ->
+      get_node_aux n.(n_name) auxF = Some (r.(nclk), r.(nrst)) ->
+      (st0 <= stN)%positive ->
+      lsig_inv stN st0 accS stS0 ->
+      lsig_inv stN st0 accT stT0 ->
+      call_weakens accS accT ->
+      node_typed_facts n nall ->
+      node_typed_facts (unnest_node P n Hwl Hpref) nall ->
+      incl (n_in (unnest_node P n Hwl Hpref) ++ n_vars (unnest_node P n Hwl Hpref)
+            ++ n_out (unnest_node P n Hwl Hpref))
+           (n_in nall ++ n_vars nall ++ n_out nall) ->
+      NoDupMembers (n_in nall ++ n_vars nall ++ n_out nall) ->
+      wc_global P -> wc_node P n ->
+      CALLS.sig_inputs_ok accT P ->
+      generate_lnode_sig_scoped_env accS n envsF auxF stS0 = OK (sgS, stS1) ->
+      generate_lnode_sig_scoped_env accT (unnest_node P n Hwl Hpref)
+        envsF auxF stT0 = OK (sgT, stT1) ->
+      sig_head_weakens sgS sgT.
+  Proof.
+    intros all envsF auxF stN P n Hwl Hpref nall env r st0 stl accS accT sgS
+      stS0 stS1 sgT stT0 stT1 Hfull Hloc Hfind Haux0 Hst0 HinvS HinvT Hw HfS
+      HfM Hext Hndall Hwcg Hwcn Hinputs HsS0 HsT0.
+    set (M := unnest_node P n Hwl Hpref) in *.
+    destruct HfS as (P1 & HwlS & HwcgS & HwcnS & HsrcS & HdisjS & HsubS).
+    destruct HfM as (P2 & HwlM & HwcgM & HwcnM & HsrcM & HdisjM & HsubM).
+    assert (HfindM : find_node_env (n_name M) envsF = Some env) by exact Hfind.
+    assert (HauxM : get_node_aux (n_name M) auxF = Some (r.(nclk), r.(nrst)))
+      by exact Haux0.
+    assert (HsS : generate_lnode_sig accS n env auxF stS0 = OK (sgS, stS1)).
+    { unfold generate_lnode_sig_scoped_env in HsS0. rewrite Hfind in HsS0.
+      exact HsS0. }
+    assert (HsT : generate_lnode_sig accT M env auxF stT0 = OK (sgT, stT1)).
+    { unfold generate_lnode_sig_scoped_env in HsT0. rewrite HfindM in HsT0.
+      exact HsT0. }
+    assert (HanS : forall w b, Env.find w env = Some b -> ~ In w (anon_names n))
+      by (intros w b Hb; exact (anon_names_not_env_key n nall st0 env r stl w b
+                                  HsubS HdisjS Hloc Hb)).
+    assert (HanM : forall w b, Env.find w env = Some b -> ~ In w (anon_names M))
+      by (intros w b Hb; exact (anon_names_not_env_key M nall st0 env r stl w b
+                                  HsubM HdisjM Hloc Hb)).
+    assert (HinvS' : lsig_inv stN stl (sgS :: accS) stS1)
+      by (eapply lsig_step_ext;
+          [exact Hfull|exact Hfind|exact Haux0|exact Hloc|exact Hst0|exact HwlS
+          |exact HwcgS|exact HwcnS|exact HsrcS|exact HanS|exact HsubS
+          |exact HinvS|exact HsS]).
+    assert (HinvT' : lsig_inv stN stl (sgT :: accT) stT1)
+      by (eapply lsig_step_ext;
+          [exact Hfull|exact HfindM|exact HauxM|exact Hloc|exact Hst0|exact HwlM
+          |exact HwcgM|exact HwcnM|exact HsrcM|exact HanM|exact HsubM
+          |exact HinvT|exact HsT]).
+    destruct (lsig_inv_head _ _ _ _ _ HinvS') as (Hgs & Hscs & Hnds).
+    destruct (lsig_inv_head _ _ _ _ _ HinvT') as (Hgt & Hsct & Hndt).
+    destruct HinvS as (HgoodS0 & HscS0 & HndS0 & HrootS0 & HbdS0 & HleS0).
+    destruct HinvT as (HgoodT0 & HscT0 & HndT0 & HrootT0 & HbdT0 & HleT0).
+    destruct (generate_local_env_for_lnode_facts nall st0 env r stl Hloc)
+      as (Hinj & Hrng & Hclk0 & Hrst0).
+    destruct (lnode_sig_inv env accS n auxF sgS stS0 stS1 HsS)
+      as (ci & ri & ct & rt & inp & out & locals & cns
+          & Haux & Hct & Hrt & Hinp & Hout & Hlocs & Hcns & HsgS).
+    assert (Hci : ci = nclk r /\ ri = nrst r)
+      by (rewrite Haux0 in Haux; inversion Haux; split; reflexivity).
+    destruct Hci as (-> & ->).
+    assert (Hi : inp = CALLS.sec_of env (List.map fst n.(n_in)))
+      by (eapply get_mappings_from_node_sec_of; exact Hinp).
+    assert (Ho : out = CALLS.sec_of env (List.map fst n.(n_out)))
+      by (eapply get_mappings_from_node_sec_of; exact Hout).
+    set (decl := CALLS.sec_of env
+                   (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                 ++ [ct; rt]).
+    set (scope := decl ++ minted stS0 stS1).
+    set (scope0 := CALLS.sec_of env (List.map fst (n.(n_in) ++ n.(n_out)))
+                   ++ [ct; rt]).
+    assert (Hdecl_scope : incl decl scope) by (intros z Hz; unfold scope; apply in_or_app; now left).
+    assert (Hsub0 : incl scope0 scope).
+    { intros z Hz. unfold scope0 in Hz. unfold scope, decl. apply in_or_app. left.
+      apply in_or_app.
+      apply in_app_or in Hz as [Hz|Hz].
+      - left. revert z Hz. apply sec_of_incl. intros y Hy.
+        rewrite !map_app in *.
+        apply in_app_or in Hy as [Hy|Hy]; apply in_or_app;
+          [now left|right; apply in_or_app; now right].
+      - right. exact Hz. }
+    assert (Hbd : In ct decl) by (unfold decl; apply in_or_app; right; cbn; auto).
+    assert (Hrd : In rt decl) by (unfold decl; apply in_or_app; right; cbn; auto).
+    assert (Hbs : In ct scope) by exact (Hdecl_scope _ Hbd).
+    assert (Hrs : In rt scope) by exact (Hdecl_scope _ Hrd).
+    assert (Hsep : forall s s', sec_le stN s ->
+                     forall x b, Env.find x env = Some b -> ~ In b (minted s s'))
+      by (intros s s' Hle x b Hb;
+          exact (env_apart_from_minted all envsF auxF stN (n_name M) env s s'
+                   Hfull HfindM Hle x b Hb)).
+    set (vars := idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))).
+    assert (Hvm : List.map fst vars
+                  = List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+      by (unfold vars, idck; rewrite map_map; reflexivity).
+    assert (Hrg : forall x b, In x (List.map fst vars) ->
+                              Env.find x env = Some b -> In b decl).
+    { intros x b Hx Hf. rewrite Hvm in Hx. unfold decl.
+      apply in_or_app. left. exact (sec_of_In_intro env _ x b Hx Hf). }
+    destruct (node_wc_clock_facts P n Hwcn) as (Hwenv & Hcenv).
+    assert (HcenvM : forall x ck, In x (List.map fst vars) ->
+                       find_clock (lnode_clock_env M) x = OK ck ->
+                       incl (clock_vars ck) (List.map fst vars)).
+    { intros x ck Hx Hfc. rewrite Hvm in Hx.
+      apply in_map_iff in Hx as ((x' & tc) & Hxe & Hin). cbn in Hxe. subst x'.
+      assert (HfcM : find_clock (lnode_clock_env M) x = OK (snd tc)).
+      { apply (unnest_node_cenv_vars P n Hwl Hpref x (snd tc)).
+        unfold idck. apply in_map_iff. exists (x, tc). split;
+          [reflexivity|exact Hin]. }
+      rewrite HfcM in Hfc. inversion Hfc; subst ck.
+      apply (Hcenv x (snd tc)).
+      - change (In x (List.map fst vars)). rewrite Hvm.
+        apply in_map_iff. exists (x, tc). split; [reflexivity|exact Hin].
+      - rewrite (lnode_clock_env_find n x tc Hin). reflexivity. }
+    assert (HclkM : clk_scoped_wc env ct P vars (anon_names n)
+                      (lnode_clock_env M) decl)
+      by exact (clk_scoped_wc_holds env ct (lnode_clock_env M) vars
+                  (anon_names n) decl Hbd Hrg Hwenv HanS HcenvM P Hwcg).
+    assert (HclkN : clk_scoped_wc env ct P vars (anon_names n)
+                      (lnode_clock_env n) decl).
+    { exact (clk_scoped_wc_holds env ct (lnode_clock_env n) vars
+               (anon_names n) decl Hbd Hrg Hwenv HanS Hcenv P Hwcg). }
+    assert (Hwin : forall s s', (stS0 <= s)%positive -> (s' <= stS1)%positive ->
+                     incl (minted s s') scope).
+    { intros s s' H1 H2. unfold scope.
+      eapply incl_tran; [|apply incl_appr, incl_refl].
+      apply minted_window; [exact H1|exact H2]. }
+    assert (Hclkg : forall (P0 : global) es ck ckty,
+              wc_global P0 -> Forall (wc_exp P0 vars) es ->
+              Forall (nested_src vars (anon_names n)) es ->
+              (clk_src vars es ck \/
+               exists x, In x (List.map fst vars)
+                         /\ find_clock (lnode_clock_env M) x = OK ck) ->
+              assign_clk_type env ct ck = Some ckty -> st_scoped scope ckty).
+    { intros P0 es ck ckty Hg Hw1 Hn1 Hs1 Hc1.
+      eapply st_scoped_weaken; [exact Hdecl_scope|].
+      exact (clk_scoped_wc_holds env ct (lnode_clock_env M) vars
+               (anon_names n) decl Hbd Hrg Hwenv HanS HcenvM P0 Hg es ck ckty
+               Hw1 Hn1 Hs1 Hc1). }
+    assert (Hclkd : forall (P0 : global) es ck ckty,
+              wc_global P0 -> Forall (wc_exp P0 vars) es ->
+              Forall (nested_src vars (anon_names n)) es ->
+              clk_src vars es ck ->
+              assign_clk_type env ct ck = Some ckty -> st_scoped decl ckty)
+      by (intros P0 es ck ckty Hg Hw1 Hn1 Hs1 Hc1;
+          exact (clk_scoped_wc_holds env ct (lnode_clock_env M) vars
+                   (anon_names n) decl Hbd Hrg Hwenv HanS HcenvM P0 Hg es ck
+                   ckty Hw1 Hn1 (or_introl Hs1) Hc1)).
+    assert (Hsty : source_types_scoped_upto_g accT env ct rt vars (anon_names n)
+                     scope stS0 stS1)
+      by exact (source_types_scoped_upto_g_holds accT env ct rt vars
+                  (anon_names n) decl scope stS0 stS1 Hbd Hrd Hrg Hclkd HscT0
+                  Hdecl_scope Hwin).
+    assert (Hslx : source_lexps_scoped_upto_g accT env ct rt vars
+                     (anon_names n) scope stS0 stS1)
+      by exact (source_lexps_scoped_upto_g_holds accT env ct rt vars
+                  (anon_names n) decl scope stS0 stS1 Hbd Hrd Hrg Hclkd HscT0
+                  Hdecl_scope Hwin).
+    assert (Hslc : source_lexps_carried_scoped_upto_g accT env ct rt vars
+                     (anon_names n) scope stS0 stS1)
+      by exact (source_lexps_carried_scoped_upto_g_holds accT env ct rt vars
+                  (anon_names n) decl scope stS0 stS1 Hbd Hrd Hrg Hclkd HscT0
+                  Hdecl_scope Hwin).
+    pose proof Hwcn as Hwcn'.
+    destruct Hwcn' as (_ & _ & _ & Hweqs).
+    assert (Hfv : n_vars M
+                  = n.(n_vars)
+                    ++ st_anns (snd (unnest_equations P n.(n_eqs) init_st)))
+      by exact (proj2 (unnest_node_fields P n Hwl Hpref)).
+    assert (Hfi : n_in M = n.(n_in)) by reflexivity.
+    assert (Hfo : n_out M = n.(n_out)) by reflexivity.
+    assert (Hnd_n : NoDupMembers (n.(n_in) ++ n.(n_vars) ++ n.(n_out))).
+    { pose proof (n_nodup n) as Hnd. rewrite !app_assoc in Hnd.
+      apply NoDupMembers_app_l in Hnd. rewrite <- !app_assoc in Hnd.
+      exact Hnd. }
+    assert (Hnd_M : NoDupMembers (n_in M ++ n_vars M ++ n_out M)).
+    { pose proof (n_nodup M) as Hnd. rewrite !app_assoc in Hnd.
+      apply NoDupMembers_app_l in Hnd. rewrite <- !app_assoc in Hnd.
+      exact Hnd. }
+    assert (HinN : forall p, In p (n.(n_in) ++ n.(n_vars) ++ n.(n_out)) ->
+                             In p (n_in nall ++ n_vars nall ++ n_out nall)).
+    { intros p Hp. apply Hext.
+      change (In p (n_in M ++ n_vars M ++ n_out M)).
+      rewrite Hfi, Hfv, Hfo.
+      apply in_app_or in Hp as [Hp|Hp]; apply in_or_app.
+      - now left.
+      - right. apply in_app_or in Hp as [Hp|Hp]; apply in_or_app.
+        + left. apply in_or_app. now left.
+        + now right. }
+    assert (Hkeys : forall x, In x (List.map fst (n.(n_in) ++ n.(n_vars)
+                                                  ++ n.(n_out))) ->
+                              exists b, Env.find x env = Some b).
+    { intros x Hx.
+      apply (generate_local_env_for_lnode_binds nall st0 env r stl Hloc x).
+      right. right.
+      apply in_map_iff in Hx as (p & Hpx & Hp).
+      apply in_map_iff. exists p. split; [exact Hpx|exact (HinN p Hp)]. }
+    assert (Hnotaux_M : ~ In (nclk r) (List.map fst (n_in M ++ n_vars M ++ n_out M))
+                        /\ ~ In (nrst r) (List.map fst (n_in M ++ n_vars M
+                                                        ++ n_out M))).
+    { split; intro Hin.
+      - exact (lnode_var_not_sec M _ st0 HsubM Hin Hclk0).
+      - exact (lnode_var_not_sec M _ (Pos.succ st0) HsubM Hin Hrst0). }
+    assert (Hnotaux_n : ~ In (nclk r) (List.map fst (n.(n_in) ++ n.(n_vars)
+                                                     ++ n.(n_out)))
+                        /\ ~ In (nrst r) (List.map fst (n.(n_in) ++ n.(n_vars)
+                                                        ++ n.(n_out)))).
+    { split; intro Hin.
+      - exact (lnode_var_not_sec n _ st0 HsubS Hin Hclk0).
+      - exact (lnode_var_not_sec n _ (Pos.succ st0) HsubS Hin Hrst0). }
+    (** fresh-ness of the call instantiations the source run makes *)
+    set (D := env_images env).
+    assert (Hdeclall : forall y, In y D -> name_above st0 y).
+    { intros y Hy. unfold D, env_images in Hy.
+      apply in_map_iff in Hy as ((x & b) & Hxb & Hin). cbn in Hxb. subst b.
+      apply Env.elements_complete in Hin.
+      destruct (Hrng x y Hin) as (k & Hk & Hlo & _). exists k. split; assumption. }
+    assert (HdkA : decl_ok env ct rt D).
+    { split; [|split].
+      - exact (env_images_spec env _ _ Hct).
+      - exact (env_images_spec env _ _ Hrt).
+      - exact (fun x b H => env_images_spec env x b H). }
+    assert (HclkA : clk_scoped env ct D).
+    { intros ck ckty Hck.
+      eapply clk_scoped_of_env;
+        [exact (env_images_spec env _ _ Hct)
+        |exact (fun x b H => env_images_spec env x b H)|exact Hck]. }
+    assert (Hef : eapp_fresh_prop accS env ct rt st0)
+      by exact (eapp_fresh_prop_holds accS env ct rt D st0 HdkA HclkA HscS0
+                  Hdeclall HbdS0).
+    assert (Hlf : lcall_fresh_prop accS env ct rt st0)
+      by exact (lcall_fresh_prop_holds accS env ct rt D st0 HdkA HclkA HscS0
+                  Hdeclall HbdS0 Hinj).
+    assert (Hlo : sec_le st0 stS0) by exact (Pos.le_trans _ _ _ Hst0 HleS0).
+    assert (Hsaf : forall f sg inp ck rst os cns sa sb,
+              find_signature f accT = Some sg ->
+              Forall (caller_st env scope) inp ->
+              caller_st env scope ck -> caller_st env scope rst ->
+              Forall (caller_name env scope) os ->
+              generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
+              call_subst_fresh sg inp ck rst os).
+    { eapply sig_actuals_fresh_holds with (lo := st0).
+      - exact HbdT0.
+      - intros y Hy. unfold scope, decl in Hy.
+        apply in_app_or in Hy as [Hy|Hy].
+        + apply in_app_or in Hy as [Hy|Hy].
+          * apply (Hdeclall y). unfold D, env_images.
+            apply sec_of_In_inv in Hy as (x & _ & Hx).
+            exact (env_images_spec env x y Hx).
+          * destruct Hy as [<-|[<-|[]]]; apply Hdeclall;
+              [exact (env_images_spec env _ _ Hct)
+              |exact (env_images_spec env _ _ Hrt)].
+        + exact (name_above_minted st0 stS0 stS1 y Hlo Hy).
+      - intros x b Hx. apply Hdeclall. exact (env_images_spec env x b Hx). }
+    destruct (generate_leqns_constraints_weaken accS accT env ct rt
+                (lnode_clock_env n) n.(n_eqs) cns stS0 stS1 st0 Hw Hef Hlf
+                (NoDup_vars_defined_n_eqs n) Hlo Hcns)
+      as (cs' & Hcns' & _).
+    pose proof (unnest_node_unnested_node P n Hwl Hpref) as Hunn.
+    (** what unnesting moved is not on the interface *)
+    assert (Hmv : forall y,
+              In y (moved_by env init_st
+                      (snd (unnest_equations P n.(n_eqs) init_st))) ->
+              ~ In y scope).
+    { intros y Hy Hys. unfold moved_by in Hy.
+      apply sec_of_In_inv in Hy as (x & Hx & Hxy).
+      apply new_ids_spec in Hx as (Hx1 & _).
+      assert (HxC : InMembers x
+                      (st_anns (snd (unnest_equations P n.(n_eqs) init_st)))).
+      { apply fst_InMembers. exact Hx1. }
+      unfold scope, decl in Hys. apply in_app_or in Hys as [Hys|Hys].
+      - apply in_app_or in Hys as [Hys|Hys].
+        + apply sec_of_In_inv in Hys as (x' & Hx' & Hx'y).
+          assert (x' = x) as Hxx
+            by (eapply Hinj; [exact Hx'y|exact Hxy|reflexivity]).
+          subst x'.
+          pose proof Hnd_M as Hnd2. rewrite Hfi, Hfv, Hfo in Hnd2.
+          destruct (created_disj (n_in n) (n_vars n) _ (n_out n) x Hnd2 HxC)
+            as (H1 & H2 & H3).
+          rewrite !map_app in Hx'.
+          apply in_app_or in Hx' as [Hx'|Hx']; [exact (H1 Hx')|].
+          apply in_app_or in Hx' as [Hx'|Hx']; [exact (H2 Hx')|exact (H3 Hx')].
+        + destruct Hys as [<-|[<-|[]]].
+          * assert (x = nclk r) as Hxc
+              by (eapply Hinj; [exact Hxy|exact Hct|reflexivity]).
+            subst x. apply (proj1 Hnotaux_M).
+            rewrite Hfi, Hfv, Hfo. rewrite !map_app. apply in_or_app. right.
+            apply in_or_app. left. apply in_or_app. right.
+            apply fst_InMembers. exact HxC.
+          * assert (x = nrst r) as Hxc
+              by (eapply Hinj; [exact Hxy|exact Hrt|reflexivity]).
+            subst x. apply (proj2 Hnotaux_M).
+            rewrite Hfi, Hfv, Hfo. rewrite !map_app. apply in_or_app. right.
+            apply in_or_app. left. apply in_or_app. right.
+            apply fst_InMembers. exact HxC.
+      - exact (Hsep stS0 stS1 HleS0 x y Hxy Hys). }
+    (** the ambients *)
+    assert (Hag : forall x ck, In (x, ck) vars ->
+                    find_clock (lnode_clock_env M) x = OK ck)
+      by (intros x ck Hxc;
+          exact (unnest_node_cenv_vars P n Hwl Hpref x ck Hxc)).
+    assert (Hamb1 : forall eq, In eq n.(n_eqs) ->
+              clocks_covered env ct rt (clocksof (snd eq))
+                (canonical_ambients_g vars env ct rt (lnode_clock_env M) eq)
+              /\ List.length (canonical_ambients_g vars env ct rt
+                                (lnode_clock_env M) eq)
+                 = List.length (fst eq)).
+    { intros eq Heq. pose proof (proj1 (Forall_forall _ _) Hweqs _ Heq) as Hwceq.
+      destruct eq as (xs & es). destruct Hwceq as (_ & _ & Hxck).
+      cbn [fst snd] in *. split.
+      - refine (canonical_ambients_g_cover vars env ct rt
+                  (lnode_clock_env M) (xs, es) Hag _ Hxck).
+        intros ck Hck.
+        destruct (Forall2_in_right (fun x ck' => In (x, ck') vars) xs
+                    (clocksof es) ck Hxck Hck) as (x & _ & Hxv).
+        apply assign_clk_type_total_of_vars. intros z Hz.
+        apply Hkeys. rewrite <- Hvm.
+        apply (HcenvM x ck); [|exact (Hag x ck Hxv)|exact Hz].
+        apply in_map_iff. exists (x, ck). split; [reflexivity|exact Hxv].
+      - apply canonical_ambients_g_length. }
+    assert (Hamb2 : forall eq, In eq n.(n_eqs) ->
+              eqn_ambients env ct rt (lnode_clock_env M) (fst eq)
+                (canonical_ambients_g vars env ct rt (lnode_clock_env M) eq)).
+    { intros eq Heq. destruct eq as (xs & es).
+      apply canonical_ambients_g_spec.
+      exact (wc_equation_lhs_vars P vars xs es
+               (proj1 (Forall_forall _ _) Hweqs _ Heq)). }
+    assert (Hassc : forall eq, stream_ambients_scoped scope
+              (canonical_ambients_g vars env ct rt (lnode_clock_env M) eq)).
+    { intros eq. apply canonical_ambients_g_scoped; [exact Hrs|].
+      intros x ck ckty Hx Hfc Hc.
+      exact (Hclkg P [] ck ckty Hwcg (Forall_nil _) (Forall_nil _)
+               (or_intror (ex_intro _ x (conj Hx Hfc))) Hc). }
+    assert (Hdefd : incl (CALLS.sec_of env (vars_defined n.(n_eqs))) scope).
+    { eapply incl_tran; [|exact Hdecl_scope]. unfold decl.
+      eapply incl_tran; [|apply incl_appl, incl_refl].
+      apply sec_of_incl. intros y Hy.
+      assert (In y (List.map fst (n.(n_vars) ++ n.(n_out)))) as Hy'
+          by (eapply Permutation_in; [exact (n_defd n)|exact Hy]).
+      rewrite map_app in Hy' |- *. rewrite map_app.
+      apply in_app_or in Hy' as [Hy'|Hy'];
+        [apply in_or_app; right; apply in_or_app; now left
+        |apply in_or_app; right; apply in_or_app; now right]. }
+    assert (Htgtok : forall ce ct1,
+              generate_leqns_constraints accT env ct rt (lnode_clock_env n)
+                n.(n_eqs) stS0 = OK (ce, ct1) ->
+              constraints_scoped scope ce /\ sec_le ct1 stS1).
+    { intros ce ct1 Hg.
+      assert (Hcc : ce = cs' /\ ct1 = stS1)
+        by (rewrite Hcns' in Hg; inversion Hg; split; reflexivity).
+      destruct Hcc as (-> & ->).
+      split; [|apply Pos.le_refl].
+      destruct (generate_leqns_constraints_shape accT env ct rt
+                  (lnode_clock_env n) n.(n_eqs) cs' stS0 stS1
+                  (minted stS0 stS1) (incl_refl _) (Hsep stS0 stS1 HleS0)
+                  (wl_node_arity P n Hwl) Hcns') as (ms & Hm & Hms).
+      refine (generate_leqns_constraints_scoped_wc accT env ct rt P vars
+                (anon_names n) scope (lnode_clock_env n) n.(n_eqs) cs' stS0 stS1
+                HscT0 _ Hrs _ Hweqs HsrcS Hdefd _ Hcns').
+      - intros es ck ckty Hw1 Hn1 Hs1 Hc1.
+        eapply st_scoped_weaken; [exact Hdecl_scope|].
+        exact (HclkN es ck ckty Hw1 Hn1 Hs1 Hc1).
+      - eapply exps_scoped_wc_of_decl;
+          [exact Hbd|exact Hrd|exact Hrg|exact HclkN|exact HscT0
+          |exact Hdecl_scope].
+      - eapply incl_tran; [eapply tgt_names_of_targets_of; exact Hm|].
+        apply incl_app; [exact Hdefd|].
+        eapply incl_tran; [exact Hms|].
+        unfold scope. apply incl_appr, incl_refl. }
+    assert (Hdisj' : forall locals0 cns0 ct1,
+              get_mappings_from_node n.(n_vars) env = Some locals0 ->
+              generate_leqns_constraints accS env ct rt (lnode_clock_env n)
+                n.(n_eqs) stS0 = OK (cns0, ct1) ->
+              forall y, In y (locals0 ++ minted stS0 ct1) -> ~ In y scope0).
+    { intros locals0 cns0 ct1 Hl0 Hg0 y Hy Hy0.
+      apply in_app_or in Hy as [Hy|Hy].
+      - unfold scope0 in Hy0. apply in_app_or in Hy0 as [Hy0|Hy0].
+        + exact (locals_not_interface env Hinj n locals0 Hnd_n Hl0 y Hy Hy0).
+        + apply get_mappings_from_node_eq in Hl0.
+          destruct (get_mappings_In _ env locals0 y Hl0 Hy) as (v & Hv & Hfv').
+          destruct Hy0 as [<-|[<-|[]]].
+          * assert (v = nclk r) as Hvc
+              by (eapply Hinj; [exact Hfv'|exact Hct|reflexivity]).
+            subst v. apply (proj1 Hnotaux_n).
+            rewrite !map_app. apply in_or_app. right. apply in_or_app. left.
+            exact Hv.
+          * assert (v = nrst r) as Hvc
+              by (eapply Hinj; [exact Hfv'|exact Hrt|reflexivity]).
+            subst v. apply (proj2 Hnotaux_n).
+            rewrite !map_app. apply in_or_app. right. apply in_or_app. left.
+            exact Hv.
+      - assert (Hex : exists x, Env.find x env = Some y).
+        { unfold scope0 in Hy0. apply in_app_or in Hy0 as [Hy0|Hy0].
+          - apply sec_of_In_inv in Hy0 as (x & _ & Hx). exists x. exact Hx.
+          - destruct Hy0 as [<-|[<-|[]]]; [exists (nclk r); exact Hct
+                                         |exists (nrst r); exact Hrt]. }
+        destruct Hex as (x & Hx).
+        exact (Hsep stS0 ct1 HleS0 x y Hx Hy). }
+    assert (Hincl : forall z, In z (signature_scope sgS) -> In z scope0).
+    { intros z Hz. rewrite HsgS in Hz.
+      cbn [signature_scope s_in s_out s_clk s_reset] in Hz.
+      rewrite Hi, Ho in Hz. unfold scope0. rewrite map_app, sec_of_app.
+      apply in_app_or in Hz as [Hz|Hz]; apply in_or_app.
+      - left. apply in_or_app. now left.
+      - apply in_app_or in Hz as [Hz|Hz].
+        + left. apply in_or_app. now right.
+        + right. exact Hz. }
+    assert (Haux' : forall clk_id rst_id,
+              get_node_aux (n_name n) auxF = Some (clk_id, rst_id) ->
+              Env.find clk_id env = Some ct /\ Env.find rst_id env = Some rt)
+      by (intros ci' ri' H; rewrite Haux0 in H; inversion H; subst;
+          split; assumption).
+    assert (Hwf : forall ce ct1,
+              generate_leqns_constraints accS env ct rt (lnode_clock_env n)
+                n.(n_eqs) stS0 = OK (ce, ct1) ->
+              Forall (fun c0 => List.length (snd c0) = 1%nat) ce)
+      by (intros ce ct1 Hg;
+          exact (generate_leqns_constraints_len1 accS env ct rt
+                   (lnode_clock_env n) n.(n_eqs) ce stS0 ct1 Hg)).
+    assert (Henvtot : forall x ck, In (x, ck) vars ->
+                       exists b, Env.find x env = Some b).
+    { intros x ck Hxc. apply Hkeys. rewrite <- Hvm.
+      apply in_map_iff. exists (x, ck). split; [reflexivity|exact Hxc]. }
+    assert (Hef1 : eapp_fresh_prop accS env ct rt stS0).
+    { intros f es er anns s0 sg argts rstty ckty outs cs sta stb stc s' Hle1.
+      eapply Hef. exact (Pos.le_trans _ _ _ Hlo Hle1). }
+    assert (Hlf1 : lcall_fresh_prop accS env ct rt stS0).
+    { intros xs f es rstty s0 sg ckty argts outs sti cs0 s' Hnd1 Hsh Hle1.
+      eapply Hlf; [exact Hnd1| |exact (Pos.le_trans _ _ _ Hlo Hle1)].
+      destruct Hsh as [Hsh|(e1 & t1 & a1 & rck & s1 & s1' & Hl1 & Hr)];
+        [left; exact Hsh|right].
+      exists e1, t1, a1, rck, s1, s1'. split;
+        [exact (Pos.le_trans _ _ _ Hlo Hl1)|exact Hr]. }
+    exact (unnest_node_step_streams accT env ct rt vars (lnode_clock_env M)
+             scope scope0 Hsub0 stS0 stS1 (anon_names n) Hinj HgoodT0
+             (fun f sg H => sig_nd_scope_nodup sg (HndT0 f sg H))
+             Hsty Hslx Hrs Hclkg
+             (fun x b Hx Hf => Hdecl_scope _ (Hrg x b Hx Hf)) Hslc HscT0 Hsaf
+             Henvtot
+             HanS (fun f sg H => HrootT0 f sg H)
+             (canonical_ambients_g vars env ct rt (lnode_clock_env M)) Hassc
+             P P n Hwl Hpref envsF auxF accS sgS stS0 stS1 sgT stT0 stT1
+             Hwcg Hinputs Hfind Haux' Logic.eq_refl Hunn Hwl Hweqs HsrcS Hmv
+             Hamb1 Hamb2 (Pos.le_refl stS0) Htgtok Hwf Hdisj' Hgs Hnds Hgt Hsct Hincl Hef1 Hlf1
+             Hw HsS0 HsT0).
+  Qed.
+
 End SecLusNormalization.
