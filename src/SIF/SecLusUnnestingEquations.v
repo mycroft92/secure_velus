@@ -170,7 +170,7 @@ Import UNN.Fresh.Tactics.
       forall x ck, In (x, ck) vars -> exists b, Env.find x env = Some b.
 
     Hypothesis env_anon :
-      forall w b, Env.find w env = Some b -> ~ In w AN.
+      forall w, In w AN -> ~ In w (List.map fst vars).
 
     (** Every signature's clock and reset formals are sources of all of its
         constraints.  True of generated signatures because every equation's
@@ -4969,8 +4969,7 @@ Import UNN.Fresh.Tactics.
       assert (Forall (src_exp vars AN) args) as Hsrces
         by (eapply src_exp_imm_forall; [|exact Hsx];
             intros e' He'; exact (imm_Eapp_arg f args er anns e' He')).
-      destruct (src_exp_loc vars AN _ Hsx) as (Hanon & Hargcl).
-      cbn in Hargcl.
+      destruct (src_exp_loc vars AN _ Hsx) as (Hanon & Hargcl & _).
       assert (Forall (nested_src vars AN) args) as Hnsrces
         by (eapply nested_src_args; exact Hsx).
 
@@ -5240,21 +5239,27 @@ Import UNN.Fresh.Tactics.
         exact (nclockof_types_defined env base_ty vars e (Hargcl e He)
                  env_total nck Hne). }
 
-      (** and each named argument stream carries its own security name *)
+      (** and each named argument stream carries its own security name, except
+          the streams of nested calls, whose names no clock variable of a
+          formal goes to *)
       assert (Forall2 (fun t nck => forall w g,
-                           snd nck = Some w -> Env.find w env = Some g ->
-                           In g (fst t))
+                           snd nck = Some w -> ~ In w AN ->
+                           Env.find w env = Some g -> In g (fst t))
                 argts (nclocksof args)) as Hnamed.
-      { eapply (assign_lexps_named_covered P GL env base_ty rst_ty vars args
-                  Hwles Hwces); [|exact Hargs].
-        intros e f0 es0 ro0 anns0 He Heq w g Hw.
+      { eapply (assign_lexps_named_covered (fun w => In w AN) P GL env
+                  base_ty rst_ty vars args Hwles Hwces); [|exact Hargs].
+        intros e f0 es0 ro0 anns0 He Heq w Hw.
         subst e.
         destruct (anon_streams_name w anns0 Hw) as (a & Ha).
-        intro Hf.
-        exact (env_anon w g Hf
-                 (Hanon w a
-                    (nested_call_name_in_anon_in f args er anns _ f0 es0 ro0
-                       anns0 w a He (@Coq.Init.Logic.eq_refl _ _) Ha))). }
+        exact (Hanon w a
+                 (nested_call_name_in_anon_in f args er anns _ f0 es0 ro0
+                    anns0 w a He (@Coq.Init.Logic.eq_refl _ _) Ha)). }
+      assert (forall i x ck x' u,
+                 nth_error (idck nd.(n_in)) i = Some (x, ck) ->
+                 In x' (clock_vars ck) -> sub x' = Some u -> ~ In u AN)
+        as Hbadok
+        by exact (sub_clock_vars_not_anon vars AN bck sub (idck nd.(n_in))
+                    args Hwi Hargcl env_anon).
       assert (List.length argts = List.length (nclocksof args)) as Hlargts
           by exact (Forall2_length _ _ _ Hnamed).
 
@@ -5266,9 +5271,14 @@ Import UNN.Fresh.Tactics.
                   (idck nd.(n_in))) as ambs_arg eqn:Eambs.
       assert (stream_ambients_scoped scope ambs_arg) as Hambargsc.
       { subst ambs_arg.
-        exact (call_arg_ambients_scoped_named env rst_ty scope sub bck ckty
+        exact (call_arg_ambients_scoped_named env rst_ty (fun w => In w AN)
+                 scope sub bck ckty
                  (nclocksof args) (idck nd.(n_in)) argts rst_ty_scoped
                  Hambcsc' Hwcin Hwi Hnamed
+                 (fun y ck x u Hin Hx Hs =>
+                    match In_nth_error _ _ Hin with
+                    | ex_intro i Hi => Hbadok i y ck x u Hi Hx Hs
+                    end)
                  (source_lexps_scoped_g P args argts stm sti Hwcg Hwces Hsrces Hlsm Hargs Hbsti)). }
       assert (clocks_covered_local (LSyn.clocksof args) ambs_arg) as Hccov.
       { subst ambs_arg. rewrite clocksof_nclocksof.
@@ -5742,16 +5752,17 @@ Import UNN.Fresh.Tactics.
                   -> ~ In y v)
                 (CALLS.augment_actuals env sub (idck nd.(n_in)) argts))
         as Hfaug.
-      { eapply (CALLS.augment_actuals_fresh env sub (idck nd.(n_in)) argts
-                  (nclocksof args)).
+      { eapply (CALLS.augment_actuals_fresh env (fun w => In w AN) sub
+                  (idck nd.(n_in)) argts (nclocksof args)).
         - exact (Forall2_length _ _ _ Hwi).
         - exact Hlin.
         - intros i x ck nck Hxi Hni.
           exact (proj1 (Forall2_nth_error _ (idck nd.(n_in)) (nclocksof args)
                           i (x, ck) nck Hwi Hxi Hni)).
-        - intros i nck t u g Hni Hti Hu Hg.
+        - intros i nck t u g Hni Hti Hu Hnb Hg.
           exact (Forall2_nth_error _ argts (nclocksof args) i t nck
-                   Hnamed Hti Hni u g Hu Hg).
+                   Hnamed Hti Hni u g Hu Hnb Hg).
+        - exact Hbadok.
         - intros i x ck x' Hxi Hx'.
           assert (In (x, ck) (idck nd.(n_in))) as Hin
               by (eapply nth_error_In; exact Hxi).
@@ -5784,7 +5795,7 @@ Import UNN.Fresh.Tactics.
         - intros c Hc.
           eapply CALLS.call_augment_dep_concrete;
             [exact Hsigin|exact Hfn|exact Esg|exact Hwcin|exact Hwi
-            |exact Hnamed|exact Hc].
+            |exact Hnamed|exact Hbadok|exact Hc].
         - exact Hcs.
         - exact Hgc.
         - exact Hcssat. }

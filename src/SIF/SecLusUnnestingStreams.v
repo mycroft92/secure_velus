@@ -661,19 +661,22 @@ Section StreamAmbients.
       argument streams' own security names -- which the call's source types
       already put in the scope -- instead of among the environment's range. *)
   Lemma call_arg_ambients_scoped_named :
-    forall scope sub bck bckty (ncks : list nclock)
+    forall (bad : ident -> Prop) scope sub bck bckty (ncks : list nclock)
            (ins : list (ident * clock)) (argts : list LST),
       In rst_ty scope ->
       st_scoped scope bckty ->
       wc_env ins ->
       Forall2 (WellInstantiated bck sub) ins ncks ->
-      Forall2 (fun t nck => forall w g, snd nck = Some w ->
+      Forall2 (fun t nck => forall w g, snd nck = Some w -> ~ bad w ->
                                          Env.find w env = Some g ->
                                          In g (fst t)) argts ncks ->
+      (forall y ck x u, In (y, ck) ins -> In x (clock_vars ck) ->
+                        sub x = Some u -> ~ bad u) ->
       Forall (fun t => st_scoped scope (fst t)) argts ->
       stream_ambients_scoped scope (call_arg_ambients sub bckty ncks ins).
   Proof.
-    intros scope sub bck bckty ncks ins argts Hrst Hbk Hwcenv Hwi Hnamed Hsc.
+    intros bad scope sub bck bckty ncks ins argts Hrst Hbk Hwcenv Hwi Hnamed
+      Hbadok Hsc.
     apply call_arg_ambients_scoped; [exact Hrst|exact Hbk|].
     intros y ck nck Hin z Hz.
     apply in_combine_l in Hin.
@@ -689,7 +692,8 @@ Section StreamAmbients.
     destruct Hwix as (Hsx & _). simpl in Hsx. rewrite Hsub in Hsx.
     destruct (Forall2_in_right _ argts ncks nckx Hnamed Hnin)
       as (t & Ht & Hnt).
-    pose proof (Hnt u z (Logic.eq_sym Hsx) Hu) as Hzt.
+    pose proof (Hnt u z (Logic.eq_sym Hsx) (Hbadok y ck x u Hin Hx Hsub) Hu)
+      as Hzt.
     rewrite Forall_forall in Hsc. exact (Hsc t Ht z Hzt).
   Qed.
 
@@ -1327,9 +1331,11 @@ Section StreamAmbients.
       forall x ck, In (x, ck) vars -> exists b, Env.find x env = Some b.
 
     (** A nested call's output names are the node's anonymous streams, which
-        the naming pass never put in the environment. *)
+        are not among its declared variables.  (They may be environment keys
+        all the same: unnesting reuses them as the names of the variables it
+        introduces.) *)
     Hypothesis env_anon :
-      forall w b, Env.find w env = Some b -> ~ In w AN.
+      forall w, In w AN -> ~ In w (List.map fst vars).
 
     (** The expression contract with one clock ambient per source stream.
         [clocks_covered] fixes the positional meaning of [ambs], while
@@ -6806,8 +6812,7 @@ Section StreamAmbients.
       assert (Forall (src_exp vars AN) es) as Hsrces
         by (eapply src_exp_imm_forall; [|exact Hsx];
             intros e' He'; exact (imm_Eapp_arg f es er anns e' He')).
-      destruct (src_exp_loc vars AN _ Hsx) as (Hanon & Hargcl).
-      cbn in Hargcl.
+      destruct (src_exp_loc vars AN _ Hsx) as (Hanon & Hargcl & _).
       assert (Forall (nested_src vars AN) es) as Hnsrces
         by (eapply nested_src_args; exact Hsx).
 
@@ -7053,21 +7058,27 @@ Section StreamAmbients.
                  env_total nck Hne). }
 
       (** and each named argument stream carries its own security name, which
-          is what makes the augmentation's actuals cover the callee's clocks *)
+          is what makes the augmentation's actuals cover the callee's clocks;
+          the streams of nested calls are the exception, and no clock
+          variable of a formal goes to one *)
       assert (Forall2 (fun t nck => forall w g,
-                           snd nck = Some w -> Env.find w env = Some g ->
-                           In g (fst t))
+                           snd nck = Some w -> ~ In w AN ->
+                           Env.find w env = Some g -> In g (fst t))
                 argts (nclocksof es)) as Hnamed.
-      { eapply (assign_lexps_named_covered P GL env base_ty rst_ty vars es
-                  Hwles Hwces); [|exact Hargs].
-        intros e f0 es0 ro0 anns0 He Heq w g Hw.
+      { eapply (assign_lexps_named_covered (fun w => In w AN) P GL env
+                  base_ty rst_ty vars es Hwles Hwces); [|exact Hargs].
+        intros e f0 es0 ro0 anns0 He Heq w Hw.
         subst e.
         destruct (anon_streams_name w anns0 Hw) as (a & Ha).
-        intro Hf.
-        exact (env_anon w g Hf
-                 (Hanon w a
-                    (nested_call_name_in_anon_in f es er anns _ f0 es0 ro0
-                       anns0 w a He (@Coq.Init.Logic.eq_refl _ _) Ha))). }
+        exact (Hanon w a
+                 (nested_call_name_in_anon_in f es er anns _ f0 es0 ro0
+                    anns0 w a He (@Coq.Init.Logic.eq_refl _ _) Ha)). }
+      assert (forall i x ck x' u,
+                 nth_error (idck nd.(n_in)) i = Some (x, ck) ->
+                 In x' (clock_vars ck) -> sub x' = Some u -> ~ In u AN)
+        as Hbadok
+        by exact (sub_clock_vars_not_anon vars AN bck sub (idck nd.(n_in)) es
+                    Hwi Hargcl env_anon).
       assert (List.length argts = List.length (nclocksof es)) as Hlargts
           by exact (Forall2_length _ _ _ Hnamed).
 
@@ -7076,11 +7087,17 @@ Section StreamAmbients.
         as ambs_arg eqn:Eambs.
       assert (stream_ambients_scoped scope ambs_arg) as Hambargsc.
       { subst ambs_arg.
-        exact (call_arg_ambients_scoped_named scope sub bck ckty (nclocksof es)
+        exact (call_arg_ambients_scoped_named (fun w => In w AN) scope sub bck
+                 ckty (nclocksof es)
                  (idck nd.(n_in)) argts rst_ty_scoped
                  (fun z Hz => clk_types_scoped P es _ ckty Hwcg Hwces Hnsrces
                                 (or_introl Hbcksrc) Hbckty z Hz)
-                 Hwcin Hwi Hnamed Hscargts). }
+                 Hwcin Hwi Hnamed
+                 (fun y ck x u Hin Hx Hs =>
+                    match In_nth_error _ _ Hin with
+                    | ex_intro i Hi => Hbadok i y ck x u Hi Hx Hs
+                    end)
+                 Hscargts). }
       assert (clocks_covered (LSyn.clocksof es) ambs_arg) as Hccov.
       { subst ambs_arg. rewrite clocksof_nclocksof.
         exact (clocks_covered_call_args bck sub (idck nd.(n_in))
@@ -7536,16 +7553,17 @@ Section StreamAmbients.
                   -> ~ In y v)
                 (CALLS.augment_actuals env sub (idck nd.(n_in)) argts))
         as Hfaug.
-      { eapply (CALLS.augment_actuals_fresh env sub (idck nd.(n_in)) argts
-                  (nclocksof es)).
+      { eapply (CALLS.augment_actuals_fresh env (fun w => In w AN) sub
+                  (idck nd.(n_in)) argts (nclocksof es)).
         - exact (Forall2_length _ _ _ Hwi).
         - exact Hlin.
         - intros i x ck nck Hxi Hni.
           exact (proj1 (Forall2_nth_error _ (idck nd.(n_in)) (nclocksof es)
                           i (x, ck) nck Hwi Hxi Hni)).
-        - intros i nck t u g Hni Hti Hu Hg.
+        - intros i nck t u g Hni Hti Hu Hnb Hg.
           exact (Forall2_nth_error _ argts (nclocksof es) i t nck
-                   Hnamed Hti Hni u g Hu Hg).
+                   Hnamed Hti Hni u g Hu Hnb Hg).
+        - exact Hbadok.
         - intros i x ck x' Hxi Hx'.
           assert (In (x, ck) (idck nd.(n_in))) as Hin
               by (eapply nth_error_In; exact Hxi).
@@ -7591,7 +7609,7 @@ Section StreamAmbients.
         - intros c Hc.
           eapply CALLS.call_augment_dep_concrete;
             [exact Hsigin|exact Hfn|exact Esg|exact Hwcin|exact Hwi
-            |exact Hnamed|exact Hc].
+            |exact Hnamed|exact Hbadok|exact Hc].
         - exact Hcs.
         - exact Hgc.
         - exact Hcs4. }

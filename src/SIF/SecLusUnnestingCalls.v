@@ -558,7 +558,7 @@ Import UNN.Fresh.Tactics.
         says only that what it adds are clock names of *its own* formal's
         clock, which is what [assign_clk_type_instck] delivers. *)
     Lemma call_augment_dep :
-      forall (sg : signature) (ins : list (ident * clock))
+      forall (bad : ident -> Prop) (sg : signature) (ins : list (ident * clock))
              (nm sub : ident -> option ident) (ncks : list nclock)
              (argts augs : list SymTypes.ST) (c : SymTypes.constraint),
         List.length ins = List.length (s_in sg) ->
@@ -573,10 +573,15 @@ Import UNN.Fresh.Tactics.
         (forall i x ck nck,
             nth_error ins i = Some (x, ck) ->
             nth_error ncks i = Some nck -> sub x = snd nck) ->
-        (** a named actual stream carries its own name *)
+        (** a named actual stream carries its own name, unless it is one of
+            the [bad] names *)
         (forall i nck w u g,
             nth_error ncks i = Some nck -> nth_error argts i = Some w ->
-            snd nck = Some u -> Env.find u env = Some g -> In g w) ->
+            snd nck = Some u -> ~ bad u -> Env.find u env = Some g -> In g w) ->
+        (** and no variable of a formal's clock is sent to a [bad] name *)
+        (forall i x ck x' u,
+            nth_error ins i = Some (x, ck) -> In x' (clock_vars ck) ->
+            sub x' = Some u -> ~ bad u) ->
         (** the augmentation adds only clock names of its own formal's clock *)
         (forall i x ck w w' z,
             nth_error ins i = Some (x, ck) -> nth_error argts i = Some w ->
@@ -595,8 +600,8 @@ Import UNN.Fresh.Tactics.
             exists y2 w2, In (y2, w2) (combine (s_in sg) argts)
                           /\ In y2 (fst c) /\ In z w2.
     Proof.
-      intros sg ins nm sub ncks argts augs c Hl1 Hl2 Hl3 Hinv
-        Hnm Hwi Hnamed Haug Hformal Hc y w' Hyw Hy z Hz.
+      intros bad sg ins nm sub ncks argts augs c Hl1 Hl2 Hl3 Hinv
+        Hnm Hwi Hnamed Hbadok Haug Hformal Hc y w' Hyw Hy z Hz.
       apply In_combine_nth_error in Hyw as (i & Hyi & Hwi').
       (** the slot this name came from *)
       assert (exists x ck, nth_error ins i = Some (x, ck)) as (x & ck & Hxi).
@@ -636,7 +641,8 @@ Import UNN.Fresh.Tactics.
         + (** and the actual at that slot carries the name *)
           assert (snd nck2 = Some u) as Hs2
               by (rewrite <- (Hwi j x' ck2 nck2 Hxj Hnj); exact Hsub).
-          exact (Hnamed j nck2 w2 u z Hnj Hwj Hs2 Hu).
+          exact (Hnamed j nck2 w2 u z Hnj Hwj Hs2
+                   (Hbadok i x ck x' u Hxi Hx' Hsub) Hu).
     Qed.
 
     (** * Substitution succeeds or fails for reasons that do not mention the
@@ -2163,7 +2169,7 @@ Import UNN.Fresh.Tactics.
         list, which is a fact about [generate_lnode_sig] and so belongs at the
         program level, like [sig_good]. *)
     Lemma call_augment_dep_at_call :
-      forall (sg : signature) (n : LSyn.node) (bck : clock)
+      forall (bad : ident -> Prop) (sg : signature) (n : LSyn.node) (bck : clock)
              (sub nm : ident -> option ident) (es : list exp)
              (argts : list LST) (augs : list SymTypes.ST)
              (c : SymTypes.constraint),
@@ -2175,9 +2181,12 @@ Import UNN.Fresh.Tactics.
         wc_env (idck n.(n_in)) ->
         Forall2 (WellInstantiated bck sub) (idck n.(n_in)) (nclocksof es) ->
         Forall2 (fun t nck => forall w g,
-                     snd nck = Some w -> Env.find w env = Some g ->
-                     In g (fst t))
+                     snd nck = Some w -> ~ bad w ->
+                     Env.find w env = Some g -> In g (fst t))
           argts (nclocksof es) ->
+        (forall i x ck x' u,
+            nth_error (idck n.(n_in)) i = Some (x, ck) ->
+            In x' (clock_vars ck) -> sub x' = Some u -> ~ bad u) ->
         (forall i x ck w w' z,
             nth_error (idck n.(n_in)) i = Some (x, ck) ->
             nth_error (List.map fst argts) i = Some w ->
@@ -2193,10 +2202,11 @@ Import UNN.Fresh.Tactics.
               In (y2, w2) (combine (s_in sg) (List.map fst argts))
               /\ In y2 (fst c) /\ In z w2.
     Proof.
-      intros sg n bck sub nm es argts augs c Hl1 Hnm Hinv Hwce Hwi Hcov Haug.
-      eapply (call_augment_dep sg (idck n.(n_in)) nm sub (nclocksof es)
+      intros bad sg n bck sub nm es argts augs c Hl1 Hnm Hinv Hwce Hwi Hcov
+        Hbadok Haug.
+      eapply (call_augment_dep bad sg (idck n.(n_in)) nm sub (nclocksof es)
                 (List.map fst argts) augs c);
-        [exact Hl1| | |exact Hinv|exact Hnm| | |exact Haug| ].
+        [exact Hl1| | |exact Hinv|exact Hnm| | | |exact Haug| ].
       - (** the actuals' nclocks are one per formal *)
         exact (Forall2_length _ _ _ Hwi).
       - (** and so are the argument types *)
@@ -2210,10 +2220,12 @@ Import UNN.Fresh.Tactics.
                     (x, ck) nck Hwi Hxi Hni) as (Hs & _).
         exact Hs.
       - (** a named actual carries its own name *)
-        intros i nck w u g Hni Hwi0 Hs Hu.
+        intros i nck w u g Hni Hwi0 Hs Hnb Hu.
         apply nth_error_map_inv in Hwi0 as (t & Hti & ?); subst w.
         exact (Forall2_nth_error _ argts (nclocksof es) i t nck Hcov Hti Hni
-                 u g Hs Hu).
+                 u g Hs Hnb Hu).
+      - (** and no clock variable goes to a [bad] name *)
+        exact Hbadok.
       - (** every variable of a formal's clock is itself a formal *)
         intros i x ck x' Hxi Hx'.
         assert (In (x, ck) (idck n.(n_in))) as Hin
@@ -2229,7 +2241,8 @@ Import UNN.Fresh.Tactics.
         slot of the clock variable it came from -- so freshness transfers from
         the plain actuals, which is what [call_subst_fresh] already gives. *)
     Lemma augment_actuals_fresh :
-      forall (sub : ident -> option ident) (ins : list (ident * clock))
+      forall (bad : ident -> Prop)
+             (sub : ident -> option ident) (ins : list (ident * clock))
              (argts : list LST) (ncks : list nclock) (xs : list ident),
         List.length ins = List.length ncks ->
         List.length ins = List.length argts ->
@@ -2238,7 +2251,11 @@ Import UNN.Fresh.Tactics.
             nth_error ncks i = Some nck -> sub x = snd nck) ->
         (forall i nck t u g,
             nth_error ncks i = Some nck -> nth_error argts i = Some t ->
-            snd nck = Some u -> Env.find u env = Some g -> In g (fst t)) ->
+            snd nck = Some u -> ~ bad u -> Env.find u env = Some g ->
+            In g (fst t)) ->
+        (forall i x ck x' u,
+            nth_error ins i = Some (x, ck) -> In x' (clock_vars ck) ->
+            sub x' = Some u -> ~ bad u) ->
         (forall i x ck x',
             nth_error ins i = Some (x, ck) -> In x' (clock_vars ck) ->
             exists ck', In (x', ck') ins) ->
@@ -2246,7 +2263,7 @@ Import UNN.Fresh.Tactics.
         Forall (fun v => forall y, In y xs -> ~ In y v)
           (augment_actuals sub ins argts).
     Proof.
-      intros sub ins argts ncks xs Hl2 Hl3 Hwi Hnamed Hformal Hfr.
+      intros bad sub ins argts ncks xs Hl2 Hl3 Hwi Hnamed Hbadok Hformal Hfr.
       rewrite Forall_forall in Hfr |- *.
       intros v' Hv' y Hy Hz.
       apply In_nth_error in Hv' as (i & Hvi).
@@ -2281,7 +2298,8 @@ Import UNN.Fresh.Tactics.
             by (rewrite <- (Hwi j x' ck2 nck2 Hxj Hnj); exact Hs).
         exact (Hfr (fst t2)
                  (nth_error_In _ j (map_nth_error fst j argts Hwj)) y Hy
-                 (Hnamed j nck2 t2 u y Hnj Hwj Hs2 Hu)).
+                 (Hnamed j nck2 t2 u y Hnj Hwj Hs2
+                    (Hbadok i x ck x' u Hxi Hx' Hs) Hu)).
     Qed.
 
     (** * What the program level must supply about the signatures
@@ -2310,7 +2328,8 @@ Import UNN.Fresh.Tactics.
         [subst_constraints_inp_map_augment] asks for, with nothing left
         abstract but the two program-level facts. *)
     Corollary call_augment_dep_concrete :
-      forall (P : global) (sg : signature) (n : LSyn.node) (bck : clock)
+      forall (bad : ident -> Prop) (P : global) (sg : signature)
+             (n : LSyn.node) (bck : clock)
              (sub : ident -> option ident) (f : ident) (es : list exp)
              (argts : list LST) (c : SymTypes.constraint),
         sig_inputs_ok P ->
@@ -2319,9 +2338,12 @@ Import UNN.Fresh.Tactics.
         wc_env (idck n.(n_in)) ->
         Forall2 (WellInstantiated bck sub) (idck n.(n_in)) (nclocksof es) ->
         Forall2 (fun t nck => forall w g,
-                     snd nck = Some w -> Env.find w env = Some g ->
-                     In g (fst t))
+                     snd nck = Some w -> ~ bad w ->
+                     Env.find w env = Some g -> In g (fst t))
           argts (nclocksof es) ->
+        (forall i x ck x' u,
+            nth_error (idck n.(n_in)) i = Some (x, ck) ->
+            In x' (clock_vars ck) -> sub x' = Some u -> ~ bad u) ->
         In c (s_constraints sg) ->
         forall y w',
           In (y, w') (combine (s_in sg)
@@ -2332,16 +2354,18 @@ Import UNN.Fresh.Tactics.
               In (y2, w2) (combine (s_in sg) (List.map fst argts))
               /\ In y2 (fst c) /\ In z w2.
     Proof.
-      intros P sg n bck sub f es argts c Hok Hfn Hfs Hwce Hwi Hcov Hc.
+      intros bad P sg n bck sub f es argts c Hok Hfn Hfs Hwce Hwi Hcov Hbadok
+        Hc.
       destruct (Hok f n sg Hfn Hfs) as (nm & Hl1 & Hnm & Hinv).
       assert (sig_inputs_clock_closed sg (idck n.(n_in)) nm) as Hinv'.
       { eapply sig_inputs_clock_closed_incl; [|exact Hinv].
         unfold idck. intros p Hp. apply in_map_iff in Hp as (q & ? & Hq).
         apply in_map_iff. exists q. split; [assumption|].
         apply in_or_app. now left. }
-      eapply (call_augment_dep_at_call sg n bck sub nm es argts
+      eapply (call_augment_dep_at_call bad sg n bck sub nm es argts
                 (augment_actuals sub (idck n.(n_in)) argts) c);
-        [exact Hl1|exact Hnm|exact Hinv'|exact Hwce|exact Hwi|exact Hcov|
+        [exact Hl1|exact Hnm|exact Hinv'|exact Hwce|exact Hwi|exact Hcov
+        |exact Hbadok|
          |exact Hc].
       (** the shape of the augmentation: it adds only clock names *)
       intros i x ck w w' z Hxi Hwi0 Hw' Hz.

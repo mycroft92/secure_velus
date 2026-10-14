@@ -1800,7 +1800,7 @@ Import UNN.Fresh.Tactics.
       forall x ck, In (x, ck) vars -> exists b, Env.find x env = Some b.
 
     Hypothesis env_anon :
-      forall w b, Env.find w env = Some b -> ~ In w AN.
+      forall w, In w AN -> ~ In w (List.map fst vars).
 
     (** Every signature's clock and reset formals are sources of all of its
         constraints -- what makes a satisfied instantiation bound the call's

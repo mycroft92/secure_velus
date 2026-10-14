@@ -119,16 +119,21 @@ variables, guarded by clocking (`lsig_step_ext`).
 
 1. **Source expressions (`src_exp vars AN`) and nested calls.**  The call case
    reads two facts that are properties of the elaborated program: a nested call's
-   output names are the node's anonymous streams (`AN`), kept off the
-   environment, and a call's arguments are clocked over the declared variables.
-   `src_exp` carries them through the pointwise chain.  **Limitation:** unnesting
-   *reuses* a nested call's anonymous name as a declared variable of the unnested
-   node, so under the shared naming (of the normalised program) the environment
-   has a key for it and `env_anon` cannot hold when a node has nested calls.  The
-   program theorem is therefore stated for sources with `anon_names = []` (no
-   nested calls; `source_guard`).  Lifting this needs the "named argument carries
-   its own name" fact (`assign_lexps_named_covered`, `augment_actuals_fresh`) to
-   be asked only of names that occur in clocks.
+   output names are the node's anonymous streams (`AN`), which are not among its
+   declared variables (`n_nodup`), and the clocks of a call's arguments and of its
+   reset are over the declared variables (`src_loc`, `nested_src`).  `src_exp`
+   carries them through the pointwise chain.  Nested calls are supported: unnesting
+   *reuses* a nested call's anonymous name as the name of a variable it declares, so
+   under the shared naming (of the normalised program) that name is an environment
+   key, and the typing run still mints a fresh name for the call's result.  The
+   chain therefore never asks the environment to agree with a nested call's
+   stream: "a named argument carries its own name" is asked of every name except
+   `AN` (`bad`), and the one place a name from a formal's clock is looked up
+   (`Hbadok`, from `sub_clock_vars_not_anon`) is shown not to be in `AN` because the
+   arguments' clocks are over declared variables.  The hypothesis `env_anon` is
+   now `AN` disjoint from the declared variables.  What remains excluded: a call
+   whose arguments are clocked on the output of another nested call (the clock then
+   mentions an anonymous name; `source_guard` fails).
 2. (merged into 1.)
 3. **Node instantiation of both legs** is done (`unnest_instance`,
    `normfby_instance`).

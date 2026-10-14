@@ -260,9 +260,10 @@ Module Check (Lat : Lattice).
       NLustre signatures of the transcription of that form.  The two
       Lustre-to-Lustre legs are [LegN.normalization_signatures_preserved];
       what is assumed beyond the program's typing and clocking is the source
-      guard (the call-argument clocks are over declared variables, and the
-      program has no nested calls) and [HJU], the closure of generated callee
-      signatures under the declared clocks. *)
+      guard (a nested call's output names are the node's anonymous streams,
+      and the clocks of a call's arguments and reset are over declared
+      variables) and [HJU], the closure of generated callee signatures under
+      the declared clocks. *)
   Module U := L.Norm.Norm.Unnesting.
   Module NFm := L.Norm.Norm.NormFby.
 

@@ -904,8 +904,6 @@ Import SECMONADNotations.
       forall x b, In x (List.map fst vars) -> Env.find x env = Some b ->
                   In b decl.
     Hypothesis Hwenv : wc_env vars.
-    Hypothesis Hanon :
-      forall w b, Env.find w env = Some b -> ~ In w AN.
     Hypothesis Hcenv :
       forall x ck, In x (List.map fst vars) -> find_clock cenv x = OK ck ->
                    incl (clock_vars ck) (List.map fst vars).
@@ -938,18 +936,12 @@ Import SECMONADNotations.
         rewrite ck_vars_eq in Hxc.
         unfold clocksof in Hc. apply in_flat_map in Hc as (e & He & Hce).
         rewrite Forall_forall in Hwes, Hnes.
-        pose proof (wc_exp_clockof P vars e Hg Hwenv (Hwes e He)) as Hcl.
+        destruct (Hnes e He) as (_ & _ & Hcl).
         rewrite Forall_forall in Hcl.
         destruct (clock_vars_wc _ c (Hcl c Hce) x Hxc) as (ckx & Hin).
-        apply in_app_or in Hin as [Hin|Hin].
-        + apply (Henv x y).
-          * apply in_map_iff. exists (x, ckx). split; [reflexivity|exact Hin].
-          * exact Hf.
-        + exfalso.
-          unfold idck in Hin. apply in_map_iff in Hin as ((x' & (ty & ckx')) & Heq & Hin').
-          inversion Heq; subst x' ckx'.
-          destruct (Hnes e He) as (_ & Hfresh).
-          exact (Hanon x y Hf (Hfresh x _ Hin')).
+        apply (Henv x y).
+        * apply in_map_iff. exists (x, ckx). split; [reflexivity|exact Hin].
+        * exact Hf.
       - exact (clk_vars_images_scoped_wc ck ckty (Hcenv x ck Hx Hfc) H).
     Qed.
 
@@ -966,12 +958,11 @@ Import SECMONADNotations.
       Forall (fun eq =>
                 Forall (src_exp (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) AN)
                   (snd eq)) n.(n_eqs) ->
-      (forall w b, Env.find w env = Some b -> ~ In w AN) ->
       (forall x b, Env.find x env = Some b -> ~ In b (minted st0 st1)) ->
       generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
       signature_scoped sg.
   Proof.
-    intros G P AN n env aux sg st0 st1 Hinj Hsgs Hwl Hwcg Hwcn Hsrc Hanon Hsep Hsig.
+    intros G P AN n env aux sg st0 st1 Hinj Hsgs Hwl Hwcg Hwcn Hsrc Hsep Hsig.
     destruct (lnode_sig_inv env G n aux sg st0 st1 Hsig)
       as (ci & ri & ct & rt & inp & out & locals & cns
           & Haux & Hct & Hrt & Hinp & Hout & Hloc & Hcns & ?); subst sg.
@@ -1031,7 +1022,7 @@ Import SECMONADNotations.
       apply in_map_iff. exists (y, cky). split; [reflexivity|exact Hyv]. }
     assert (Hclk : clk_scoped_wc env ct P vars AN (lnode_clock_env n) decl)
       by exact (clk_scoped_wc_holds env ct (lnode_clock_env n) vars AN decl
-                  Hbd Hrg Hwenv Hanon Hcenv P Hwcg).
+                  Hbd Hrg Hcenv P Hwcg).
     (** item 7: every target is a defined name or a minted one *)
     destruct (generate_leqns_constraints_shape G env ct rt
                 (lnode_clock_env n) n.(n_eqs) cns st0 st1 (minted st0 st1)
@@ -1412,8 +1403,8 @@ Import SECMONADNotations.
                    Forall (src_exp (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
                              (anon_names n)) (snd eq)) n.(n_eqs)
       /\ (forall w, In w (anon_names n) ->
-                    ~ In w (List.map fst (nall.(n_in) ++ nall.(n_vars)
-                                          ++ nall.(n_out))))
+                    ~ In w (List.map fst (idck (n.(n_in) ++ n.(n_vars)
+                                                ++ n.(n_out)))))
       /\ PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs).
   Lemma lsig_step_ext :
     forall (P : global) (AN : list ident) (all : list node) envs aux stN
@@ -1430,14 +1421,13 @@ Import SECMONADNotations.
       Forall (fun eq =>
                 Forall (src_exp (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) AN)
                   (snd eq)) n.(n_eqs) ->
-      (forall w b, Env.find w env = Some b -> ~ In w AN) ->
       PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs) ->
       lsig_inv stN st0 acc st ->
       generate_lnode_sig acc n env aux st = OK (sg, st1) ->
       lsig_inv stN stl (sg :: acc) st1.
   Proof.
     intros P AN all envs aux stN n nall env r st0 stl acc st sg st1
-           Hfull Hfind Haux Hloc Hst0 Hwl Hwcg Hwcn Hsrc Hanon Hsub
+           Hfull Hfind Haux Hloc Hst0 Hwl Hwcg Hwcn Hsrc Hsub
            (Hgood & Hsc & Hnd & Hroot & Hbd & Hle) Hsig.
     destruct (generate_local_env_for_lnode_facts nall st0 env r stl Hloc)
       as (Hinj & Hrng & Hclk & Hrst).
@@ -1501,7 +1491,7 @@ Import SECMONADNotations.
                   Hsep Hsig).
     assert (Hscd : signature_scoped sg)
       by exact (generate_lnode_sig_scoped_wc acc P AN n env aux sg st st1
-                  Hinj Hsc Hwl Hwcg Hwcn Hsrc Hanon Hsep Hsig).
+                  Hinj Hsc Hwl Hwcg Hwcn Hsrc Hsep Hsig).
     assert (Hnodup : NoDup (signature_scope sg)).
     { eapply generate_lnode_sig_scope_nodup;
         [exact Hinj| |exact Hsig].
@@ -1611,31 +1601,26 @@ Import SECMONADNotations.
     split; [exact Hnd'|exact Hrec].
   Qed.
 
-  Lemma anon_names_not_env_key :
-    forall n nall st0 le0 r0 stl w b,
-      PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs) ->
-      (forall w, In w (anon_names n) ->
-                 ~ In w (List.map fst (nall.(n_in) ++ nall.(n_vars)
-                                       ++ nall.(n_out)))) ->
-      generate_local_env_for_lnode nall st0 = OK ((le0, r0), stl) ->
-      Env.find w le0 = Some b -> ~ In w (anon_names n).
+  (** A node's anonymous streams are not among its declared variables. *)
+  Lemma anon_names_not_declared :
+    forall (n : node) w,
+      In w (anon_names n) ->
+      ~ In w (List.map fst (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
   Proof.
-    intros n nall st0 le0 r0 stl w b Hsubn Hdisj Hloc Hb Hin.
-    destruct (generate_local_env_for_lnode_facts nall st0 le0 r0 stl Hloc)
-      as (_ & _ & Hclk & Hrst).
-    destruct (generate_local_env_for_lnode_domain nall st0 le0 r0 stl w b
-                Hloc Hb) as [Hw|[Hw|Hw]].
-    - rewrite Hw, Hclk in Hin. unfold anon_names in Hin.
-      apply fst_InMembers in Hin.
-      exact (anon_stream_not_sec n _ st0 Hsubn Hin Logic.eq_refl).
-    - rewrite Hw, Hrst in Hin. unfold anon_names in Hin.
-      apply fst_InMembers in Hin.
-      exact (anon_stream_not_sec n _ (Pos.succ st0) Hsubn Hin Logic.eq_refl).
-    - apply (Hdisj w Hin).
-      rewrite !map_app in Hw |- *.
-      apply in_app_or in Hw as [Hw|Hw]; [apply in_or_app; now left|].
-      apply in_app_or in Hw as [Hw|Hw]; apply in_or_app; right;
-        apply in_or_app; [now right|now left].
+    intros n w Hw Hd.
+    pose proof (n_nodup n) as H. rewrite fst_NoDupMembers in H.
+    assert (Heq : List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)
+                                ++ anon_in_eqs n.(n_eqs))
+                  = List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out))
+                    ++ anon_names n).
+    { unfold anon_names. rewrite !map_app. repeat rewrite <- app_assoc.
+      reflexivity. }
+    rewrite Heq in H.
+    assert (Hv : List.map fst (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                 = List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+      by (unfold idck; rewrite map_map; reflexivity).
+    rewrite Hv in Hd.
+    eapply NoDup_app_In; [exact H|exact Hd|exact Hw].
   Qed.
 
   Theorem generate_all_lsignatures'_inv_ext :
@@ -1677,8 +1662,6 @@ Import SECMONADNotations.
       eapply lsig_step_ext;
         [exact Hfull|rewrite Hname; exact Hfind|rewrite Hname; exact Haux
         |exact Hloc|exact Hst0|exact Hwln|exact Hwcg|exact Hwcn|exact Hsrc
-        |exact (fun w b Hb => anon_names_not_env_key n nall st0 le0 r0 stl w b
-                  Hsubn Hdisj Hloc Hb)
         |exact Hsubn|exact Hinv|exact Hs].
   Qed.
 
@@ -1785,14 +1768,10 @@ Import SECMONADNotations.
       + eapply lsig_step_ext;
           [exact Hfull|rewrite HnameS; exact Hfind|rewrite HnameS; exact Haux
           |exact Hloc|exact Hst0|exact HwlS|exact HwcgS|exact HwcnS|exact HsrcS
-          |exact (fun w b Hb => anon_names_not_env_key nS nall st0 le0 r0 stl
-                                  w b HsubS HdisjS Hloc Hb)
           |exact HsubS|exact HinvS|exact HsS].
       + eapply lsig_step_ext;
           [exact Hfull|rewrite HnameM; exact Hfind|rewrite HnameM; exact Haux
           |exact Hloc|exact Hst0|exact HwlM|exact HwcgM|exact HwcnM|exact HsrcM
-          |exact (fun w b Hb => anon_names_not_env_key nM nall st0 le0 r0 stl
-                                  w b HsubM HdisjM Hloc Hb)
           |exact HsubM|exact HinvT|exact HsT].
       + exact (call_weakens_cons sgS sgT accS accT Hname Hcall Hw).
       + exact (sigs_preserved_cons sgS sgT accS accT Hname Hpres Hp).
@@ -2392,21 +2371,15 @@ Import SECMONADNotations.
     assert (HsT : generate_lnode_sig accT N env auxF stT0 = OK (sgT, stT1)).
     { unfold generate_lnode_sig_scoped_env in HsT0. rewrite HfindN in HsT0.
       exact HsT0. }
-    assert (HanS : forall w b, Env.find w env = Some b -> ~ In w (anon_names n))
-      by (intros w b Hb; exact (anon_names_not_env_key n N st0 env r stl w b
-                                  HsubS HdisjS Hloc Hb)).
-    assert (HanT : forall w b, Env.find w env = Some b -> ~ In w (anon_names N))
-      by (intros w b Hb; exact (anon_names_not_env_key N N st0 env r stl w b
-                                  HsubT HdisjT Hloc Hb)).
     assert (HinvS' : lsig_inv stN stl (sgS :: accS) stS1)
       by (eapply lsig_step_ext;
           [exact Hfull|exact Hfind|exact Haux0|exact Hloc|exact Hst0|exact HwlS
-          |exact HwcgS|exact HwcnS|exact HsrcS|exact HanS|exact HsubS
+          |exact HwcgS|exact HwcnS|exact HsrcS|exact HsubS
           |exact HinvS|exact HsS]).
     assert (HinvT' : lsig_inv stN stl (sgT :: accT) stT1)
       by (eapply lsig_step_ext;
           [exact Hfull|exact HfindN|exact HauxN|exact Hloc|exact Hst0|exact HwlT
-          |exact HwcgT|exact HwcnT|exact HsrcT|exact HanT|exact HsubT
+          |exact HwcgT|exact HwcnT|exact HsrcT|exact HsubT
           |exact HinvT|exact HsT]).
     destruct (lsig_inv_head _ _ _ _ _ HinvS') as (Hgs & Hscs & Hnds).
     destruct (lsig_inv_head _ _ _ _ _ HinvT') as (Hgt & Hsct & Hndt).
@@ -2458,7 +2431,7 @@ Import SECMONADNotations.
     assert (Hclk : clk_scoped_wc env ct P vars (anon_names n)
                      (lnode_clock_env n) scope)
       by exact (clk_scoped_wc_holds env ct (lnode_clock_env n) vars
-                  (anon_names n) scope Hbs Hrg Hwenv HanS Hcenv P HwcgS).
+                  (anon_names n) scope Hbs Hrg Hcenv P HwcgS).
     assert (Hfi : n_in N = n.(n_in)) by reflexivity.
     assert (Hfo : n_out N = n.(n_out)) by reflexivity.
     assert (Hfv : n_vars N
@@ -2945,21 +2918,19 @@ Import SECMONADNotations.
     assert (HsT : generate_lnode_sig accT M env auxF stT0 = OK (sgT, stT1)).
     { unfold generate_lnode_sig_scoped_env in HsT0. rewrite HfindM in HsT0.
       exact HsT0. }
-    assert (HanS : forall w b, Env.find w env = Some b -> ~ In w (anon_names n))
-      by (intros w b Hb; exact (anon_names_not_env_key n nall st0 env r stl w b
-                                  HsubS HdisjS Hloc Hb)).
-    assert (HanM : forall w b, Env.find w env = Some b -> ~ In w (anon_names M))
-      by (intros w b Hb; exact (anon_names_not_env_key M nall st0 env r stl w b
-                                  HsubM HdisjM Hloc Hb)).
+    assert (HanS : forall w, In w (anon_names n) ->
+                             ~ In w (List.map fst (idck (n.(n_in) ++ n.(n_vars)
+                                                         ++ n.(n_out)))))
+      by exact HdisjS.
     assert (HinvS' : lsig_inv stN stl (sgS :: accS) stS1)
       by (eapply lsig_step_ext;
           [exact Hfull|exact Hfind|exact Haux0|exact Hloc|exact Hst0|exact HwlS
-          |exact HwcgS|exact HwcnS|exact HsrcS|exact HanS|exact HsubS
+          |exact HwcgS|exact HwcnS|exact HsrcS|exact HsubS
           |exact HinvS|exact HsS]).
     assert (HinvT' : lsig_inv stN stl (sgT :: accT) stT1)
       by (eapply lsig_step_ext;
           [exact Hfull|exact HfindM|exact HauxM|exact Hloc|exact Hst0|exact HwlM
-          |exact HwcgM|exact HwcnM|exact HsrcM|exact HanM|exact HsubM
+          |exact HwcgM|exact HwcnM|exact HsrcM|exact HsubM
           |exact HinvT|exact HsT]).
     destruct (lsig_inv_head _ _ _ _ _ HinvS') as (Hgs & Hscs & Hnds).
     destruct (lsig_inv_head _ _ _ _ _ HinvT') as (Hgt & Hsct & Hndt).
@@ -3028,11 +2999,11 @@ Import SECMONADNotations.
     assert (HclkM : clk_scoped_wc env ct P vars (anon_names n)
                       (lnode_clock_env M) decl)
       by exact (clk_scoped_wc_holds env ct (lnode_clock_env M) vars
-                  (anon_names n) decl Hbd Hrg Hwenv HanS HcenvM P Hwcg).
+                  (anon_names n) decl Hbd Hrg HcenvM P Hwcg).
     assert (HclkN : clk_scoped_wc env ct P vars (anon_names n)
                       (lnode_clock_env n) decl).
     { exact (clk_scoped_wc_holds env ct (lnode_clock_env n) vars
-               (anon_names n) decl Hbd Hrg Hwenv HanS Hcenv P Hwcg). }
+               (anon_names n) decl Hbd Hrg Hcenv P Hwcg). }
     assert (Hwin : forall s s', (stS0 <= s)%positive -> (s' <= stS1)%positive ->
                      incl (minted s s') scope).
     { intros s s' H1 H2. unfold scope.
@@ -3048,7 +3019,7 @@ Import SECMONADNotations.
     { intros P0 es ck ckty Hg Hw1 Hn1 Hs1 Hc1.
       eapply st_scoped_weaken; [exact Hdecl_scope|].
       exact (clk_scoped_wc_holds env ct (lnode_clock_env M) vars
-               (anon_names n) decl Hbd Hrg Hwenv HanS HcenvM P0 Hg es ck ckty
+               (anon_names n) decl Hbd Hrg HcenvM P0 Hg es ck ckty
                Hw1 Hn1 Hs1 Hc1). }
     assert (Hclkd : forall (P0 : global) es ck ckty,
               wc_global P0 -> Forall (wc_exp P0 vars) es ->
@@ -3057,7 +3028,7 @@ Import SECMONADNotations.
               assign_clk_type env ct ck = Some ckty -> st_scoped decl ckty)
       by (intros P0 es ck ckty Hg Hw1 Hn1 Hs1 Hc1;
           exact (clk_scoped_wc_holds env ct (lnode_clock_env M) vars
-                   (anon_names n) decl Hbd Hrg Hwenv HanS HcenvM P0 Hg es ck
+                   (anon_names n) decl Hbd Hrg HcenvM P0 Hg es ck
                    ckty Hw1 Hn1 (or_introl Hs1) Hc1)).
     assert (Hsty : source_types_scoped_upto_g accT env ct rt vars (anon_names n)
                      scope stS0 stS1)
@@ -3448,9 +3419,13 @@ Import SECMONADNotations.
       Forall normalized_lexp es ->
       (match ro with None => True | Some r => normalized_lexp r end) ->
       Forall (fun e' => Forall (wc_clock vars) (clockof e')) es ->
+      (match ro with
+       | Some r => Forall (wc_clock vars) (clockof r)
+       | None => True
+       end) ->
       src_exp vars [] (Eapp f es ro anns).
   Proof.
-    intros vars f es ro anns Hn Hr Hclk e' Hs.
+    intros vars f es ro anns Hn Hr Hclk Hrcl e' Hs.
     apply sub_exp_inv in Hs as [->|(e1 & Himm & Hs1)].
     - split.
       + intros w a Hin. exfalso. destruct ro as [r|]; cbn [anon_in] in Hin.
@@ -3459,7 +3434,7 @@ Import SECMONADNotations.
             (normalized_lexp_fresh_in _ Hr) in Hin. destruct Hin.
         * unfold fresh_ins in Hin.
           rewrite (normalized_lexps_fresh_ins _ Hn) in Hin. destruct Hin.
-      + exact Hclk.
+      + exact (conj Hclk Hrcl).
     - inversion Himm; subst.
       + match goal with
         | Hin : In _ es |- _ =>
@@ -3527,6 +3502,22 @@ Import SECMONADNotations.
     cbn [idck List.map] in Hc. rewrite app_nil_r in Hc. exact Hc.
   Qed.
 
+  Lemma wc_reset_inv :
+    forall Q vars f es r anns,
+      wc_exp Q vars (Eapp f es (Some r) anns) -> wc_exp Q vars r.
+  Proof. intros Q vars f es r anns H. inversion H; assumption. Qed.
+
+  Lemma wc_reset_clocks :
+    forall Q vars r,
+      wc_global Q -> wc_env vars -> wc_exp Q vars r -> normalized_lexp r ->
+      Forall (wc_clock vars) (clockof r).
+  Proof.
+    intros Q vars r Hg Hwe Hw Hn.
+    pose proof (wc_exp_clockof Q vars r Hg Hwe Hw) as Hc.
+    rewrite (normalized_lexp_fresh_in _ Hn) in Hc.
+    cbn [idck List.map] in Hc. rewrite app_nil_r in Hc. exact Hc.
+  Qed.
+
   Lemma unnested_node_src :
     forall Q (X : node),
       wc_global Q -> wc_node Q X -> unnested_node Q X ->
@@ -3546,12 +3537,14 @@ Import SECMONADNotations.
                     | xs0 f0 n0 es0 x0 ty0 cl0 lann0 Hn Hf Hk
                     | x0 e0 e1 ann0 H0 H1 | x0 e0 e1 ann0 H0 H1 | x0 e0 Hc];
       subst; cbn [snd]; (apply Forall_cons; [|apply Forall_nil]).
-    - apply src_exp_Eapp; [exact Hn|exact I| ].
+    - apply src_exp_Eapp; [exact Hn|exact I| |exact I].
       exact (wc_args_clocks Q _ _ Hg Hwenv
                (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
-    - apply src_exp_Eapp; [exact Hn|constructor| ].
-      exact (wc_args_clocks Q _ _ Hg Hwenv
-               (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
+    - apply src_exp_Eapp; [exact Hn|constructor| |].
+      + exact (wc_args_clocks Q _ _ Hg Hwenv
+                 (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
+      + exact (wc_reset_clocks Q _ _ Hg Hwenv
+                 (wc_reset_inv Q _ _ _ _ _ (Forall_inv Hwe)) (unnested_Evar _ _ _)).
     - exact (src_exp_Efby _ _ _ _ H0 H1).
     - exact (src_exp_Earrow _ _ _ _ H0 H1).
     - exact (src_exp_cexp _ _ Hc).
@@ -3576,12 +3569,14 @@ Import SECMONADNotations.
                     | out0 xs0 f0 n0 es0 x0 ty0 cl0 lann0 Hn Hf Hk
                     | out0 x0 e0 e1 ann0 Hno H0 H1 | out0 x0 e0 Hc];
       subst; cbn [snd]; (apply Forall_cons; [|apply Forall_nil]).
-    - apply src_exp_Eapp; [exact Hn|exact I| ].
+    - apply src_exp_Eapp; [exact Hn|exact I| |exact I].
       exact (wc_args_clocks Q _ _ Hg Hwenv
                (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
-    - apply src_exp_Eapp; [exact Hn|constructor| ].
-      exact (wc_args_clocks Q _ _ Hg Hwenv
-               (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
+    - apply src_exp_Eapp; [exact Hn|constructor| |].
+      + exact (wc_args_clocks Q _ _ Hg Hwenv
+                 (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
+      + exact (wc_reset_clocks Q _ _ Hg Hwenv
+                 (wc_reset_inv Q _ _ _ _ _ (Forall_inv Hwe)) (unnested_Evar _ _ _)).
     - exact (src_exp_Efby _ _ _ _ (normalized_constant_lexp _ H0) H1).
     - exact (src_exp_cexp _ _ Hc).
   Qed.
@@ -3619,10 +3614,9 @@ Import SECMONADNotations.
   (** * The two legs' node relations *)
 
   Definition source_guard (n : node) : Prop :=
-    anon_names n = []
-    /\ Forall (fun eq =>
-                 Forall (src_exp (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
-                           []) (snd eq)) n.(n_eqs).
+    Forall (fun eq =>
+              Forall (src_exp (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+                        (anon_names n)) (snd eq)) n.(n_eqs).
 
   (** Leg U: [P] is the source program the node is read against. *)
   Definition RU (P : global) (nS nM nN : node) : Prop :=
@@ -3684,11 +3678,10 @@ Import SECMONADNotations.
       n_prefixes nS = elab_prefs -> source_guard nS ->
       node_typed_facts nS nall.
   Proof.
-    intros P nS nall Hwl Hgp Hwc Hpref (Hanon & Hsrc).
+    intros P nS nall Hwl Hgp Hwc Hpref Hsrc.
     exists P. refine (conj Hwl (conj Hgp (conj Hwc _))).
-    rewrite Hanon.
     refine (conj Hsrc (conj _ _)).
-    - intros w Hw. destruct Hw.
+    - exact (anon_names_not_declared nS).
     - rewrite Hpref. exact elab_prefs_subset.
   Qed.
 
