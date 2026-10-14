@@ -1694,8 +1694,14 @@ Import SECMONADNotations.
         (forall P nS nM nall, R P nS nM nall ->
            n_name nS = n_name nall /\ node_typed_facts nS nall
            /\ n_name nM = n_name nall /\ node_typed_facts nM nall) ->
-        (forall P nS nM nall accT sgT stT0 stT1,
+        (forall P nS nM nall (env : Env.t ident) (r : node_aux_names) st0 stl
+                accT sgT stT0 stT1,
             R P nS nM nall ->
+            generate_local_env_for_lnode nall st0 = OK ((env, r), stl) ->
+            find_node_env nall.(n_name) envsF = Some env ->
+            get_node_aux nall.(n_name) auxF = Some (r.(nclk), r.(nrst)) ->
+            (st0 <= stN)%positive ->
+            lsig_inv stN st0 accT stT0 ->
             Jinv accT P ->
             generate_lnode_sig_scoped_env accT nM envsF auxF stT0
               = OK (sgT, stT1) ->
@@ -1756,7 +1762,8 @@ Import SECMONADNotations.
       destruct (Hstep P0 nS nM nall le0 r0 st0 stl accS accT sgS stS stS1 sgT
                   stT stT1 HRn Hloc Hfind Haux Hst0 HinvS HinvT Hw Hj HsS HsT)
         as (Hname & Hpres & Hcall).
-      pose proof (HJ P0 nS nM nall accT sgT stT stT1 HRn Hj HsT) as Hj'.
+      pose proof (HJ P0 nS nM nall le0 r0 st0 stl accT sgT stT stT1 HRn Hloc
+                    Hfind Haux Hst0 HinvT Hj HsT) as Hj'.
       unfold generate_lnode_sig_scoped_env in HsS, HsT.
       rewrite HnameS, Hfind in HsS. rewrite HnameM, Hfind in HsT.
       assert (Hrev : List.rev (nS :: nsS') ++ P0 = List.rev nsS' ++ (nS :: P0)).
@@ -3940,8 +3947,14 @@ Import SECMONADNotations.
         (forall P nS nM nall, R P nS nM nall ->
            n_name nS = n_name nall /\ node_typed_facts nS nall
            /\ n_name nM = n_name nall /\ node_typed_facts nM nall) ->
-        (forall P nS nM nall accT sgT stT0 stT1,
+        (forall P nS nM nall (env : Env.t ident) (r : node_aux_names) st0 stl
+                accT sgT stT0 stT1,
             R P nS nM nall ->
+            generate_local_env_for_lnode nall st0 = OK ((env, r), stl) ->
+            find_node_env nall.(n_name) envsF = Some env ->
+            get_node_aux nall.(n_name) auxF = Some (r.(nclk), r.(nrst)) ->
+            (st0 <= stN)%positive ->
+            lsig_inv stN st0 accT stT0 ->
             Jinv accT P ->
             generate_lnode_sig_scoped_env accT nM envsF auxF stT0
               = OK (sgT, stT1) ->
@@ -4029,85 +4042,6 @@ Import SECMONADNotations.
     rewrite Forall_forall in Hnm. exact (Hnm n' Hin' (@Logic.eq_sym _ _ _ Hn')).
   Qed.
 
-  Theorem normalization_signatures_preserved :
-    forall (G : global) (Hwl : wl_global G)
-           (Hpr : Forall (fun n => n_prefixes n = elab_prefs) G)
-           (Hunt : unnested_global (unnest_global G Hwl Hpr))
-           (Hpref1 : Forall (fun n => n_prefixes n = norm1_prefs)
-                       (unnest_global G Hwl Hpr)),
-      wc_global G -> wt_global G -> Forall source_guard G ->
-      (forall P nS nM nN accT sgT envsF auxF stT0 stT1,
-          RU P nS nM nN ->
-          CALLS.sig_inputs_ok accT P ->
-          generate_lnode_sig_scoped_env accT nM envsF auxF stT0
-            = OK (sgT, stT1) ->
-          CALLS.sig_inputs_ok (sgT :: accT) (nS :: P)) ->
-      forall envsF auxF stN st GS GT GM,
-        generate_lnode_scoped_env_st
-          (List.rev (normfby_global (unnest_global G Hwl Hpr) Hunt Hpref1))
-          = OK (envsF, auxF, stN) ->
-        sec_le stN st ->
-        generate_all_lsignatures_scoped_env (List.rev G) envsF auxF st = OK GS ->
-        generate_all_lsignatures_scoped_env
-          (List.rev (unnest_global G Hwl Hpr)) envsF auxF st = OK GT ->
-        generate_all_lsignatures_scoped_env
-          (List.rev (normfby_global (unnest_global G Hwl Hpr) Hunt Hpref1))
-          envsF auxF st = OK GM ->
-        call_weakens GS GM /\ sigs_preserved GS GM.
-  Proof.
-    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard HJU envsF auxF stN st GS GT GM
-      Hnaming Hle HgS HgT HgM.
-    set (G1 := unnest_global G Hwl Hpr) in *.
-    set (G2 := normfby_global G1 Hunt Hpref1) in *.
-    assert (Hwc1 : wc_global G1) by exact (NClo.unnest_global_wc G Hwl Hpr Hwc).
-    assert (Hwt1 : wt_global G1) by exact (NTyp.unnest_global_wt G Hwl Hpr Hwt).
-    assert (Hnd : NoDup (List.map n_name (List.rev G2))).
-    { rewrite List.map_rev.
-      apply (Permutation_NoDup (Permutation_rev _)).
-      unfold G2. rewrite normfby_global_map_names. unfold G1.
-      rewrite unnest_global_map_names. exact (wc_global_names_nodup G Hwc). }
-    (** the unnesting leg *)
-    destruct (generate_all_lsignatures_weakens_ext_driver
-                (List.rev G2) envsF auxF stN st Hnaming RU
-                (fun acc P => CALLS.sig_inputs_ok acc P)
-                (fun P nS nM nall HR =>
-                   match RU_facts P nS nM nall HR with
-                   | conj Hn1 (conj Hn2 (conj tfS (conj tfM _))) =>
-                     conj Hn1 (conj tfS (conj Hn2 tfM))
-                   end)
-                (fun P nS nM nall accT sgT stT0 stT1 HR Hj Hs =>
-                   HJU P nS nM nall accT sgT envsF auxF stT0 stT1 HR Hj Hs)
-                (fun P nS nM nall env r st0 stl accS accT sgS stS0 stS1 sgT
-                     stT0 stT1 HR Hloc Hfind Haux Hst0 HiS HiT Hw Hj HsS HsT =>
-                   stepU (List.rev G2) envsF auxF stN Hnaming P nS nM nall env r
-                     st0 stl accS accT sgS stS0 stS1 sgT stT0 stT1 HR Hloc
-                     Hfind Haux Hst0 HiS HiT Hw Hj HsS HsT)
-                (List.rev G) (List.rev G1)
-                (build_U G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard) Hnd Hle
-                sig_inputs_ok_nil GS GT HgS HgT)
-      as (Hc1 & Hp1 & _).
-    (** the [fby] leg *)
-    destruct (generate_all_lsignatures_weakens_ext_driver
-                (List.rev G2) envsF auxF stN st Hnaming RI
-                (fun _ _ => True)
-                (fun P nS nM nall HR =>
-                   match RI_facts P nS nM nall HR with
-                   | conj Hn1 (conj Hn2 (conj tfM tfN)) =>
-                     conj Hn1 (conj tfM (conj Hn2 tfN))
-                   end)
-                (fun _ _ _ _ _ _ _ _ _ _ _ => I)
-                (fun P nS nM nall env r st0 stl accS accT sgS stS0 stS1 sgT
-                     stT0 stT1 HR Hloc Hfind Haux Hst0 HiS HiT Hw Hj HsS HsT =>
-                   stepI (List.rev G2) envsF auxF stN Hnaming P nS nM nall env r
-                     st0 stl accS accT sgS stS0 stS1 sgT stT0 stT1 HR Hloc
-                     Hfind Haux Hst0 HiS HiT Hw Hj HsS HsT)
-                (List.rev G1) (List.rev G2)
-                (build_I G1 Hunt Hpref1 Hwc1 Hwt1) Hnd Hle I GT GM HgT HgM)
-      as (Hc2 & Hp2 & _).
-    split.
-    - exact (call_weakens_trans _ _ _ Hc1 Hc2).
-    - exact (sigs_preserved_trans _ _ _ Hp1 Hp2).
-  Qed.
 
 
   (** * The source signatures are good
@@ -4191,6 +4125,1270 @@ Import SECMONADNotations.
                 Hrun [] st GS stf (lsig_inv_nil stN init_state st Hle) HallS)
       as Hinv.
     exact (lsig_inv_find_good _ _ _ _ f sg Hinv Hf).
+  Qed.
+
+
+  (** * Item 8: the clock closure of a generated signature's inputs
+
+      [sig_inputs_ok] asks, of a callee's generated signature, that a stored
+      constraint mentioning an input's security name also mentions the names of
+      the clock variables of that input's declared clock.  Everything here is
+      relative to a set [ins] of declared variables (the inputs) and a
+      predicate [zs] on the names a clock type can contain: the base name and
+      the names of [ins] themselves, none of which is ever a constraint's
+      target or an eliminated local. *)
+
+  Definition icl (env : Env.t ident) (ct : ident)
+             (ins : list (ident * clock)) (c : SymTypes.constraint) : Prop :=
+    forall v b ckv ckvty,
+      Env.find v env = Some b -> In b (fst c) -> In (v, ckv) ins ->
+      assign_clk_type env ct ckv = Some ckvty -> incl ckvty (fst c).
+
+  Definition ntg (zs : ident -> Prop) (c : SymTypes.constraint) : Prop :=
+    forall t, In t (snd c) -> ~ zs t.
+
+  Lemma join_into_ok :
+    forall env ct ins zs l r acc,
+      icl env ct ins (l, r) -> ntg zs (l, r) ->
+      Forall (icl env ct ins) acc -> Forall (ntg zs) acc ->
+      Forall (icl env ct ins) (SymTypes.join_into l r acc)
+      /\ Forall (ntg zs) (SymTypes.join_into l r acc).
+  Proof.
+    intros env ct ins zs l r acc Hc Ht.
+    induction acc as [|[l' r'] acc IH]; intros Hi Hn; cbn [SymTypes.join_into].
+    - split; constructor; [exact Hc|constructor|exact Ht|constructor].
+    - inversion Hi as [|? ? Hi1 Hi2]; subst.
+      inversion Hn as [|? ? Hn1 Hn2]; subst.
+      destruct (SymTypes.st_eq_dec r r') as [Heq|Hne].
+      + split; constructor; try assumption.
+        intros v b ckv ckvty Hf Hb Hin Hck. cbn [fst] in Hb.
+        apply in_merge_inv in Hb as [Hb|Hb]; intros z Hz; cbn [fst].
+        * apply in_merge_left. exact (Hc v b ckv ckvty Hf Hb Hin Hck z Hz).
+        * apply in_merge_right.
+          exact (Hi1 v b ckv ckvty Hf Hb Hin Hck z Hz).
+      + destruct (IH Hi2 Hn2) as [A B]. split; constructor; assumption.
+  Qed.
+
+  Lemma collapse_ok :
+    forall env ct ins zs cs,
+      Forall (icl env ct ins) cs -> Forall (ntg zs) cs ->
+      Forall (icl env ct ins) (SymTypes.collapse cs)
+      /\ Forall (ntg zs) (SymTypes.collapse cs).
+  Proof.
+    intros env ct ins zs cs. induction cs as [|[l r] cs IH]; intros Hi Hn.
+    - split; constructor.
+    - inversion Hi as [|? ? Hi1 Hi2]; subst.
+      inversion Hn as [|? ? Hn1 Hn2]; subst.
+      destruct (IH Hi2 Hn2) as [A B]. cbn [SymTypes.collapse].
+      exact (join_into_ok env ct ins zs l r _ Hi1 Hn1 A B).
+  Qed.
+
+  Lemma subST_in :
+    forall a d b z,
+      In z (SymTypes.subST a d b) ->
+      z <> d /\ (In z a \/ (In d a /\ In z b)).
+  Proof.
+    intros a d b z Hz. unfold SymTypes.subST in Hz.
+    destruct (SymTypes.st_mem d a) eqn:Ha.
+    - assert (Hda : In d a)
+        by (apply SymTypes.my_set_mem_correct; exact Ha).
+      destruct (SymTypes.st_mem d b) eqn:Hb.
+      + apply in_merge_inv in Hz as [Hz|Hz].
+        * destruct (SymTypes.st_remove_in_inv _ _ _ Hz) as [H1 H2].
+          split; [exact H2|left; exact H1].
+        * destruct (SymTypes.st_remove_in_inv _ _ _ Hz) as [H1 H2].
+          split; [exact H2|right; split; [exact Hda|exact H1]].
+      + apply in_merge_inv in Hz as [Hz|Hz].
+        * destruct (SymTypes.st_remove_in_inv _ _ _ Hz) as [H1 H2].
+          split; [exact H2|left; exact H1].
+        * assert (z <> d) as Hne.
+          { intro Heq. subst z. 
+            assert (SymTypes.st_mem d b = true)
+              by (apply SymTypes.my_set_mem_correct; exact Hz).
+            congruence. }
+          split; [exact Hne|right; split; [exact Hda|exact Hz]].
+    - split; [|left; exact Hz].
+      intro Heq. subst z.
+      assert (SymTypes.st_mem d a = true)
+        by (apply SymTypes.my_set_mem_correct; exact Hz).
+      congruence.
+  Qed.
+
+  Lemma subST_intro_l :
+    forall a d b z, In z a -> z <> d -> In z (SymTypes.subST a d b).
+  Proof.
+    intros a d b z Hz Hne. unfold SymTypes.subST.
+    destruct (SymTypes.st_mem d a) eqn:Ha.
+    - destruct (SymTypes.st_mem d b);
+        apply in_merge_left; apply SymTypes.st_remove_preserves_other_in;
+        assumption.
+    - exact Hz.
+  Qed.
+
+  Lemma subST_intro_r :
+    forall a d b z, In d a -> In z b -> z <> d -> In z (SymTypes.subST a d b).
+  Proof.
+    intros a d b z Hd Hz Hne. unfold SymTypes.subST.
+    assert (SymTypes.st_mem d a = true)
+      by (apply SymTypes.my_set_mem_correct; exact Hd).
+    rewrite H.
+    destruct (SymTypes.st_mem d b);
+      apply in_merge_right; [apply SymTypes.st_remove_preserves_other_in|];
+      assumption.
+  Qed.
+
+  Section SimplifyClosed.
+
+    Variable env : Env.t ident.
+    Variable ct  : ident.
+    Variable ins : list (ident * clock).
+    Variable zs  : ident -> Prop.
+
+    Hypothesis HZ :
+      forall v ckv ckvty z,
+        In (v, ckv) ins -> assign_clk_type env ct ckv = Some ckvty ->
+        In z ckvty -> zs z.
+
+    Lemma subAll_ok :
+      forall cns d st,
+        Forall (icl env ct ins) cns -> Forall (ntg zs) cns ->
+        ~ zs d -> icl env ct ins (st, [d]) ->
+        Forall (icl env ct ins) (SymTypes.subAll cns d st)
+        /\ Forall (ntg zs) (SymTypes.subAll cns d st).
+    Proof.
+      intros cns d st. induction cns as [|[st0 rhs] cns IH]; intros Hi Hn Hd Hst;
+        cbn [SymTypes.subAll].
+      - split; constructor.
+      - inversion Hi as [|? ? Hi1 Hi2]; subst.
+        inversion Hn as [|? ? Hn1 Hn2]; subst.
+        destruct (IH Hi2 Hn2 Hd Hst) as [A B].
+        destruct rhs as [|d' [|d'' rhs']]; try exact (conj A B).
+        destruct (ident_eqb d' d) eqn:Hdd; [exact (conj A B)|].
+        split; constructor; try assumption.
+        + unfold SymTypes.normalize_constraint.
+          intros v b ckv ckvty Hf Hb Hin Hck. cbn [fst] in Hb.
+          destruct (SymTypes.st_remove_in_inv _ _ _ Hb) as [HbL Hbd'].
+          destruct (subST_in _ _ _ _ HbL) as [Hbd [Hb0|(Hdin & Hbst)]].
+          * intros z Hz. cbn [fst].
+            apply SymTypes.st_remove_preserves_other_in.
+            -- intro Heq. subst z. exact (Hn1 d' (or_introl Logic.eq_refl)
+                                           (HZ _ _ _ _ Hin Hck Hz)).
+            -- apply subST_intro_l.
+               ++ exact (Hi1 v b ckv ckvty Hf Hb0 Hin Hck z Hz).
+               ++ intro Heq. subst z. exact (Hd (HZ _ _ _ _ Hin Hck Hz)).
+          * intros z Hz. cbn [fst].
+            apply SymTypes.st_remove_preserves_other_in.
+            -- intro Heq. subst z. exact (Hn1 d' (or_introl Logic.eq_refl)
+                                           (HZ _ _ _ _ Hin Hck Hz)).
+            -- apply subST_intro_r.
+               ++ exact Hdin.
+               ++ exact (Hst v b ckv ckvty Hf Hbst Hin Hck z Hz).
+               ++ intro Heq. subst z. exact (Hd (HZ _ _ _ _ Hin Hck Hz)).
+    Qed.
+
+    Lemma simplify_ok :
+      forall ds cns,
+        Forall (icl env ct ins) cns -> Forall (ntg zs) cns ->
+        (forall d, In d ds -> ~ zs d) ->
+        Forall (icl env ct ins) (SymTypes.simplify cns ds)
+        /\ Forall (ntg zs) (SymTypes.simplify cns ds).
+    Proof.
+      intros ds. induction ds as [|d ds IH]; intros cns Hi Hn Hds;
+        cbn [SymTypes.simplify].
+      - exact (conj Hi Hn).
+      - destruct (SymTypes.findST cns d) as [st|] eqn:Hf.
+        + apply SymTypes.find_correct in Hf.
+          assert (Hc : icl env ct ins (st, [d]))
+            by (rewrite Forall_forall in Hi; exact (Hi _ Hf)).
+          destruct (subAll_ok cns d st Hi Hn (Hds d (or_introl Logic.eq_refl))
+                      Hc) as [A B].
+          exact (IH _ A B (fun d0 H0 => Hds d0 (or_intror H0))).
+        + exact (IH _ Hi Hn (fun d0 H0 => Hds d0 (or_intror H0))).
+    Qed.
+
+  End SimplifyClosed.
+
+  Lemma assign_clk_type_vars_in :
+    forall env bt ck ckty x y,
+      assign_clk_type env bt ck = Some ckty ->
+      In x (clock_vars ck) -> Env.find x env = Some y -> In y ckty.
+  Proof.
+    intros env bt ck. induction ck as [|ck0 IH x0 b]; intros ckty x y H Hx Hf.
+    - simpl in Hx. contradiction.
+    - apply assign_clk_type_Con_inv in H as (ckty0 & g & H0 & Hg & ->).
+      simpl in Hx. destruct Hx as [Hx|Hx].
+      + subst x0. rewrite Hg in Hf. apply option_Some_inj in Hf. subst g.
+        apply in_merge_right. now left.
+      + apply in_merge_left. exact (IH ckty0 x y H0 Hx Hf).
+  Qed.
+
+  (** From the per-constraint closure to the form the call rule consumes. *)
+  Lemma closed_of_icl :
+    forall env ct (ins : list (ident * clock)) (cs : list SymTypes.constraint),
+      Forall (icl env ct ins) cs ->
+      (forall x ck x', In (x, ck) ins -> In x' (clock_vars ck) ->
+                       exists y', Env.find x' env = Some y') ->
+      forall c, In c cs ->
+      forall x ck y, In (x, ck) ins -> Env.find x env = Some y ->
+        In y (fst c) ->
+        forall x' y', In x' (clock_vars ck) -> Env.find x' env = Some y' ->
+          In y' (fst c).
+  Proof.
+    intros env ct ins cs Hi Hkeys c Hc x ck y Hin Hx Hy x' y' Hx' Hy'.
+    rewrite Forall_forall in Hi.
+    destruct (assign_clk_type_total_of_vars env ct ck
+                (fun x0 Hx0 => Hkeys x ck x0 Hin Hx0)) as (ckty & Hck).
+    exact (Hi c Hc x y ck ckty Hx Hy Hin Hck y'
+             (assign_clk_type_vars_in env ct ck ckty x' y' Hck Hx' Hy')).
+  Qed.
+
+  (** The expressions an unnested node's non-call equations hold. *)
+  Definition cf_exp (e : exp) : Prop :=
+    normalized_cexp e
+    \/ exists e0 e1 a,
+         (e = Efby [e0] [e1] [a] \/ e = Earrow [e0] [e1] [a])
+         /\ normalized_lexp e0 /\ normalized_lexp e1.
+
+  Lemma assign_lexp_delay_pure :
+    forall G env bt rt e0 e1 e a st ts st',
+      normalized_lexp e0 -> normalized_lexp e1 ->
+      (e = Efby [e0] [e1] [a] \/ e = Earrow [e0] [e1] [a]) ->
+      assign_lexp_type G env bt rt e st = OK (ts, st') ->
+      st' = st /\ List.length ts = 1 /\ carried ts = [].
+  Proof.
+    intros G env bt rt e0 e1 e a st ts st' H0 H1 He Hrun.
+    assert (Hr : (do ts0 <- assign_lexps G env bt rt [e0];
+                  do us <- assign_lexps G env bt rt [e1];
+                  ljoin_list ts0 us) st = OK (ts, st')).
+    { destruct He as [ -> | -> ].
+      - rewrite assign_lexp_Efby in Hrun. exact Hrun.
+      - rewrite assign_lexp_Earrow in Hrun. exact Hrun. }
+    eapply sec_bind_inv in Hr as (ts0 & sa & Hts0 & Hr).
+    eapply sec_bind_inv in Hr as (us & sb & Hus & Hj).
+    assert (Forall normalized_cexp [e0]) as Hc0
+      by (constructor; [apply normalized_lexp_cexp; exact H0|constructor]).
+    assert (Forall normalized_cexp [e1]) as Hc1
+      by (constructor; [apply normalized_lexp_cexp; exact H1|constructor]).
+    destruct (assign_lexps_normalized_pure G env bt rt [e0] Hc0 ts0 st sa Hts0)
+      as (? & Hl0 & Hca0 & _); subst sa.
+    destruct (assign_lexps_normalized_pure G env bt rt [e1] Hc1 us st sb Hus)
+      as (? & Hl1 & Hca1 & _); subst sb.
+    assert (st' = st) as ? by (eapply ljoin_list_pure; exact Hj); subst st'.
+    destruct ts0 as [|p [|]]; simpl in Hl0; try discriminate.
+    destruct us as [|q [|]]; simpl in Hl1; try discriminate.
+    simpl in Hj. eapply sec_bind_inv in Hj as (r & s2 & Hr2 & Hret).
+    unfold ret in Hr2. inversion Hr2; subst r. unfold ret in Hret.
+    inversion Hret; subst ts.
+    rewrite carried_single in Hca0, Hca1.
+    split; [reflexivity|split; [reflexivity|]].
+    rewrite carried_single. rewrite snd_ljoin, Hca0, Hca1. reflexivity.
+  Qed.
+
+  Lemma ldef_ok :
+    forall (G : secglobal) env ct rt (cenv : Env.t (type * clock)) (P : global)
+           (vars ins : list (ident * clock)) (zs : ident -> Prop)
+           x e ckx cs st st',
+      env_injective env -> NoDupMembers vars ->
+      (forall v ckv b, In (v, ckv) vars -> Env.find v env = Some b -> b <> ct) ->
+      (forall v ckv b, In (v, ckv) vars -> Env.find v env = Some b -> b <> rt) ->
+      (forall v ckv, In (v, ckv) ins -> In (v, ckv) vars) ->
+      wc_global P -> wc_env vars ->
+      wc_exp P vars e -> cf_exp e ->
+      clockof e = [ckx] -> find_clock cenv x = OK ckx -> In (x, ckx) vars ->
+      (forall b, Env.find x env = Some b -> ~ zs b) ->
+      generate_ldef_constraint G env ct rt cenv x e st = OK (cs, st') ->
+      Forall (icl env ct ins) cs /\ Forall (ntg zs) cs.
+  Proof.
+    intros G env ct rt cenv P vars ins zs x e ckx cs st st' Hinj Hnd Hbase Hrst
+      Hins Hg Hwenv Hwc Hcf Hclk Hfc Hxin Hbz Hgen.
+    destruct (generate_ldef_constraint_inv G env ct rt cenv x e cs st st' Hgen)
+      as (ck & ckty & tf & b & st1 & Hck & Hckty & Hrun & Hb & Hst' & Hcs).
+    destruct tf as (sa, rho).
+    rewrite Hfc in Hck. inversion Hck; subst ck. clear Hck.
+    assert (st1 = st /\ carried [(sa, rho)] = []) as (Hst & Hcar).
+    { destruct Hcf as [Hn|(e0 & e1 & a & He & H0 & H1)].
+      - destruct (assign_lexp_normalized_cexp_pure G env ct rt e Hn _ _ _ Hrun)
+          as (? & _ & Hc & _). auto.
+      - destruct (assign_lexp_delay_pure G env ct rt e0 e1 e a st _ st1 H0 H1 He
+                    Hrun) as (? & _ & Hc). auto. }
+    subst st1. subst st'. rewrite carried_single in Hcar. cbn [snd] in Hcar.
+    subst rho.
+    rewrite cmerge_nil in Hcs. cbn [fst] in Hcs. subst cs.
+    assert (wc_clock vars ckx) as Hwck.
+    { unfold wc_env in Hwenv. rewrite Forall_forall in Hwenv.
+      exact (Hwenv _ Hxin). }
+    pose proof (assign_lexp_type_clock_closed G env ct rt P vars Hinj Hnd e Hwc
+                  [(sa, [])] st st [] ltac:(rewrite minted_refl; intros z []) Hrun)
+      as Hlcc.
+    rewrite Hclk in Hlcc. inversion Hlcc as [|t0 c0 ts0 cs0 Hl1 Hl2]; subst.
+    split; constructor; [|constructor| |constructor].
+    - intros v b' ckv ckvty Hf Hb' Hin Hck'. cbn [fst] in Hb'.
+      intros z Hz. cbn [fst].
+      apply in_merge_inv in Hb' as [Hb'|Hb'].
+      + apply in_merge_inv in Hb' as [Hb'|Hb'].
+        * exfalso. destruct Hb' as [Hb'|[]]. subst b'.
+          exact (Hrst v ckv rt (Hins _ _ Hin) Hf Logic.eq_refl).
+        * apply in_merge_left. apply in_merge_right.
+          exact (assign_clk_type_clock_closed env ct vars Hinj Hnd Hbase ckx
+                   ckty Hwck Hckty v b' ckv ckvty Hf Hb' (Hins _ _ Hin) Hck'
+                   z Hz).
+      + pose proof (Hl1 ckty b' Hckty (fun H => H) Hb' v ckv ckvty Hf
+                      (Hins _ _ Hin) Hck' z Hz) as Hz'.
+        apply in_merge_inv in Hz' as [Hz'|Hz'].
+        * apply in_merge_left. apply in_merge_right. exact Hz'.
+        * apply in_merge_right. exact Hz'.
+    - intros t Ht. cbn [snd] in Ht. destruct Ht as [<-|[]]. exact (Hbz b Hb).
+  Qed.
+
+
+  (** The names a clock type of an input can contain: the base name and the
+      security names of the inputs. *)
+  Definition zset (env : Env.t ident) (ct : ident)
+             (ins : list (ident * clock)) (z : ident) : Prop :=
+    z = ct \/ exists x ck, In (x, ck) ins /\ Env.find x env = Some z.
+
+  Lemma HZ_of_ins :
+    forall env ct (ins : list (ident * clock)),
+      wc_env ins ->
+      forall v ckv ckvty z,
+        In (v, ckv) ins -> assign_clk_type env ct ckv = Some ckvty ->
+        In z ckvty -> zset env ct ins z.
+  Proof.
+    intros env ct ins Hwc v ckv ckvty z Hin Hck Hz.
+    destruct (assign_clk_type_images env ct ckv ckvty Hck z Hz)
+      as [->|(x & Hx & Hf)].
+    - left. reflexivity.
+    - right. unfold wc_env in Hwc. rewrite Forall_forall in Hwc.
+      pose proof (Hwc _ Hin) as Hw. cbn [snd] in Hw.
+      destruct (clock_vars_wc ins ckv Hw x Hx) as (ckx & Hxin).
+      exists x, ckx. split; assumption.
+  Qed.
+
+  Lemma icl_of_closed_mod :
+    forall env ct ins cs,
+      CALLS.constraints_closed_mod env ct ins [] [] cs ->
+      Forall (icl env ct ins) cs.
+  Proof.
+    intros env ct ins cs H. unfold CALLS.constraints_closed_mod in H.
+    eapply Forall_impl; [|exact H].
+    intros c Hc v b ckv ckvty Hf Hb Hin Hck z Hz.
+    pose proof (Hc v b ckv ckvty Hf (fun H => H) Hb Hin Hck z Hz) as Hz'.
+    apply in_merge_inv in Hz' as [Hz'|Hz']; [contradiction|exact Hz'].
+  Qed.
+
+  Lemma normalized_lexp_not_Eapp :
+    forall e f es ro anns, normalized_lexp e -> e <> Eapp f es ro anns.
+  Proof. intros e f es ro anns H. inversion H; discriminate. Qed.
+
+  Lemma scope_fresh_for_env_of :
+    forall env ct rt st0 stl sg,
+      (exists ci, Env.find ci env = Some ct) ->
+      (exists ri, Env.find ri env = Some rt) ->
+      (forall x b, Env.find x env = Some b ->
+                   exists k, b = Ids.gensym Ids.sec k
+                             /\ (st0 <= k)%positive /\ (k < stl)%positive) ->
+      signature_scope_bounded_above sg st0 ->
+      CALLS.sig_scope_fresh_for_env env ct rt sg.
+  Proof.
+    intros env ct rt st0 stl sg (ci & Hct) (ri & Hrt) Hrng Hbd.
+    assert (Hall : forall b, (exists x, Env.find x env = Some b) ->
+                             ~ In b (signature_scope sg)).
+    { intros b (x & Hx) Hin.
+      destruct (Hrng x b Hx) as (k & Hk & Hlo & _). subst b.
+      destruct (Hbd _ Hin) as (n & Hn & Hlt).
+      apply gensym_injective in Hn as [_ Hn]. subst n. lia. }
+    refine (conj _ (conj _ _)).
+    - exact (Hall ct (ex_intro _ ci Hct)).
+    - exact (Hall rt (ex_intro _ ri Hrt)).
+    - intros x b Hx. exact (Hall b (ex_intro _ x Hx)).
+  Qed.
+
+  Lemma lcall_fresh_of_env :
+    forall G env ct rt st0 stl,
+      env_injective env ->
+      (exists ci, Env.find ci env = Some ct) ->
+      (exists ri, Env.find ri env = Some rt) ->
+      (forall x b, Env.find x env = Some b ->
+                   exists k, b = Ids.gensym Ids.sec k
+                             /\ (st0 <= k)%positive /\ (k < stl)%positive) ->
+      secglobal_scoped G -> secglobal_scope_bounded_above G st0 ->
+      lcall_fresh_prop G env ct rt st0.
+  Proof.
+    intros G env ct rt st0 stl Hinj (ci & Hct) (ri & Hrt) Hrng HscS HbdS.
+    set (D := env_images env).
+    assert (Hdeclall : forall y, In y D -> name_above st0 y).
+    { intros y Hy. unfold D, env_images in Hy.
+      apply in_map_iff in Hy as ((x & b) & Hxb & Hin). cbn in Hxb. subst b.
+      apply Env.elements_complete in Hin.
+      destruct (Hrng x y Hin) as (k & Hk & Hlo & _). exists k.
+      split; assumption. }
+    assert (HdkA : decl_ok env ct rt D).
+    { split; [|split].
+      - exact (env_images_spec env _ _ Hct).
+      - exact (env_images_spec env _ _ Hrt).
+      - exact (fun x b H => env_images_spec env x b H). }
+    assert (HclkA : clk_scoped env ct D).
+    { intros ck ckty Hck.
+      eapply clk_scoped_of_env;
+        [exact (env_images_spec env _ _ Hct)
+        |exact (fun x b H => env_images_spec env x b H)|exact Hck]. }
+    exact (lcall_fresh_prop_holds G env ct rt D st0 HdkA HclkA HscS Hdeclall
+             HbdS Hinj).
+  Qed.
+
+  Lemma aug_closed :
+    forall env ct (vars ins : list (ident * clock)) (nd : node) bck sub es
+           argts ckty,
+      env_injective env -> NoDupMembers vars ->
+      (forall v ckv b, In (v, ckv) vars -> Env.find v env = Some b -> b <> ct) ->
+      (forall v ckv, In (v, ckv) ins -> In (v, ckv) vars) ->
+      (forall x ck, In (x, ck) vars -> exists b, Env.find x env = Some b) ->
+      Forall2 (WellInstantiated bck sub) (idck nd.(n_in)) (nclocksof es) ->
+      Forall (fun e => Forall (wc_clock vars) (clockof e)) es ->
+      Forall2 (lst_clock_closed env ct vars []) argts (clocksof es) ->
+      List.length argts = List.length (nclocksof es) ->
+      assign_clk_type env ct bck = Some ckty ->
+      Forall (CALLS.st_closed_mod env ct ins [] ckty)
+        (CALLS.augment_actuals env sub (idck nd.(n_in)) argts).
+  Proof.
+    intros env ct vars ins nd bck sub es argts ckty Hinj Hnd Hbase Hins Hkeys
+      Hwi Hargcl Hlcc Hlen Hbck.
+    rewrite Forall_forall. intros w Hw.
+    apply In_nth_error in Hw as (i & Hi).
+    assert (Hl2 : List.length (idck nd.(n_in)) = List.length (nclocksof es))
+      by exact (Forall2_length _ _ _ Hwi).
+    assert (Hl3 : List.length (idck nd.(n_in)) = List.length argts)
+      by (rewrite Hl2; symmetry; exact Hlen).
+    assert (Hlt : (i < List.length (idck nd.(n_in)))%nat).
+    { unfold CALLS.augment_actuals in Hi. apply nth_error_lt_inv in Hi.
+      rewrite map_length, combine_length in Hi. lia. }
+    destruct (nth_error_lt _ _ Hlt) as ((x & ckf) & Hxi).
+    assert (Hlta : (i < List.length argts)%nat) by lia.
+    destruct (nth_error_lt _ _ Hlta) as (t & Hti).
+    rewrite (CALLS.augment_actuals_nth env sub (idck nd.(n_in)) argts i x ckf t
+               Hxi Hti) in Hi.
+    inversion Hi; subst w. clear Hi.
+    assert (Hltn : (i < List.length (nclocksof es))%nat) by lia.
+    destruct (nth_error_lt _ _ Hltn) as (nck & Hni).
+    destruct (Forall2_nth_error _ (idck nd.(n_in)) (nclocksof es) i (x, ckf)
+                nck Hwi Hxi Hni) as (_ & Hinst).
+    cbn [fst snd] in Hinst.
+    assert (Hnck : nth_error (clocksof es) i = Some (fst nck)).
+    { rewrite clocksof_nclocksof.
+      exact (map_nth_error stripname i (nclocksof es) Hni). }
+    pose proof (Forall2_nth_error _ argts (clocksof es) i t (fst nck) Hlcc Hti
+                  Hnck) as Hlt1.
+    assert (Hwcj : wc_clock vars (fst nck)).
+    { pose proof (nth_error_In _ _ Hnck) as Hin. unfold clocksof in Hin.
+      apply in_flat_map in Hin as (e & He & Hce).
+      rewrite Forall_forall in Hargcl.
+      pose proof (Hargcl e He) as Hw. rewrite Forall_forall in Hw.
+      exact (Hw _ Hce). }
+    destruct (assign_clk_type_total_of_vars env ct (fst nck)
+                (fun x0 Hx0 =>
+                   match clock_vars_wc vars (fst nck) Hwcj x0 Hx0 with
+                   | ex_intro ckx Hin => Hkeys x0 ckx Hin
+                   end)) as (cktj & Hcktj).
+    assert (Hincl : incl cktj (merge ckty
+                                 (CALLS.clock_actuals env sub ckf))).
+    { eapply assign_clk_type_instck_incl;
+        [exact Hinst|exact Hbck|exact Hcktj|].
+      intros x0 x' z Hx0 Hs Hz.
+      exact (CALLS.clock_actuals_intro env sub ckf x0 x' z Hx0 Hs Hz). }
+    assert (Hup : forall z, In z cktj ->
+                    In z (merge ckty (merge (fst t)
+                                        (CALLS.clock_actuals env sub ckf)))).
+    { intros z Hz. apply Hincl in Hz. apply in_merge_inv in Hz as [Hz|Hz].
+      - apply in_merge_left. exact Hz.
+      - apply in_merge_right. apply in_merge_right. exact Hz. }
+    intros v b ckv ckvty Hf _ Hb Hin Hck z Hz. cbn [fst] in Hb |- *.
+    apply in_merge_inv in Hb as [Hb|Hb].
+    - pose proof (Hlt1 cktj b Hcktj (fun H => H) Hb v ckv ckvty Hf
+                    (Hins _ _ Hin) Hck z Hz) as Hz'.
+      apply in_merge_inv in Hz' as [Hz'|Hz'].
+      + exact (Hup z Hz').
+      + apply in_merge_right. apply in_merge_left. exact Hz'.
+    - unfold CALLS.clock_actuals in Hb.
+      destruct (CALLS.sub_names_inv env sub (clock_vars ckf) b Hb)
+        as (x0 & u & Hx0 & Hs & Hu).
+      pose proof (instck_clock_vars bck sub ckf (fst nck) x0 u Hinst Hx0 Hs)
+        as Hucj.
+      pose proof (assign_clk_type_vars_in env ct (fst nck) cktj u b Hcktj Hucj
+                    Hu) as Hbj.
+      pose proof (assign_clk_type_clock_closed env ct vars Hinj Hnd Hbase
+                    (fst nck) cktj Hwcj Hcktj v b ckv ckvty Hf Hbj
+                    (Hins _ _ Hin) Hck z Hz) as Hzj.
+      exact (Hup z Hzj).
+  Qed.
+
+  Lemma call_eq_icl :
+    forall (G : secglobal) env ct rt (P : global)
+           (vars ins : list (ident * clock)) stN lo stl stx
+           (xs : list ident) f es (ro : option exp) anns (rstty : LST)
+           cs st st',
+      lsig_inv stN lo G stx ->
+      CALLS.sig_inputs_ok G P ->
+      env_injective env -> NoDupMembers vars ->
+      (forall v ckv b, In (v, ckv) vars -> Env.find v env = Some b -> b <> ct) ->
+      (forall v ckv b, In (v, ckv) vars -> Env.find v env = Some b -> b <> rt) ->
+      (forall v ckv, In (v, ckv) ins -> In (v, ckv) vars) ->
+      (forall x ck, In (x, ck) vars -> exists b, Env.find x env = Some b) ->
+      wc_global P -> wc_env vars ->
+      wl_exp P (Eapp f es ro anns) -> wc_exp P vars (Eapp f es ro anns) ->
+      Forall normalized_lexp es ->
+      Forall (fun e => Forall (wc_clock vars) (clockof e)) es ->
+      lcall_fresh_prop G env ct rt lo -> lcall_rst_shape G env ct rt lo rstty ->
+      sec_le lo st ->
+      (exists ci, Env.find ci env = Some ct) ->
+      (exists ri, Env.find ri env = Some rt) ->
+      (forall x b, Env.find x env = Some b ->
+                   exists k, b = Ids.gensym Ids.sec k
+                             /\ (lo <= k)%positive /\ (k < stl)%positive) ->
+      snd rstty = [] ->
+      (forall ckty, CALLS.st_closed_mod env ct ins [] ckty (fst rstty)) ->
+      NoDup xs ->
+      (forall x, In x xs ->
+                 (exists ck, In (x, ck) vars) /\ forall ck, ~ In (x, ck) ins) ->
+      generate_lcall_constraint G env ct rt xs f es rstty st = OK (cs, st') ->
+      Forall (icl env ct ins) cs /\ Forall (ntg (zset env ct ins)) cs.
+  Proof.
+    intros G env ct rt P vars ins stN lo stl stx xs f es ro anns rstty cs st st'
+      Hinv Hsigin Hinj Hnd Hbase Hrst Hins Hkeys Hg Hwenv Hwl Hwc Hesn Hargcl
+      Hlf Hshape Hlo Hci Hri Hrng Hsr Hrstcl Hndx Hxs Hgen.
+    destruct (generate_lcall_constraint_inv G env ct rt xs f es rstty cs st st'
+                Hgen)
+      as (sg & ckty & argts & outs & sti & cs0 & Hfs & Hckty & Hargs & Houts
+          & Hgc & Hcs).
+    assert (Hesc : Forall normalized_cexp es).
+    { eapply Forall_impl; [|exact Hesn]. intros e He.
+      exact (normalized_lexp_cexp e He). }
+    destruct (assign_lexps_normalized_pure G env ct rt es Hesc argts st sti
+                Hargs) as (Hsti & Hlarg & Hcar & _). subst sti.
+    assert (Hcs0 : cs = cs0).
+    { rewrite Hcs, Hcar, Hsr.
+      change (cmerge [] []) with (@nil SymTypes.constraint).
+      apply cmerge_nil. }
+    clear Hcs. subst cs.
+    destruct Hinv as (Hgood & Hsc & Hndall & Hroot & Hbd & Hle).
+    assert (Hcallsite : exists (nd : node) bck sub,
+              find_node f P = Some nd
+              /\ Forall2 (WellInstantiated bck sub) (idck nd.(n_in))
+                   (nclocksof es)
+              /\ Forall2 (WellInstantiated bck sub) (idck nd.(n_out))
+                   (List.map snd anns))
+      by (inversion Hwc; repeat esplit; eauto).
+    destruct Hcallsite as (nd & bck & sub & Hfn & Hwi & Hwo).
+    assert (Hwcin : wc_env (idck nd.(n_in))).
+    { destruct (wc_find_node P f nd Hg Hfn) as (G' & (Wcin & _)). exact Wcin. }
+    pose proof (wc_exp_Eapp_base_clock P nd f es bck sub Hg Hfn Hwi) as Hbck.
+    pose proof Hckty as Hckty0.
+    rewrite Hbck in Hckty.
+    assert (Hbckin : In bck (List.map stripname (nclocksof es))).
+    { eapply WellInstantiated_bck; [exact Hwcin| |exact Hwi].
+      unfold idck. rewrite map_length. exact (n_ingt0 nd). }
+    assert (Hwcbck : wc_clock vars bck).
+    { rewrite <- clocksof_nclocksof in Hbckin. unfold clocksof in Hbckin.
+      apply in_flat_map in Hbckin as (e & He & Hce).
+      rewrite Forall_forall in Hargcl.
+      pose proof (Hargcl e He) as Hw. rewrite Forall_forall in Hw.
+      exact (Hw _ Hce). }
+    assert (Hwces : Forall (wc_exp P vars) es)
+      by exact (wc_Eapp_inv' P vars f es ro anns Hwc).
+    assert (Hwles : Forall (wl_exp P) es) by (inversion Hwl; assumption).
+    assert (Hnamed : Forall2 (fun t nck => forall w g,
+                                 snd nck = Some w -> ~ (fun _ : ident => False) w ->
+                                 Env.find w env = Some g -> In g (fst t))
+                       argts (nclocksof es)).
+    { eapply (assign_lexps_named_covered (fun _ : ident => False) P G env ct
+                rt vars es Hwles Hwces); [|exact Hargs].
+      intros e f' es' ro' anns' He Heq w Hw. exfalso.
+      rewrite Forall_forall in Hesn.
+      exact (normalized_lexp_not_Eapp e f' es' ro' anns' (Hesn e He) Heq). }
+    destruct (Hlf xs f es rstty st sg ckty argts outs st cs0 st' Hndx Hshape
+                Hlo Hfs Hckty0 Hargs Houts Hgc) as (Hfr & _).
+    assert (Hfenv : CALLS.sig_scope_fresh_for_env env ct rt sg)
+      by exact (scope_fresh_for_env_of env ct rt lo stl sg Hci Hri Hrng
+                  (Hbd f sg Hfs)).
+    pose proof (CALLS.mmap_find_env_Forall2 env xs outs st st Houts)
+      as Hout_env.
+    assert (Hlcc : Forall2 (lst_clock_closed env ct vars []) argts
+                     (clocksof es)).
+    { refine (assign_lexps_closed_of G env ct rt P vars es _ Hwces
+                argts st st [] _ Hargs).
+      - rewrite Forall_forall. intros e _.
+        exact (assign_lexp_type_clock_closed G env ct rt P vars Hinj Hnd e).
+      - rewrite minted_refl. intros z []. }
+    assert (Hlarg' : List.length argts = List.length (nclocksof es))
+      by exact (Forall2_length _ _ _ Hnamed).
+    assert (Hckcl : CALLS.st_closed_mod env ct ins [] ckty ckty).
+    { intros v b ckv ckvty Hf _ Hb Hin Hck z Hz.
+      apply in_merge_left.
+      exact (assign_clk_type_clock_closed env ct vars Hinj Hnd Hbase bck ckty
+               Hwcbck Hckty v b ckv ckvty Hf Hb (Hins _ _ Hin) Hck z Hz). }
+    assert (Houtcl : Forall (fun v => CALLS.st_closed_mod env ct ins [] ckty [v])
+                       outs).
+    { rewrite Forall_forall. intros o Ho v b ckv ckvty Hf _ Hb Hin Hck.
+      exfalso. destruct Hb as [Hb|[]]. subst b.
+      destruct (Forall2_in_right _ xs outs o Hout_env Ho) as (x & Hx & Hxo).
+      assert (v = x) as ->
+          by exact (Hinj v x o o Hf Hxo Logic.eq_refl).
+      exact (proj2 (Hxs x Hx) ckv Hin). }
+    pose proof (CALLS.generate_constraints_icl G env ct rt ins
+                  (fun _ : ident => False) P f nd sg es bck sub argts ckty
+                  (fst rstty) outs cs0 st st' Hsigin Hfn Hfs (Hsc f sg Hfs)
+                  Hfenv (Hndall f sg Hfs) (proj1 (Hroot f sg Hfs)) Hwcin Hwi
+                  Hnamed (fun i x ck x' u _ _ _ H => H) Hfr
+                  (aug_closed env ct vars ins nd bck sub es argts ckty Hinj Hnd
+                     Hbase Hins Hkeys Hwi Hargcl Hlcc Hlarg' Hckty)
+                  Hckcl (Hrstcl ckty) Houtcl Hgc) as Hcl.
+    split.
+    - exact (icl_of_closed_mod env ct ins cs0 Hcl).
+    - rewrite Forall_forall. intros c Hc t Ht Hz.
+      pose proof (CALLS.generate_constraints_targets sg _ _ _ _ _ _ _ Hgc)
+        as Htg.
+      assert (Hs : In (snd c) (List.map snd cs0))
+        by (apply in_map_iff; exists c; split; [reflexivity|exact Hc]).
+      rewrite Htg in Hs. apply in_map_iff in Hs as (o & Heq & Ho).
+      rewrite <- Heq in Ht. destruct Ht as [Ht|[]]. subst o.
+      destruct (Forall2_in_right _ xs outs t Hout_env Ho) as (x & Hx & Hxo).
+      destruct (Hxs x Hx) as ((ckx & Hxv) & Hnin).
+      destruct Hz as [Hz|(y & cky & Hyin & Hy)].
+      + exact (Hbase x ckx t Hxv Hxo Hz).
+      + assert (y = x) as Hyx by exact (Hinj y x t t Hy Hxo Logic.eq_refl).
+        subst y. exact (Hnin cky Hyin).
+  Qed.
+
+  Lemma gen_leqn_ldef :
+    forall G env bt rt cenv x e,
+      (forall f es ro a, e <> Eapp f es ro a) ->
+      generate_leqn_constraint G env bt rt cenv ([x], [e])
+      = generate_ldef_constraint G env bt rt cenv x e.
+  Proof.
+    intros G env bt rt cenv x e He.
+    destruct e as [c|x0 a|op e1 a|op e1 e2 a|e0s es a|e0s es a|es x0 b a
+                  |x0 ets efs a|e0 ets efs a|f es ro a]; try reflexivity.
+    exfalso. exact (He f es ro a Logic.eq_refl).
+  Qed.
+
+  Lemma normalized_cexp_not_Eapp :
+    forall e f es ro anns, normalized_cexp e -> e <> Eapp f es ro anns.
+  Proof.
+    intros e f es ro anns H. inversion H; try discriminate.
+    subst. eapply normalized_lexp_not_Eapp; eauto.
+  Qed.
+
+  Lemma reset_closed :
+    forall (G : secglobal) env ct rt (P : global)
+           (vars ins : list (ident * clock)) e1 t1 a1 rck st,
+      env_injective env -> NoDupMembers vars ->
+      (forall v ckv b, In (v, ckv) vars -> Env.find v env = Some b -> b <> ct) ->
+      (forall v ckv b, In (v, ckv) vars -> Env.find v env = Some b -> b <> rt) ->
+      (forall v ckv, In (v, ckv) ins -> In (v, ckv) vars) ->
+      wc_global P -> wc_env vars ->
+      wc_exp P vars e1 -> normalized_lexp e1 ->
+      assign_lexp_type G env ct rt e1 st = OK (t1, st) ->
+      single t1 st = OK (a1, st) ->
+      assign_clk_type env ct (hd Cbase (clockof e1)) = Some rck ->
+      snd (ljoin (lvar rt) (ljoin a1 (rck, []))) = []
+      /\ forall ckty,
+           CALLS.st_closed_mod env ct ins [] ckty
+             (fst (ljoin (lvar rt) (ljoin a1 (rck, [])))).
+  Proof.
+    intros G env ct rt P vars ins e1 t1 a1 rck st Hinj Hnd Hbase Hrst Hins Hg
+      Hwenv Hwc Hn Hrun Hsingle Hrck.
+    destruct (assign_lexp_normalized_lexp_pure G env ct rt e1 Hn t1 st st Hrun)
+      as (_ & Hl & Hc & _).
+    apply single_inv in Hsingle as (-> & _).
+    rewrite carried_single in Hc.
+    pose proof (wc_reset_clocks P vars e1 Hg Hwenv Hwc Hn) as Hwcl.
+    pose proof (assign_lexp_type_clock_closed G env ct rt P vars Hinj Hnd e1 Hwc
+                  [a1] st st [] ltac:(rewrite minted_refl; intros z [])
+                  Hrun) as Hlcc.
+    destruct (clockof e1) as [|ckr rest] eqn:Hce; [inversion Hlcc|].
+    inversion Hlcc as [|t0 c0 ts0 cs0 Hl1 Hl2]; subst.
+    inversion Hl2; subst rest.
+    cbn [hd] in Hrck.
+    inversion Hwcl as [|c1 l1 Hwckr _]; subst.
+    split.
+    - rewrite !snd_ljoin, Hc. reflexivity.
+    - intros ckty v b ckv ckvty Hf _ Hb Hin Hck z Hz.
+      rewrite !fst_ljoin, fst_lvar in Hb |- *. cbn [fst] in Hb |- *.
+      apply in_merge_right.
+      apply in_merge_inv in Hb as [Hb|Hb].
+      + exfalso. destruct Hb as [Hb|[]]. subst b.
+        exact (Hrst v ckv rt (Hins _ _ Hin) Hf Logic.eq_refl).
+      + apply in_merge_inv in Hb as [Hb|Hb].
+        * pose proof (Hl1 rck b Hrck (fun H => H) Hb v ckv ckvty Hf
+                        (Hins _ _ Hin) Hck z Hz) as Hz'.
+          apply in_merge_right.
+          apply in_merge_inv in Hz' as [Hz'|Hz'].
+          -- apply in_merge_right. exact Hz'.
+          -- apply in_merge_left. exact Hz'.
+        * apply in_merge_right. apply in_merge_right.
+          exact (assign_clk_type_clock_closed env ct vars Hinj Hnd Hbase ckr
+                   rck Hwckr Hrck v b ckv ckvty Hf Hb (Hins _ _ Hin) Hck z Hz).
+  Qed.
+
+  Lemma wc_eq_single :
+    forall P vars x e,
+      wc_equation P vars ([x], [e]) ->
+      exists ck, clockof e = [ck] /\ In (x, ck) vars /\ wc_exp P vars e.
+  Proof.
+    intros P vars x e (Hwe & _ & Hin).
+    unfold clocksof in Hin. cbn [flat_map] in Hin. rewrite app_nil_r in Hin.
+    remember (clockof e) as l eqn:Hl.
+    inversion Hin as [|x' ck l0 l1 Hxck Hrest Hx Hl0]; subst.
+    inversion Hrest; subst.
+    exists ck. split; [reflexivity|]. split; [exact Hxck|exact (Forall_inv Hwe)].
+  Qed.
+
+  Lemma rst_plain_closed :
+    forall env ct rt (vars ins : list (ident * clock)),
+      (forall v ckv b, In (v, ckv) vars -> Env.find v env = Some b -> b <> rt) ->
+      (forall v ckv, In (v, ckv) ins -> In (v, ckv) vars) ->
+      forall ckty,
+        CALLS.st_closed_mod env ct ins [] ckty (fst (lvar rt)).
+  Proof.
+    intros env ct rt vars ins Hrst Hins ckty v b ckv ckvty Hf _ Hb Hin Hck z Hz.
+    rewrite fst_lvar in Hb. destruct Hb as [<-|[]]. exfalso.
+    exact (Hrst v ckv rt (Hins _ _ Hin) Hf Logic.eq_refl).
+  Qed.
+
+  Lemma leqn_icl :
+    forall (G : secglobal) env ct rt (n : node) (P Q : global) stN lo stl stx
+           (eq : equation) cs st st',
+      lsig_inv stN lo G stx ->
+      CALLS.sig_inputs_ok G P ->
+      env_injective env ->
+      NoDupMembers (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+      (forall v ckv b, In (v, ckv) (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+                       Env.find v env = Some b -> b <> ct) ->
+      (forall v ckv b, In (v, ckv) (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+                       Env.find v env = Some b -> b <> rt) ->
+      (forall x ck, In (x, ck) (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+                    exists b, Env.find x env = Some b) ->
+      wc_global P -> wc_env (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+      unnested_equation Q eq -> wl_equation P eq ->
+      wc_equation P (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) eq ->
+      lcall_fresh_prop G env ct rt lo -> sec_le lo st ->
+      (exists ci, Env.find ci env = Some ct) ->
+      (exists ri, Env.find ri env = Some rt) ->
+      (forall x b, Env.find x env = Some b ->
+                   exists k, b = Ids.gensym Ids.sec k
+                             /\ (lo <= k)%positive /\ (k < stl)%positive) ->
+      NoDup (fst eq) ->
+      (forall x, In x (fst eq) ->
+                 (exists ck, In (x, ck) (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))))
+                 /\ forall ck, ~ In (x, ck) (idck n.(n_in))) ->
+      generate_leqn_constraint G env ct rt (lnode_clock_env n) eq st
+        = OK (cs, st') ->
+      Forall (icl env ct (idck n.(n_in))) cs
+      /\ Forall (ntg (zset env ct (idck n.(n_in)))) cs.
+  Proof.
+    intros G env ct rt n P Q stN lo stl stx eq cs st st' Hinv Hsigin Hinj Hnd
+      Hbase Hrst Hkeys Hg Hwenv Hun Hwl Hwc Hlf Hlo Hci Hri Hrng Hndx Hxs Hgen.
+    set (vars := idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) in *.
+    set (ins := idck n.(n_in)) in *.
+    assert (Hins : forall v ckv, In (v, ckv) ins -> In (v, ckv) vars).
+    { intros v ckv H. unfold ins, vars, idck in *.
+      apply in_map_iff in H as (q & Hq & Hin). apply in_map_iff.
+      exists q. split; [exact Hq|]. apply in_or_app. left. exact Hin. }
+    assert (Hfc : forall x ck, In (x, ck) vars ->
+                   find_clock (lnode_clock_env n) x = OK ck).
+    { intros x ck H. unfold vars, idck in H.
+      apply in_map_iff in H as ((x' & tc) & Hq & Hin).
+      inversion Hq; subst x' ck. exact (lnode_clock_env_find n x tc Hin). }
+    assert (Hbz : forall x ckx b, In (x, ckx) vars ->
+                    (forall ck, ~ In (x, ck) ins) ->
+                    Env.find x env = Some b -> ~ zset env ct ins b).
+    { intros x ckx b Hxv Hnin Hf [Hz|(y & cky & Hyin & Hy)].
+      - exact (Hbase x ckx b Hxv Hf Hz).
+      - assert (y = x) as Hyx by exact (Hinj y x b b Hy Hf Logic.eq_refl).
+        subst y. exact (Hnin cky Hyin). }
+    destruct eq as (xs, es). cbn [fst] in Hndx, Hxs.
+    inversion Hun as [xs0 f0 n0 es0 lann0 Hn Hfn Hk
+                     | xs0 f0 n0 es0 x0 ty0 cl0 lann0 Hn Hfn Hk
+                     | x0 e0 e1 ann0 H0 H1 | x0 e0 e1 ann0 H0 H1 | x0 e0 Hc];
+      subst.
+    - (** a call without reset *)
+      destruct Hwl as (Hwle & _). destruct Hwc as (Hwce & _ & _).
+      destruct xs as [|x xs'].
+      + cbn in Hgen. unfold SC.ret in Hgen. inversion Hgen; subst.
+        split; constructor.
+      + rewrite gen_leqn_Eapp in Hgen.
+        refine (call_eq_icl G env ct rt P vars ins stN lo stl stx (x :: xs') f0
+                  es0 None lann0 (lvar rt) cs st st' Hinv Hsigin Hinj Hnd Hbase
+                  Hrst Hins Hkeys Hg Hwenv (Forall_inv Hwle) (Forall_inv Hwce)
+                  Hn _ Hlf (or_introl Logic.eq_refl) Hlo Hci Hri Hrng
+                  (snd_lvar rt) (rst_plain_closed env ct rt vars ins Hrst Hins)
+                  Hndx Hxs Hgen).
+        exact (wc_args_clocks P vars es0 Hg Hwenv
+                 (wc_Eapp_inv' P vars f0 es0 None lann0 (Forall_inv Hwce)) Hn).
+    - (** a call with a reset variable *)
+      destruct Hwl as (Hwle & _). destruct Hwc as (Hwce & _ & _).
+      destruct xs as [|x xs'].
+      + cbn in Hgen. unfold SC.ret in Hgen. inversion Hgen; subst.
+        split; constructor.
+      + rewrite gen_leqn_Eapp_someresetel in Hgen.
+        apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
+        apply sec_bind_inv in Hgen as (a1 & s2 & Ha1 & Hgen).
+        apply sec_bind_inv in Hgen as (rck & s3 & Hrck & Hgen).
+        assert (Hnev : normalized_lexp (Evar x0 (ty0, cl0)))
+          by exact (unnested_Evar x0 ty0 cl0).
+        destruct (assign_lexp_normalized_lexp_pure G env ct rt _ Hnev t1 st s1
+                    Ht1) as (? & _ & _ & _); subst s1.
+        pose proof Ha1 as Ha1c.
+        apply single_inv in Ha1c as (Ht1eq & Hs2). subst s2.
+        apply option_to_sec_inv in Hrck as (Hrck & Hs3). subst s3.
+        destruct (reset_closed G env ct rt P vars ins (Evar x0 (ty0, cl0)) t1
+                    a1 rck st Hinj Hnd Hbase Hrst Hins Hg Hwenv
+                    (wc_reset_inv P vars f0 es0 _ lann0 (Forall_inv Hwce)) Hnev
+                    Ht1 Ha1 Hrck) as (Hsr & Hrstcl).
+        refine (call_eq_icl G env ct rt P vars ins stN lo stl stx (x :: xs') f0
+                  es0 (Some (Evar x0 (ty0, cl0))) lann0
+                  (ljoin (lvar rt) (ljoin a1 (rck, []))) cs st st' Hinv Hsigin
+                  Hinj Hnd Hbase Hrst Hins Hkeys Hg Hwenv (Forall_inv Hwle)
+                  (Forall_inv Hwce) Hn
+                  (wc_args_clocks P vars es0 Hg Hwenv
+                     (wc_Eapp_inv' P vars f0 es0 _ lann0 (Forall_inv Hwce)) Hn)
+                  Hlf
+                  (or_intror (ex_intro _ (Evar x0 (ty0, cl0))
+                    (ex_intro _ t1 (ex_intro _ a1 (ex_intro _ rck
+                      (ex_intro _ st (ex_intro _ st
+                        (conj Hlo (conj Ht1 (conj Ha1 (conj Hrck
+                           Logic.eq_refl)))))))))))
+                  Hlo Hci Hri Hrng Hsr Hrstcl Hndx Hxs Hgen).
+    - (** a delayed definition *)
+      destruct (wc_eq_single P vars x0 (Efby [e0] [e1] [ann0]) Hwc)
+        as (ckx & Hce & Hxck & Hwcexp).
+      rewrite gen_leqn_ldef in Hgen by (intros f es ro a H; discriminate H).
+      refine (ldef_ok G env ct rt (lnode_clock_env n) P vars ins
+                (zset env ct ins) x0 _ ckx cs st st' Hinj Hnd Hbase Hrst Hins
+                Hg Hwenv Hwcexp _ Hce (Hfc x0 ckx Hxck) Hxck _ Hgen).
+      + right. exists e0, e1, ann0. split; [left; reflexivity|exact (conj H0 H1)].
+      + intros b Hb. exact (Hbz x0 ckx b Hxck
+                              (proj2 (Hxs x0 (or_introl Logic.eq_refl))) Hb).
+    - (** [->] *)
+      destruct (wc_eq_single P vars x0 (Earrow [e0] [e1] [ann0]) Hwc)
+        as (ckx & Hce & Hxck & Hwcexp).
+      rewrite gen_leqn_ldef in Hgen by (intros f es ro a H; discriminate H).
+      refine (ldef_ok G env ct rt (lnode_clock_env n) P vars ins
+                (zset env ct ins) x0 _ ckx cs st st' Hinj Hnd Hbase Hrst Hins
+                Hg Hwenv Hwcexp _ Hce (Hfc x0 ckx Hxck) Hxck _ Hgen).
+      + right. exists e0, e1, ann0. split; [right; reflexivity|exact (conj H0 H1)].
+      + intros b Hb. exact (Hbz x0 ckx b Hxck
+                              (proj2 (Hxs x0 (or_introl Logic.eq_refl))) Hb).
+    - (** control expressions *)
+      destruct (wc_eq_single P vars x0 e0 Hwc)
+        as (ckx & Hce & Hxck & Hwcexp).
+      rewrite gen_leqn_ldef in Hgen
+        by (intros f es ro a H; exact (normalized_cexp_not_Eapp e0 f es ro a Hc H)).
+      refine (ldef_ok G env ct rt (lnode_clock_env n) P vars ins
+                (zset env ct ins) x0 e0 ckx cs st st' Hinj Hnd Hbase Hrst Hins
+                Hg Hwenv Hwcexp _ Hce (Hfc x0 ckx Hxck) Hxck _ Hgen).
+      + left. exact Hc.
+      + intros b Hb. exact (Hbz x0 ckx b Hxck
+                              (proj2 (Hxs x0 (or_introl Logic.eq_refl))) Hb).
+  Qed.
+
+  Lemma leqns_icl :
+    forall (G : secglobal) env ct rt (n : node) (P Q : global) stN lo stl stx
+           (eqs : list equation) cs st st',
+      lsig_inv stN lo G stx ->
+      CALLS.sig_inputs_ok G P ->
+      env_injective env ->
+      NoDupMembers (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+      (forall v ckv b, In (v, ckv) (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+                       Env.find v env = Some b -> b <> ct) ->
+      (forall v ckv b, In (v, ckv) (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+                       Env.find v env = Some b -> b <> rt) ->
+      (forall x ck, In (x, ck) (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+                    exists b, Env.find x env = Some b) ->
+      wc_global P -> wc_env (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+      Forall (unnested_equation Q) eqs -> Forall (wl_equation P) eqs ->
+      Forall (wc_equation P (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))) eqs ->
+      lcall_fresh_prop G env ct rt lo -> sec_le lo st ->
+      (exists ci, Env.find ci env = Some ct) ->
+      (exists ri, Env.find ri env = Some rt) ->
+      (forall x b, Env.find x env = Some b ->
+                   exists k, b = Ids.gensym Ids.sec k
+                             /\ (lo <= k)%positive /\ (k < stl)%positive) ->
+      NoDup (vars_defined eqs) ->
+      (forall x, In x (vars_defined eqs) ->
+                 (exists ck, In (x, ck) (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))))
+                 /\ forall ck, ~ In (x, ck) (idck n.(n_in))) ->
+      generate_leqns_constraints G env ct rt (lnode_clock_env n) eqs st
+        = OK (cs, st') ->
+      Forall (icl env ct (idck n.(n_in))) cs
+      /\ Forall (ntg (zset env ct (idck n.(n_in)))) cs.
+  Proof.
+    intros G env ct rt n P Q stN lo stl stx eqs.
+    induction eqs as [|eq eqs IH]; intros cs st st' Hinv Hsigin Hinj Hnd Hbase
+      Hrst Hkeys Hg Hwenv Hun Hwl Hwc Hlf Hlo Hci Hri Hrng Hndx Hxs Hgen.
+    - apply generate_leqns_constraints_nil in Hgen as (-> & _).
+      split; constructor.
+    - rewrite generate_leqns_constraints_cons in Hgen.
+      apply sec_bind_inv in Hgen as (c & s1 & Hc & Hgen).
+      apply sec_bind_inv in Hgen as (cs2 & s2 & Hcs2 & Hret).
+      unfold SC.ret in Hret. destruct (OK_pair_inv _ _ _ _ Hret) as (Heq & _).
+      subst cs.
+      inversion Hun as [|? ? Hun1 Hun2]; subst.
+      inversion Hwl as [|? ? Hwl1 Hwl2]; subst.
+      inversion Hwc as [|? ? Hwc1 Hwc2]; subst.
+      unfold vars_defined in Hndx, Hxs. cbn [flat_map] in Hndx, Hxs.
+      assert (Hnd1 : NoDup (fst eq)) by (eapply NoDup_app_l; exact Hndx).
+      assert (Hnd2 : NoDup (flat_map fst eqs))
+        by (eapply NoDup_app_r; exact Hndx).
+      destruct (leqn_icl G env ct rt n P Q stN lo stl stx eq c st s1 Hinv
+                  Hsigin Hinj Hnd Hbase Hrst Hkeys Hg Hwenv Hun1 Hwl1 Hwc1 Hlf
+                  Hlo Hci Hri Hrng Hnd1
+                  (fun x Hx => Hxs x (in_or_app _ _ _ (or_introl Hx))) Hc)
+        as (A1 & B1).
+      assert (Hlo1 : sec_le lo s1).
+      { eapply Pos.le_trans; [exact Hlo|].
+        eapply generate_leqn_constraint_sec_le; exact Hc. }
+      destruct (IH cs2 s1 s2 Hinv Hsigin Hinj Hnd Hbase Hrst Hkeys Hg Hwenv Hun2
+                  Hwl2 Hwc2 Hlf Hlo1 Hci Hri Hrng Hnd2
+                  (fun x Hx => Hxs x (in_or_app _ _ _ (or_intror Hx))) Hcs2)
+        as (A2 & B2).
+      split; apply Forall_app; split; assumption.
+  Qed.
+
+
+  Lemma get_mappings_from_node_nth :
+    forall {A : Type} (xs : list (ident * A)) env inp,
+      get_mappings_from_node xs env = Some inp ->
+      List.length inp = List.length xs
+      /\ forall i x a y,
+           nth_error xs i = Some (x, a) -> nth_error inp i = Some y ->
+           Env.find x env = Some y.
+  Proof.
+    intros A xs env. induction xs as [|[x0 a0] xs IH]; intros inp H.
+    - cbn in H. inversion H; subst. split; [reflexivity|].
+      intros i x a y Hx; destruct i; discriminate.
+    - cbn in H.
+      destruct (Env.find x0 env) as [t|] eqn:Ht; [|discriminate].
+      destruct (get_mappings_from_node xs env) as [ts|] eqn:Hts;
+        [|discriminate].
+      inversion H; subst. destruct (IH ts Logic.eq_refl) as (Hl & Hn).
+      split; [simpl; f_equal; exact Hl|].
+      intros i x a y Hx Hy. destruct i as [|i]; simpl in Hx, Hy.
+      + inversion Hx; inversion Hy; subst. exact Ht.
+      + exact (Hn i x a y Hx Hy).
+  Qed.
+
+  Lemma defined_decl_not_input :
+    forall (n : node) x,
+      In x (vars_defined n.(n_eqs)) ->
+      (exists ck, In (x, ck) (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))))
+      /\ forall ck, ~ In (x, ck) (idck n.(n_in)).
+  Proof.
+    intros n x Hx.
+    assert (Hm : In x (List.map fst (n.(n_vars) ++ n.(n_out))))
+      by (eapply Permutation_in; [exact (n_defd n)|exact Hx]).
+    split.
+    - rewrite map_app in Hm. apply in_app_or in Hm as [Hm|Hm].
+      + apply in_map_iff in Hm as ((x' & tc) & Hq & Hin). cbn in Hq. subst x'.
+        exists (snd tc). unfold idck. apply in_map_iff.
+        exists (x, tc). split; [reflexivity|].
+        apply in_or_app. right. apply in_or_app. left. exact Hin.
+      + apply in_map_iff in Hm as ((x' & tc) & Hq & Hin). cbn in Hq. subst x'.
+        exists (snd tc). unfold idck. apply in_map_iff.
+        exists (x, tc). split; [reflexivity|].
+        apply in_or_app. right. apply in_or_app. right. exact Hin.
+    - intros ck Hin. unfold idck in Hin.
+      apply in_map_iff in Hin as ((x' & tc) & Hq & Hin'). cbn in Hq.
+      inversion Hq; subst x'.
+      pose proof (n_nodup n) as Hnd. rewrite fst_NoDupMembers in Hnd.
+      rewrite !map_app in Hnd.
+      assert (Hin1 : In x (List.map fst n.(n_in)))
+        by (apply in_map_iff; exists (x, tc); split; [reflexivity|exact Hin']).
+      rewrite map_app in Hm. apply in_app_or in Hm as [Hm|Hm].
+      + eapply NoDup_app_In; [exact Hnd|exact Hin1|].
+        apply in_or_app. left. exact Hm.
+      + eapply NoDup_app_In; [exact Hnd|exact Hin1|].
+        apply in_or_app. right. apply in_or_app. left. exact Hm.
+  Qed.
+
+
+  Lemma node_sig_inputs :
+    forall (G : secglobal) (P Q : global) (n : node) env aux sg st0 st1
+           stN lo stl,
+      generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
+      wl_node P n -> wc_global P -> wc_node P n -> unnested_node Q n ->
+      env_injective env ->
+      lsig_inv stN lo G st0 -> sec_le lo st0 ->
+      CALLS.sig_inputs_ok G P ->
+      (forall x b, Env.find x env = Some b -> ~ In b (minted st0 st1)) ->
+      (forall x b, Env.find x env = Some b ->
+                   exists k, b = Ids.gensym Ids.sec k
+                             /\ (lo <= k)%positive /\ (k < stl)%positive) ->
+      (forall ci ri, get_node_aux n.(n_name) aux = Some (ci, ri) ->
+         ~ In ci (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+         /\ ~ In ri (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))) ->
+      (forall x, In x (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) ->
+                 exists b, Env.find x env = Some b) ->
+      List.length (idck n.(n_in)) = List.length (s_in sg)
+      /\ (forall i x ck y,
+            nth_error (idck n.(n_in)) i = Some (x, ck) ->
+            nth_error (s_in sg) i = Some y -> Env.find x env = Some y)
+      /\ CALLS.sig_inputs_clock_closed sg (idck n.(n_in))
+           (fun x => Env.find x env).
+  Proof.
+    intros G P Q n env aux sg st0 st1 stN lo stl Hsig Hwl Hg Hwcn Hun Hinj Hinv
+      Hlo Hsigin Hsep Hrng Haux Hbind.
+    destruct (lnode_sig_inv env G n aux sg st0 st1 Hsig)
+      as (ci & ri & ct & rt & inp & out & locals & cns & Haux' & Hct & Hrt
+          & Hinp & Hout & Hloc & Hcns & Hsg).
+    subst sg.
+    destruct (Haux ci ri Haux') as (Hcind & Hrind).
+    destruct (node_wc_clock_facts P n Hwcn) as (Hwenv & _).
+    destruct Hwcn as (Hwin & _ & _ & Hweqs).
+    destruct (get_mappings_from_node_nth _ env inp Hinp) as (Hlen & Hnth).
+    assert (HndN : NoDup (List.map fst n.(n_in)
+                          ++ List.map fst n.(n_vars) ++ List.map fst n.(n_out))).
+    { pose proof (n_nodup n) as H0. rewrite fst_NoDupMembers in H0.
+      rewrite !map_app in H0. rewrite !app_assoc in H0.
+      apply NoDup_app_l in H0. rewrite <- !app_assoc in H0. exact H0. }
+    assert (Hnd : NoDupMembers (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
+    { rewrite NoDupMembers_idck, fst_NoDupMembers, !map_app. exact HndN. }
+    set (vars := idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) in *.
+    set (ins := idck n.(n_in)) in *.
+    assert (HinD : forall v ckv, In (v, ckv) vars ->
+                     In v (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
+    { intros v ckv H. unfold vars, idck in H.
+      apply in_map_iff in H as ((x' & tc) & Hq & Hin). inversion Hq; subst x'.
+      apply in_map_iff. exists (v, tc). split; [reflexivity|exact Hin]. }
+    assert (Hins : forall v ckv, In (v, ckv) ins -> In (v, ckv) vars).
+    { intros v ckv H. unfold ins, vars, idck in *.
+      apply in_map_iff in H as (q & Hq & Hin). apply in_map_iff.
+      exists q. split; [exact Hq|]. apply in_or_app. left. exact Hin. }
+    assert (Hbase : forall v ckv b, In (v, ckv) vars ->
+                      Env.find v env = Some b -> b <> ct).
+    { intros v ckv b Hv Hf Heq. subst b.
+      assert (v = ci) as -> by exact (Hinj v ci ct ct Hf Hct Logic.eq_refl).
+      exact (Hcind (HinD _ _ Hv)). }
+    assert (Hrst : forall v ckv b, In (v, ckv) vars ->
+                      Env.find v env = Some b -> b <> rt).
+    { intros v ckv b Hv Hf Heq. subst b.
+      assert (v = ri) as -> by exact (Hinj v ri rt rt Hf Hrt Logic.eq_refl).
+      exact (Hrind (HinD _ _ Hv)). }
+    assert (Hkeys : forall x ck, In (x, ck) vars ->
+                      exists b, Env.find x env = Some b)
+      by (intros x ck H; exact (Hbind x (HinD _ _ H))).
+    pose proof Hinv as Hinv0.
+    destruct Hinv0 as (Hgood & Hsc & Hndsig & Hroot & Hbd & Hle).
+    assert (Hlf : lcall_fresh_prop G env ct rt lo)
+      by exact (lcall_fresh_of_env G env ct rt lo stl Hinj
+                  (ex_intro _ ci Hct) (ex_intro _ ri Hrt) Hrng Hsc Hbd).
+    destruct (leqns_icl G env ct rt n P Q stN lo stl st0 n.(n_eqs) cns st0 st1
+                Hinv Hsigin Hinj Hnd Hbase Hrst Hkeys Hg Hwenv Hun Hwl Hweqs Hlf
+                Hlo (ex_intro _ ci Hct) (ex_intro _ ri Hrt) Hrng
+                (NoDup_vars_defined_n_eqs n) (defined_decl_not_input n) Hcns)
+      as (A & B).
+    destruct (collapse_ok env ct ins (zset env ct ins) cns A B) as (A1 & B1).
+    assert (Hds : forall d, In d (locals ++ minted st0 st1) ->
+                            ~ zset env ct ins d).
+    { intros d Hd Hz. apply in_app_or in Hd as [Hd|Hd].
+      - rewrite (get_mappings_from_node_sec_of _ env locals Hloc) in Hd.
+        apply sec_of_In_inv in Hd as (y & Hy & Hfy).
+        destruct Hz as [Hz|(x & ck & Hxin & Hfx)].
+        + subst d.
+          assert (y = ci) as -> by exact (Hinj y ci ct ct Hfy Hct Logic.eq_refl).
+          apply Hcind. rewrite !map_app. apply in_or_app. right.
+          apply in_or_app. left. exact Hy.
+        + assert (x = y) as -> by exact (Hinj x y d d Hfx Hfy Logic.eq_refl).
+          unfold ins, idck in Hxin. apply in_map_iff in Hxin as ((x' & tc) & Hq & Hin).
+          inversion Hq; subst x'.
+          eapply NoDup_app_In; [exact HndN| |apply in_or_app; left; exact Hy].
+          apply in_map_iff. exists (y, tc). split; [reflexivity|exact Hin].
+      - destruct Hz as [Hz|(x & ck & Hxin & Hfx)].
+        + subst d. exact (Hsep ci ct Hct Hd).
+        + exact (Hsep x d Hfx Hd). }
+    destruct (simplify_ok env ct ins (zset env ct ins)
+                (HZ_of_ins env ct ins Hwin)
+                (locals ++ minted st0 st1) (SymTypes.collapse cns) A1 B1 Hds)
+      as (A2 & _).
+    refine (conj _ (conj _ _)).
+    - cbn [s_in]. unfold ins, idck. rewrite map_length. symmetry. exact Hlen.
+    - cbn [s_in]. intros i x ck y Hx Hy.
+      unfold ins, idck in Hx. apply nth_error_map_inv in Hx as ((x' & (ty & ck0)) & Hxn & Heq).
+      inversion Heq; subst x' ck0. exact (Hnth i x (ty, ck) y Hxn Hy).
+    - cbn [s_constraints].
+      intros c Hc x ck y Hin Hx Hy x' y' Hx' Hy'.
+      refine (closed_of_icl env ct ins _ A2 _ c Hc x ck y Hin Hx Hy x' y' Hx' Hy').
+      intros x0 ck0 x1 Hin0 Hx1.
+      unfold ins in Hin0. pose proof (Hins _ _ Hin0) as Hv.
+      unfold wc_env in Hwenv. rewrite Forall_forall in Hwenv.
+      pose proof (Hwenv _ Hv) as Hw. cbn [snd] in Hw.
+      destruct (clock_vars_wc vars ck0 Hw x1 Hx1) as (ck1 & Hin1).
+      exact (Hkeys x1 ck1 Hin1).
+  Qed.
+
+
+  Lemma sig_inputs_step :
+    forall (all : list node) envsF auxF stN,
+      generate_lnode_scoped_env_st all = OK (envsF, auxF, stN) ->
+      forall P nS nM nall (env : Env.t ident) (r : node_aux_names) st0 stl
+             accT sgT stT0 stT1,
+        RU P nS nM nall ->
+        generate_local_env_for_lnode nall st0 = OK ((env, r), stl) ->
+        find_node_env nall.(n_name) envsF = Some env ->
+        get_node_aux nall.(n_name) auxF = Some (r.(nclk), r.(nrst)) ->
+        (st0 <= stN)%positive ->
+        lsig_inv stN st0 accT stT0 ->
+        CALLS.sig_inputs_ok accT P ->
+        generate_lnode_sig_scoped_env accT nM envsF auxF stT0
+          = OK (sgT, stT1) ->
+        CALLS.sig_inputs_ok (sgT :: accT) (nS :: P).
+  Proof.
+    intros all envsF auxF stN Hfull P nS nM nall env r st0 stl accT sgT stT0
+      stT1 HRU Hloc Hfind Haux Hst0 HinvT Hj Hs.
+    destruct (RU_facts P nS nM nall HRU)
+      as (Hn1 & Hn2 & tfS & tfM & tfN).
+    destruct tfM as (P2 & HwlM & HwcgM & HwcnM & HsrcM & HdisjM & HsubM).
+    destruct HRU as (Hwl & Hpref & Q & Hunt & Hpref1 & HM & HN & Hgp & Hwtn
+                     & Hwcn & Hif & Hgq & Hguard).
+    subst nM nall.
+    set (M := unnest_node P nS Hwl Hpref) in *.
+    assert (HwtM : wt_node P M)
+      by exact (NTyp.unnest_node_wt P nS Hwl Hpref Hwtn).
+    assert (HwcM : wc_node P M)
+      by exact (NClo.unnest_node_wc P nS Hwl Hpref Hgp Hwcn).
+    assert (HwlMP : wl_node P M) by exact (wt_node_wl_node _ _ HwtM).
+    assert (HfindM : find_node_env (n_name M) envsF = Some env) by exact Hfind.
+    unfold generate_lnode_sig_scoped_env in Hs. rewrite HfindM in Hs.
+    destruct (generate_local_env_for_lnode_facts _ st0 env r stl Hloc)
+      as (Hinj & Hrng & Hclk0 & Hrst0).
+    pose proof HinvT as HinvT0.
+    destruct HinvT0 as (_ & _ & _ & _ & _ & Hle).
+    assert (HinN : forall p, In p (n_in M ++ n_vars M ++ n_out M) ->
+                    In p (n_in (normfby_node Q PS.empty M Hunt Hpref1)
+                          ++ n_vars (normfby_node Q PS.empty M Hunt Hpref1)
+                          ++ n_out (normfby_node Q PS.empty M Hunt Hpref1)))
+      by exact (normfby_vars_incl Q M Hunt Hpref1).
+    destruct (lnode_sig_inv env accT M auxF sgT stT0 stT1 Hs)
+      as (ci & ri & ct & rt & inp & out & locals & cns & Haux' & _ & _ & _ & _
+          & _ & _ & Hsg).
+    assert (Hsgname : s_name sgT = n_name nS) by (rewrite Hsg; reflexivity).
+    assert (Hauxn : forall ci0 ri0, get_node_aux (n_name M) auxF = Some (ci0, ri0) ->
+                ~ In ci0 (List.map fst (n_in M ++ n_vars M ++ n_out M))
+                /\ ~ In ri0 (List.map fst (n_in M ++ n_vars M ++ n_out M))).
+    { intros ci0 ri0 Ha. change (n_name M) with
+        (n_name (normfby_node Q PS.empty M Hunt Hpref1)) in Ha.
+      rewrite Haux in Ha. inversion Ha; subst ci0 ri0. split; intro Hin.
+      - exact (lnode_var_not_sec M _ st0 HsubM Hin Hclk0).
+      - exact (lnode_var_not_sec M _ (Pos.succ st0) HsubM Hin Hrst0). }
+    assert (Hbind : forall x, In x (List.map fst (n_in M ++ n_vars M ++ n_out M)) ->
+                    exists b, Env.find x env = Some b).
+    { intros x Hx.
+      apply (generate_local_env_for_lnode_binds
+               (normfby_node Q PS.empty M Hunt Hpref1) st0 env r stl Hloc x).
+      right. right.
+      apply in_map_iff in Hx as (p & Hpx & Hp).
+      apply in_map_iff. exists p. split; [exact Hpx|exact (HinN p Hp)]. }
+    destruct (node_sig_inputs accT P Q M env auxF sgT stT0 stT1 stN st0 stl Hs
+                HwlMP Hgp HwcM Hunt Hinj HinvT
+                (Pos.le_trans _ _ _ Hst0 Hle) Hj
+                (fun x b Hb => env_apart_from_minted all envsF auxF stN
+                                 (n_name M) env stT0 stT1 Hfull HfindM Hle x b
+                                 Hb)
+                (fun x b Hb => match Hrng x b Hb with
+                               | ex_intro k (conj Hk (conj Hl Hh)) =>
+                                 ex_intro _ k (conj Hk (conj Hl Hh))
+                               end)
+                Hauxn Hbind)
+      as (Hlen & Hnth & Hcl).
+    unfold CALLS.sig_inputs_ok. intros f n sg Hfn Hfs.
+    unfold find_node in Hfn. unfold find_signature in Hfs. simpl in Hfn, Hfs.
+    destruct (ident_eqb (n_name nS) f) eqn:Hnf.
+    - inversion Hfn; subst n.
+      assert (Hsn : ident_eqb (s_name sgT) f = true)
+        by (rewrite Hsgname; exact Hnf).
+      rewrite Hsn in Hfs. inversion Hfs; subst sg.
+      exists (fun x => Env.find x env).
+      exact (conj Hlen (conj Hnth Hcl)).
+    - assert (Hsn : ident_eqb (s_name sgT) f = false)
+        by (rewrite Hsgname; exact Hnf).
+      rewrite Hsn in Hfs. exact (Hj f n sg Hfn Hfs).
+  Qed.
+
+
+  Theorem normalization_signatures_preserved :
+    forall (G : global) (Hwl : wl_global G)
+           (Hpr : Forall (fun n => n_prefixes n = elab_prefs) G)
+           (Hunt : unnested_global (unnest_global G Hwl Hpr))
+           (Hpref1 : Forall (fun n => n_prefixes n = norm1_prefs)
+                       (unnest_global G Hwl Hpr)),
+      wc_global G -> wt_global G -> Forall source_guard G ->
+      forall envsF auxF stN st GS GT GM,
+        generate_lnode_scoped_env_st
+          (List.rev (normfby_global (unnest_global G Hwl Hpr) Hunt Hpref1))
+          = OK (envsF, auxF, stN) ->
+        sec_le stN st ->
+        generate_all_lsignatures_scoped_env (List.rev G) envsF auxF st = OK GS ->
+        generate_all_lsignatures_scoped_env
+          (List.rev (unnest_global G Hwl Hpr)) envsF auxF st = OK GT ->
+        generate_all_lsignatures_scoped_env
+          (List.rev (normfby_global (unnest_global G Hwl Hpr) Hunt Hpref1))
+          envsF auxF st = OK GM ->
+        call_weakens GS GM /\ sigs_preserved GS GM.
+  Proof.
+    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard envsF auxF stN st GS GT GM
+      Hnaming Hle HgS HgT HgM.
+    set (G1 := unnest_global G Hwl Hpr) in *.
+    set (G2 := normfby_global G1 Hunt Hpref1) in *.
+    assert (Hwc1 : wc_global G1) by exact (NClo.unnest_global_wc G Hwl Hpr Hwc).
+    assert (Hwt1 : wt_global G1) by exact (NTyp.unnest_global_wt G Hwl Hpr Hwt).
+    assert (Hnd : NoDup (List.map n_name (List.rev G2))).
+    { rewrite List.map_rev.
+      apply (Permutation_NoDup (Permutation_rev _)).
+      unfold G2. rewrite normfby_global_map_names. unfold G1.
+      rewrite unnest_global_map_names. exact (wc_global_names_nodup G Hwc). }
+    (** the unnesting leg *)
+    destruct (generate_all_lsignatures_weakens_ext_driver
+                (List.rev G2) envsF auxF stN st Hnaming RU
+                (fun acc P => CALLS.sig_inputs_ok acc P)
+                (fun P nS nM nall HR =>
+                   match RU_facts P nS nM nall HR with
+                   | conj Hn1 (conj Hn2 (conj tfS (conj tfM _))) =>
+                     conj Hn1 (conj tfS (conj Hn2 tfM))
+                   end)
+                (fun P nS nM nall env r st0 stl accT sgT stT0 stT1 HR Hloc Hfind
+                     Haux Hst0 HiT Hj Hs =>
+                   sig_inputs_step (List.rev G2) envsF auxF stN Hnaming P nS nM
+                     nall env r st0 stl accT sgT stT0 stT1 HR Hloc Hfind Haux
+                     Hst0 HiT Hj Hs)
+                (fun P nS nM nall env r st0 stl accS accT sgS stS0 stS1 sgT
+                     stT0 stT1 HR Hloc Hfind Haux Hst0 HiS HiT Hw Hj HsS HsT =>
+                   stepU (List.rev G2) envsF auxF stN Hnaming P nS nM nall env r
+                     st0 stl accS accT sgS stS0 stS1 sgT stT0 stT1 HR Hloc
+                     Hfind Haux Hst0 HiS HiT Hw Hj HsS HsT)
+                (List.rev G) (List.rev G1)
+                (build_U G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard) Hnd Hle
+                sig_inputs_ok_nil GS GT HgS HgT)
+      as (Hc1 & Hp1 & _).
+    (** the [fby] leg *)
+    destruct (generate_all_lsignatures_weakens_ext_driver
+                (List.rev G2) envsF auxF stN st Hnaming RI
+                (fun _ _ => True)
+                (fun P nS nM nall HR =>
+                   match RI_facts P nS nM nall HR with
+                   | conj Hn1 (conj Hn2 (conj tfM tfN)) =>
+                     conj Hn1 (conj tfM (conj Hn2 tfN))
+                   end)
+                (fun _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ => I)
+                (fun P nS nM nall env r st0 stl accS accT sgS stS0 stS1 sgT
+                     stT0 stT1 HR Hloc Hfind Haux Hst0 HiS HiT Hw Hj HsS HsT =>
+                   stepI (List.rev G2) envsF auxF stN Hnaming P nS nM nall env r
+                     st0 stl accS accT sgS stS0 stS1 sgT stT0 stT1 HR Hloc
+                     Hfind Haux Hst0 HiS HiT Hw Hj HsS HsT)
+                (List.rev G1) (List.rev G2)
+                (build_I G1 Hunt Hpref1 Hwc1 Hwt1) Hnd Hle I GT GM HgT HgM)
+      as (Hc2 & Hp2 & _).
+    split.
+    - exact (call_weakens_trans _ _ _ Hc1 Hc2).
+    - exact (sigs_preserved_trans _ _ _ Hp1 Hp2).
   Qed.
 
 End SecLusNormalization.

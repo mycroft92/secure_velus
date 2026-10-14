@@ -137,17 +137,29 @@ variables, guarded by clocking (`lsig_step_ext`).
 2. (merged into 1.)
 3. **Node instantiation of both legs** is done (`unnest_instance`,
    `normfby_instance`).
-4. **`sig_inputs_ok GL P`** (a callee's signature inputs line up with its node's
-   inputs and its constraints are closed under the declared clocks) is a
-   hypothesis `HJU` of the program theorem.  The expression level is proved
-   (`assign_lexp_type_clock_closed`); what is missing is the equation level for
-   top-level calls, the preservation through `collapse`/`simplify` (including the
-   removal of a constraint's own target, which is only harmless for a causal
-   node), and the induction over the program.
-5. **Composition theorem.**  Signature half: `Check.source_signatures_entail_nlustre`.
-   Noninterference half: transporting `lnode_security` from the source to the
-   normalised program needs the raw-constraint data of each node and the callee
-   clauses, not only the stored signatures; this is not done.
+4. **`sig_inputs_ok GL P`** is proved for the signatures the lockstep generates
+   (`sig_inputs_step`, `node_sig_inputs`), so the program theorem has no hypothesis
+   about it.  It was restricted to a callee's *inputs* (its only consumer,
+   `call_augment_dep_concrete`, reads only those), which is what makes it true
+   without a causality assumption: the clock variables of an input are inputs, so a
+   constraint's own target, which `simplify` removes from its sources, is never one
+   of them.  The proof: `ldef_ok`/`call_eq_icl`/`leqn_icl`/`leqns_icl` show every raw
+   constraint closed (`icl`) with targets outside the input names (`ntg`); the call
+   case is `CALLS.generate_constraints_icl`, which chains the six substitution stages
+   modulo the call's clock type and transfers to the plain block through
+   `generate_constraints_same_inp`; `collapse_ok` and `simplify_ok` preserve closure
+   because the eliminated names are never input names or the base name (`zset`).
+5. **Composition theorem.**  Signature half: `Check.source_signatures_entail_nlustre`
+   and its reading for policies, `Check.source_policy_realised`: a valuation satisfying
+   a source signature's stored constraints extends, agreeing on the signature scope, to
+   one satisfying the transcribed NLustre signature.  What is **not** done is the
+   transport of `lnode_security` itself (the raw-constraint satisfaction of each node
+   and the callee clauses at the induced valuations) from the source to the normalised
+   program: the node-level legs prove entailment of stored signatures, and the
+   security predicate looks at raw constraints and at every call site's instance.
+   Noninterference of the compiled program is therefore obtained by
+   `lnode_noninterference_outputs_generated` at the normalised program, with its
+   security data as the hypothesis it already is.
 6. The signature-fold facts for source nodes typed against the naming of the
    normalised program carry only `good` and the duplicate-free scope
    (`source_signatures_good`); scoped and rooted are used for the unnested and

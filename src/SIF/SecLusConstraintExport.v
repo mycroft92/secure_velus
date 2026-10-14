@@ -262,8 +262,8 @@ Module Check (Lat : Lattice).
       what is assumed beyond the program's typing and clocking is the source
       guard (a nested call's output names are the node's anonymous streams,
       and the clocks of a call's arguments and reset are over declared
-      variables) and [HJU], the closure of generated callee signatures under
-      the declared clocks. *)
+      variables).  The closure of generated callee signatures under the
+      declared clocks is proved ([LegN.sig_inputs_step]). *)
   Module U := L.Norm.Norm.Unnesting.
   Module NFm := L.Norm.Norm.NormFby.
 
@@ -275,12 +275,6 @@ Module Check (Lat : Lattice).
                        (U.unnest_global G Hwl Hpr)),
       L.Clo.wc_global G -> L.Typ.wt_global G ->
       Forall LegN.source_guard G ->
-      (forall P nS nM nN accT sgT envsF auxF stT0 stT1,
-          LegN.RU P nS nM nN ->
-          LegN.CALLS.sig_inputs_ok accT P ->
-          ConcreteSecLTyping.generate_lnode_sig_scoped_env accT nM envsF auxF
-            stT0 = OK (sgT, stT1) ->
-          LegN.CALLS.sig_inputs_ok (sgT :: accT) (nS :: P)) ->
       forall envs aux stN st GS GT GM P Hp GN,
         ConcreteSecLNameGen.generate_lnode_scoped_env_st
           (rev (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1))
@@ -303,10 +297,10 @@ Module Check (Lat : Lattice).
         SECNLUSTYPING.generate_all_signatures_scoped_env P envs aux = OK GN ->
         Leg.Signature_entails GS GN.
   Proof.
-    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard HJU envs aux stN st GS GT GM P
+    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard envs aux stN st GS GT GM P
       Hp GN Hnaming Hle Hord HgS HgT HgM Htr Hnames Hwcp HgN.
     destruct (LegN.normalization_signatures_preserved G Hwl Hpr Hunt Hpref1
-                Hwc Hwt Hguard HJU envs aux stN st GS GT GM Hnaming Hle HgS HgT
+                Hwc Hwt Hguard envs aux stN st GS GT GM Hnaming Hle HgS HgT
                 HgM) as (_ & Hsp).
     assert (Hnotself :
               Forall (fun m => ~ L.Ord.Is_node_in m.(L.Syn.n_name)
@@ -324,6 +318,27 @@ Module Check (Lat : Lattice).
       |exact (LegN.source_signatures_good G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard
                 envs aux stN st GS Hnaming Hle HgS)
       |exact Hsc].
+  Qed.
+
+  (** What the signature half says about a security policy.  A valuation that
+      satisfies a source signature's stored constraints -- a policy on the
+      source node's interface and its call interface -- extends, agreeing on
+      the signature's scope, to a valuation satisfying the stored constraints
+      of the transcribed NLustre signature of the same node.  Noninterference
+      of the compiled program is then stated against the extension, whose
+      interface levels are the policy's. *)
+  Corollary source_policy_realised :
+    forall GS GN,
+      Leg.Signature_entails GS GN ->
+      forall f sgS,
+        SIG.find_signature f GS = Some sgS ->
+        exists sgN,
+          SIG.find_signature f GN = Some sgN
+          /\ SIGPROOFS.signatures_preserved sgS sgN.
+  Proof.
+    intros GS GN Hent f sgS Hf.
+    destruct (Hent f sgS Hf) as (sgN & HfN & _ & Hpres & _).
+    exact (ex_intro _ sgN (conj HfN Hpres)).
   Qed.
 
 End Check.

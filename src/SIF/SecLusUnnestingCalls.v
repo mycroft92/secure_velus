@@ -2320,9 +2320,7 @@ Import UNN.Fresh.Tactics.
           /\ (forall i x ck y,
                  nth_error (idck n.(n_in)) i = Some (x, ck) ->
                  nth_error (s_in sg) i = Some y -> nm x = Some y)
-          (** over the whole interface, not just the inputs: see
-              [sig_inputs_clock_closed_incl] *)
-          /\ sig_inputs_clock_closed sg (idck (n.(n_in) ++ n.(n_out))) nm.
+          /\ sig_inputs_clock_closed sg (idck n.(n_in)) nm.
 
     (** And the whole of it, on the concrete augmentation: the premise
         [subst_constraints_inp_map_augment] asks for, with nothing left
@@ -2357,11 +2355,8 @@ Import UNN.Fresh.Tactics.
       intros bad P sg n bck sub f es argts c Hok Hfn Hfs Hwce Hwi Hcov Hbadok
         Hc.
       destruct (Hok f n sg Hfn Hfs) as (nm & Hl1 & Hnm & Hinv).
-      assert (sig_inputs_clock_closed sg (idck n.(n_in)) nm) as Hinv'.
-      { eapply sig_inputs_clock_closed_incl; [|exact Hinv].
-        unfold idck. intros p Hp. apply in_map_iff in Hp as (q & ? & Hq).
-        apply in_map_iff. exists q. split; [assumption|].
-        apply in_or_app. now left. }
+      assert (sig_inputs_clock_closed sg (idck n.(n_in)) nm) as Hinv'
+        by exact Hinv.
       eapply (call_augment_dep_at_call bad sg n bck sub nm es argts
                 (augment_actuals sub (idck n.(n_in)) argts) c);
         [exact Hl1|exact Hnm|exact Hinv'|exact Hwce|exact Hwi|exact Hcov
@@ -3217,6 +3212,289 @@ Import UNN.Fresh.Tactics.
       exact (Hfaug v Hv y Hy).
     Qed.
 
+
+
+
+    Lemma subst_constraints_out_map_length :
+      forall xs vs cs d sa sa',
+        SIG.subst_constraints_out_map cs xs vs sa = OK (d, sa') ->
+        List.length xs = List.length vs.
+    Proof.
+      induction xs as [|x xs IH]; intros vs cs d sa sa' H.
+      - destruct vs; [reflexivity|]. simpl in H. unfold SC.error in H.
+        discriminate.
+      - destruct vs as [|v vs]; [simpl in H; unfold SC.error in H; discriminate|].
+        simpl in H.
+        destruct (SymTypes.findST cs v) as [t|];
+          [unfold SC.error in H; discriminate|].
+        apply sec_bind_inv in H as (e & p & He & H).
+        simpl. f_equal. exact (IH vs e d p sa' H).
+    Qed.
+
+    Lemma Forall2_ne_of :
+      forall (xs vs : list ident),
+        List.length xs = List.length vs ->
+        (forall x v, In x xs -> In v vs -> x <> v) ->
+        Forall2 (fun x v => x <> v) xs vs.
+    Proof.
+      induction xs as [|x xs IH]; intros vs Hl Hne.
+      - destruct vs; [constructor|discriminate].
+      - destruct vs as [|v vs]; [discriminate|].
+        constructor.
+        + apply Hne; now left.
+        + apply IH; [simpl in Hl; congruence|].
+          intros x0 v0 H1 H2. apply Hne; now right.
+    Qed.
+
+    Lemma closed_mod_transfer :
+      forall cs cs',
+        Forall2
+          (fun c c' =>
+             (forall z, In z (fst c) <-> In z (fst c'))
+             /\ (forall z, In z (snd c) <-> In z (snd c'))) cs cs' ->
+        constraints_closed_mod [] [] cs' ->
+        constraints_closed_mod [] [] cs.
+    Proof.
+      intros cs cs' Hrel. unfold constraints_closed_mod.
+      induction Hrel as [|c c' l l' (Hs & _) Hr IH]; intro Sf;
+        [constructor|].
+      inversion Sf as [|c0 l0 Hc Hl]; subst.
+      constructor; [|exact (IH Hl)].
+      intros v b ckv ckvty Hf Hnm Hb Hin Hck z Hz.
+      pose proof (Hc v b ckv ckvty Hf Hnm ((proj1 (Hs b)) Hb) Hin Hck z Hz)
+        as Hz'.
+      apply in_merge_inv in Hz' as [Hz'|Hz']; [contradiction|].
+      apply in_merge_right. exact ((proj2 (Hs z)) Hz').
+    Qed.
+
+    (** * The closure of an instantiated call block
+
+        What the closure of a generated signature needs at a call equation: a
+        constraint of the instantiated block that mentions one of the caller's
+        [vars] also mentions the names of the clock variables of its declared
+        clock.  The block is shown closed *modulo the call's clock type*
+        through the six stages, for the augmented actuals (whose closure
+        modulo that type is a fact about the actuals and their clocks); the
+        clock type is then in every source, and the plain block has the same
+        sources as the augmented one. *)
+    Lemma generate_constraints_icl :
+      forall (bad : ident -> Prop) (P : global) (f : ident) (nd : LSyn.node)
+             (sg : signature) (es : list exp) (bck : clock)
+             (sub : ident -> option ident) (argts : list LST)
+             (ckty rst : ST) (outs : list ident) cns sa sa',
+        sig_inputs_ok P ->
+        find_node f P = Some nd ->
+        find_signature f GL = Some sg ->
+        signature_scoped sg ->
+        sig_scope_fresh_for_env sg ->
+        NoDup (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)) ->
+        all_sources_have sg.(s_clk) sg.(s_constraints) ->
+        wc_env (idck nd.(n_in)) ->
+        Forall2 (WellInstantiated bck sub) (idck nd.(n_in)) (nclocksof es) ->
+        Forall2 (fun t nck => forall w g,
+                     snd nck = Some w -> ~ bad w ->
+                     Env.find w env = Some g -> In g (fst t))
+          argts (nclocksof es) ->
+        (forall i x ck x' u,
+            nth_error (idck nd.(n_in)) i = Some (x, ck) ->
+            In x' (clock_vars ck) -> sub x' = Some u -> ~ bad u) ->
+        call_subst_fresh sg (List.map fst argts) ckty rst outs ->
+        Forall (st_closed_mod [] ckty)
+          (augment_actuals sub (idck nd.(n_in)) argts) ->
+        st_closed_mod [] ckty ckty ->
+        st_closed_mod [] ckty rst ->
+        Forall (fun v => st_closed_mod [] ckty [v]) outs ->
+        generate_constraints sg (List.map fst argts) ckty rst outs sa
+          = OK (cns, sa') ->
+        constraints_closed_mod [] [] cns.
+    Proof.
+      intros bad P f nd sg es bck sub argts ckty rst outs cns sa sa'
+        Hsigin Hfn Hfs Hsc Hfenv Hnd Hck0 Hwcin Hwi Hnamed Hbadok Hfr Haugcl
+        Hckcl Hrstcl Houtcl Hgen.
+      set (ins := idck nd.(n_in)) in *.
+      set (aug := augment_actuals sub ins argts) in *.
+      pose proof Hfr as Hfr0.
+      destruct Hfr0 as (Hfi & Hfc & Hfrr & Hfo).
+      assert (List.length ins = List.length (nclocksof es)) as Hl2
+          by exact (Forall2_length _ _ _ Hwi).
+      assert (List.length ins = List.length argts) as Hl3
+          by (rewrite Hl2; symmetry; exact (Forall2_length _ _ _ Hnamed)).
+      assert (List.length (List.map fst argts) = List.length aug) as Hlaug.
+      { assert (forall (A B : Type) (l1 : list A) (l2 : list B),
+                   List.length l1 = List.length l2 ->
+                   List.length (combine l1 l2) = List.length l2) as Hcl.
+        { intros A B l1. induction l1 as [|a l1 IH]; intros l2 Hl.
+          - destruct l2; [reflexivity|discriminate].
+          - destruct l2 as [|b l2]; [discriminate|].
+            simpl. f_equal. apply IH. simpl in Hl; congruence. }
+        unfold aug, augment_actuals. rewrite !map_length.
+        symmetry. exact (Hcl _ _ ins argts Hl3). }
+      (** the plain actuals avoid the callee's names *)
+      assert (forall y, In y (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset)
+                              :: sg.(s_out)) -> In y (signature_scope sg))
+        as Hscp.
+      { intros y Hy. eapply Permutation_in;
+          [symmetry; apply signature_scope_perm|exact Hy]. }
+      assert (Forall (fun v => forall y,
+                  In y (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out))
+                  -> ~ In y v) (List.map fst argts)) as Hfp.
+      { unfold types_fresh, type_fresh in Hfi.
+        rewrite Forall_forall in Hfi |- *. intros v Hv y Hy Hyv.
+        pose proof (Hfi v Hv) as Hv'. rewrite Forall_forall in Hv'.
+        exact (Hv' y Hyv (Hscp y Hy)). }
+      (** and so do the augmented ones *)
+      assert (Forall (fun v => forall y,
+                  In y (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out))
+                  -> ~ In y v) aug) as Hfaug.
+      { eapply (augment_actuals_fresh bad sub ins argts (nclocksof es)).
+        - exact Hl2.
+        - exact Hl3.
+        - intros i x ck nck Hxi Hni.
+          exact (proj1 (Forall2_nth_error _ ins (nclocksof es) i (x, ck) nck
+                          Hwi Hxi Hni)).
+        - intros i nck t u g Hni Hti Hu Hnb Hg.
+          exact (Forall2_nth_error _ argts (nclocksof es) i t nck
+                   Hnamed Hti Hni u g Hu Hnb Hg).
+        - exact Hbadok.
+        - intros i x ck x' Hxi Hx'.
+          assert (In (x, ck) ins) as Hin by (eapply nth_error_In; exact Hxi).
+          unfold wc_env in Hwcin. rewrite Forall_forall in Hwcin.
+          pose proof (Hwcin (x, ck) Hin) as Hwck. cbn [snd] in Hwck.
+          exact (clock_vars_wc ins ck Hwck x' Hx').
+        - exact Hfp. }
+      (** the augmented run exists, with the same sources *)
+      destruct (generate_constraints_total_inp sg (List.map fst argts) aug ckty
+                  rst outs cns sa sa' sa Hlaug Hgen) as (cnsa & Ha).
+      assert (NoDup sg.(s_in)) as Hndin by (eapply NoDup_app_l; exact Hnd).
+      assert (Forall (fun v => forall y, In y sg.(s_in) -> ~ In y v) aug)
+        as Hfa.
+      { eapply Forall_impl; [|exact Hfaug].
+        intros v Hv y Hy. exact (Hv y (in_or_app _ _ _ (or_introl Hy))). }
+      assert (Forall (fun v => forall y, In y sg.(s_in) -> ~ In y v)
+                (List.map fst argts)) as Hfp'.
+      { eapply Forall_impl; [|exact Hfp].
+        intros v Hv y Hy. exact (Hv y (in_or_app _ _ _ (or_introl Hy))). }
+      assert (forall a1 a2 t1 t2,
+                 SIG.subst_constraints_inp_map sg.(s_constraints) sg.(s_in)
+                   (List.map fst argts) sa = OK (a1, t1) ->
+                 SIG.subst_constraints_inp_map sg.(s_constraints) sg.(s_in)
+                   aug sa = OK (a2, t2) ->
+                 cs_same_src a1 a2) as Hsame.
+      { intros a1 a2 t1 t2 Hp1 Hp2.
+        assert (Forall2
+                  (fun a b =>
+                     (forall z, In z (fst a) <-> In z (fst b))
+                     /\ (forall z, In z (snd a) <-> In z (snd b))) a1 a2)
+          as Hrelset.
+        { eapply subst_constraints_inp_map_augment;
+            [exact Hndin|exact Hfp'|exact Hfa
+            |exact (augment_actuals_grows sub ins argts Hl3)| |exact Hp1
+            |exact Hp2].
+          intros c Hc.
+          exact (call_augment_dep_concrete bad P sg nd bck sub f es argts c
+                   Hsigin Hfn Hfs Hwcin Hwi Hnamed Hbadok Hc). }
+        assert (List.map snd a1 = List.map snd a2) as Ht.
+        { rewrite (subst_constraints_inp_map_targets sg.(s_in)
+                     sg.(s_constraints) (List.map fst argts) a1 sa t1 Hp1).
+          rewrite (subst_constraints_inp_map_targets sg.(s_in)
+                     sg.(s_constraints) aug a2 sa t2 Hp2).
+          reflexivity. }
+        unfold cs_same_src.
+        clear Hp1 Hp2. revert Ht.
+        induction Hrelset as [|a b l l' (Hs & _) Hr IH]; intro Ht;
+          [constructor|].
+        simpl in Ht. injection Ht as Htc Htr.
+        constructor; [split; [now symmetry|exact Hs]|exact (IH Htr)]. }
+      assert (~ In sg.(s_clk) ckty) as Hnck.
+      { unfold type_fresh in Hfc. rewrite Forall_forall in Hfc.
+        intro Hin. apply (Hfc _ Hin). apply Hscp.
+        apply in_or_app. right. now left. }
+      assert (~ In sg.(s_reset) rst) as Hnrst.
+      { unfold type_fresh in Hfrr. rewrite Forall_forall in Hfrr.
+        intro Hin. apply (Hfrr _ Hin). apply Hscp.
+        apply in_or_app. right. right. now left. }
+      pose proof (generate_constraints_same_inp sg (List.map fst argts) aug
+                    ckty rst outs cns cnsa sa sa' sa sa Hnck Hnrst Hsame Hgen Ha)
+        as Hrel.
+      (** closure of the augmented block, modulo the clock type *)
+      assert (forall y, In y (signature_scope sg) ->
+                forall v0 ckv ckvty, In (v0, ckv) vars ->
+                  assign_clk_type env base_ty ckv = Some ckvty ->
+                  ~ In y ckvty) as Hxck.
+      { intros y Hy v0 ckv ckvty _ Hck.
+        exact (sig_scope_not_in_clock_type sg y ckv ckvty Hfenv Hy Hck). }
+      assert (constraints_closed_mod [] ckty sg.(s_constraints)) as H0.
+      { unfold constraints_closed_mod. rewrite Forall_forall.
+        intros c Hc v b ckv ckvty Hf _ Hb _ _. exfalso.
+        pose proof ((proj1 (Forall_forall _ _) Hsc) c Hc b) as Hb'.
+        assert (In b (constraint_scope c))
+          by (unfold constraint_scope; apply in_or_app; now left).
+        destruct Hfenv as (_ & _ & Hfe).
+        exact (Hfe v b Hf (Hb' H)). }
+      pose proof Ha as Ha0.
+      unfold generate_constraints in Ha.
+      apply sec_bind_inv in Ha as (a1 & t1 & Ha1 & Ha).
+      apply sec_bind_inv in Ha as (b1 & u1 & Hb1 & Ha).
+      apply sec_bind_inv in Ha as (c1 & v1 & Hc1 & Ha).
+      apply sec_bind_inv in Ha as (e1 & w1 & He1 & Hr1).
+      assert (constraints_closed_mod [] ckty a1) as S1.
+      { eapply subst_constraints_inp_map_closed_mod;
+          [exact Hndin|exact Hfa
+          |intros y Hy; apply Hxck; apply Hscp;
+           apply in_or_app; now left
+          |exact H0|exact Haugcl|exact Ha1]. }
+      assert (constraints_closed_mod [] ckty b1) as S2.
+      { eapply subst_ident_in_constraints_closed_mod;
+          [exact Hnck
+          |intros v0 ckv ckvty Hin Hck;
+           refine (Hxck sg.(s_clk) _ v0 ckv ckvty Hin Hck);
+           apply Hscp; apply in_or_app; right; now left
+          |exact S1|exact Hckcl|exact Hb1]. }
+      assert (constraints_closed_mod [] ckty c1) as S3.
+      { eapply subst_ident_in_constraints_closed_mod;
+          [exact Hnrst
+          |intros v0 ckv ckvty Hin Hck;
+           refine (Hxck sg.(s_reset) _ v0 ckv ckvty Hin Hck);
+           apply Hscp; apply in_or_app; right; right; now left
+          |exact S2|exact Hrstcl|exact Hc1]. }
+      assert (constraints_closed_mod [] ckty e1) as S4.
+      { eapply subst_constraints_out_map_closed_mod;
+          [| |exact Houtcl|exact S3|exact He1].
+        - apply Forall2_ne_of.
+          + exact (subst_constraints_out_map_length _ _ _ _ _ _ He1).
+          + intros x v Hx Hv Heq. subst v.
+            unfold outputs_fresh in Hfo. rewrite Forall_forall in Hfo.
+            apply (Hfo x Hv). apply Hscp. apply in_or_app. right.
+            right. right. exact Hx.
+        - intros y Hy. apply Hxck. apply Hscp. apply in_or_app.
+          right. right. right. exact Hy. }
+      assert (constraints_closed_mod [] ckty cnsa) as S5
+        by (eapply mmap_findST_closed_mod; [exact S4|exact Hr1]).
+      assert (call_subst_fresh sg aug ckty rst outs) as Hfr_aug.
+      { refine (conj _ (conj Hfc (conj Hfrr Hfo))).
+        unfold types_fresh, type_fresh. rewrite Forall_forall.
+        intros v Hv. rewrite Forall_forall. intros y Hyv Hy.
+        rewrite Forall_forall in Hfaug.
+        assert (In y (sg.(s_in) ++ sg.(s_clk) :: sg.(s_reset) :: sg.(s_out)))
+          as Hy' by (eapply Permutation_in;
+                     [apply signature_scope_perm|exact Hy]).
+        exact (Hfaug v Hv y Hy' Hyv). }
+      assert (forall z, In z ckty -> all_sources_have z cnsa) as Hreach.
+      { intros z Hz.
+        exact (generate_constraints_clk_reaches sg aug ckty rst outs cnsa sa sa
+                 z Hnd Hfr_aug Hck0 Hz Ha0). }
+      assert (constraints_closed_mod [] [] cnsa) as Sf.
+      { unfold constraints_closed_mod in S5 |- *.
+        rewrite Forall_forall in S5 |- *.
+        intros c Hc v b ckv ckvty Hf Hnm Hb Hin Hck z Hz.
+        pose proof (S5 c Hc v b ckv ckvty Hf Hnm Hb Hin Hck z Hz) as Hz'.
+        apply in_merge_inv in Hz' as [Hz'|Hz'].
+        - apply in_merge_right.
+          pose proof (Hreach z Hz') as Hr. unfold all_sources_have in Hr.
+          rewrite Forall_forall in Hr. exact (Hr c Hc).
+        - apply in_merge_right. exact Hz'. }
+      exact (closed_mod_transfer cns cnsa Hrel Sf).
+    Qed.
 
 
     (** * The no-op arguments
