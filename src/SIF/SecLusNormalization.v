@@ -151,15 +151,35 @@ Import SECMONADNotations.
              Forall (fun t => st_scoped S (fst t)) ts
              /\ constraints_scoped S (carried ts)).
 
+    (** A clock the rules meet is a declared variable's clock, or the base
+        clock of a call's arguments, or a reset's.  The names in the last two
+        may be nested calls' results, whose security names are targets of what
+        the arguments carry; so the scoping is relative to the arguments' run,
+        and to a scope that contains the targets it carried. *)
     Definition clk_scoped_wc (ckenv : Env.t (type * clock))
         (S : list ident) : Prop :=
-      forall es ck ckty,
+      forall es ck ckty argts s s1,
         Forall (wc_exp P vars) es ->
-        Forall (nested_src vars AN) es ->
         (clk_src vars es ck \/
          exists x, In x (List.map fst vars) /\ find_clock ckenv x = OK ck) ->
+        incl (tgt_names (carried argts)) S ->
+        assign_lexps G env base_ty rst_ty es s = OK (argts, s1) ->
         assign_clk_type env base_ty ck = Some ckty ->
         st_scoped S ckty.
+
+    Lemma assign_lexps_nil_ok :
+      forall s, assign_lexps G env base_ty rst_ty [] s = OK ([], s).
+    Proof. intros s. rewrite assign_lexps_nil. reflexivity. Qed.
+
+    Lemma assign_lexps_single_ok :
+      forall e s ts s1,
+        assign_lexp_type G env base_ty rst_ty e s = OK (ts, s1) ->
+        assign_lexps G env base_ty rst_ty [e] s = OK (ts, s1).
+    Proof.
+      intros e s ts s1 H. rewrite assign_lexps_cons, assign_lexps_nil.
+      cbn. unfold SC.bind, SC.ret. rewrite H. cbn. rewrite app_nil_r.
+      reflexivity.
+    Qed.
 
     Lemma generate_lvars_constraints_scoped_tgt_wc :
       forall S ckenv xs bs ts c s s',
@@ -202,10 +222,11 @@ Import SECMONADNotations.
             apply sec_bind_inv in Hck as (ck & sa & Hfc & Hck).
             apply option_to_sec_inv in Hck as (Hck & _).
             apply res_to_sec_inv_ok in Hfc as (Hfc & _).
-            exact (Hclk [] ck ckty (Forall_nil _) (Forall_nil _)
+            exact (Hclk [] ck ckty [] s s (Forall_nil _)
                      (or_intror (ex_intro _ x
                         (conj (Hxv x (or_introl (@Logic.eq_refl _ x))) Hfc)))
-                     Hck).
+                     (fun y Hy => match Hy with end)
+                     (assign_lexps_nil_ok s) Hck).
           * rewrite snd_ljoin. unfold ambient.
             rewrite snd_ljoin, snd_lvar. cbn [snd].
             rewrite cmerge_nil, cmerge_nil2. exact Hct.
@@ -245,8 +266,10 @@ Import SECMONADNotations.
       - apply st_scoped_merge; [|exact Hf1].
         apply st_scoped_merge;
           [intros y [Hy|[]]; subst y; exact Hrs|].
-        exact (Hclk [] ck ckty (Forall_nil _) (Forall_nil _)
-                 (or_intror (ex_intro _ x (conj Hxv Hfc))) Hck).
+        exact (Hclk [] ck ckty [] s s (Forall_nil _)
+                 (or_intror (ex_intro _ x (conj Hxv Hfc)))
+                 (fun y Hy => match Hy with end)
+                 (assign_lexps_nil_ok s) Hck).
       - apply Hxs. unfold CALLS.sec_of. cbn [flat_map].
         rewrite Hb. now left.
     Qed.
@@ -325,7 +348,8 @@ Import SECMONADNotations.
       rewrite Hcs. apply cscoped_cmerge; [|apply cscoped_cmerge].
       - eapply generate_constraints_scoped;
           [exact (Hsg _ _ Esg)| |
-           exact (Hclk es _ _ Hwces Hnsx (or_introl (clk_src_base vars es)) Hck)
+           exact (Hclk es _ _ argts s sti Hwces
+                    (or_introl (clk_src_base vars es)) Hci Hargs Hck)
           |exact Hfr| |exact Hgc].
         + apply Forall_forall. intros X HX.
           apply in_map_iff in HX as (t & Ht & Htin); subst X.
@@ -409,10 +433,10 @@ Import SECMONADNotations.
           apply st_scoped_merge;
             [intros y0 [Hy0|[]]; subst y0; exact Hrs|].
           apply st_scoped_merge; [exact Hs1|].
-          exact (Hclk [e1] (hd Cbase (LSyn.clockof e1)) rck
+          exact (Hclk [e1] (hd Cbase (LSyn.clockof e1)) rck [a1] s s1
                    (Forall_cons _ Hwce1 (Forall_nil _))
-                   (Forall_cons _ Hns1 (Forall_nil _))
-                   (or_introl (clk_src_hd_clockof vars e1)) Hrck).
+                   (or_introl (clk_src_hd_clockof vars e1)) Hci
+                   (assign_lexps_single_ok e1 s [a1] s1 Ht1) Hrck).
         + rewrite !snd_ljoin, snd_lvar. cbn [snd].
           rewrite cmerge_nil, cmerge_nil2. exact Hc1.
       - unfold SC.ret in Hgen.
@@ -543,325 +567,40 @@ Import SECMONADNotations.
           * eapply incl_tran; [|exact Htc]. apply incl_appr, incl_refl.
     Qed.
 
+    (** The dichotomy at the declared names, for a source expression: the
+        well-clockedness the clock names need is [wc_exp_clock_names]'s, so
+        nothing is asked of the program beyond [wc]. *)
     Theorem lexp_scoped_tgt_all_src :
       forall decl,
         In base_ty decl -> In rst_ty decl ->
         (forall x b, In x (List.map fst vars) -> Env.find x env = Some b ->
                      In b decl) ->
-        (forall es ck ckty,
-            Forall (wc_exp P vars) es -> Forall (nested_src vars AN) es ->
-            clk_src vars es ck ->
-            assign_clk_type env base_ty ck = Some ckty ->
-            st_scoped decl ckty) ->
+        wc_global P -> wc_env vars ->
         secglobal_scoped G ->
         forall e, wc_exp P vars e /\ src_exp vars AN e ->
                   lexp_scoped_tgt G env base_ty rst_ty decl e.
     Proof.
-      intros decl Hbase Hrstd Henv Hclk Hsg e.
-      induction e using exp_ind2; intros (Hwc & Hsx) ts s s' Hgen.
-      - rewrite assign_lexp_Econst in Hgen. unfold SC.ret in Hgen.
-        destruct (OK_pair_inv _ _ _ _ Hgen) as (Hts & _); subst ts.
-        split.
-        + constructor; [|constructor]. cbn [fst lbot]. intros ? [].
-        + cbn [carried lbot snd]. constructor.
-      - apply assign_lexp_Evar_inv in Hgen as (xt & Hxt & Hts & _); subst ts.
-        split.
-        + constructor; [|constructor]. cbn [fst].
-          intros y [Hy|[]]; subst y. apply in_or_app. left.
-          exact (Henv _ _ (wc_Evar_vars P vars _ _ Hwc) Hxt).
-        + cbn [carried snd]. constructor.
-      - exact (IHe (conj (wc_Eunop_sub P vars _ _ _ Hwc)
-                      (src_exp_imm vars AN _ _ (imm_Eunop _ _ _) Hsx))
-                 ts s s' Hgen).
-      - rewrite assign_lexp_Ebinop in Hgen.
-        apply sec_bind_inv in Hgen as (t1 & s1 & Ht1 & Hgen).
-        apply sec_bind_inv in Hgen as (t2 & s2 & Ht2 & Hgen).
-        apply sec_bind_inv in Hgen as (a1 & s3 & Ha1 & Hgen).
-        apply sec_bind_inv in Hgen as (a2 & s4 & Ha2 & Hret).
-        apply single_inv in Ha1 as (? & ?); subst t1 s3.
-        apply single_inv in Ha2 as (? & ?); subst t2 s4.
-        unfold SC.ret in Hret.
-        destruct (OK_pair_inv _ _ _ _ Hret) as (Hts & ?); subst ts s'.
-        destruct (wc_Ebinop_sub P vars _ _ _ _ Hwc) as (Hw1 & Hw2).
-        destruct (IHe1 (conj Hw1 (src_exp_imm vars AN _ _ (imm_Ebinop_l _ _ _ _) Hsx))
-                    [a1] s s1 Ht1) as (Hf1 & Hc1).
-        destruct (IHe2 (conj Hw2 (src_exp_imm vars AN _ _ (imm_Ebinop_r _ _ _ _) Hsx))
-                    [a2] s1 s2 Ht2) as (Hf2 & Hc2).
-        rewrite carried_single in Hf1, Hc1, Hf2, Hc2.
-        rewrite carried_single, snd_ljoin.
-        inversion Hf1 as [|? ? Hs1 ?]; subst.
-        inversion Hf2 as [|? ? Hs2 ?]; subst.
-        split.
-        + constructor; [|constructor]. rewrite fst_ljoin.
-          apply st_scoped_merge.
-          * eapply st_scoped_weaken;
-              [apply incl_decl_tgt, tgt_names_cmerge_l|exact Hs1].
-          * eapply st_scoped_weaken;
-              [apply incl_decl_tgt, tgt_names_cmerge_r|exact Hs2].
-        + apply cscoped_cmerge;
-            [eapply cscoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hc1]
-            |eapply cscoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hc2]].
-      - rewrite assign_lexp_Efby in Hgen.
-        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
-        apply sec_bind_inv in Hgen as (us & s2 & Hus & Hj).
-        assert (s' = s2) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
-        destruct (wc_Efby_sub P vars _ _ _ Hwc) as (Hw0 & Hw1).
-        pose proof (src_exp_imm_forall vars AN e0s _
-                      (fun e' He' => imm_Efby_0 _ _ _ e' He') Hsx) as Hs0.
-        pose proof (src_exp_imm_forall vars AN es _
-                      (fun e' He' => imm_Efby_1 _ _ _ e' He') Hsx) as Hs1.
-        destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl e0s
-                    (Forall_wc_impl _ _ _ H (Forall_and _ _ _ Hw0 Hs0))
-                    ts0 s s1 Hts0) as (Hf1 & Hc1).
-        destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl es
-                    (Forall_wc_impl _ _ _ H0 (Forall_and _ _ _ Hw1 Hs1))
-                    us s1 s2 Hus) as (Hf2 & Hc2).
-        rewrite (ljoin_list_carried ts0 us ts s2 s2 Hj).
-        split.
-        + eapply CALLS.ljoin_list_scoped_plain; [exact Hj| |].
-          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hf1].
-          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hf2].
-        + apply cscoped_cmerge;
-            [eapply cscoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hc1]
-            |eapply cscoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hc2]].
-      - rewrite assign_lexp_Earrow in Hgen.
-        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
-        apply sec_bind_inv in Hgen as (us & s2 & Hus & Hj).
-        assert (s' = s2) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
-        destruct (wc_Earrow_sub P vars _ _ _ Hwc) as (Hw0 & Hw1).
-        pose proof (src_exp_imm_forall vars AN e0s _
-                      (fun e' He' => imm_Earrow_0 _ _ _ e' He') Hsx) as Hs0.
-        pose proof (src_exp_imm_forall vars AN es _
-                      (fun e' He' => imm_Earrow_1 _ _ _ e' He') Hsx) as Hs1.
-        destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl e0s
-                    (Forall_wc_impl _ _ _ H (Forall_and _ _ _ Hw0 Hs0))
-                    ts0 s s1 Hts0) as (Hf1 & Hc1).
-        destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl es
-                    (Forall_wc_impl _ _ _ H0 (Forall_and _ _ _ Hw1 Hs1))
-                    us s1 s2 Hus) as (Hf2 & Hc2).
-        rewrite (ljoin_list_carried ts0 us ts s2 s2 Hj).
-        split.
-        + eapply CALLS.ljoin_list_scoped_plain; [exact Hj| |].
-          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hf1].
-          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hf2].
-        + apply cscoped_cmerge;
-            [eapply cscoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hc1]
-            |eapply cscoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hc2]].
-      - rewrite assign_lexp_Ewhen in Hgen.
-        apply sec_bind_inv in Hgen as (ts0 & s1 & Hts0 & Hgen).
-        apply sec_bind_inv in Hgen as (g & s2 & Hg & Hret).
-        apply find_env_inv in Hg as (Hg & ?); subst s2.
-        unfold SC.ret in Hret.
-        destruct (OK_pair_inv _ _ _ _ Hret) as (Hts & ?); subst ts s'.
-        destruct (wc_Ewhen_sub P vars _ _ _ _ Hwc) as (Hw0 & Hwx).
-        pose proof (src_exp_imm_forall vars AN es _
-                      (fun e' He' => imm_Ewhen _ _ _ _ e' He') Hsx) as Hs0.
-        destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl es
-                    (Forall_wc_impl _ _ _ H (Forall_and _ _ _ Hw0 Hs0))
-                    ts0 s s1 Hts0) as (Hf1 & Hc1).
-        rewrite carried_map_when.
-        split; [|exact Hc1].
-        apply Forall_forall. intros t Ht.
-        apply in_map_iff in Ht as (t0 & Ht0 & Hin0); subst t.
-        rewrite fst_ljoin, fst_lvar. apply st_scoped_merge.
-        + rewrite Forall_forall in Hf1. exact (Hf1 t0 Hin0).
-        + intros y [Hy|[]]; subst y. apply in_or_app. left.
-          exact (Henv _ _ Hwx Hg).
-      - destruct a as (tys & cl).
-        rewrite assign_lexp_Emerge in Hgen.
-        apply sec_bind_inv in Hgen as (g & s1 & Hg & Hgen).
-        apply find_env_inv in Hg as (Hg & ?); subst s1.
-        apply sec_bind_inv in Hgen as (ts0 & s2 & Hts0 & Hgen).
-        apply sec_bind_inv in Hgen as (us & s3 & Hus & Hj).
-        assert (s' = s3) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
-        destruct (wc_Emerge_sub P vars _ _ _ _ Hwc) as (Hw0 & Hw1 & Hwx).
-        pose proof (src_exp_imm_forall vars AN ets _
-                      (fun e' He' => imm_Emerge_t _ _ _ _ e' He') Hsx) as Hs0.
-        pose proof (src_exp_imm_forall vars AN efs _
-                      (fun e' He' => imm_Emerge_f _ _ _ _ e' He') Hsx) as Hs1.
-        destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl ets
-                    (Forall_wc_impl _ _ _ H (Forall_and _ _ _ Hw0 Hs0))
-                    ts0 s s2 Hts0) as (Hf1 & Hc1).
-        destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl efs
-                    (Forall_wc_impl _ _ _ H0 (Forall_and _ _ _ Hw1 Hs1))
-                    us s2 s3 Hus) as (Hf2 & Hc2).
-        rewrite (ljoin_list_carried _ us ts s3 s3 Hj), carried_map_merge_l.
-        split.
-        + eapply CALLS.ljoin_list_scoped; [|exact Hj| |].
-          * apply in_or_app. left. exact (Henv _ _ Hwx Hg).
-          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hf1].
-          * eapply scoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hf2].
-        + apply cscoped_cmerge;
-            [eapply cscoped_tgt_widen; [apply tgt_names_cmerge_l|exact Hc1]
-            |eapply cscoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hc2]].
-      - destruct a as (tys & cl).
-        rewrite assign_lexp_Eite in Hgen.
-        apply sec_bind_inv in Hgen as (t0 & s1 & Ht0 & Hgen).
-        apply sec_bind_inv in Hgen as (th & s2 & Hth & Hgen).
-        apply single_inv in Hth as (? & ?); subst t0 s2.
-        apply sec_bind_inv in Hgen as (ts0 & s3 & Hts0 & Hgen).
-        apply sec_bind_inv in Hgen as (us & s4 & Hus & Hj).
-        assert (s' = s4) as ? by (eapply ljoin_list_pure; exact Hj); subst s'.
-        destruct (wc_Eite_sub P vars _ _ _ _ Hwc) as (Hw0 & Hw1 & Hw2).
-        pose proof (src_exp_imm vars AN _ _ (imm_Eite_c _ _ _ _) Hsx) as Hsc.
-        pose proof (src_exp_imm_forall vars AN ets _
-                      (fun e' He' => imm_Eite_t _ _ _ _ e' He') Hsx) as Hs1.
-        pose proof (src_exp_imm_forall vars AN efs _
-                      (fun e' He' => imm_Eite_f _ _ _ _ e' He') Hsx) as Hs2.
-        destruct (IHe (conj Hw0 Hsc) [th] s s1 Ht0) as (Hfh & Hch).
-        rewrite carried_single in Hfh, Hch.
-        inversion Hfh as [|? ? Hsh ?]; subst.
-        destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl ets
-                    (Forall_wc_impl _ _ _ H (Forall_and _ _ _ Hw1 Hs1))
-                    ts0 s1 s3 Hts0) as (Hf1 & Hc1).
-        destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl efs
-                    (Forall_wc_impl _ _ _ H0 (Forall_and _ _ _ Hw2 Hs2))
-                    us s3 s4 Hus) as (Hf2 & Hc2).
-        rewrite (ljoin_list_carried _ us ts s4 s4 Hj).
-        destruct ts0 as [|t00 ts0'].
-        + cbn [List.map carried]. rewrite cmerge_nil2.
-          split.
-          * eapply CALLS.ljoin_list_scoped_plain; [exact Hj|constructor|].
-            exact Hf2.
-          * exact Hc2.
-        + rewrite carried_map_ljoin_eq by (intros HF; inversion HF).
-          split.
-          * eapply CALLS.ljoin_list_scoped_head; [|exact Hj| |].
-            -- eapply st_scoped_weaken; [|exact Hsh].
-               apply incl_decl_tgt.
-               eapply incl_tran;
-                 [apply tgt_names_cmerge_l|apply tgt_names_cmerge_l].
-            -- eapply scoped_tgt_widen; [|exact Hf1].
-               eapply incl_tran;
-                 [apply tgt_names_cmerge_r|apply tgt_names_cmerge_l].
-            -- eapply scoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hf2].
-          * apply cscoped_cmerge; [apply cscoped_cmerge|].
-            -- eapply cscoped_tgt_widen; [|exact Hch].
-               eapply incl_tran;
-                 [apply tgt_names_cmerge_l|apply tgt_names_cmerge_l].
-            -- eapply cscoped_tgt_widen; [|exact Hc1].
-               eapply incl_tran;
-                 [apply tgt_names_cmerge_r|apply tgt_names_cmerge_l].
-            -- eapply cscoped_tgt_widen; [apply tgt_names_cmerge_r|exact Hc2].
-      - apply assign_lexp_Eapp_inv in Hgen
-          as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
-              & Hargs & Hck & Hrst & Hsgf & Houts & Hcs & Hts).
-        destruct (wc_Eapp_sub P vars _ _ _ _ Hwc) as (Hwes & Hwro).
-        assert (Forall (src_exp vars AN) es) as Hsxes
-          by (eapply src_exp_imm_forall; [|exact Hsx];
-              intros e' He'; exact (imm_Eapp_arg _ _ _ _ e' He')).
-        assert (Forall (nested_src vars AN) es) as Hnses
-          by (eapply nested_src_args; exact Hsx).
-        destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl es
-                    (Forall_wc_impl _ _ _ H0 (Forall_and _ _ _ Hwes Hsxes))
-                    argts s sta Hargs) as (Hfa & Hca).
-        assert (exists rs, st_scoped (decl ++ tgt_names rs) (fst rstty)
-                           /\ constraints_scoped (decl ++ tgt_names rs)
-                                (snd rstty)
-                           /\ incl (tgt_names rs) (tgt_names (snd rstty)))
-          as (rs & Hfr & Hcr & Hir).
-        { destruct ro as [e1|].
-          - destruct Hrst as (t1 & a1 & rck & stm & Ht1 & Hsg1 & Hrck & Hr).
-            apply single_inv in Hsg1 as (? & ?); subst t1 stb.
-            assert (Hwe1 : wc_exp P vars e1)
-              by exact (Hwro e1 Logic.eq_refl).
-            assert (src_exp vars AN e1) as Hsxe1
-              by (eapply src_exp_imm; [apply imm_Eapp_rst|exact Hsx]).
-            assert (nested_src vars AN e1) as Hnse1
-              by (eapply nested_src_reset; exact Hsx).
-            destruct (H (conj Hwe1 Hsxe1) [a1] sta stm Ht1) as (Hf1 & Hc1).
-            rewrite carried_single in Hf1, Hc1.
-            inversion Hf1 as [|? ? Hs1 ?]; subst.
-            exists (snd a1). try subst rstty.
-            rewrite !fst_ljoin, !snd_ljoin, fst_lvar, snd_lvar.
-            cbn [fst snd]. rewrite cmerge_nil, cmerge_nil2.
-            split; [|split; [exact Hc1|apply incl_refl]].
-            apply st_scoped_merge;
-              [intros y [Hy|[]]; subst y; apply in_or_app; now left|].
-            apply st_scoped_merge; [exact Hs1|].
-            eapply st_scoped_weaken;
-              [|exact (Hclk [e1] _ _ (Forall_cons _ Hwe1 (Forall_nil _))
-                         (Forall_cons _ Hnse1 (Forall_nil _))
-                         (clk_src_hd_clockof vars e1) Hrck)].
-            intros y Hy. apply in_or_app. left. exact Hy.
-          - destruct Hrst as (Hr & _). subst rstty.
-            exists []. rewrite fst_lvar, snd_lvar.
-            split; [intros y [Hy|[]]; subst y; apply in_or_app; now left|].
-            split; [constructor|intros y []]. }
-        pose proof (CALLS.generate_constraints_targets sg
-                      (List.map fst argts) ckty (fst rstty) outs cs
-                      stc s' Hcs) as Hsnd.
-        subst ts. rewrite carried_uniform.
-        destruct outs as [|o os].
-        + split; [constructor|constructor].
-        + assert (Hcsi : incl (tgt_names cs)
-                           (tgt_names (cmerge cs
-                              (cmerge (carried argts) (snd rstty)))))
-              by apply tgt_names_cmerge_l.
-          assert (Hargi : incl (tgt_names (carried argts))
-                            (tgt_names (cmerge cs
-                               (cmerge (carried argts) (snd rstty))))).
-          { eapply incl_tran;
-              [apply tgt_names_cmerge_l|apply tgt_names_cmerge_r]. }
-          assert (Hrsti : incl (tgt_names (snd rstty))
-                            (tgt_names (cmerge cs
-                               (cmerge (carried argts) (snd rstty))))).
-          { eapply incl_tran;
-              [apply tgt_names_cmerge_r|apply tgt_names_cmerge_r]. }
-          assert (Hoin : forall d, In d (o :: os) ->
-                           In d (decl ++ tgt_names (cmerge cs
-                                   (cmerge (carried argts) (snd rstty))))).
-          { intros d Hd. apply in_or_app. right.
-            apply Hcsi. exact (tgt_names_of_targets cs (o :: os) Hsnd d Hd). }
-          assert (Hcscs : constraints_scoped
-                            (decl ++ tgt_names (cmerge cs
-                               (cmerge (carried argts) (snd rstty)))) cs).
-          { eapply generate_constraints_scoped;
-              [exact (Hsg _ _ Hsgf)| | | | |exact Hcs].
-            - apply Forall_forall. intros X HX.
-              apply in_map_iff in HX as (t & Ht & Htin); subst X.
-              eapply st_scoped_weaken; [apply incl_decl_tgt, Hargi|].
-              rewrite Forall_forall in Hfa. exact (Hfa t Htin).
-            - eapply st_scoped_weaken;
-                [|exact (Hclk es _ _ Hwes Hnses (clk_src_base vars es) Hck)].
-              intros y Hy. apply in_or_app. left. exact Hy.
-            - eapply st_scoped_weaken; [apply incl_decl_tgt, Hrsti|].
-              eapply st_scoped_weaken; [apply incl_decl_tgt, Hir|exact Hfr].
-            - apply Forall_forall. exact Hoin. }
-          split.
-          * apply Forall_forall. intros t Ht.
-            apply in_map_iff in Ht as (d & Hd & Hdin); subst t.
-            cbn [fst]. intros y [Hy|[]]; subst y. exact (Hoin d Hdin).
-          * apply cscoped_cmerge; [exact Hcscs|].
-            apply cscoped_cmerge.
-            -- eapply cscoped_tgt_widen; [exact Hargi|exact Hca].
-            -- eapply cscoped_tgt_widen; [exact Hrsti|].
-               eapply cscoped_tgt_widen; [exact Hir|exact Hcr].
+      intros decl Hbase Hrstd Henv Hg Hwenv Hsg e (Hwc & _).
+      exact (lexp_scoped_tgt_all_wc G env base_ty rst_ty P vars decl Hbase
+               Hrstd Henv Hg Hwenv Hsg e Hwc).
     Qed.
 
     (** The guarded premises, from the dichotomy at the node's declared
         names. *)
     Lemma exps_scoped_wc_of_decl :
-      forall decl S ckenv,
+      forall decl S,
         In base_ty decl -> In rst_ty decl ->
         (forall x b, In x (List.map fst vars) -> Env.find x env = Some b ->
                      In b decl) ->
-        clk_scoped_wc ckenv decl ->
+        wc_global P -> wc_env vars ->
         secglobal_scoped G ->
         incl decl S ->
         exps_scoped_wc S.
     Proof.
-      intros decl S ckenv Hb Hr Henv Hclk Hsg Hds.
-      assert (Hclk' : forall es ck ckty,
-                 Forall (wc_exp P vars) es -> Forall (nested_src vars AN) es ->
-                 clk_src vars es ck ->
-                 assign_clk_type env base_ty ck = Some ckty ->
-                 st_scoped decl ckty)
-        by (intros es ck ckty Hw Hn Hsrc Hck;
-            exact (Hclk es ck ckty Hw Hn (or_introl Hsrc) Hck)).
+      intros decl S Hb Hr Henv Hg Hwenv Hsg Hds.
       split.
       - intros e ts s0 s1 Hwc Hsx Hci Hgen.
-        destruct (lexp_scoped_tgt_all_src decl Hb Hr Henv Hclk' Hsg e
+        destruct (lexp_scoped_tgt_all_src decl Hb Hr Henv Hg Hwenv Hsg e
                     (conj Hwc Hsx) ts s0 s1 Hgen) as (Hf & Hc).
         assert (incl (decl ++ tgt_names (carried ts)) S) as Hi
             by (apply incl_app; [exact Hds|exact Hci]).
@@ -872,7 +611,7 @@ Import SECMONADNotations.
       - intros es ts s0 s1 Hwcs Hsxs Hci Hgen.
         assert (Forall (lexp_scoped_tgt G env base_ty rst_ty decl) es) as Hall.
         { rewrite Forall_forall in Hwcs, Hsxs |- *. intros e0 He0.
-          exact (lexp_scoped_tgt_all_src decl Hb Hr Henv Hclk' Hsg e0
+          exact (lexp_scoped_tgt_all_src decl Hb Hr Henv Hg Hwenv Hsg e0
                    (conj (Hwcs e0 He0) (Hsxs e0 He0))). }
         destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl es Hall
                     ts s0 s1 Hgen) as (Hf & Hc).
@@ -886,18 +625,22 @@ Import SECMONADNotations.
 
   End GuardedScoped.
 
-  (** The clock-scoping premise of the guarded rules, from the node's
-      declared variables: a clock the rules meet samples on declared variables
-      only, because it is a declared clock, or the clock of a source
-      expression, whose anonymous names are not environment keys. *)
+  (** The clock-scoping premise of the rules, from the node's declared
+      variables and what the arguments carried: a clock the rules meet is a
+      declared clock, or the base clock of a call's arguments / a reset's,
+      whose names are declared variables or streams the arguments name -- and
+      those are targets of what the arguments carry. *)
   Section ClkScopedWc.
 
+    Variable G       : secglobal.
     Variable env     : Env.t ident.
     Variable base_ty : ident.
+    Variable rst_ty  : ident.
     Variable cenv    : Env.t (type * clock).
+    Variable P       : global.
     Variable vars    : list (ident * clock).
-    Variable AN      : list ident.
     Variable decl    : list ident.
+    Variable S       : list ident.
 
     Hypothesis Hb : In base_ty decl.
     Hypothesis Henv :
@@ -907,6 +650,7 @@ Import SECMONADNotations.
     Hypothesis Hcenv :
       forall x ck, In x (List.map fst vars) -> find_clock cenv x = OK ck ->
                    incl (clock_vars ck) (List.map fst vars).
+    Hypothesis Hds : incl decl S.
 
     Lemma clk_vars_images_scoped_wc :
       forall ck ckty,
@@ -920,32 +664,83 @@ Import SECMONADNotations.
     Qed.
 
     Theorem clk_scoped_wc_holds :
-      forall (P : global),
-        wc_global P ->
-        clk_scoped_wc env base_ty P vars AN cenv decl.
+      wc_global P ->
+      clk_scoped_wc G env base_ty rst_ty P vars cenv S.
     Proof.
-      intros P Hg es ck ckty Hwes Hnes Hsrc H.
+      intros Hg es ck ckty argts s s1 Hwes Hsrc HT Hargs H.
       destruct Hsrc as [Hs|(x & Hx & Hfc)].
-      - intros y Hy.
-        destruct (assign_clk_type_images env base_ty ck ckty H y Hy)
-          as [->|(x & Hx & Hf)]; [exact Hb|].
-        unfold clk_src in Hs. rewrite ck_vars_eq in Hs.
-        apply Hs in Hx. apply in_app_or in Hx as [Hx|Hx];
-          [exact (Henv x y Hx Hf)|].
-        apply in_flat_map in Hx as (c & Hc & Hxc).
-        rewrite ck_vars_eq in Hxc.
-        unfold clocksof in Hc. apply in_flat_map in Hc as (e & He & Hce).
-        rewrite Forall_forall in Hwes, Hnes.
-        destruct (Hnes e He) as (_ & _ & Hcl).
-        rewrite Forall_forall in Hcl.
-        destruct (clock_vars_wc _ c (Hcl c Hce) x Hxc) as (ckx & Hin).
-        apply (Henv x y).
-        * apply in_map_iff. exists (x, ckx). split; [reflexivity|exact Hin].
-        * exact Hf.
-      - exact (clk_vars_images_scoped_wc ck ckty (Hcenv x ck Hx Hfc) H).
+      - eapply st_scoped_weaken; [apply incl_app; [exact Hds|exact HT]|].
+        refine (clk_scoped_named env base_ty P vars decl es ck ckty
+                  (tgt_names (carried argts)) Hg Hwenv Hb Henv Hwes Hs _ H).
+        exact (proj2 (lexp_named_tgt_list G env base_ty rst_ty P vars es Hwes
+                        argts s s1 Hargs)).
+      - eapply st_scoped_weaken; [exact Hds|].
+        exact (clk_vars_images_scoped_wc ck ckty (Hcenv x ck Hx Hfc) H).
     Qed.
 
   End ClkScopedWc.
+
+  (** The environment's names for a node's anonymous streams are distinct,
+      and apart from the declared variables' and the two levels'. *)
+  Lemma flat_map_opt_NoDup :
+    forall env (l : list ident),
+      env_injective env -> NoDup l ->
+      NoDup (flat_map (fun w => match Env.find w env with
+                                | Some b => [b] | None => [] end) l).
+  Proof.
+    intros env l Hinj. induction l as [|w l IH]; intros Hnd; simpl.
+    - constructor.
+    - inversion Hnd as [|? ? Hw Hl]; subst.
+      destruct (Env.find w env) as [b|] eqn:Eb; [|exact (IH Hl)].
+      constructor; [|exact (IH Hl)].
+      intro Hin. apply in_flat_map in Hin as (w' & Hw' & Hb').
+      destruct (Env.find w' env) as [b'|] eqn:Eb'; [|destruct Hb'].
+      destruct Hb' as [Hb'|[]]. subst b'.
+      assert (w' = w) as -> by (exact (Hinj w' w b b Eb' Eb Logic.eq_refl)).
+      exact (Hw Hw').
+  Qed.
+
+  Lemma anon_images_NoDup :
+    forall env (n : node),
+      env_injective env -> NoDup (anon_images env n).
+  Proof.
+    intros env n Hinj. unfold anon_images.
+    assert (forall (A : Type) (l : list (ident * A)),
+              flat_map (fun p => match Env.find (fst p) env with
+                                 | Some b => [b] | None => [] end) l
+              = flat_map (fun w => match Env.find w env with
+                                   | Some b => [b] | None => [] end)
+                  (List.map fst l)) as ->.
+    { induction l as [|p l IH]; [reflexivity|]. simpl. now rewrite IH. }
+    apply flat_map_opt_NoDup; [exact Hinj|].
+    apply fst_NoDupMembers.
+    pose proof (n_nodup n) as H.
+    rewrite !app_assoc in H. apply NoDupMembers_app_r in H. exact H.
+  Qed.
+
+  Lemma anon_images_not_declared :
+    forall env (n : node) d,
+      env_injective env ->
+      In d (anon_images env n) ->
+      ~ In d (CALLS.sec_of env
+                (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
+  Proof.
+    intros env n d Hinj Hin Hdecl.
+    unfold anon_images in Hin. apply in_flat_map in Hin as ((w, a) & Hp & Hb).
+    cbn [fst] in Hb.
+    destruct (Env.find w env) as [b0|] eqn:Ew; [|destruct Hb].
+    destruct Hb as [Hb|[]]. subst b0.
+    unfold CALLS.sec_of in Hdecl. apply in_flat_map in Hdecl as (x & Hx & Hxd).
+    destruct (Env.find x env) as [b|] eqn:Ex; [|destruct Hxd].
+    destruct Hxd as [Hxd|[]]. subst b.
+    assert (x = w) as -> by (exact (Hinj x w d d Ex Ew Logic.eq_refl)).
+    assert (Hnd : NoDupMembers ((n.(n_in) ++ n.(n_vars) ++ n.(n_out))
+                                ++ anon_in_eqs n.(n_eqs)))
+      by (rewrite <- !app_assoc; exact (n_nodup n)).
+    exact (NoDupMembers_app_InMembers w _ _ Hnd
+             (proj2 (fst_InMembers _ _) Hx)
+             (proj2 (fst_InMembers _ _) (in_map _ _ _ Hp))).
+  Qed.
 
   Theorem generate_lnode_sig_scoped_wc :
     forall (G : secglobal) (P : global) (AN : list ident) (n : node)
@@ -959,13 +754,19 @@ Import SECMONADNotations.
                 Forall (src_exp (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) AN)
                   (snd eq)) n.(n_eqs) ->
       (forall x b, Env.find x env = Some b -> ~ In b (minted st0 st1)) ->
+      (forall clk_id rst_id,
+          get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
+          ~ In clk_id (List.map fst (anon_in_eqs n.(n_eqs)))
+          /\ ~ In rst_id (List.map fst (anon_in_eqs n.(n_eqs)))) ->
       generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
       signature_scoped sg.
   Proof.
-    intros G P AN n env aux sg st0 st1 Hinj Hsgs Hwl Hwcg Hwcn Hsrc Hsep Hsig.
+    intros G P AN n env aux sg st0 st1 Hinj Hsgs Hwl Hwcg Hwcn Hsrc Hsep Hauxna
+      Hsig.
     destruct (lnode_sig_inv env G n aux sg st0 st1 Hsig)
       as (ci & ri & ct & rt & inp & out & locals & cns
           & Haux & Hct & Hrt & Hinp & Hout & Hloc & Hcns & ?); subst sg.
+    destruct (Hauxna ci ri Haux) as (Hnca & Hnra).
     assert (inp = CALLS.sec_of env (List.map fst n.(n_in))) as Hi
         by (eapply get_mappings_from_node_sec_of; exact Hinp).
     assert (out = CALLS.sec_of env (List.map fst n.(n_out))) as Ho
@@ -975,6 +776,7 @@ Import SECMONADNotations.
     set (decl := CALLS.sec_of env
                    (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
                  ++ [ct; rt]).
+    set (NI := anon_images env n).
     assert (Hsplit : decl = (inp ++ locals ++ out) ++ [ct; rt])
         by (unfold decl; rewrite Hi, Hl, Ho, !map_app, !sec_of_app;
             reflexivity).
@@ -986,6 +788,20 @@ Import SECMONADNotations.
         destruct Hd as [Hd|[]]; subst b. exact (Hsep x d Hx).
       - destruct Hd as [Hd|[Hd|[]]]; subst d;
           [exact (Hsep ci ct Hct)|exact (Hsep ri rt Hrt)]. }
+    (** the anonymous streams' names: distinct, not declared, not the two
+        levels, not minted *)
+    assert (HNInd : NoDup NI) by exact (anon_images_NoDup env n Hinj).
+    assert (HNIdecl : forall d, In d NI -> ~ In d decl).
+    { intros d Hd Hdd. unfold decl in Hdd. apply in_app_or in Hdd as [Hdd|Hdd].
+      - exact (anon_images_not_declared env n d Hinj Hd Hdd).
+      - destruct Hdd as [<-|[<-|[]]].
+        + exact (anon_images_apart env n ci _ Hinj Hct Hnca Hd).
+        + exact (anon_images_apart env n ri _ Hinj Hrt Hnra Hd). }
+    assert (HNImin : forall d, In d NI -> ~ In d (minted st0 st1)).
+    { intros d Hd Hm. unfold NI, anon_images in Hd.
+      apply in_flat_map in Hd as ((w, a) & _ & Hb). cbn [fst] in Hb.
+      destruct (Env.find w env) as [b|] eqn:Ew; [|destruct Hb].
+      destruct Hb as [Hb|[]]. subst b. exact (Hsep w d Ew Hm). }
     assert (Hbd : In ct decl)
       by (unfold decl; apply in_or_app; right; now left).
     assert (Hrd : In rt decl)
@@ -1020,13 +836,19 @@ Import SECMONADNotations.
       intros y Hy.
       destruct (clock_vars_wc vars (snd tc) (Hwenv _ Hv) y Hy) as (cky & Hyv).
       apply in_map_iff. exists (y, cky). split; [reflexivity|exact Hyv]. }
-    assert (Hclk : clk_scoped_wc env ct P vars AN (lnode_clock_env n) decl)
-      by exact (clk_scoped_wc_holds env ct (lnode_clock_env n) vars AN decl
-                  Hbd Hrg Hcenv P Hwcg).
-    (** item 7: every target is a defined name or a minted one *)
-    destruct (generate_leqns_constraints_shape G env ct rt
-                (lnode_clock_env n) n.(n_eqs) cns st0 st1 (minted st0 st1)
-                (incl_refl _) Hsep (wl_node_arity P n Hwl) Hcns)
+    (** item 7: every target is a defined name, an anonymous stream's, or a
+        minted one *)
+    destruct (generate_leqns_constraints_shape NI G env ct rt
+                (lnode_clock_env n) n.(n_eqs) cns st0 st1 (NI ++ minted st0 st1)
+                (conj (incl_appr _ (incl_refl _)) (incl_appl _ (incl_refl _)))
+                (proj2 (Forall_forall _ _) (fun eq H => eqs_named_in env n eq H))
+                (fun x b Hx Hf Hin =>
+                   match in_app_or _ _ _ Hin with
+                   | or_introl H =>
+                       defined_not_in_anon_images env n x b Hinj Hx Hf H
+                   | or_intror H => Hsep x b Hf H
+                   end)
+                (wl_node_arity P n Hwl) Hcns)
       as (ms & Hm & Hms).
     assert (Hdefd : incl (CALLS.sec_of env (vars_defined n.(n_eqs))) decl).
     { unfold decl. eapply incl_tran; [|apply incl_appl, incl_refl].
@@ -1037,22 +859,21 @@ Import SECMONADNotations.
       apply in_app_or in Hy' as [Hy'|Hy'];
         [apply in_or_app; right; apply in_or_app; now left
         |apply in_or_app; right; apply in_or_app; now right]. }
-    assert (Htb : incl (tgt_names cns) (decl ++ minted st0 st1)).
+    assert (Htb : incl (tgt_names cns) (decl ++ NI ++ minted st0 st1)).
     { eapply incl_tran; [eapply tgt_names_of_targets_of; exact Hm|].
       apply incl_app;
         [eapply incl_tran; [exact Hdefd|apply incl_appl, incl_refl]
         |eapply incl_tran; [exact Hms|apply incl_appr, incl_refl]]. }
     (** the scoping, at the scope that carries the dichotomy *)
     set (S := decl ++ tgt_names cns).
-    assert (HclkS : clk_scoped_wc env ct P vars AN (lnode_clock_env n) S).
-    { intros es ck ckty Hw Hn Hsr Hck.
-      eapply st_scoped_weaken;
-        [unfold S; apply incl_appl, incl_refl|exact (Hclk es ck ckty Hw Hn Hsr Hck)]. }
+    assert (HclkS : clk_scoped_wc G env ct rt P vars (lnode_clock_env n) S).
+    { apply (clk_scoped_wc_holds G env ct rt (lnode_clock_env n) P vars decl S
+               Hbd Hrg Hwenv Hcenv (incl_appl _ (incl_refl _)) Hwcg). }
     assert (Hcsc : constraints_scoped S cns).
     { eapply generate_leqns_constraints_scoped_wc;
         [exact Hsgs|exact HclkS| |
          eapply exps_scoped_wc_of_decl;
-           [exact Hbd|exact Hrd|exact Hrg|exact Hclk|exact Hsgs
+           [exact Hbd|exact Hrd|exact Hrg|exact Hwcg|exact Hwenv|exact Hsgs
            |unfold S; apply incl_appl, incl_refl]
         |exact Hweqs|exact Hsrc
         |eapply incl_tran; [exact Hdefd|unfold S; apply incl_appl, incl_refl]
@@ -1087,10 +908,17 @@ Import SECMONADNotations.
         apply NoDupMembers_app_l in Hnd.
         apply NoDupMembers_app_l in Hnd.
         apply NoDupMembers_app_r in Hnd. exact Hnd.
-      + apply minted_NoDup.
-      + apply Forall_forall. intros y Hy Hin. apply (Hdm y); [|exact Hin].
-        rewrite Hsplit. apply in_or_app. left.
-        apply in_or_app. right. apply in_or_app. left. exact Hy.
+      + apply NoDup_app'.
+        * exact HNInd.
+        * apply minted_NoDup.
+        * apply Forall_forall. intros y Hy Hin. exact (HNImin y Hy Hin).
+      + apply Forall_forall. intros y Hy Hin.
+        apply in_app_or in Hin as [Hin|Hin].
+        * apply (HNIdecl y Hin). rewrite Hsplit. apply in_or_app. left.
+          apply in_or_app. right. apply in_or_app. left. exact Hy.
+        * apply (Hdm y); [|exact Hin].
+          rewrite Hsplit. apply in_or_app. left.
+          apply in_or_app. right. apply in_or_app. left. exact Hy.
     - (** scoped, after moving [decl ++ tgt_names cns] into place *)
       eapply constraints_scoped_weaken; [|exact Hcol].
       intros y Hy. unfold S in Hy. apply in_app_or in Hy as [Hy|Hy].
@@ -1113,7 +941,7 @@ Import SECMONADNotations.
                 apply in_or_app; now left].
           -- apply in_or_app. left. apply in_or_app. right.
              apply in_or_app. now right.
-        * apply in_or_app. right. apply in_or_app. now right.
+        * apply in_or_app. right. apply in_or_app. right. exact Hy.
     - (** a target, or absent *)
       intros d Hd. apply in_app_or in Hd as [Hd|Hd].
       + (** a local: defined by some equation, so item 7 gives it a
@@ -1127,7 +955,12 @@ Import SECMONADNotations.
         apply in_flat_map. exists x. split; [|exact Hdx].
         eapply Permutation_in; [apply Permutation_sym; exact (n_defd n)|].
         rewrite map_app. apply in_or_app. now left.
-      + (** a minted name: a target if it occurs at all *)
+      + (** an anonymous stream's name or a minted one: a target if it occurs
+            at all, because the same scoping says an occurring name is
+            declared or a target, and neither kind is declared *)
+        assert (Hnd : ~ In d decl).
+        { apply in_app_or in Hd as [Hd|Hd];
+            [exact (HNIdecl d Hd)|intro Hdd; exact (Hdm d Hdd Hd)]. }
         destruct (In_dec ident_eq_dec d (tgt_names (collapse cns)))
           as [Ht|Ht].
         * left. exact (In_tgt_names_target (collapse cns) d Hlen1 Ht).
@@ -1135,7 +968,7 @@ Import SECMONADNotations.
           assert (In d S) as Hin
               by (eapply constraints_scoped_In; [exact Hcol|exact Hc|exact Hx]).
           unfold S in Hin. apply in_app_or in Hin as [Hin|Hin].
-          -- exact (Hdm d Hin Hd).
+          -- exact (Hnd Hin).
           -- apply Ht. apply target_In_tgt_names. apply collapse_rhs_in.
              exact (In_tgt_names_target cns d Hlen1c Hin).
   Qed.
@@ -1171,7 +1004,9 @@ Import SECMONADNotations.
       (forall clk_id rst_id,
           get_node_aux n.(n_name) aux = Some (clk_id, rst_id) ->
           ~ In clk_id (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
-          /\ ~ In rst_id (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))) ->
+          /\ ~ In rst_id (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
+          /\ ~ In clk_id (List.map fst (anon_in_eqs n.(n_eqs)))
+          /\ ~ In rst_id (List.map fst (anon_in_eqs n.(n_eqs)))) ->
       generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
       CALLS.all_sources_have sg.(s_clk) sg.(s_constraints)
       /\ CALLS.all_sources_have sg.(s_reset) sg.(s_constraints).
@@ -1180,7 +1015,7 @@ Import SECMONADNotations.
     destruct (lnode_sig_inv env G n aux sg st0 st1 Hsig)
       as (ci & ri & ct & rt & inp & out & locals & cns
           & Haux & Hct & Hrt & Hinp & Hout & Hloc & Hcns & ?); subst sg.
-    destruct (Haux0 ci ri Haux) as (Hnc & Hnr).
+    destruct (Haux0 ci ri Haux) as (Hnc & Hnr & Hnca & Hnra).
     destruct (Hrf ci ri ct rt Haux Hct Hrt) as (Hrg & Hnsf).
     assert (locals = CALLS.sec_of env (List.map fst n.(n_vars))) as Hl
         by (eapply get_mappings_from_node_sec_of; exact Hloc).
@@ -1206,10 +1041,16 @@ Import SECMONADNotations.
         [apply in_or_app; right; apply in_or_app; now left
         |apply in_or_app; right; apply in_or_app; now right]. }
     assert (Hcr : constraints_rooted ct rt cns).
-    { eapply (generate_leqns_constraints_rooted_win G env ct rt decl
-                (decl ++ minted st0 st1) Hdk Hclk Hsgs);
+    { eapply (generate_leqns_constraints_rooted_win (anon_images env n)
+                G env ct rt decl (decl ++ minted st0 st1) Hdk Hclk Hsgs);
         [apply incl_appl, incl_refl|exact Hnsf|exact Hnd|exact Hroot
-        |apply incl_appr, incl_refl
+        |split; [apply incl_appr, incl_refl
+                |intros d Hd; apply in_or_app; left;
+                 unfold anon_images in Hd; apply in_flat_map in Hd
+                   as ((w, a) & _ & Hb); cbn [fst] in Hb;
+                 destruct (Env.find w env) as [b|] eqn:Ew; [|destruct Hb];
+                 destruct Hb as [Hb|[]]; subst b; exact (Hrg w d Ew)]
+        |exact (proj2 (Forall_forall _ _) (fun eq H => eqs_named_in env n eq H))
         |eapply incl_tran; [exact Hdefd|apply incl_appl, incl_refl]
         |exact Hcns]. }
     (** the levels are neither declared names nor minted ones *)
@@ -1222,9 +1063,18 @@ Import SECMONADNotations.
       - eapply (sec_of_apart env ri rt); [exact Hinj|exact Hrt| |exact Hy].
         intros Hin. apply Hnr. rewrite !map_app.
         apply in_or_app. right. apply in_or_app. now left. }
-    destruct (generate_leqns_constraints_shape G env ct rt
-                (lnode_clock_env n) n.(n_eqs) cns st0 st1 (minted st0 st1)
-                (incl_refl _) Hsep (wl_node_arity P n Hwl) Hcns)
+    set (NI := anon_images env n).
+    destruct (generate_leqns_constraints_shape NI G env ct rt
+                (lnode_clock_env n) n.(n_eqs) cns st0 st1 (NI ++ minted st0 st1)
+                (conj (incl_appr _ (incl_refl _)) (incl_appl _ (incl_refl _)))
+                (proj2 (Forall_forall _ _) (fun eq H => eqs_named_in env n eq H))
+                (fun x b Hx Hf Hin =>
+                   match in_app_or _ _ _ Hin with
+                   | or_introl H =>
+                       defined_not_in_anon_images env n x b Hinj Hx Hf H
+                   | or_intror H => Hsep x b Hf H
+                   end)
+                (wl_node_arity P n Hwl) Hcns)
       as (ms & Hm & Hms).
     assert (Htg : forall y, In y (tgt_names cns) -> y <> ct /\ y <> rt).
     { intros y Hy.
@@ -1241,17 +1091,24 @@ Import SECMONADNotations.
         + eapply (sec_of_apart env ri rt); [exact Hinj|exact Hrt| |exact Hy'].
           intros Hin. apply Hnr. rewrite map_app in Hin. rewrite !map_app.
           apply in_or_app. right. exact Hin.
-      - apply Hms in Hy. split; intros ->;
-          [exact (Hsep ci _ Hct Hy)|exact (Hsep ri _ Hrt Hy)]. }
+      - apply Hms in Hy. apply in_app_or in Hy as [Hy|Hy].
+        + split; intros ->;
+            [exact (anon_images_apart env n ci _ Hinj Hct Hnca Hy)
+            |exact (anon_images_apart env n ri _ Hinj Hrt Hnra Hy)].
+        + split; intros ->;
+            [exact (Hsep ci _ Hct Hy)|exact (Hsep ri _ Hrt Hy)]. }
     assert (Hrs : constraints_rooted ct rt
-                    (simplify (collapse cns) (locals ++ minted st0 st1))).
+                    (simplify (collapse cns) (locals ++ NI ++ minted st0 st1))).
     { apply simplify_rooted with (keep := [ct; rt]).
       - now left.
       - right. now left.
-      - intros d Hd [Hdc|[Hdr|[]]]; subst d; apply in_app_or in Hd as [Hd|Hd].
+      - intros d Hd [Hdc|[Hdr|[]]]; subst d; apply in_app_or in Hd as [Hd|Hd];
+          try (apply in_app_or in Hd as [Hd|Hd]).
         + rewrite Hl in Hd. exact (proj1 (Hav _ Hd) Logic.eq_refl).
+        + exact (anon_images_apart env n ci _ Hinj Hct Hnca Hd).
         + exact (Hsep ci _ Hct Hd).
         + rewrite Hl in Hd. exact (proj2 (Hav _ Hd) Logic.eq_refl).
+        + exact (anon_images_apart env n ri _ Hinj Hrt Hnra Hd).
         + exact (Hsep ri _ Hrt Hd).
       - intros c Hc y Hy [Hyc|[Hyr|[]]].
         + assert (In (snd c) (List.map snd (collapse cns)))
@@ -1486,12 +1343,22 @@ Import SECMONADNotations.
       - intros Hin. exact (lnode_var_not_sec n _ st0 Hsub Hin Logic.eq_refl).
       - intros Hin. exact (lnode_var_not_sec n _ (Pos.succ st0) Hsub Hin
                              Logic.eq_refl). }
+    assert (Hauxna : forall ci ri,
+               get_node_aux n.(n_name) aux = Some (ci, ri) ->
+               ~ In ci (List.map fst (anon_in_eqs n.(n_eqs)))
+               /\ ~ In ri (List.map fst (anon_in_eqs n.(n_eqs)))).
+    { intros ci ri Ha. destruct (Hlev ci ri Ha) as (-> & ->).
+      rewrite Hclk, Hrst. split.
+      - intros Hin. exact (anon_stream_not_sec n _ st0 Hsub
+                             (proj2 (fst_InMembers _ _) Hin) Logic.eq_refl).
+      - intros Hin. exact (anon_stream_not_sec n _ (Pos.succ st0) Hsub
+                             (proj2 (fst_InMembers _ _) Hin) Logic.eq_refl). }
     assert (Hgd : signature_good sg)
       by exact (generate_lnode_sig_good acc P n env aux sg st st1 Hinj Hwl
                   Hsep Hsig).
     assert (Hscd : signature_scoped sg)
       by exact (generate_lnode_sig_scoped_wc acc P AN n env aux sg st st1
-                  Hinj Hsc Hwl Hwcg Hwcn Hsrc Hsep Hsig).
+                  Hinj Hsc Hwl Hwcg Hwcn Hsrc Hsep Hauxna Hsig).
     assert (Hnodup : NoDup (signature_scope sg)).
     { eapply generate_lnode_sig_scope_nodup;
         [exact Hinj| |exact Hsig].
@@ -1504,7 +1371,8 @@ Import SECMONADNotations.
         destruct (Hlev ci ri Ha) as (-> & ->).
         exact (Hrf ct rt Hct Hrt0).
       - intros ci ri Ha. destruct (Haux0 ci ri Ha) as (_ & H1 & H2).
-        split; assumption. }
+        destruct (Hauxna ci ri Ha) as (H3 & H4).
+        repeat split; assumption. }
     destruct (lnode_sig_inv env acc n aux sg st st1 Hsig)
       as (ci & ri & ct & rt & inp & out & locals & cns
           & Haux' & Hct & Hrt' & Hinp & Hout & Hloc' & Hcns & Hsg).
@@ -1581,7 +1449,8 @@ Import SECMONADNotations.
       apply name_bind_inv in Hloc as (c1 & s1 & _ & Hl).
       apply name_bind_inv in Hl as (c2 & s2 & _ & Hl).
       apply name_bind_inv in Hl as (c3 & s3 & _ & Hl).
-      apply name_bind_inv in Hl as (c4 & s4 & _ & Hret0).
+      apply name_bind_inv in Hl as (c4 & s4 & _ & Hl).
+      apply name_bind_inv in Hl as (c5 & s5 & _ & Hret0).
       unfold NMret in Hret0. inversion Hret0. reflexivity. }
     exists le0, r0, stl. split; [exact Hloc|].
     split.
@@ -2435,10 +2304,9 @@ Import SECMONADNotations.
     { intros x b Hx Hf. rewrite Hvm in Hx. unfold scope.
       apply in_or_app. left. exact (sec_of_In_intro env _ x b Hx Hf). }
     destruct (node_wc_clock_facts P n HwcnS) as (Hwenv & Hcenv).
-    assert (Hclk : clk_scoped_wc env ct P vars (anon_names n)
-                     (lnode_clock_env n) scope)
-      by exact (clk_scoped_wc_holds env ct (lnode_clock_env n) vars
-                  (anon_names n) scope Hbs Hrg Hcenv P HwcgS).
+    assert (Hclk : clk_scoped_wc accT env ct rt P vars (lnode_clock_env n) scope)
+      by exact (clk_scoped_wc_holds accT env ct rt (lnode_clock_env n) P vars
+                  scope scope Hbs Hrg Hwenv Hcenv (incl_refl _) HwcgS).
     assert (Hfi : n_in N = n.(n_in)) by reflexivity.
     assert (Hfo : n_out N = n.(n_out)) by reflexivity.
     assert (Hfv : n_vars N
@@ -2569,13 +2437,6 @@ Import SECMONADNotations.
     }
     pose proof HwcnS as HwcnS'.
     destruct HwcnS' as (_ & _ & _ & Hweqs).
-    assert (Hclk' : forall es ck ckty,
-              Forall (wc_exp P vars) es ->
-              Forall (nested_src vars (anon_names n)) es ->
-              clk_src vars es ck ->
-              assign_clk_type env ct ck = Some ckty -> st_scoped scope ckty)
-      by (intros es ck ckty Hw1 Hn1 Hs1 Hc1;
-          exact (Hclk es ck ckty Hw1 Hn1 (or_introl Hs1) Hc1)).
     assert (Hnd_n : NoDupMembers (n.(n_in) ++ n.(n_vars) ++ n.(n_out))).
     { pose proof (n_nodup n) as Hnd. rewrite !app_assoc in Hnd.
       apply NoDupMembers_app_l in Hnd. rewrite <- !app_assoc in Hnd.
@@ -2657,7 +2518,7 @@ Import SECMONADNotations.
       assert (Hsc0 : forall z, In z s0 -> In z scope).
       { intros z Hz.
         destruct (lexp_scoped_tgt_all_src accT env ct rt P vars (anon_names n)
-                    scope Hbs Hrs Hrg Hclk' HscT0 e0 (conj Hw0 Hs0)
+                    scope Hbs Hrs Hrg HwcgS Hwenv HscT0 e0 (conj Hw0 Hs0)
                     [(s0, [])] stS0 stS0 (Hp0 stS0)) as (Hf0 & _).
         inversion Hf0 as [|? ? Hz0 ?]; subst. cbn [fst] in Hz0.
         pose proof (Hz0 z Hz) as Hzs. rewrite app_nil_r in Hzs.
@@ -2665,7 +2526,7 @@ Import SECMONADNotations.
       assert (Hsc1 : forall z, In z s1 -> In z scope).
       { intros z Hz.
         destruct (lexp_scoped_tgt_all_src accT env ct rt P vars (anon_names n)
-                    scope Hbs Hrs Hrg Hclk' HscT0 e (conj Hw1 Hs1)
+                    scope Hbs Hrs Hrg HwcgS Hwenv HscT0 e (conj Hw1 Hs1)
                     [(s1, [])] stS0 stS0 (Hp1 stS0)) as (Hf1 & _).
         inversion Hf1 as [|? ? Hz1 ?]; subst. cbn [fst] in Hz1.
         pose proof (Hz1 z Hz) as Hzs. rewrite app_nil_r in Hzs.
@@ -2676,9 +2537,15 @@ Import SECMONADNotations.
       - intros z Hz. apply in_merge_inv in Hz as [Hz|Hz].
         + apply in_merge_inv in Hz as [Hz|Hz].
           * destruct Hz as [<-|[]]. exact Hrs.
-          * exact (Hclk [] ck ckty (Forall_nil _) (Forall_nil _)
-                     (or_intror (ex_intro _ x (conj Hxin Hfcn))) Hckty z Hz).
+          * exact (Hclk [] ck ckty [] stS0 stS0 (Forall_nil _)
+                     (or_intror (ex_intro _ x (conj Hxin Hfcn)))
+                     (fun z0 Hz0 => match Hz0 with end)
+                     (assign_lexps_nil_ok accT env ct rt stS0) Hckty z Hz).
         + apply in_merge_inv in Hz as [Hz|Hz]; [exact (Hsc0 z Hz)|exact (Hsc1 z Hz)]. }
+    assert (HNI0o : anon_images env n = []).
+    { pose proof (anon_names_unnested Q n Hunt) as H00.
+      unfold anon_names in H00. apply map_eq_nil in H00.
+      unfold anon_images. rewrite H00. reflexivity. }
     (** the raw run, against the target accumulator, is scoped *)
     assert (Htgt : forall ce ct1,
               generate_leqns_constraints accT env ct rt (lnode_clock_env n)
@@ -2687,13 +2554,27 @@ Import SECMONADNotations.
       destruct (state_pure_generate_leqns accT env ct rt (lnode_clock_env n) Q
                   n.(n_eqs) Hunt stS0 stS0 ce ct1 Hg) as (Hs_eq & _).
       subst ct1.
-      destruct (generate_leqns_constraints_shape accT env ct rt
-                  (lnode_clock_env n) n.(n_eqs) ce stS0 stS0 (minted stS0 stS0)
-                  (incl_refl _) (Hsep stS0 stS0 HleS0) (wl_node_arity P n HwlS) Hg)
+      destruct (generate_leqns_constraints_shape (anon_images env n) accT env ct
+                  rt (lnode_clock_env n) n.(n_eqs) ce stS0 stS0
+                  (anon_images env n ++ minted stS0 stS0)
+                  (conj (incl_appr _ (incl_refl _)) (incl_appl _ (incl_refl _)))
+                  (proj2 (Forall_forall _ _) (fun eq H => eqs_named_in env n eq H))
+                  (fun x b Hx Hf Hin =>
+                     match in_app_or _ _ _ Hin with
+                     | or_introl H =>
+                         defined_not_in_anon_images env n x b Hinj Hx Hf H
+                     | or_intror H => Hsep stS0 stS0 HleS0 x b Hf H
+                     end)
+                  (wl_node_arity P n HwlS) Hg)
         as (ms & Hm & Hms).
+      assert (HNI0 : anon_images env n = []).
+      { pose proof (anon_names_unnested Q n Hunt) as H00.
+        unfold anon_names in H00. apply map_eq_nil in H00.
+        unfold anon_images. rewrite H00. reflexivity. }
       assert (Hms0 : ms = []).
       { destruct ms as [|m ms']; [reflexivity|exfalso].
         pose proof (Hms m (or_introl Logic.eq_refl)) as Hmin.
+        rewrite HNI0 in Hmin. cbn [app] in Hmin.
         apply minted_spec in Hmin as (k & Hk1 & Hk2 & _).
         exact (Pos.lt_irrefl _ (Pos.le_lt_trans _ _ _ Hk1 Hk2)). }
       subst ms.
@@ -2702,7 +2583,7 @@ Import SECMONADNotations.
                 HscT0 Hclk Hrs);
         [|exact Hweqs|exact HsrcS|exact Hdefd| |exact Hg].
       - eapply exps_scoped_wc_of_decl;
-          [exact Hbs|exact Hrs|exact Hrg|exact Hclk|exact HscT0|apply incl_refl].
+          [exact Hbs|exact Hrs|exact Hrg|exact HwcgS|exact Hwenv|exact HscT0|apply incl_refl].
       - eapply incl_tran; [eapply tgt_names_of_targets_of; exact Hm|].
         apply incl_app; [exact Hdefd|intros z []]. }
     (** and what the source run eliminates is not on the interface *)
@@ -2710,8 +2591,9 @@ Import SECMONADNotations.
               get_mappings_from_node n.(n_vars) env = Some locals0 ->
               generate_leqns_constraints accS env ct rt (lnode_clock_env n)
                 n.(n_eqs) stS0 = OK (cns0, ct1) ->
-              forall y, In y (locals0 ++ minted stS0 ct1) -> ~ In y scope0).
+              forall y, In y (locals0 ++ anon_images env n ++ minted stS0 ct1) -> ~ In y scope0).
     { intros locals0 cns0 ct1 Hl0 Hg0 y Hy Hy0.
+      rewrite HNI0o in Hy. cbn [app] in Hy.
       apply in_app_or in Hy as [Hy|Hy].
       - unfold scope0 in Hy0. apply in_app_or in Hy0 as [Hy0|Hy0].
         + exact (locals_not_interface env Hinj n locals0 Hnd_n Hl0 y Hy Hy0).
@@ -2789,6 +2671,7 @@ Import SECMONADNotations.
     Variable vars    : list (ident * clock).
     Variable AN      : list ident.
     Variable decl    : list ident.
+    Variable NI      : list ident.
     Variable scope   : list ident.
     Variable stLo stF : sec_state.
 
@@ -2797,29 +2680,36 @@ Import SECMONADNotations.
     Hypothesis Henv :
       forall x b, In x (List.map fst vars) -> Env.find x env = Some b ->
                   In b decl.
-    Hypothesis Hclk :
-      forall (P : global) es ck ckty,
-        wc_global P ->
-        Forall (wc_exp P vars) es -> Forall (nested_src vars AN) es ->
-        clk_src vars es ck ->
-        assign_clk_type env base_ty ck = Some ckty -> st_scoped decl ckty.
+    Hypothesis Hwenv : wc_env vars.
+    Hypothesis HNI :
+      forall w b, In w AN -> Env.find w env = Some b -> In b NI.
     Hypothesis Hsgs : secglobal_scoped G.
-    Hypothesis Hincl : incl decl scope.
+    Hypothesis Hincl : incl (decl ++ NI) scope.
     Hypothesis Hwin :
       forall s s', (stLo <= s)%positive -> (s' <= stF)%positive ->
                    incl (minted s s') scope.
 
+    (** a source expression names only anonymous streams and declared
+        variables, whose security names are in [decl ++ NI] *)
+    Lemma named_in_src :
+      forall e, src_exp vars AN e -> named_in env (decl ++ NI) e.
+    Proof.
+      intros e Hsx f es r anns w b Hsub Hw Hb'.
+      destruct (Hsx _ Hsub) as (_ & Hn). cbn in Hn.
+      destruct (Hn w Hw) as [Hw1|Hw1]; apply in_or_app.
+      - right. exact (HNI w b Hw1 Hb').
+      - left. exact (Henv w b Hw1 Hb').
+    Qed.
+
     Lemma tgt_in_scope_g :
-      forall (cs : list SymTypes.constraint) s s',
-        (stLo <= s)%positive -> (s' <= stF)%positive ->
-        Forall (fun c => incl (snd c) (minted s s')) cs ->
+      forall (cs : list SymTypes.constraint),
+        Forall (fun c => incl (snd c) scope) cs ->
         incl (decl ++ tgt_names cs) scope.
     Proof.
-      intros cs s s' Hlo Hhi Hc y Hy. apply in_app_or in Hy as [Hy|Hy];
-        [exact (Hincl y Hy)|].
+      intros cs Hc y Hy. apply in_app_or in Hy as [Hy|Hy];
+        [apply Hincl; apply in_or_app; now left|].
       unfold tgt_names in Hy. apply in_flat_map in Hy as (c & Hc1 & Hyc).
-      rewrite Forall_forall in Hc. apply (Hwin s s' Hlo Hhi).
-      exact (Hc c Hc1 y Hyc).
+      rewrite Forall_forall in Hc. exact (Hc c Hc1 y Hyc).
     Qed.
 
     Lemma source_types_scoped_upto_g_holds :
@@ -2827,11 +2717,13 @@ Import SECMONADNotations.
     Proof.
       intros P e ts s s' Hg Hwc Hsx Hlo H Hhi.
       destruct (lexp_scoped_tgt_all_src G env base_ty rst_ty P vars AN decl Hb
-                  Hr Henv (fun es0 ck0 ckty0 Hw0 Hn0 Hs0 Hc0 => Hclk P es0 ck0 ckty0 Hg Hw0 Hn0 Hs0 Hc0) Hsgs e (conj Hwc Hsx) ts s s' H)
+                  Hr Henv Hg Hwenv Hsgs e (conj Hwc Hsx) ts s s' H)
         as (Hf & _).
-      pose proof (lexp_carried_minted_all G env base_ty rst_ty e ts s s'
-                    (minted s s') (fun y Hy => Hy) H) as Hm.
-      pose proof (tgt_in_scope_g (carried ts) s s' Hlo Hhi Hm) as Hs.
+      pose proof (lexp_carried_minted_all (decl ++ NI) G env base_ty rst_ty e
+                    ts s s' scope
+                    (conj (Hwin s s' Hlo Hhi) Hincl) (named_in_src e Hsx) H)
+        as Hm.
+      pose proof (tgt_in_scope_g (carried ts) Hm) as Hs.
       eapply Forall_impl; [|exact Hf]. intros t Ht.
       eapply st_scoped_weaken; [exact Hs|exact Ht].
     Qed.
@@ -2851,15 +2743,21 @@ Import SECMONADNotations.
       assert (Hall : Forall (lexp_scoped_tgt G env base_ty rst_ty decl) es).
       { rewrite Forall_forall in Hwc, Hsx |- *. intros e He.
         exact (lexp_scoped_tgt_all_src G env base_ty rst_ty P vars AN decl Hb
-                 Hr Henv (fun es0 ck0 ckty0 Hw0 Hn0 Hs0 Hc0 => Hclk P es0 ck0 ckty0 Hg Hw0 Hn0 Hs0 Hc0) Hsgs e (conj (Hwc e He) (Hsx e He))). }
+                 Hr Henv Hg Hwenv Hsgs e (conj (Hwc e He) (Hsx e He))). }
       destruct (lexps_scoped_tgt_of G env base_ty rst_ty decl es Hall ts s s'
                   H) as (Hf & Hc).
-      assert (Hmin : Forall (lexp_carried_minted G env base_ty rst_ty) es)
+      assert (Hmin : Forall (lexp_carried_minted (decl ++ NI) G env base_ty
+                               rst_ty) es)
         by (apply Forall_forall; intros e0 _;
-            apply (lexp_carried_minted_all G env base_ty rst_ty)).
-      pose proof (lexps_carried_minted_of G env base_ty rst_ty es Hmin ts s s'
-                    (minted s s') (fun y Hy => Hy) H) as Hm.
-      pose proof (tgt_in_scope_g (carried ts) s s' Hlo Hhi Hm) as Hs.
+            apply (lexp_carried_minted_all (decl ++ NI) G env base_ty rst_ty)).
+      pose proof (lexps_carried_minted_of (decl ++ NI) G env base_ty rst_ty es
+                    Hmin ts s s' scope
+                    (conj (Hwin s s' Hlo Hhi) Hincl)
+                    (proj2 (Forall_forall _ _)
+                       (fun e0 He0 => named_in_src e0 (proj1 (Forall_forall _ _)
+                                                          Hsx e0 He0))) H)
+        as Hm.
+      pose proof (tgt_in_scope_g (carried ts) Hm) as Hs.
       split.
       - eapply Forall_impl; [|exact Hf]. intros t Ht.
         eapply st_scoped_weaken; [exact Hs|exact Ht].
@@ -2882,6 +2780,433 @@ Import SECMONADNotations.
     Qed.
 
   End SourceScopedG.
+
+  Section AnonDeclared.
+  Import UNN.Fresh.
+
+Lemma st_follows_ids : forall (st st' : fresh_st (type * clock)%type),
+    st_follows st st' -> incl (st_ids st) (st_ids st').
+Proof.
+  intros st st' H w Hw. unfold st_ids in *.
+  apply in_map_iff in Hw as (p & <- & Hp). apply in_map_iff.
+  exists p. split; [reflexivity|]. exact (st_follows_incl _ _ H p Hp).
+Qed.
+
+Ltac ib :=
+  simpl in *;
+  match goal with
+  | H : @bind _ _ _ _ _ _ = (_, _) |- _ =>
+      apply bind_spec in H; destruct H as [? [? [? ?]]]; simpl in *
+  | H : @bind2 _ _ _ _ _ _ _ = (_, _) |- _ =>
+      apply bind2_spec in H; destruct H as [? [? [? [? ?]]]]; simpl in *
+  | H : @ret _ _ _ _ = (_, _) |- _ =>
+      rewrite ret_spec in H
+  | H : (_, _) = (_, _) |- _ =>
+      inversion H; subst; clear H
+  end.
+
+Lemma idents_for_anns'_named_ids :
+  forall anns ids (st st' : fresh_st (type * clock)%type),
+    idents_for_anns' anns st = (ids, st') ->
+    forall w, In (Some w) (map LSyn.stream_name anns) -> In w (map fst ids).
+Proof.
+  induction anns as [|[ty [ck nm]] tl IH]; intros ids st st' H w Hw.
+  - destruct Hw.
+  - destruct nm as [nm|]; simpl in H; repeat ib.
+    + destruct Hw as [Hw|Hw].
+      * inversion Hw; subst. left. reflexivity.
+      * right. match goal with Hi : idents_for_anns' tl _ = (_, _) |- _ =>
+          exact (IH _ _ _ Hi w Hw) end.
+    + destruct Hw as [Hw|Hw]; [discriminate Hw|].
+      right. match goal with Hi : idents_for_anns' tl _ = (_, _) |- _ =>
+          exact (IH _ _ _ Hi w Hw) end.
+Qed.
+
+Section MB.
+  Context {A A1 A2 : Type}.
+  Variable k : A -> Fresh (A1 * A2)%type (type * clock)%type.
+  Variable W : A -> ident -> Prop.
+
+  Lemma map_bind2_ids :
+    forall l st l1 l2 st',
+      map_bind2 k l st = (l1, l2, st') ->
+      Forall (fun a => forall a1 a2 s s', k a s = (a1, a2, s') ->
+                st_follows s s' /\ forall w, W a w -> In w (st_ids s')) l ->
+      forall a, In a l -> forall w, W a w -> In w (st_ids st').
+  Proof.
+    induction l as [|a0 l IH]; intros st l1 l2 st' H HF a Ha w Hw;
+      simpl in H; repeat ib.
+    - destruct Ha.
+    - inversion HF as [|? ? Hh Ht]; subst.
+      destruct Ha as [<-|Ha].
+      + destruct (Hh _ _ _ _ H) as (_ & Hid).
+        assert (Hf2 : Forall (fun a => forall a1 a2 s s',
+                          k a s = (a1, a2, s') -> st_follows s s') l).
+        { eapply Forall_impl; [|exact Ht].
+          intros a Hq a1 a2 s s' Hk. exact (proj1 (Hq a1 a2 s s' Hk)). }
+        pose proof (map_bind2_st_follows k l x2 x3 x1 st' H0 Hf2) as Hfl.
+        exact (st_follows_ids _ _ Hfl w (Hid w Hw)).
+      + exact (IH _ _ _ _ H0 Ht a Ha w Hw).
+  Qed.
+End MB.
+
+
+Lemma fresh_ins_In :
+  forall es w, In w (map fst (concat (map fresh_in es))) ->
+               exists e, In e es /\ In w (map fst (fresh_in e)).
+Proof.
+  induction es as [|e es IH]; intros w H; simpl in H.
+  - destruct H.
+  - rewrite map_app in H. apply in_app_or in H as [H|H].
+    + exists e. split; [now left|exact H].
+    + destruct (IH _ H) as (e' & He' & Hw). exists e'. split; [now right|exact Hw].
+Qed.
+
+Lemma mb_exps_follows :
+  forall G b es st l1 l2 (st' : fresh_st (type * clock)%type),
+    map_bind2 (unnest_exp G b) es st = (l1, l2, st') -> st_follows st st'.
+Proof.
+  intros G b es st l1 l2 st' H.
+  eapply map_bind2_st_follows; [exact H|].
+  apply Forall_forall. intros e _ a1 a2 s s' Hk.
+  exact (unnest_exp_st_follows G e b _ s s' Hk).
+Qed.
+
+Ltac sf := repeat (reflexivity || (etransitivity;
+  [ first [ eapply mb_exps_follows; eassumption
+          | eapply idents_for_anns_st_follows; eassumption
+          | eapply idents_for_anns'_st_follows; eassumption
+          | eapply unnest_noops_exps_st_follows; eassumption
+          | eapply unnest_reset_st_follows; eassumption
+          | eapply unnest_exp_st_follows; eassumption ] | ])).
+
+Lemma mb_exps_ids :
+  forall G b es,
+    Forall (fun e => forall bb res (st st' : fresh_st (type * clock)%type),
+              unnest_exp G bb e st = (res, st') ->
+              forall w, In w (map fst (fresh_in e)) -> In w (st_ids st')) es ->
+    forall st l1 l2 (st' : fresh_st (type * clock)%type),
+      map_bind2 (unnest_exp G b) es st = (l1, l2, st') ->
+      forall w, In w (map fst (concat (map fresh_in es))) ->
+                In w (st_ids st').
+Proof.
+  intros G b es IH st l1 l2 st' H w Hw.
+  destruct (fresh_ins_In es w Hw) as (e & He & Hwe).
+  refine (map_bind2_ids (unnest_exp G b) (fun e w => In w (map fst (fresh_in e)))
+            es st l1 l2 st' H _ e He w Hwe).
+  apply Forall_forall. intros e' He' a1 a2 s s' Hk. split.
+  - exact (unnest_exp_st_follows G e' b _ s s' Hk).
+  - intros w' Hw'.
+    exact (proj1 (Forall_forall _ _) IH e' He' b _ s s' Hk w' Hw').
+Qed.
+
+
+Lemma anon_streams_named :
+  forall anns w, In w (map fst (LSyn.anon_streams anns)) ->
+                 In (Some w) (map LSyn.stream_name anns).
+Proof.
+  induction anns as [|[ty [ck nm]] tl IH]; intros w H; simpl in H.
+  - destruct H.
+  - destruct nm as [nm|]; simpl in H.
+    + destruct H as [<-|H]; [now left|right; exact (IH _ H)].
+    + right. exact (IH _ H).
+Qed.
+
+Lemma unnest_reset_ids :
+  forall G r (st st' : fresh_st (type * clock)%type) res,
+    (forall bb res (st st' : fresh_st (type * clock)%type),
+        unnest_exp G bb r st = (res, st') ->
+        forall w, In w (map fst (fresh_in r)) -> In w (st_ids st')) ->
+    unnest_reset (unnest_exp G true) (Some r) st = (res, st') ->
+    forall w, In w (map fst (fresh_in r)) -> In w (st_ids st').
+Proof.
+  intros G r st st' res IH H w Hw.
+  destruct (unnest_exp G true r st) as [[es' eqs'] s1] eqn:Hk.
+  pose proof (unnest_reset_spec (unnest_exp G true) r es' eqs' st s1 Hk)
+    as [(v & ann & _ & Hr)|(ty & ck & o & x & s2 & _ & Hf & Hr)];
+    rewrite Hr in H; inversion H; subst.
+  - exact (IH true _ st st' Hk w Hw).
+  - refine (st_follows_ids _ _ _ w (IH true _ st s1 Hk w Hw)).
+    eapply fresh_ident_st_follows. exact Hf.
+Qed.
+
+Lemma unnest_exp_fresh_ids :
+  forall G e b res (st st' : fresh_st (type * clock)%type),
+    unnest_exp G b e st = (res, st') ->
+    forall w, In w (map fst (fresh_in e)) -> In w (st_ids st').
+Proof.
+  induction e using exp_ind2; intros bb res st st' Hun w Hw.
+  - simpl in Hw. destruct Hw.
+  - simpl in Hw. destruct Hw.
+  - (* unop *)
+    simpl in Hun; repeat ib. simpl in Hw.
+    match goal with Hr : unnest_exp _ _ _ _ = (_, _, _) |- _ => exact (IHe _ _ _ _ Hr w Hw) end.
+  - (* binop *)
+    simpl in Hun; repeat ib. simpl in Hw. rewrite map_app in Hw.
+    apply in_app_or in Hw as [Hw|Hw].
+    + exact (st_follows_ids _ _ (unnest_exp_st_follows G e2 false _ _ _ H0) w (IHe1 _ _ _ _ H w Hw)).
+    + exact (IHe2 _ _ _ _ H0 w Hw).
+  - (* fby *) simpl in Hun; repeat ib. simpl in Hw. rewrite map_app in Hw.
+    apply in_app_or in Hw as [Hw|Hw].
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G false e0s H _ _ _ _ H1 w Hw)). sf.
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G false es H0 _ _ _ _ H2 w Hw)). sf.
+  - (* arrow *) simpl in Hun; repeat ib. simpl in Hw. rewrite map_app in Hw.
+    apply in_app_or in Hw as [Hw|Hw].
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G false e0s H _ _ _ _ H1 w Hw)). sf.
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G false es H0 _ _ _ _ H2 w Hw)). sf.
+  - (* when *) destruct a. simpl in Hun; repeat ib. simpl in Hw.
+    match goal with Hm : map_bind2 _ _ _ = (_, _, _) |- _ =>
+      exact (mb_exps_ids G false es H _ _ _ _ Hm w Hw) end.
+  - (* merge *) destruct a. destruct bb; simpl in Hun; repeat ib; simpl in Hw;
+      repeat rewrite map_app in Hw; apply in_app_or in Hw as [Hw|Hw].
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G true ets H _ _ _ _ H1 w Hw)). sf.
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G true efs H0 _ _ _ _ H2 w Hw)). sf.
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G true ets H _ _ _ _ H1 w Hw)). sf.
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G true efs H0 _ _ _ _ H2 w Hw)). sf.
+  - (* ite *) destruct a. destruct bb; simpl in Hun; repeat ib; simpl in Hw;
+      repeat rewrite map_app in Hw; apply in_app_or in Hw as [Hw|Hw];
+      try (apply in_app_or in Hw as [Hw|Hw]).
+    + refine (st_follows_ids _ _ _ w (IHe _ _ _ _ H1 w Hw)). sf.
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G true ets H _ _ _ _ H2 w Hw)). sf.
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G true efs H0 _ _ _ _ H3 w Hw)). sf.
+    + refine (st_follows_ids _ _ _ w (IHe _ _ _ _ H1 w Hw)). sf.
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G true ets H _ _ _ _ H2 w Hw)). sf.
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G true efs H0 _ _ _ _ H3 w Hw)). sf.
+  - (* app *) simpl in Hun; repeat ib. simpl in Hw.
+    destruct ro as [r|]; repeat rewrite map_app in Hw.
+    + apply in_app_or in Hw as [Hw|Hw]; [|apply in_app_or in Hw as [Hw|Hw]].
+      * refine (st_follows_ids _ _ _ w (mb_exps_ids G false es H0 _ _ _ _ H1 w Hw)). sf.
+      * refine (st_follows_ids _ _ _ w (unnest_reset_ids G r _ _ _ H H3 w Hw)). sf.
+      * exact (idents_for_anns'_incl_ids _ _ _ _ H4 w
+                 (idents_for_anns'_named_ids _ _ _ _ H4 w (anon_streams_named _ _ Hw))).
+    + apply in_app_or in Hw as [Hw|Hw].
+      * refine (st_follows_ids _ _ _ w (mb_exps_ids G false es H0 _ _ _ _ H1 w Hw)). sf.
+      * exact (idents_for_anns'_incl_ids _ _ _ _ H4 w
+                 (idents_for_anns'_named_ids _ _ _ _ H4 w (anon_streams_named _ _ Hw))).
+Qed.
+
+Lemma anon_ins_In :
+  forall es w, In w (map fst (concat (map anon_in es))) ->
+               exists e, In e es /\ In w (map fst (anon_in e)).
+Proof.
+  induction es as [|e es IH]; intros w H; simpl in H.
+  - destruct H.
+  - rewrite map_app in H. apply in_app_or in H as [H|H].
+    + exists e. split; [now left|exact H].
+    + destruct (IH _ H) as (e' & He' & Hw). exists e'. split; [now right|exact Hw].
+Qed.
+
+Lemma exps_IH :
+  forall G es,
+    Forall (fun e => forall bb res (st st' : fresh_st (type * clock)%type),
+              unnest_exp G bb e st = (res, st') ->
+              forall w, In w (map fst (fresh_in e)) -> In w (st_ids st')) es.
+Proof.
+  intros G es. apply Forall_forall. intros e _ bb res st st' H w Hw.
+  exact (unnest_exp_fresh_ids G e bb res st st' H w Hw).
+Qed.
+
+Lemma unnest_rhs_ids :
+  forall G e res (st st' : fresh_st (type * clock)%type),
+    unnest_rhs G e st = (res, st') ->
+    forall w, In w (map fst (anon_in e)) -> In w (st_ids st').
+Proof.
+  intros G e res st st' H w Hw.
+  destruct e; try (solve [exact (unnest_exp_fresh_ids G _ true _ _ _ H w Hw)]).
+  - (* fby *) simpl in H; unfold unnest_exps in H; repeat ib. simpl in Hw.
+    rewrite map_app in Hw. apply in_app_or in Hw as [Hw|Hw].
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G false _ (exps_IH G _) _ _ _ _ H w Hw)). sf.
+    + exact (mb_exps_ids G false _ (exps_IH G _) _ _ _ _ H0 w Hw).
+  - (* arrow *) simpl in H; unfold unnest_exps in H; repeat ib. simpl in Hw.
+    rewrite map_app in Hw. apply in_app_or in Hw as [Hw|Hw].
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G false _ (exps_IH G _) _ _ _ _ H w Hw)). sf.
+    + exact (mb_exps_ids G false _ (exps_IH G _) _ _ _ _ H0 w Hw).
+  - (* app *) simpl in H; unfold unnest_exps in H; repeat ib. simpl in Hw.
+    destruct o as [r|].
+    + rewrite map_app in Hw. apply in_app_or in Hw as [Hw|Hw].
+      * refine (st_follows_ids _ _ _ w (mb_exps_ids G false _ (exps_IH G _) _ _ _ _ H w Hw)). sf.
+      * refine (unnest_reset_ids G r _ _ _
+                  (fun bb res s s' Hr w0 Hw0 => unnest_exp_fresh_ids G r bb res s s' Hr w0 Hw0)
+                  H1 w Hw).
+    + refine (st_follows_ids _ _ _ w (mb_exps_ids G false _ (exps_IH G _) _ _ _ _ H w Hw)). sf.
+Qed.
+
+Lemma mb_rhs_ids :
+  forall G es st l1 l2 (st' : fresh_st (type * clock)%type),
+    map_bind2 (unnest_rhs G) es st = (l1, l2, st') ->
+    forall w, In w (map fst (concat (map anon_in es))) -> In w (st_ids st').
+Proof.
+  intros G es st l1 l2 st' H w Hw.
+  destruct (anon_ins_In es w Hw) as (e & He & Hwe).
+  refine (map_bind2_ids (unnest_rhs G) (fun e w => In w (map fst (anon_in e)))
+            es st l1 l2 st' H _ e He w Hwe).
+  apply Forall_forall. intros e' He' a1 a2 s s' Hk. split.
+  - exact (unnest_rhs_st_follows G e' _ s s' Hk).
+  - intros w' Hw'. exact (unnest_rhs_ids G e' _ s s' Hk w' Hw').
+Qed.
+
+Lemma unnest_equation_ids :
+  forall G eq res (st st' : fresh_st (type * clock)%type),
+    unnest_equation G eq st = (res, st') ->
+    forall w, In w (map fst (anon_in_eq eq)) -> In w (st_ids st').
+Proof.
+  intros G [xs es] res st st' H w Hw.
+  unfold unnest_equation in H; unfold unnest_rhss in H; repeat ib.
+  exact (mb_rhs_ids G es _ _ _ _ H w Hw).
+Qed.
+
+Section MB1.
+  Context {A A1 : Type}.
+  Variable k : A -> Fresh A1 (type * clock)%type.
+  Variable W : A -> ident -> Prop.
+
+  Lemma map_bind_ids :
+    forall l st l1 st',
+      map_bind k l st = (l1, st') ->
+      Forall (fun a => forall a1 s s', k a s = (a1, s') ->
+                st_follows s s' /\ forall w, W a w -> In w (st_ids s')) l ->
+      forall a, In a l -> forall w, W a w -> In w (st_ids st').
+  Proof.
+    induction l as [|a0 l IH]; intros st l1 st' H HF a Ha w Hw;
+      simpl in H; repeat ib.
+    - destruct Ha.
+    - inversion HF as [|? ? Hh Ht]; subst.
+      destruct Ha as [<-|Ha].
+      + destruct (Hh _ _ _ H) as (_ & Hid).
+        assert (Hf2 : Forall (fun a => forall a1 s s',
+                          k a s = (a1, s') -> st_follows s s') l).
+        { eapply Forall_impl; [|exact Ht].
+          intros a Hq a1 s s' Hk. exact (proj1 (Hq a1 s s' Hk)). }
+        pose proof (map_bind_st_follows k l _ _ _ H0 Hf2) as Hfl.
+        exact (st_follows_ids _ _ Hfl w (Hid w Hw)).
+      + exact (IH _ _ _ H0 Ht a Ha w Hw).
+  Qed.
+End MB1.
+
+Lemma anon_eqs_In :
+  forall eqs w, In w (map fst (concat (map anon_in_eq eqs))) ->
+                exists eq, In eq eqs /\ In w (map fst (anon_in_eq eq)).
+Proof.
+  induction eqs as [|e es IH]; intros w H; simpl in H.
+  - destruct H.
+  - rewrite map_app in H. apply in_app_or in H as [H|H].
+    + exists e. split; [now left|exact H].
+    + destruct (IH _ H) as (e' & He' & Hw). exists e'. split; [now right|exact Hw].
+Qed.
+
+Lemma unnest_equations_ids :
+  forall G eqs res (st st' : fresh_st (type * clock)%type),
+    unnest_equations G eqs st = (res, st') ->
+    forall w, In w (map fst (anon_in_eqs eqs)) -> In w (st_ids st').
+Proof.
+  intros G eqs res st st' H w Hw.
+  unfold unnest_equations in H; repeat ib.
+  unfold anon_in_eqs in Hw.
+  destruct (anon_eqs_In eqs w Hw) as (eq & Heq & Hwe).
+  refine (map_bind_ids (unnest_equation G) (fun e w => In w (map fst (anon_in_eq e)))
+            eqs st _ st' H _ eq Heq w Hwe).
+  apply Forall_forall. intros e' He' a1 s s' Hk. split.
+  - exact (unnest_equation_st_follows G e' _ s s' Hk).
+  - intros w' Hw'. exact (unnest_equation_ids G e' _ s s' Hk w' Hw').
+Qed.
+
+Lemma anon_names_declared_M :
+  forall P (n : node) (Hwl : wl_node P n) (Hpref : n_prefixes n = elab_prefs) w,
+    In w (anon_names n) ->
+    In w (List.map fst (n_in (unnest_node P n Hwl Hpref)
+                        ++ n_vars (unnest_node P n Hwl Hpref)
+                        ++ n_out (unnest_node P n Hwl Hpref))).
+Proof.
+  intros P n Hwl Hpref w Hw.
+  assert (Hfv : n_vars (unnest_node P n Hwl Hpref)
+                = n.(n_vars)
+                  ++ st_anns (snd (unnest_equations P n.(n_eqs) init_st)))
+    by exact (proj2 (unnest_node_fields P n Hwl Hpref)).
+  destruct (unnest_equations P n.(n_eqs) init_st) as [res st'] eqn:E.
+  pose proof (unnest_equations_ids P n.(n_eqs) res init_st st' E w Hw) as Hid.
+  unfold st_ids in Hid. cbn [snd] in Hfv. rewrite Hfv.
+  rewrite !map_app. apply in_or_app. right. apply in_or_app. left.
+  apply in_or_app. right. exact Hid.
+Qed.
+
+  (** A source node's anonymous streams are apart from the names the
+      unnesting pass mints: those are [gensym norm1 _], and the node's names
+      are atoms or [gensym] of its own prefixes. *)
+  Lemma anon_stream_not_gensym :
+    forall (n : node) w pref k,
+      ~ PS.In pref n.(n_prefixes) ->
+      InMembers w (anon_in_eqs n.(n_eqs)) -> w <> Ids.gensym pref k.
+  Proof.
+    intros n w pref k Hp Hin Heq.
+    destruct n.(n_good) as [Hgood _].
+    rewrite Forall_forall in Hgood.
+    assert (Ha : AtomOrGensym n.(n_prefixes) w).
+    { apply Hgood. rewrite !map_app. apply in_or_app. right.
+      apply in_or_app. right. apply in_or_app. right.
+      now apply fst_InMembers. }
+    destruct Ha as [Hat|Hex].
+    - rewrite Heq in Hat. eapply gensym_not_atom; eauto.
+    - unfold PS.Exists in Hex.
+      destruct Hex as (pre & Hinpre & m & Hm).
+      rewrite Heq in Hm. apply gensym_injective in Hm as [Hpre _].
+      subst pre. exact (Hp Hinpre).
+  Qed.
+
+  Lemma fresh_ident_gensym_n :
+    forall pref (b : type * clock) x st st',
+      UNN.Fresh.fresh_ident pref b st = (x, st') ->
+      exists k, x = Ids.gensym pref k.
+  Proof.
+    intros pref b x st st' H.
+    exact (UNN.Fresh.fresh_ident_gensym pref b x st st' H).
+  Qed.
+
+  Lemma idents_for_anns_gensym :
+    forall anns xs st st',
+      UNN.idents_for_anns anns st = (xs, st') ->
+      forall x, In x (List.map fst xs) -> exists k, x = Ids.gensym Ids.norm1 k.
+  Proof.
+    induction anns as [|[ty [cl nm]] tl IH]; intros xs st st' H x Hx.
+    - simpl in H; repeat ib. simpl in Hx. destruct Hx.
+    - simpl in H; repeat ib. simpl in Hx. destruct Hx as [<-|Hx].
+      + match goal with
+        | Hf : UNN.Fresh.fresh_ident _ _ _ = (_, _) |- _ =>
+            exact (fresh_ident_gensym_n _ _ _ _ _ Hf)
+        end.
+      + match goal with
+        | Hi : UNN.idents_for_anns tl _ = (_, _) |- _ =>
+            exact (IH _ _ _ Hi x Hx)
+        end.
+  Qed.
+
+  Lemma idents_for_anns'_gensym :
+    forall anns xs st st',
+      UNN.idents_for_anns' anns st = (xs, st') ->
+      forall x a, In (x, a) xs -> LSyn.stream_name a = None ->
+                  exists k, x = Ids.gensym Ids.norm1 k.
+  Proof.
+    induction anns as [|[ty [ck nm]] tl IH]; intros xs st st' H x a Hx Hn.
+    - simpl in H; repeat ib. destruct Hx.
+    - destruct nm as [nm|]; simpl in H; repeat ib.
+      + destruct Hx as [Hx|Hx].
+        * inversion Hx; subst. discriminate Hn.
+        * match goal with
+          | Hi : UNN.idents_for_anns' tl _ = (_, _) |- _ =>
+              exact (IH _ _ _ Hi x a Hx Hn)
+          end.
+      + destruct Hx as [Hx|Hx].
+        * inversion Hx; subst.
+          match goal with
+          | Hf : UNN.Fresh.fresh_ident _ _ _ = (_, _) |- _ =>
+              exact (fresh_ident_gensym_n _ _ _ _ _ Hf)
+          end.
+        * match goal with
+          | Hi : UNN.idents_for_anns' tl _ = (_, _) |- _ =>
+              exact (IH _ _ _ Hi x a Hx Hn)
+          end.
+  Qed.
+
+  End AnonDeclared.
 
   Lemma unnest_instance :
     forall (all : list node) envsF auxF stN
@@ -2958,7 +3283,8 @@ Import SECMONADNotations.
     set (decl := CALLS.sec_of env
                    (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
                  ++ [ct; rt]).
-    set (scope := decl ++ minted stS0 stS1).
+    set (NI := anon_images env n).
+    set (scope := decl ++ NI ++ minted stS0 stS1).
     set (scope0 := CALLS.sec_of env (List.map fst (n.(n_in) ++ n.(n_out)))
                    ++ [ct; rt]).
     assert (Hdecl_scope : incl decl scope) by (intros z Hz; unfold scope; apply in_or_app; now left).
@@ -3003,18 +3329,34 @@ Import SECMONADNotations.
       - change (In x (List.map fst vars)). rewrite Hvm.
         apply in_map_iff. exists (x, tc). split; [reflexivity|exact Hin].
       - rewrite (lnode_clock_env_find n x tc Hin). reflexivity. }
-    assert (HclkM : clk_scoped_wc env ct P vars (anon_names n)
-                      (lnode_clock_env M) decl)
-      by exact (clk_scoped_wc_holds env ct (lnode_clock_env M) vars
-                  (anon_names n) decl Hbd Hrg HcenvM P Hwcg).
-    assert (HclkN : clk_scoped_wc env ct P vars (anon_names n)
-                      (lnode_clock_env n) decl).
-    { exact (clk_scoped_wc_holds env ct (lnode_clock_env n) vars
-               (anon_names n) decl Hbd Hrg Hcenv P Hwcg). }
+    assert (HNI : forall w b, In w (anon_names n) ->
+                              Env.find w env = Some b -> In b NI).
+    { intros w b Hwn Hb. unfold anon_names in Hwn.
+      apply in_map_iff in Hwn as ((w' & a) & Hwe & Hp). cbn [fst] in Hwe.
+      subst w'. unfold NI, anon_images. apply in_flat_map.
+      exists (w, a). split; [exact Hp|]. cbn [fst]. rewrite Hb. now left. }
+    assert (HNIsc : incl NI scope).
+    { intros z Hz. unfold scope. apply in_or_app. right. apply in_or_app.
+      now left. }
+    assert (Hdn_sc : incl (decl ++ NI) scope).
+    { apply incl_app; [exact Hdecl_scope|exact HNIsc]. }
+    assert (Hnca : ~ In (nclk r) (List.map fst (anon_in_eqs n.(n_eqs)))).
+    { intro Hin. exact (anon_stream_not_sec n _ st0 HsubS
+                          (proj2 (fst_InMembers _ _) Hin) Hclk0). }
+    assert (Hnra : ~ In (nrst r) (List.map fst (anon_in_eqs n.(n_eqs)))).
+    { intro Hin. exact (anon_stream_not_sec n _ (Pos.succ st0) HsubS
+                          (proj2 (fst_InMembers _ _) Hin) Hrst0). }
+    assert (Hrg' : forall x b, In x (List.map fst vars) ->
+                               Env.find x env = Some b -> In b scope)
+      by (intros x b Hx Hf; exact (Hdecl_scope _ (Hrg x b Hx Hf))).
+    assert (HclkN : clk_scoped_wc accT env ct rt P vars (lnode_clock_env n)
+                      scope)
+      by exact (clk_scoped_wc_holds accT env ct rt (lnode_clock_env n) P vars
+                  scope scope Hbs Hrg' Hwenv Hcenv (incl_refl _) Hwcg).
     assert (Hwin : forall s s', (stS0 <= s)%positive -> (s' <= stS1)%positive ->
                      incl (minted s s') scope).
     { intros s s' H1 H2. unfold scope.
-      eapply incl_tran; [|apply incl_appr, incl_refl].
+      eapply incl_tran; [|apply incl_appr, incl_appr, incl_refl].
       apply minted_window; [exact H1|exact H2]. }
     assert (Hclkg : forall (P0 : global) es ck ckty,
               wc_global P0 -> Forall (wc_exp P0 vars) es ->
@@ -3023,35 +3365,38 @@ Import SECMONADNotations.
                exists x, In x (List.map fst vars)
                          /\ find_clock (lnode_clock_env M) x = OK ck) ->
               assign_clk_type env ct ck = Some ckty -> st_scoped scope ckty).
-    { intros P0 es ck ckty Hg Hw1 Hn1 Hs1 Hc1.
-      eapply st_scoped_weaken; [exact Hdecl_scope|].
-      exact (clk_scoped_wc_holds env ct (lnode_clock_env M) vars
-               (anon_names n) decl Hbd Hrg HcenvM P0 Hg es ck ckty
-               Hw1 Hn1 Hs1 Hc1). }
-    assert (Hclkd : forall (P0 : global) es ck ckty,
-              wc_global P0 -> Forall (wc_exp P0 vars) es ->
-              Forall (nested_src vars (anon_names n)) es ->
-              clk_src vars es ck ->
-              assign_clk_type env ct ck = Some ckty -> st_scoped decl ckty)
-      by (intros P0 es ck ckty Hg Hw1 Hn1 Hs1 Hc1;
-          exact (clk_scoped_wc_holds env ct (lnode_clock_env M) vars
-                   (anon_names n) decl Hbd Hrg HcenvM P0 Hg es ck
-                   ckty Hw1 Hn1 (or_introl Hs1) Hc1)).
+    { intros P0 es ck ckty Hg Hw1 Hn1 [Hs1|(x & Hx & Hfc)] Hc1.
+      - eapply st_scoped_weaken; [exact Hdn_sc|].
+        refine (clk_scoped_named env ct P0 vars decl es ck ckty NI Hg Hwenv
+                  Hbd Hrg Hw1 Hs1 _ Hc1).
+        intros w b Hwn Hb.
+        apply (proj1 (fst_InMembers _ _)) in Hwn.
+        apply in_map_iff in Hwn as ((w' & a) & Hwe & Hin). cbn [fst] in Hwe.
+        subst w'. unfold fresh_ins in Hin.
+        apply in_concat in Hin as (l & Hin & Hl).
+        apply in_map_iff in Hl as (e & <- & He).
+        rewrite Forall_forall in Hn1.
+        exact (HNI w b ((proj2 (Hn1 e He)) w a Hin) Hb).
+      - eapply st_scoped_weaken; [exact Hdecl_scope|].
+        intros y Hy.
+        destruct (assign_clk_type_images env ct ck ckty Hc1 y Hy)
+          as [->|(x' & Hx' & Hf)]; [exact Hbd|].
+        exact (Hrg x' y (HcenvM x ck Hx Hfc x' Hx') Hf). }
     assert (Hsty : source_types_scoped_upto_g accT env ct rt vars (anon_names n)
                      scope stS0 stS1)
       by exact (source_types_scoped_upto_g_holds accT env ct rt vars
-                  (anon_names n) decl scope stS0 stS1 Hbd Hrd Hrg Hclkd HscT0
-                  Hdecl_scope Hwin).
+                  (anon_names n) decl NI scope stS0 stS1 Hbd Hrd Hrg Hwenv HNI HscT0
+                  Hdn_sc Hwin).
     assert (Hslx : source_lexps_scoped_upto_g accT env ct rt vars
                      (anon_names n) scope stS0 stS1)
       by exact (source_lexps_scoped_upto_g_holds accT env ct rt vars
-                  (anon_names n) decl scope stS0 stS1 Hbd Hrd Hrg Hclkd HscT0
-                  Hdecl_scope Hwin).
+                  (anon_names n) decl NI scope stS0 stS1 Hbd Hrd Hrg Hwenv HNI HscT0
+                  Hdn_sc Hwin).
     assert (Hslc : source_lexps_carried_scoped_upto_g accT env ct rt vars
                      (anon_names n) scope stS0 stS1)
       by exact (source_lexps_carried_scoped_upto_g_holds accT env ct rt vars
-                  (anon_names n) decl scope stS0 stS1 Hbd Hrd Hrg Hclkd HscT0
-                  Hdecl_scope Hwin).
+                  (anon_names n) decl NI scope stS0 stS1 Hbd Hrd Hrg Hwenv HNI HscT0
+                  Hdn_sc Hwin).
     pose proof Hwcn as Hwcn'.
     destruct Hwcn' as (_ & _ & _ & Hweqs).
     assert (Hfv : n_vars M
@@ -3141,7 +3486,13 @@ Import SECMONADNotations.
           * destruct Hy as [<-|[<-|[]]]; apply Hdeclall;
               [exact (env_images_spec env _ _ Hct)
               |exact (env_images_spec env _ _ Hrt)].
-        + exact (name_above_minted st0 stS0 stS1 y Hlo Hy).
+        + apply in_app_or in Hy as [HyN|HyM].
+          * apply (Hdeclall y). unfold NI, anon_images in HyN.
+            apply in_flat_map in HyN as ((w & a) & _ & Hb'). cbn [fst] in Hb'.
+            destruct (Env.find w env) as [b0|] eqn:Ew; [|destruct Hb'].
+            destruct Hb' as [Hb'|[]]. subst b0.
+            unfold D, env_images. exact (env_images_spec env w y Ew).
+          * exact (name_above_minted st0 stS0 stS1 y Hlo HyM).
       - intros x b Hx. apply Hdeclall. exact (env_images_spec env x b Hx). }
     destruct (generate_leqns_constraints_weaken accS accT env ct rt
                 (lnode_clock_env n) n.(n_eqs) cns stS0 stS1 st0 Hw Hef Hlf
@@ -3150,11 +3501,13 @@ Import SECMONADNotations.
     pose proof (unnest_node_unnested_node P n Hwl Hpref) as Hunn.
     (** what unnesting moved is not on the interface *)
     assert (Hmv : forall y,
-              In y (moved_by env init_st
+              In y (moved_by env (anon_names n) init_st
                       (snd (unnest_equations P n.(n_eqs) init_st))) ->
               ~ In y scope).
-    { intros y Hy Hys. unfold moved_by in Hy.
-      apply sec_of_In_inv in Hy as (x & Hx & Hxy).
+    { intros y Hy Hys.
+      destruct (moved_by_In_inv env (anon_names n) init_st
+                  (snd (unnest_equations P n.(n_eqs) init_st)) y Hy)
+        as (x & Hx & Hxan & Hxy).
       apply new_ids_spec in Hx as (Hx1 & _).
       assert (HxC : InMembers x
                       (st_anns (snd (unnest_equations P n.(n_eqs) init_st)))).
@@ -3184,7 +3537,16 @@ Import SECMONADNotations.
             rewrite Hfi, Hfv, Hfo. rewrite !map_app. apply in_or_app. right.
             apply in_or_app. left. apply in_or_app. right.
             apply fst_InMembers. exact HxC.
-      - exact (Hsep stS0 stS1 HleS0 x y Hxy Hys). }
+      - apply in_app_or in Hys as [HysN|HysM].
+        + unfold NI, anon_images in HysN.
+          apply in_flat_map in HysN as ((w & a) & Hp & Hb'). cbn [fst] in Hb'.
+          destruct (Env.find w env) as [b0|] eqn:Ew; [|destruct Hb'].
+          destruct Hb' as [Hb'|[]]. subst b0.
+          assert (x = w) as ->
+            by (eapply Hinj; [exact Hxy|exact Ew|reflexivity]).
+          apply Hxan. unfold anon_names. apply in_map_iff.
+          exists (w, a). split; [reflexivity|exact Hp].
+        + exact (Hsep stS0 stS1 HleS0 x y Hxy HysM). }
     (** the ambients *)
     assert (Hag : forall x ck, In (x, ck) vars ->
                     find_clock (lnode_clock_env M) x = OK ck)
@@ -3241,18 +3603,24 @@ Import SECMONADNotations.
         by (rewrite Hcns' in Hg; inversion Hg; split; reflexivity).
       destruct Hcc as (-> & ->).
       split; [|apply Pos.le_refl].
-      destruct (generate_leqns_constraints_shape accT env ct rt
+      destruct (generate_leqns_constraints_shape NI accT env ct rt
                   (lnode_clock_env n) n.(n_eqs) cs' stS0 stS1
-                  (minted stS0 stS1) (incl_refl _) (Hsep stS0 stS1 HleS0)
+                  (NI ++ minted stS0 stS1)
+                  (conj (incl_appr _ (incl_refl _)) (incl_appl _ (incl_refl _)))
+                  (proj2 (Forall_forall _ _) (fun eq H => eqs_named_in env n eq H))
+                  (fun x b Hx Hf Hin =>
+                     match in_app_or _ _ _ Hin with
+                     | or_introl H =>
+                         defined_not_in_anon_images env n x b Hinj Hx Hf H
+                     | or_intror H => Hsep stS0 stS1 HleS0 x b Hf H
+                     end)
                   (wl_node_arity P n Hwl) Hcns') as (ms & Hm & Hms).
       refine (generate_leqns_constraints_scoped_wc accT env ct rt P vars
                 (anon_names n) scope (lnode_clock_env n) n.(n_eqs) cs' stS0 stS1
                 HscT0 _ Hrs _ Hweqs HsrcS Hdefd _ Hcns').
-      - intros es ck ckty Hw1 Hn1 Hs1 Hc1.
-        eapply st_scoped_weaken; [exact Hdecl_scope|].
-        exact (HclkN es ck ckty Hw1 Hn1 Hs1 Hc1).
+      - exact HclkN.
       - eapply exps_scoped_wc_of_decl;
-          [exact Hbd|exact Hrd|exact Hrg|exact HclkN|exact HscT0
+          [exact Hbd|exact Hrd|exact Hrg|exact Hwcg|exact Hwenv|exact HscT0
           |exact Hdecl_scope].
       - eapply incl_tran; [eapply tgt_names_of_targets_of; exact Hm|].
         apply incl_app; [exact Hdefd|].
@@ -3262,7 +3630,8 @@ Import SECMONADNotations.
               get_mappings_from_node n.(n_vars) env = Some locals0 ->
               generate_leqns_constraints accS env ct rt (lnode_clock_env n)
                 n.(n_eqs) stS0 = OK (cns0, ct1) ->
-              forall y, In y (locals0 ++ minted stS0 ct1) -> ~ In y scope0).
+              forall y, In y (locals0 ++ anon_images env n ++ minted stS0 ct1) ->
+                        ~ In y scope0).
     { intros locals0 cns0 ct1 Hl0 Hg0 y Hy Hy0.
       apply in_app_or in Hy as [Hy|Hy].
       - unfold scope0 in Hy0. apply in_app_or in Hy0 as [Hy0|Hy0].
@@ -3280,7 +3649,18 @@ Import SECMONADNotations.
             subst v. apply (proj2 Hnotaux_n).
             rewrite !map_app. apply in_or_app. right. apply in_or_app. left.
             exact Hv.
-      - assert (Hex : exists x, Env.find x env = Some y).
+      - apply in_app_or in Hy as [HyN|Hy].
+        + unfold scope0 in Hy0. apply in_app_or in Hy0 as [Hy0|Hy0].
+          * refine (anon_images_not_declared env n y Hinj HyN _).
+            eapply sec_of_incl; [|exact Hy0].
+            intros q Hq. apply in_map_iff in Hq as (p & <- & Hp).
+            apply in_map_iff. exists p. split; [reflexivity|].
+            apply in_app_or in Hp as [Hp|Hp]; apply in_or_app;
+              [now left|right; apply in_or_app; now right].
+          * destruct Hy0 as [<-|[<-|[]]];
+              [exact (anon_images_apart env n (nclk r) _ Hinj Hct Hnca HyN)
+              |exact (anon_images_apart env n (nrst r) _ Hinj Hrt Hnra HyN)].
+        + assert (Hex : exists x, Env.find x env = Some y).
         { unfold scope0 in Hy0. apply in_app_or in Hy0 as [Hy0|Hy0].
           - apply sec_of_In_inv in Hy0 as (x & _ & Hx). exists x. exact Hx.
           - destruct Hy0 as [<-|[<-|[]]]; [exists (nclk r); exact Hct
@@ -3322,13 +3702,50 @@ Import SECMONADNotations.
         [left; exact Hsh|right].
       exists e1, t1, a1, rck, s1, s1'. split;
         [exact (Pos.le_trans _ _ _ Hlo Hl1)|exact Hr]. }
+    assert (HAN_anns : forall anns xs st st',
+               UNN.idents_for_anns anns st = (xs, st') ->
+               forall x, In x (List.map fst xs) -> ~ In x (anon_names n)).
+    { intros anns xs st st' Hi' x Hx Hxan.
+      destruct (idents_for_anns_gensym anns xs st st' Hi' x Hx) as (k & Hk).
+      unfold anon_names in Hxan.
+      refine (anon_stream_not_gensym n x Ids.norm1 k _
+                (proj2 (fst_InMembers _ _) Hxan) Hk).
+      rewrite Hpref. exact UNN.norm1_not_in_elab_prefs. }
+    assert (HAN_fresh : forall (b : type * clock) x st st',
+               UNN.Fresh.fresh_ident Ids.norm1 b st = (x, st') ->
+               ~ In x (anon_names n)).
+    { intros b x st st' Hf Hxan.
+      destruct (fresh_ident_gensym_n _ _ _ _ _ Hf) as (k & Hk).
+      unfold anon_names in Hxan.
+      refine (anon_stream_not_gensym n x Ids.norm1 k _
+                (proj2 (fst_InMembers _ _) Hxan) Hk).
+      rewrite Hpref. exact UNN.norm1_not_in_elab_prefs. }
+    assert (HAN_anns' : forall anns xs st st',
+               UNN.idents_for_anns' anns st = (xs, st') ->
+               forall x a, In (x, a) xs -> LSyn.stream_name a = None ->
+                           ~ In x (anon_names n)).
+    { intros anns xs st st' Hi' x a Hx Hn Hxan.
+      destruct (idents_for_anns'_gensym anns xs st st' Hi' x a Hx Hn)
+        as (k & Hk).
+      unfold anon_names in Hxan.
+      refine (anon_stream_not_gensym n x Ids.norm1 k _
+                (proj2 (fst_InMembers _ _) Hxan) Hk).
+      rewrite Hpref. exact UNN.norm1_not_in_elab_prefs. }
+    assert (Hank : forall w, In w (anon_names n) ->
+                             exists b, Env.find w env = Some b).
+    { intros w Hwn.
+      pose proof (anon_names_declared_M P n Hwl Hpref w Hwn) as Hwd.
+      apply (generate_local_env_for_lnode_binds nall st0 env r stl Hloc w).
+      right. right.
+      apply in_map_iff in Hwd as (p & Hpw & Hp). apply in_map_iff.
+      exists p. split; [exact Hpw|]. apply Hext. exact Hp. }
     exact (unnest_node_step_streams accT env ct rt vars (lnode_clock_env M)
-             scope scope0 Hsub0 stS0 stS1 (anon_names n) Hinj HgoodT0
+             scope scope0 Hsub0 stS0 stS1 (anon_names n)
+             HAN_anns HAN_fresh HAN_anns' Hinj HgoodT0
              (fun f sg H => sig_nd_scope_nodup sg (HndT0 f sg H))
              Hsty Hslx Hrs Hclkg
-             (fun x b Hx Hf => Hdecl_scope _ (Hrg x b Hx Hf)) Hslc HscT0 Hsaf
-             Henvtot
-             HanS (fun f sg H => HrootT0 f sg H)
+             Hrg' Hslc HscT0 Hsaf
+             Henvtot Hwenv Hank (fun f sg H => HrootT0 f sg H)
              (canonical_ambients_g vars env ct rt (lnode_clock_env M)) Hassc
              P P n Hwl Hpref envsF auxF accS sgS stS0 stS1 sgT stT0 stT1
              Hwcg Hinputs Hfind Haux' Logic.eq_refl Hunn Hwl Hweqs HsrcS Hmv
@@ -3409,6 +3826,22 @@ Import SECMONADNotations.
     exact (IH (imm_sub_normalized_cexp _ _ H Himm)).
   Qed.
 
+  Lemma named_ok_normalized_lexp :
+    forall (vars : list (ident * clock)) e, normalized_lexp e -> named_ok vars e.
+  Proof.
+    intros vars e H f es r anns w Hs _.
+    pose proof (sub_exp_normalized_lexp _ _ Hs H) as H'. inversion H'.
+  Qed.
+
+  Lemma named_ok_normalized_cexp :
+    forall (vars : list (ident * clock)) e, normalized_cexp e -> named_ok vars e.
+  Proof.
+    intros vars e H f es r anns w Hs _.
+    pose proof (sub_exp_normalized_cexp _ _ Hs H) as H'.
+    inversion H'; subst;
+      match goal with Hl : normalized_lexp _ |- _ => inversion Hl end.
+  Qed.
+
   Lemma src_exp_cexp :
     forall vars e, normalized_cexp e -> src_exp vars [] e.
   Proof.
@@ -3425,14 +3858,11 @@ Import SECMONADNotations.
     forall vars f es ro anns,
       Forall normalized_lexp es ->
       (match ro with None => True | Some r => normalized_lexp r end) ->
-      Forall (fun e' => Forall (wc_clock vars) (clockof e')) es ->
-      (match ro with
-       | Some r => Forall (wc_clock vars) (clockof r)
-       | None => True
-       end) ->
+      (forall w, In (Some w) (List.map stream_name anns) ->
+                 In w (List.map fst vars)) ->
       src_exp vars [] (Eapp f es ro anns).
   Proof.
-    intros vars f es ro anns Hn Hr Hclk Hrcl e' Hs.
+    intros vars f es ro anns Hn Hr Hnames e' Hs.
     apply sub_exp_inv in Hs as [->|(e1 & Himm & Hs1)].
     - split.
       + intros w a Hin. exfalso. destruct ro as [r|]; cbn [anon_in] in Hin.
@@ -3441,7 +3871,7 @@ Import SECMONADNotations.
             (normalized_lexp_fresh_in _ Hr) in Hin. destruct Hin.
         * unfold fresh_ins in Hin.
           rewrite (normalized_lexps_fresh_ins _ Hn) in Hin. destruct Hin.
-      + exact (conj Hclk Hrcl).
+      + intros w Hw. right. exact (Hnames w Hw).
     - inversion Himm; subst.
       + match goal with
         | Hin : In _ es |- _ =>
@@ -3493,8 +3923,31 @@ Import SECMONADNotations.
         end.
   Qed.
 
-  (** The arguments of a call in a well-clocked equation are clocked over the
-      declared variables. *)
+  Lemma wc_call_names :
+    forall (vars : list (ident * clock)) (xs : list ident) f es ro
+           (anns : list LSyn.ann),
+      Forall2 (fun x nc => LiftO True (Logic.eq x) (snd nc)) xs
+        (nclocksof [Eapp f es ro anns]) ->
+      Forall2 (fun x ck => In (x, ck) vars) xs
+        (clocksof [Eapp f es ro anns]) ->
+      forall w, In (Some w) (List.map stream_name anns) ->
+                In w (List.map fst vars).
+  Proof.
+    intros vars xs f es ro anns Heq Hvs w Hw.
+    apply in_map_iff in Hw as (ann & Hann & Hin).
+    assert (In (snd ann) (nclocksof [Eapp f es ro anns])) as Hnc.
+    { simpl. rewrite app_nil_r. apply in_map_iff. exists ann.
+      split; [reflexivity|exact Hin]. }
+    destruct (Forall2_in_right _ xs (nclocksof [Eapp f es ro anns]) (snd ann)
+                Heq Hnc) as (x & Hx & Hxe).
+    unfold stream_name in Hann. simpl in Hxe. rewrite Hann in Hxe.
+    simpl in Hxe. subst x.
+    assert (Hlen : List.length xs = List.length (clocksof [Eapp f es ro anns]))
+      by exact (Forall2_length _ _ _ Hvs).
+    destruct (Forall2_in_left _ _ _ w Hvs Hx) as (ck & _ & Hv).
+    apply in_map_iff. exists (w, ck). split; [reflexivity|exact Hv].
+  Qed.
+
   Lemma wc_args_clocks :
     forall Q vars es,
       wc_global Q -> wc_env vars ->
@@ -3539,19 +3992,13 @@ Import SECMONADNotations.
     rewrite Forall_forall in Hun, Hweqs |- *. intros eq Hin.
     pose proof (Hun eq Hin) as Hu. pose proof (Hweqs eq Hin) as Hw.
     destruct eq as [xs es]. cbn in Hw.
-    destruct Hw as (Hwe & _ & _).
+    destruct Hw as (Hwe & Hweq & Hwv).
     inversion Hu as [xs0 f0 n0 es0 lann0 Hn Hf Hk
                     | xs0 f0 n0 es0 x0 ty0 cl0 lann0 Hn Hf Hk
                     | x0 e0 e1 ann0 H0 H1 | x0 e0 e1 ann0 H0 H1 | x0 e0 Hc];
       subst; cbn [snd]; (apply Forall_cons; [|apply Forall_nil]).
-    - apply src_exp_Eapp; [exact Hn|exact I| |exact I].
-      exact (wc_args_clocks Q _ _ Hg Hwenv
-               (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
-    - apply src_exp_Eapp; [exact Hn|constructor| |].
-      + exact (wc_args_clocks Q _ _ Hg Hwenv
-                 (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
-      + exact (wc_reset_clocks Q _ _ Hg Hwenv
-                 (wc_reset_inv Q _ _ _ _ _ (Forall_inv Hwe)) (unnested_Evar _ _ _)).
+    - apply src_exp_Eapp; [exact Hn|exact I| exact (wc_call_names _ _ _ _ _ _ Hweq Hwv)].
+    - apply src_exp_Eapp; [exact Hn|constructor| exact (wc_call_names _ _ _ _ _ _ Hweq Hwv)].
     - exact (src_exp_Efby _ _ _ _ H0 H1).
     - exact (src_exp_Earrow _ _ _ _ H0 H1).
     - exact (src_exp_cexp _ _ Hc).
@@ -3571,19 +4018,13 @@ Import SECMONADNotations.
     rewrite Forall_forall in Hun, Hweqs |- *. intros eq Hin.
     pose proof (Hun eq Hin) as Hu. pose proof (Hweqs eq Hin) as Hw.
     destruct eq as [xs es]. cbn in Hw.
-    destruct Hw as (Hwe & _ & _).
+    destruct Hw as (Hwe & Hweq & Hwv).
     inversion Hu as [out0 xs0 f0 n0 es0 lann0 Hn Hf Hk
                     | out0 xs0 f0 n0 es0 x0 ty0 cl0 lann0 Hn Hf Hk
                     | out0 x0 e0 e1 ann0 Hno H0 H1 | out0 x0 e0 Hc];
       subst; cbn [snd]; (apply Forall_cons; [|apply Forall_nil]).
-    - apply src_exp_Eapp; [exact Hn|exact I| |exact I].
-      exact (wc_args_clocks Q _ _ Hg Hwenv
-               (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
-    - apply src_exp_Eapp; [exact Hn|constructor| |].
-      + exact (wc_args_clocks Q _ _ Hg Hwenv
-                 (wc_Eapp_inv' Q _ _ _ _ _ (Forall_inv Hwe)) Hn).
-      + exact (wc_reset_clocks Q _ _ Hg Hwenv
-                 (wc_reset_inv Q _ _ _ _ _ (Forall_inv Hwe)) (unnested_Evar _ _ _)).
+    - apply src_exp_Eapp; [exact Hn|exact I| exact (wc_call_names _ _ _ _ _ _ Hweq Hwv)].
+    - apply src_exp_Eapp; [exact Hn|constructor| exact (wc_call_names _ _ _ _ _ _ Hweq Hwv)].
     - exact (src_exp_Efby _ _ _ _ (normalized_constant_lexp _ H0) H1).
     - exact (src_exp_cexp _ _ Hc).
   Qed.
@@ -3618,12 +4059,147 @@ Import SECMONADNotations.
 
 
 
+  (** * The source expressions' anonymous streams are the node's
+
+      What [src_exp] still asks -- the anonymous streams of every
+      subexpression of an equation are among the node's -- is a fact about the
+      node, not about the program: [anon_in] of a subexpression is inside
+      [anon_in] of the expression, and [anon_in_eqs] collects the equations'. *)
+
+  Lemma imm_sub_fresh_anon :
+    forall e' e, imm_sub e' e -> incl (fresh_in e') (anon_in e).
+  Proof.
+    intros e' e H x Hx.
+    inversion H; subst; simpl.
+    - exact Hx.
+    - apply in_or_app. left. exact Hx.
+    - apply in_or_app. right. exact Hx.
+    - apply in_or_app. left. exact (fresh_in_incl _ _ H0 x Hx).
+    - apply in_or_app. right. exact (fresh_in_incl _ _ H0 x Hx).
+    - apply in_or_app. left. exact (fresh_in_incl _ _ H0 x Hx).
+    - apply in_or_app. right. exact (fresh_in_incl _ _ H0 x Hx).
+    - exact (fresh_in_incl _ _ H0 x Hx).
+    - apply in_or_app. left. exact (fresh_in_incl _ _ H0 x Hx).
+    - apply in_or_app. right. exact (fresh_in_incl _ _ H0 x Hx).
+    - apply in_or_app. left. exact Hx.
+    - apply in_or_app. right. apply in_or_app. left.
+      exact (fresh_in_incl _ _ H0 x Hx).
+    - apply in_or_app. right. apply in_or_app. right.
+      exact (fresh_in_incl _ _ H0 x Hx).
+    - destruct ro as [r|]; simpl; [apply in_or_app; left|];
+        exact (fresh_in_incl _ _ H0 x Hx).
+    - apply in_or_app. right. exact Hx.
+  Qed.
+
+  Lemma imm_sub_anon_in :
+    forall e' e, imm_sub e' e -> incl (anon_in e') (anon_in e).
+  Proof.
+    intros e' e H x Hx. apply anon_in_fresh_in in Hx.
+    exact (imm_sub_fresh_anon _ _ H x Hx).
+  Qed.
+
+  Lemma imm_sub_fresh_in :
+    forall e' e, imm_sub e' e -> incl (fresh_in e') (fresh_in e).
+  Proof.
+    intros e' e H x Hx. apply anon_in_fresh_in.
+    exact (imm_sub_fresh_anon _ _ H x Hx).
+  Qed.
+
+  Lemma sub_exp_anon_in :
+    forall e'' e, sub_exp e'' e -> incl (anon_in e'') (anon_in e).
+  Proof.
+    intros e'' e H. induction H as [e|e'' e' e Himm Hs IH].
+    - apply incl_refl.
+    - eapply incl_tran; [exact IH|exact (imm_sub_anon_in _ _ Himm)].
+  Qed.
+
+  Lemma sub_exp_fresh_in :
+    forall e'' e, sub_exp e'' e -> incl (fresh_in e'') (fresh_in e).
+  Proof.
+    intros e'' e H. induction H as [e|e'' e' e Himm Hs IH].
+    - apply incl_refl.
+    - eapply incl_tran; [exact IH|exact (imm_sub_fresh_in _ _ Himm)].
+  Qed.
+
+  Lemma wc_call_names_gen :
+    forall (vars : list (ident * clock)) (xs : list ident) (es : list exp) f es0
+           ro (anns : list LSyn.ann),
+      Forall2 (fun x nc => LiftO True (Logic.eq x) (snd nc)) xs (nclocksof es) ->
+      Forall2 (fun x ck => In (x, ck) vars) xs (clocksof es) ->
+      In (Eapp f es0 ro anns) es ->
+      forall w, In (Some w) (List.map stream_name anns) ->
+                In w (List.map fst vars).
+  Proof.
+    intros vars xs es f es0 ro anns Heq Hvs Hin w Hw.
+    apply in_map_iff in Hw as (ann & Hann & Hina).
+    assert (In (snd ann) (nclocksof es)) as Hnc.
+    { unfold nclocksof. apply in_flat_map. exists (Eapp f es0 ro anns).
+      split; [exact Hin|]. simpl. apply in_map_iff. exists ann.
+      split; [reflexivity|exact Hina]. }
+    destruct (Forall2_in_right _ xs (nclocksof es) (snd ann) Heq Hnc)
+      as (x & Hx & Hxe).
+    unfold stream_name in Hann. simpl in Hxe. rewrite Hann in Hxe.
+    simpl in Hxe. subst x.
+    destruct (Forall2_in_left _ _ _ w Hvs Hx) as (ck & _ & Hv).
+    apply in_map_iff. exists (w, ck). split; [reflexivity|exact Hv].
+  Qed.
+
+  Lemma source_exp_node :
+    forall (Q : global) (n : node) eq e,
+      wc_equation Q (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) eq ->
+      In eq n.(n_eqs) -> In e (snd eq) ->
+      src_exp (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out))) (anon_names n) e.
+  Proof.
+    intros Q n eq e Hweq Heq He e' Hs. split.
+    - intros w a Hin.
+      apply sub_exp_anon_in in Hs. apply Hs in Hin.
+      assert (Hin' : In (w, a) (anon_in_eqs n.(n_eqs))).
+      { eapply anon_in_eq_incl; [exact Heq|].
+        eapply anon_in_incl; [exact He|exact Hin]. }
+      apply in_map_iff. exists (w, a). split; [reflexivity|exact Hin'].
+    - destruct e' as [c|x a|op e1 a|op e1 e2 a|e0s es a|e0s es a|es x b a
+                     |x ets efs a|e0 ets efs a|f es0 ro anns]; try exact I.
+      intros w Hw.
+      apply sub_exp_inv in Hs as [Heqe|(e1 & Himm & Hs1)].
+      + (* the call is the equation's own: its names are the lhs *)
+        right. destruct eq as (xs, es). destruct Hweq as (_ & Hweq1 & Hweq2).
+        cbn [snd] in He. subst e.
+        exact (wc_call_names_gen _ xs es f es0 ro anns Hweq1 Hweq2 He w Hw).
+      + (* nested: its names are anonymous streams of the equation *)
+        left. destruct (anon_streams_name w anns Hw) as (a & Ha).
+        assert (Hf : In (w, a) (fresh_in (Eapp f es0 ro anns)))
+          by exact (nested_call_name_fresh f es0 ro anns w a Ha).
+        apply (sub_exp_fresh_in _ _ Hs1) in Hf.
+        apply (imm_sub_fresh_anon _ _ Himm) in Hf.
+        assert (Hin' : In (w, a) (anon_in_eqs n.(n_eqs))).
+        { eapply anon_in_eq_incl; [exact Heq|].
+          eapply anon_in_incl; [exact He|exact Hf]. }
+        apply in_map_iff. exists (w, a). split; [reflexivity|exact Hin'].
+  Qed.
+
   (** * The two legs' node relations *)
 
   Definition source_guard (n : node) : Prop :=
     Forall (fun eq =>
               Forall (src_exp (idck (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
                         (anon_names n)) (snd eq)) n.(n_eqs).
+
+  Lemma source_guard_holds :
+    forall (Q : global) n, wc_node Q n -> source_guard n.
+  Proof.
+    intros Q n Hwcn. unfold source_guard. apply Forall_forall. intros eq Heq.
+    apply Forall_forall. intros e He.
+    destruct Hwcn as (_ & _ & _ & Hweqs). rewrite Forall_forall in Hweqs.
+    exact (source_exp_node Q n eq e (Hweqs eq Heq) Heq He).
+  Qed.
+
+  Lemma wc_global_source_guard :
+    forall G, wc_global G -> Forall source_guard G.
+  Proof.
+    intros G H. induction H as [|n ns Hg IH Hn Hd]; constructor.
+    - exact (source_guard_holds ns n Hn).
+    - exact IH.
+  Qed.
 
   (** Leg U: [P] is the source program the node is read against. *)
   Definition RU (P : global) (nS nM nN : node) : Prop :=
@@ -4081,7 +4657,7 @@ Import SECMONADNotations.
            (Hunt : unnested_global (unnest_global G Hwl Hpr))
            (Hpref1 : Forall (fun n => n_prefixes n = norm1_prefs)
                        (unnest_global G Hwl Hpr)),
-      wc_global G -> wt_global G -> Forall source_guard G ->
+      wc_global G -> wt_global G ->
       forall envsF auxF stN st GS,
         generate_lnode_scoped_env_st
           (List.rev (normfby_global (unnest_global G Hwl Hpr) Hunt Hpref1))
@@ -4091,8 +4667,9 @@ Import SECMONADNotations.
         forall f sg, find_signature f GS = Some sg ->
           signature_good sg /\ NoDup (signature_scope sg).
   Proof.
-    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard envsF auxF stN st GS
+    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt envsF auxF stN st GS
       Hnaming Hle HgS f sg Hf.
+    pose proof (wc_global_source_guard G Hwc) as Hguard.
     set (G1 := unnest_global G Hwl Hpr) in *.
     set (G2 := normfby_global G1 Hunt Hpref1) in *.
     assert (Hnd : NoDup (List.map n_name (List.rev G2))).
@@ -4349,6 +4926,23 @@ Import SECMONADNotations.
          (e = Efby [e0] [e1] [a] \/ e = Earrow [e0] [e1] [a])
          /\ normalized_lexp e0 /\ normalized_lexp e1.
 
+  Lemma named_ok_cf :
+    forall (vars : list (ident * clock)) e, cf_exp e -> named_ok vars e.
+  Proof.
+    intros vars e Hcf f es r anns w Hs Hw.
+    destruct Hcf as [Hn|(e0 & e1 & a & He & H0 & H1)].
+    - exact (named_ok_normalized_cexp vars e Hn f es r anns w Hs Hw).
+    - destruct He as [He|He]; subst e;
+        apply sub_exp_inv in Hs as [Heq|[e' [Himm Hs']]]; try discriminate;
+        inversion Himm; subst;
+        match goal with
+        | Hin : In _ [_] |- _ =>
+          destruct Hin as [<-|[]];
+          first [exact (named_ok_normalized_lexp vars _ H0 f es r anns w Hs' Hw)
+                |exact (named_ok_normalized_lexp vars _ H1 f es r anns w Hs' Hw)]
+        end.
+  Qed.
+
   Lemma assign_lexp_delay_pure :
     forall G env bt rt e0 e1 e a st ts st',
       normalized_lexp e0 -> normalized_lexp e1 ->
@@ -4418,6 +5012,7 @@ Import SECMONADNotations.
     { unfold wc_env in Hwenv. rewrite Forall_forall in Hwenv.
       exact (Hwenv _ Hxin). }
     pose proof (assign_lexp_type_clock_closed G env ct rt P vars Hinj Hnd e Hwc
+                  (named_ok_cf vars e Hcf)
                   [(sa, [])] st st [] ltac:(rewrite minted_refl; intros z []) Hrun)
       as Hlcc.
     rewrite Hclk in Hlcc. inversion Hlcc as [|t0 c0 ts0 cs0 Hl1 Hl2]; subst.
@@ -4714,6 +5309,9 @@ Import SECMONADNotations.
     assert (Hlcc : Forall2 (lst_clock_closed env ct vars []) argts
                      (clocksof es)).
     { refine (assign_lexps_closed_of G env ct rt P vars es _ Hwces
+                (proj2 (Forall_forall _ _)
+                   (fun e He => named_ok_normalized_lexp vars e
+                                  (proj1 (Forall_forall _ _) Hesn e He)))
                 argts st st [] _ Hargs).
       - rewrite Forall_forall. intros e _.
         exact (assign_lexp_type_clock_closed G env ct rt P vars Hinj Hnd e).
@@ -4802,6 +5400,7 @@ Import SECMONADNotations.
     rewrite carried_single in Hc.
     pose proof (wc_reset_clocks P vars e1 Hg Hwenv Hwc Hn) as Hwcl.
     pose proof (assign_lexp_type_clock_closed G env ct rt P vars Hinj Hnd e1 Hwc
+                  (named_ok_normalized_lexp vars e1 Hn)
                   [a1] st st [] ltac:(rewrite minted_refl; intros z [])
                   Hrun) as Hlcc.
     destruct (clockof e1) as [|ckr rest] eqn:Hce; [inversion Hlcc|].
@@ -5215,6 +5814,11 @@ Import SECMONADNotations.
       unfold ins, idck in Hx. apply nth_error_map_inv in Hx as ((x' & (ty & ck0)) & Hxn & Heq).
       inversion Heq; subst x' ck0. exact (Hnth i x (ty, ck) y Hxn Hy).
     - cbn [s_constraints].
+      assert (Hanon0 : anon_images env n = []).
+      { pose proof (anon_names_unnested Q n Hun) as H00.
+        unfold anon_names in H00. apply map_eq_nil in H00.
+        unfold anon_images. rewrite H00. reflexivity. }
+      rewrite Hanon0. cbn [app].
       intros c Hc x ck y Hin Hx Hy x' y' Hx' Hy'.
       refine (closed_of_icl env ct ins _ A2 _ c Hc x ck y Hin Hx Hy x' y' Hx' Hy').
       intros x0 ck0 x1 Hin0 Hx1.
@@ -5320,7 +5924,7 @@ Import SECMONADNotations.
            (Hunt : unnested_global (unnest_global G Hwl Hpr))
            (Hpref1 : Forall (fun n => n_prefixes n = norm1_prefs)
                        (unnest_global G Hwl Hpr)),
-      wc_global G -> wt_global G -> Forall source_guard G ->
+      wc_global G -> wt_global G ->
       forall envsF auxF stN st GS GT GM,
         generate_lnode_scoped_env_st
           (List.rev (normfby_global (unnest_global G Hwl Hpr) Hunt Hpref1))
@@ -5334,8 +5938,9 @@ Import SECMONADNotations.
           envsF auxF st = OK GM ->
         call_weakens GS GM /\ sigs_preserved GS GM.
   Proof.
-    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard envsF auxF stN st GS GT GM
+    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt envsF auxF stN st GS GT GM
       Hnaming Hle HgS HgT HgM.
+    pose proof (wc_global_source_guard G Hwc) as Hguard.
     set (G1 := unnest_global G Hwl Hpr) in *.
     set (G2 := normfby_global G1 Hunt Hpref1) in *.
     assert (Hwc1 : wc_global G1) by exact (NClo.unnest_global_wc G Hwl Hpr Hwc).

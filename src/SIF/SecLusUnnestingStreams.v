@@ -92,6 +92,49 @@ Qed.
       one covering its *own* slot, and [state_clocks_found] reads a variable's
       clock off the state.  The pass stores the head of the argument's
       annotation, so the clock is the argument's own. *)
+  (** The variables [idents_for_anns'] binds the results to: a named result
+      keeps its name. *)
+  Lemma idents_for_anns'_named :
+    forall anns xs st st',
+      idents_for_anns' anns st = (xs, st') ->
+      forall xa, In xa xs -> forall w,
+        stream_name (snd xa) = Some w -> fst xa = w.
+  Proof.
+    induction anns as [|a anns IH]; intros xs st st' H xa Hxa w Hw.
+    - simpl in H. repeat UNN.Fresh.Tactics.inv_bind. destruct Hxa.
+    - destruct a as (ty & ck & [x0|]); simpl in H;
+        repeat UNN.Fresh.Tactics.inv_bind.
+      + destruct Hxa as [<-|Hxa];
+          [unfold stream_name in Hw; simpl in Hw |- *; congruence|].
+        eapply IH; eauto.
+      + destruct Hxa as [<-|Hxa];
+          [unfold stream_name in Hw; simpl in Hw; discriminate|].
+        eapply IH; eauto.
+  Qed.
+
+  Lemma Forall2_map_left_gen :
+    forall {A A' B : Type} (f : A -> A') (P : A' -> B -> Prop) xs ys,
+      Forall2 P (List.map f xs) ys ->
+      Forall2 (fun x y => P (f x) y) xs ys.
+  Proof.
+    intros A A' B f P xs. induction xs as [|x xs IH]; intros ys H;
+      inversion H; subst; constructor; auto.
+  Qed.
+
+  Lemma Forall2_align :
+    forall {A B C : Type} (R : A -> B -> Prop) (S : A -> C -> Prop) xs ys zs,
+      Forall2 R xs ys -> Forall2 S xs zs ->
+      Forall2 (fun y z => exists x, In x xs /\ R x y /\ S x z) ys zs.
+  Proof.
+    intros A B C R S xs ys zs H. revert zs.
+    induction H as [|x y xs ys Hxy Hr IH]; intros zs HS;
+      inversion HS as [|x0 z0 xs0 zs0 Hxz HS0]; subst; constructor.
+    - exists x. split; [now left|split; assumption].
+    - eapply CALLS.Forall2_weaken_pt; [|exact (IH _ HS0)].
+      intros y' z' (x' & Hx' & Hr' & Hs'). exists x'.
+      split; [now right|split; assumption].
+  Qed.
+
   Lemma unnest_noops_exp_inv_anns :
     forall cki e e' eqs st st',
       unnest_noops_exp cki e st = ((e', eqs), st') ->
@@ -423,6 +466,20 @@ Section StreamAmbients.
   Variable cenv    : Env.t (type * clock).
 
   Hypothesis env_inj : env_injective env.
+
+  Variable AN : list ident.
+
+  Hypothesis AN_apart_anns :
+    forall anns xs st st',
+      idents_for_anns anns st = (xs, st') ->
+      forall x, In x (List.map fst xs) -> ~ In x AN.
+  Hypothesis AN_apart_fresh :
+    forall (b : type * clock) x st st',
+      fresh_ident norm1 b st = (x, st') -> ~ In x AN.
+  Hypothesis AN_apart_anns' :
+    forall anns xs st st',
+    idents_for_anns' anns st = (xs, st') ->
+    forall x a, In (x, a) xs -> stream_name a = None -> ~ In x AN.
 
   Local Notation sec_of := (CALLS.sec_of env).
   Local Notation agree_off := CALLS.agree_off.
@@ -1043,7 +1100,7 @@ Section StreamAmbients.
       Forall normalized_lexp es1 ->
       unnest_noops_exps ckis es1 st = ((es2, eqs2), st') ->
       NoDup (vars_defined eqs2 ++ st_ids st) ->
-      (forall b, In b (CALLS.moved_by env st st') -> ~ In b bound) ->
+      (forall b, In b (CALLS.moved_by env AN st st') -> ~ In b bound) ->
       clocks_covered (clocksof es1) ambs ->
       stream_ambients_scoped bound ambs ->
       state_clocks_found st' ->
@@ -1053,12 +1110,12 @@ Section StreamAmbients.
       generate_leqns_constraints GL env base_ty rst_ty cenv eqs2 xst
         = OK (ce, xst') ->
       exists dlt',
-        CALLS.agree_off (CALLS.moved_by env st st') dlt dlt'
+        CALLS.agree_off (CALLS.moved_by env AN st st') dlt dlt'
         /\ listSatisfiable dlt' ce
         /\ stream_rel dlt' ambs ts1 ts2
-        /\ constraints_scoped (bound ++ CALLS.moved_by env st st') ce
+        /\ constraints_scoped (bound ++ CALLS.moved_by env AN st st') ce
         /\ Forall (fun t2 =>
-                     st_scoped (bound ++ CALLS.moved_by env st st') (fst t2))
+                     st_scoped (bound ++ CALLS.moved_by env AN st st') (fst t2))
              ts2.
   Proof.
     intros bound ambs ckis es1. revert bound ambs ckis.
@@ -1132,7 +1189,7 @@ Section StreamAmbients.
       { exact Ht. }
       { exact Hndt. }
       { intros b Hb. apply Hmv.
-        apply (CALLS.moved_by_suffix_local env st st1 st' Hf0). exact Hb. }
+        apply (CALLS.moved_by_suffix_local env AN st st1 st' Hf0). exact Hb. }
       { exact Hcovr. }
       { exact Hambscr. }
       { exact Hfound. }
@@ -1142,6 +1199,7 @@ Section StreamAmbients.
       { exact Hgent. }
 
       (** and the head *)
+      pose proof Hh as Hhx.
       apply unnest_noops_exp_inv_anns in Hh
         as [(? & ? & ?)|(x & ty & cko & o & Han & ? & ? & Hxan & Hpx)]; subst.
       + (** kept: the same expression, so the same type, nothing emitted *)
@@ -1162,20 +1220,21 @@ Section StreamAmbients.
         assert (In x (CALLS.new_ids st st1)) as Hxnew.
         { apply new_ids_spec. split; [|exact Hxst].
           eapply Permutation_in; [exact Hpx|now left]. }
-        assert (In b (CALLS.moved_by env st st1)) as Hbmv.
-        { unfold CALLS.moved_by, CALLS.sec_of. apply in_flat_map.
-          exists x. split; [exact Hxnew|]. rewrite Hb. now left. }
+        assert (In b (CALLS.moved_by env AN st st1)) as Hbmv.
+        { refine (CALLS.In_moved_by env AN st st1 x b Hxnew _ Hb).
+          eapply (CALLS.unnest_noops_exp_notAN AN AN_apart_fresh);
+            [exact Hhx|simpl; now left]. }
         assert (forall c, In c (CALLS.sec_of env [x]) ->
-                          In c (CALLS.moved_by env st st1)) as Hbnew.
+                          In c (CALLS.moved_by env AN st st1)) as Hbnew.
         { intros c Hc. unfold CALLS.sec_of in Hc. cbn in Hc.
           rewrite Hb in Hc. destruct Hc as [|[]]; subst. exact Hbmv. }
         assert (forall c, In c (CALLS.sec_of env [x]) ->
-                    ~ In c (bound ++ CALLS.moved_by env st1 st')) as Hsepx.
+                    ~ In c (bound ++ CALLS.moved_by env AN st1 st')) as Hsepx.
         { intros c Hc Hin. apply Hbnew in Hc.
           apply in_app_or in Hin as [Hin|Hin].
           - eapply (Hmv c); [|exact Hin].
-            apply (CALLS.moved_by_prefix_local env st st1 st' Hf1). exact Hc.
-          - exact (CALLS.moved_by_disjoint_local env env_inj st st1 st' c Hc Hin). }
+            apply (CALLS.moved_by_prefix_local env AN st st1 st' Hf1). exact Hc.
+          - exact (CALLS.moved_by_disjoint_local env AN env_inj st st1 st' c Hc Hin). }
         (** the ambient covers the clock the pass recorded *)
         assert (declared_ambients [x] [a]) as Hdecl.
         { constructor; [|constructor].
@@ -1188,7 +1247,7 @@ Section StreamAmbients.
                            (normalized_lexp_numstreams e Hne) Han)).
           rewrite Hcko in Hcke. inversion Hcke; subst cke. exact Hca. }
 
-        edestruct (lifted_defs_streams (bound ++ CALLS.moved_by env st1 st')
+        edestruct (lifted_defs_streams (bound ++ CALLS.moved_by env AN st1 st')
                      [x] [e] [t0] [a] ceh xst xstm dlt1)
           as (dlt2 & Hoff2 & Hce2 & Hscope2 & Hrel2).
         { constructor; [intros []|constructor]. }
@@ -1214,23 +1273,23 @@ Section StreamAmbients.
         assert (satisfiable dlt2 [b] (merge a (fst t0))) as Hhead.
         { inversion Hrel2 as [|p q s0 ps qs ss Hpq _]; subst.
           now apply Hpq. }
-        assert (incl (CALLS.sec_of env [x]) (CALLS.moved_by env st st'))
+        assert (incl (CALLS.sec_of env [x]) (CALLS.moved_by env AN st st'))
           as Hincx.
-        { intros c Hc. apply (CALLS.moved_by_prefix_local env st st1 st' Hf1).
+        { intros c Hc. apply (CALLS.moved_by_prefix_local env AN st st1 st' Hf1).
           now apply Hbnew. }
         exists dlt2. split; [|split; [|split; [|split]]].
         * eapply agree_off_trans.
           -- eapply agree_off_incl; [|exact Hoff1].
-             apply (CALLS.moved_by_suffix_local env st st1 st' Hf0).
+             apply (CALLS.moved_by_suffix_local env AN st st1 st' Hf0).
           -- eapply agree_off_incl; [|exact Hoff2]. exact Hincx.
         * apply listSatisfiable_app. split; [exact Hce2|].
           eapply listSatisfiable_off_scope
-            with (sc := bound ++ CALLS.moved_by env st1 st')
+            with (sc := bound ++ CALLS.moved_by env AN st1 st')
                  (xs := CALLS.sec_of env [x]); eauto.
         * constructor.
           -- exact Hhead.
           -- eapply stream_rel_off_scope
-               with (scope := bound ++ CALLS.moved_by env st1 st')
+               with (scope := bound ++ CALLS.moved_by env AN st1 st')
                     (moved := CALLS.sec_of env [x]);
                [| | |exact Hsepx|exact Hoff2|exact Hrel1].
              ++ eapply Forall_impl; [|exact Hambscr].
@@ -1246,11 +1305,11 @@ Section StreamAmbients.
              apply incl_app;
                [|eapply incl_tran; [exact Hincx|apply incl_appr, incl_refl]].
              apply incl_app; [apply incl_appl, incl_refl|].
-             apply incl_appr, (CALLS.moved_by_suffix_local env st st1 st' Hf0).
+             apply incl_appr, (CALLS.moved_by_suffix_local env AN st st1 st' Hf0).
           -- eapply Forall_impl; [|exact Hscope1].
              intros cc Hcc. eapply constraint_scoped_incl; [|exact Hcc].
              apply incl_app; [apply incl_appl, incl_refl|].
-             apply incl_appr, (CALLS.moved_by_suffix_local env st st1 st' Hf0).
+             apply incl_appr, (CALLS.moved_by_suffix_local env AN st st1 st' Hf0).
         * constructor.
           -- intros c Hc. destruct Hc as [|[]]; subst.
              apply in_or_app. right. apply Hincx.
@@ -1258,7 +1317,7 @@ Section StreamAmbients.
           -- eapply Forall_impl; [|exact Hsc2t].
              intros q Hq. eapply st_scoped_weaken; [|exact Hq].
              apply incl_app; [apply incl_appl, incl_refl|].
-             apply incl_appr, (CALLS.moved_by_suffix_local env st st1 st' Hf0).
+             apply incl_appr, (CALLS.moved_by_suffix_local env AN st st1 st' Hf0).
   Qed.
 
   Section ExpressionContract.
@@ -1271,7 +1330,6 @@ Section StreamAmbients.
         source generator hold only for runs that finish before it. *)
     Variable stLo     : sec_state.
     Variable stF   : sec_state.
-    Variable AN : list ident.
 
 
     (** The facts about the source generator that only the call case reads.
@@ -1298,6 +1356,14 @@ Section StreamAmbients.
         Forall (caller_name env scope) os ->
         generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
         call_subst_fresh sg inp ck rst os.
+
+    (** Every signature's clock and reset formals are sources of all of its
+        constraints. *)
+    Hypothesis sig_rooted :
+      forall f sg,
+        find_signature f GL = Some sg ->
+        CALLS.all_sources_have sg.(s_clk) sg.(s_constraints)
+        /\ CALLS.all_sources_have sg.(s_reset) sg.(s_constraints).
 
     Hypothesis source_types_scoped :
       CALLS.source_types_scoped_upto_g GL env base_ty rst_ty vars AN scope stLo stF.
@@ -1337,6 +1403,15 @@ Section StreamAmbients.
     Hypothesis env_anon :
       forall w, In w AN -> ~ In w (List.map fst vars).
 
+    (** The node's clocking, and the anonymous streams of its calls as
+        environment keys: the naming pass names them.  Together with
+        [wc_exp_clock_names] these make every clock of a source expression
+        typed. *)
+    Hypothesis vars_wcenv : wc_env vars.
+
+    Hypothesis env_anon_keys :
+      forall w, In w AN -> exists b, Env.find w env = Some b.
+
     (** The expression contract with one clock ambient per source stream.
         [clocks_covered] fixes the positional meaning of [ambs], while
         [state_clocks_found] connects the clocks stored on variables freshly
@@ -1350,7 +1425,7 @@ Section StreamAmbients.
         src_exp vars AN e ->
         NoDup (vars_defined eqs ++ st_ids st) ->
         (forall x,
-            In x (CALLS.moved_by env st st') -> ~ In x scope) ->
+            In x (CALLS.moved_by env AN st st') -> ~ In x scope) ->
         constraints_scoped scope (carried ts) ->
         Forall (fun t => st_scoped scope (fst t)) ts ->
         stream_ambients_scoped scope ambs ->
@@ -1365,7 +1440,7 @@ Section StreamAmbients.
         listSatisfiable dlt (carried ts) ->
         sec_le sst' stF -> sec_le stLo sst ->
         exists dlt',
-          carries_result_streams scope (CALLS.moved_by env st st')
+          carries_result_streams scope (CALLS.moved_by env AN st st')
             ambs ts ts'' ce dlt dlt'.
 
     Definition carries_streams (P : global) (e : exp) : Prop :=
@@ -1404,7 +1479,7 @@ Section StreamAmbients.
       inversion Has'; subst; clear Has'.
       exact
         (carries_unchanged_streams
-           scope (CALLS.moved_by env st' st') ambs [lbot] [lbot] [] dlt
+           scope (CALLS.moved_by env AN st' st') ambs [lbot] [lbot] [] dlt
            (@Coq.Init.Logic.eq_refl (list LST) [lbot])
            (@Coq.Init.Logic.eq_refl (list constraint) []) Hlen Htsc).
     Qed.
@@ -1429,7 +1504,7 @@ Section StreamAmbients.
       rewrite Hb in Hb'. inversion Hb'; subst b'; clear Hb'.
       exact
         (carries_unchanged_streams
-           scope (CALLS.moved_by env st' st')
+           scope (CALLS.moved_by env AN st' st')
            ambs [([b], [])] [([b], [])] [] dlt
            (@Coq.Init.Logic.eq_refl (list LST) [([b], [])])
            (@Coq.Init.Logic.eq_refl (list constraint) []) Hlen Htsc).
@@ -1575,16 +1650,16 @@ Section StreamAmbients.
         - exact Hnd. }
       assert
         (forall x,
-            In x (CALLS.moved_by env st st1) -> ~ In x scope) as Hmv1.
+            In x (CALLS.moved_by env AN st st1) -> ~ In x scope) as Hmv1.
       { intros x Hx. apply Hmv.
         exact
-          (CALLS.moved_by_prefix_local env st st1 st' Hf2 x Hx). }
+          (CALLS.moved_by_prefix_local env AN st st1 st' Hf2 x Hx). }
       assert
         (forall x,
-            In x (CALLS.moved_by env st1 st') -> ~ In x scope) as Hmv2.
+            In x (CALLS.moved_by env AN st1 st') -> ~ In x scope) as Hmv2.
       { intros x Hx. apply Hmv.
         exact
-          (CALLS.moved_by_suffix_local env st st1 st' Hf1 x Hx). }
+          (CALLS.moved_by_suffix_local env AN st st1 st' Hf1 x Hx). }
       assert
         (Forall (fun t => st_scoped scope (fst t)) [a1]) as Ha1scs.
       { constructor; [exact Ha1sc|constructor]. }
@@ -1612,7 +1687,7 @@ Section StreamAmbients.
       assert (listSatisfiable dlt1 (carried [a2])) as Hsat2'.
       { apply
           (CALLS.listSatisfiable_off
-             scope (carried [a2]) (CALLS.moved_by env st st1)
+             scope (carried [a2]) (CALLS.moved_by env AN st st1)
              dlt dlt1).
         - rewrite Hcar2. exact Hcsc2.
         - exact Hmv1.
@@ -1644,16 +1719,16 @@ Section StreamAmbients.
         rewrite Hoff1.
         2: { intro Hin. apply Hx.
              exact
-               (CALLS.moved_by_prefix_local env st st1 st' Hf2 x Hin). }
+               (CALLS.moved_by_prefix_local env AN st st1 st' Hf2 x Hin). }
         apply Hoff2. intro Hin. apply Hx.
         exact
-          (CALLS.moved_by_suffix_local env st st1 st' Hf1 x Hin).
+          (CALLS.moved_by_suffix_local env AN st st1 st' Hf1 x Hin).
       - split.
         + apply listSatisfiable_app. split; [|exact Hce2].
           exact
             (CALLS.listSatisfiable_off_scope
-               ce1 (scope ++ CALLS.moved_by env st st1)
-               (CALLS.moved_by env st1 st') dlt1 dlt2
+               ce1 (scope ++ CALLS.moved_by env AN st st1)
+               (CALLS.moved_by env AN st1 st') dlt1 dlt2
                Hscope1
                (fun x Hin Hxin =>
                   match in_app_or _ _ _ Hxin with
@@ -1661,7 +1736,7 @@ Section StreamAmbients.
                       Hmv2 x Hin Hscope
                   | or_intror Hfirst =>
                       CALLS.moved_by_disjoint_local
-                        env env_inj st st1 st' x Hfirst Hin
+                        env AN env_inj st st1 st' x Hfirst Hin
                   end)
                Hoff2 Hce1).
         + split.
@@ -1671,14 +1746,14 @@ Section StreamAmbients.
                apply
                  (CALLS.satisfiable_off
                     (fst b1) (merge amb (fst a1))
-                    (CALLS.moved_by env st1 st') dlt1 dlt2).
+                    (CALLS.moved_by env AN st1 st') dlt1 dlt2).
                ++ exact Hoff2.
                ++ intros x Hx Hin. apply Hb1sc in Hx.
                   apply in_app_or in Hx as [Hx|Hx].
                   ** exact (Hmv2 x Hin Hx).
                   ** exact
                        (CALLS.moved_by_disjoint_local
-                          env env_inj st st1 st' x Hx Hin).
+                          env AN env_inj st st1 st' x Hx Hin).
                ++ intros x Hx Hin. apply in_merge_inv in Hx as [Hx|Hx].
                   ** exact (Hmv2 x Hin (Hambsc0 x Hx)).
                   ** exact (Hmv2 x Hin (Ha1sc x Hx)).
@@ -1690,43 +1765,43 @@ Section StreamAmbients.
                ++ apply
                     (@Forall_impl constraint
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st1))
+                          (scope ++ CALLS.moved_by env AN st st1))
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st'))).
+                          (scope ++ CALLS.moved_by env AN st st'))).
                   ** intros c Hc. apply constraint_scoped_incl with
-                       (scope1 := scope ++ CALLS.moved_by env st st1).
+                       (scope1 := scope ++ CALLS.moved_by env AN st st1).
                      2: exact Hc.
                      apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr.
-                     exact (CALLS.moved_by_prefix_local env st st1 st' Hf2).
+                     exact (CALLS.moved_by_prefix_local env AN st st1 st' Hf2).
                   ** exact Hscope1.
                ++ apply
                     (@Forall_impl constraint
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st1 st'))
+                          (scope ++ CALLS.moved_by env AN st1 st'))
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st'))).
+                          (scope ++ CALLS.moved_by env AN st st'))).
                   ** intros c Hc. apply constraint_scoped_incl with
-                       (scope1 := scope ++ CALLS.moved_by env st1 st').
+                       (scope1 := scope ++ CALLS.moved_by env AN st1 st').
                      2: exact Hc.
                      apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr.
-                     exact (CALLS.moved_by_suffix_local env st st1 st' Hf1).
+                     exact (CALLS.moved_by_suffix_local env AN st st1 st' Hf1).
                   ** exact Hscope2.
             -- constructor; [|constructor]. unfold ljoin; simpl.
                apply st_scoped_merge.
                ++ apply st_scoped_weaken with
-                    (scope1 := scope ++ CALLS.moved_by env st st1).
+                    (scope1 := scope ++ CALLS.moved_by env AN st st1).
                   2: exact Hb1sc.
                   apply incl_app; [apply incl_appl, incl_refl|].
                   apply incl_appr.
-                  exact (CALLS.moved_by_prefix_local env st st1 st' Hf2).
+                  exact (CALLS.moved_by_prefix_local env AN st st1 st' Hf2).
                ++ apply st_scoped_weaken with
-                    (scope1 := scope ++ CALLS.moved_by env st1 st').
+                    (scope1 := scope ++ CALLS.moved_by env AN st1 st').
                   2: exact Hb2sc.
                   apply incl_app; [apply incl_appl, incl_refl|].
                   apply incl_appr.
-                  exact (CALLS.moved_by_suffix_local env st st1 st' Hf1).
+                  exact (CALLS.moved_by_suffix_local env AN st st1 st' Hf1).
     Qed.
 
     Definition carries_list_streams (P : global) (es : list exp) : Prop :=
@@ -1737,7 +1812,7 @@ Section StreamAmbients.
         Forall (src_exp vars AN) es ->
         NoDup (vars_defined (List.concat eqs) ++ st_ids st) ->
         (forall x,
-            In x (CALLS.moved_by env st st') -> ~ In x scope) ->
+            In x (CALLS.moved_by env AN st st') -> ~ In x scope) ->
         constraints_scoped scope (carried ts) ->
         Forall (fun t => st_scoped scope (fst t)) ts ->
         stream_ambients_scoped scope ambs ->
@@ -1753,7 +1828,7 @@ Section StreamAmbients.
         listSatisfiable dlt (carried ts) ->
         sec_le sst' stF -> sec_le stLo sst ->
         exists dlt',
-          carries_result_streams scope (CALLS.moved_by env st st')
+          carries_result_streams scope (CALLS.moved_by env AN st st')
             ambs ts ts'' ce dlt dlt'.
 
     Lemma split_at_length :
@@ -1800,7 +1875,7 @@ Section StreamAmbients.
         destruct ambs as [|amb ambs]; [|discriminate].
         exact
           (carries_unchanged_streams
-             scope (CALLS.moved_by env st st) [] [] [] [] dlt
+             scope (CALLS.moved_by env AN st st) [] [] [] [] dlt
              (@Coq.Init.Logic.eq_refl (list LST) [])
              (@Coq.Init.Logic.eq_refl (list constraint) []) Hlen Htsc).
       - inversion Hwl as [|e0 es0 Hwle Hwles]; subst.
@@ -1882,16 +1957,16 @@ Section StreamAmbients.
           - exact Hnd. }
         assert
           (forall x,
-              In x (CALLS.moved_by env st st1) -> ~ In x scope) as Hmv1.
+              In x (CALLS.moved_by env AN st st1) -> ~ In x scope) as Hmv1.
         { intros x Hx. apply Hmv.
           exact
-            (CALLS.moved_by_prefix_local env st st1 st' Hf2 x Hx). }
+            (CALLS.moved_by_prefix_local env AN st st1 st' Hf2 x Hx). }
         assert
           (forall x,
-              In x (CALLS.moved_by env st1 st') -> ~ In x scope) as Hmv2.
+              In x (CALLS.moved_by env AN st1 st') -> ~ In x scope) as Hmv2.
         { intros x Hx. apply Hmv.
           exact
-            (CALLS.moved_by_suffix_local env st st1 st' Hf1 x Hx). }
+            (CALLS.moved_by_suffix_local env AN st st1 st' Hf1 x Hx). }
 
         destruct
           (IHe ic ambs1 f1 eq1 st st1 t sst sa
@@ -1907,7 +1982,7 @@ Section StreamAmbients.
         assert (listSatisfiable dlt1 (carried r)) as Hsat2'.
         { apply
             (CALLS.listSatisfiable_off
-               scope (carried r) (CALLS.moved_by env st st1) dlt dlt1).
+               scope (carried r) (CALLS.moved_by env AN st st1) dlt dlt1).
           - exact Hcsc2.
           - exact Hmv1.
           - exact Hoff1.
@@ -1926,12 +2001,12 @@ Section StreamAmbients.
           (stream_rel dlt2 ambs1 t u) as Hrel1'.
         { apply
             (stream_rel_off_scope
-               (scope ++ CALLS.moved_by env st st1)
-               (CALLS.moved_by env st1 st') dlt1 dlt2 ambs1 t u).
+               (scope ++ CALLS.moved_by env AN st st1)
+               (CALLS.moved_by env AN st1 st') dlt1 dlt2 ambs1 t u).
           - apply
               (@Forall_impl ST
                  (st_scoped scope)
-                 (st_scoped (scope ++ CALLS.moved_by env st st1))).
+                 (st_scoped (scope ++ CALLS.moved_by env AN st st1))).
             + intros a0 Ha0. apply st_scoped_weaken with (scope1 := scope).
               * apply incl_appl, incl_refl.
               * exact Ha0.
@@ -1941,7 +2016,7 @@ Section StreamAmbients.
                  (fun src => st_scoped scope (fst src))
                  (fun src =>
                     st_scoped
-                      (scope ++ CALLS.moved_by env st st1) (fst src))).
+                      (scope ++ CALLS.moved_by env AN st st1) (fst src))).
             + intros src Hsrc. apply st_scoped_weaken with (scope1 := scope).
               * apply incl_appl, incl_refl.
               * exact Hsrc.
@@ -1951,7 +2026,7 @@ Section StreamAmbients.
             + exact (Hmv2 x Hin Hxin).
             + exact
                 (CALLS.moved_by_disjoint_local
-                   env env_inj st st1 st' x Hxin Hin).
+                   env AN env_inj st st1 st' x Hxin Hin).
           - exact Hoff2.
           - exact Hrel1. }
 
@@ -1961,23 +2036,23 @@ Section StreamAmbients.
           rewrite Hoff1.
           2: { intro Hin. apply Hx.
                exact
-                 (CALLS.moved_by_prefix_local env st st1 st' Hf2 x Hin). }
+                 (CALLS.moved_by_prefix_local env AN st st1 st' Hf2 x Hin). }
           apply Hoff2. intro Hin. apply Hx.
           exact
-            (CALLS.moved_by_suffix_local env st st1 st' Hf1 x Hin).
+            (CALLS.moved_by_suffix_local env AN st st1 st' Hf1 x Hin).
         + split.
           * apply listSatisfiable_app. split; [|exact Hce2].
             exact
               (CALLS.listSatisfiable_off_scope
-                 ce1 (scope ++ CALLS.moved_by env st st1)
-                 (CALLS.moved_by env st1 st') dlt1 dlt2
+                 ce1 (scope ++ CALLS.moved_by env AN st st1)
+                 (CALLS.moved_by env AN st1 st') dlt1 dlt2
                  Hscope1
                  (fun x Hin Hxin =>
                     match in_app_or _ _ _ Hxin with
                     | or_introl Hscope => Hmv2 x Hin Hscope
                     | or_intror Hfirst =>
                         CALLS.moved_by_disjoint_local
-                          env env_inj st st1 st' x Hfirst Hin
+                          env AN env_inj st st1 st' x Hfirst Hin
                     end)
                  Hoff2 Hce1).
           * split.
@@ -1989,71 +2064,71 @@ Section StreamAmbients.
                   ** apply
                        (@Forall_impl constraint
                           (constraint_scoped
-                             (scope ++ CALLS.moved_by env st st1))
+                             (scope ++ CALLS.moved_by env AN st st1))
                           (constraint_scoped
-                             (scope ++ CALLS.moved_by env st st'))).
+                             (scope ++ CALLS.moved_by env AN st st'))).
                      --- intros c Hc. apply constraint_scoped_incl with
-                           (scope1 := scope ++ CALLS.moved_by env st st1).
+                           (scope1 := scope ++ CALLS.moved_by env AN st st1).
                          2: exact Hc.
                          apply incl_app; [apply incl_appl, incl_refl|].
                          apply incl_appr.
                          exact
                            (CALLS.moved_by_prefix_local
-                              env st st1 st' Hf2).
+                              env AN st st1 st' Hf2).
                      --- exact Hscope1.
                   ** apply
                        (@Forall_impl constraint
                           (constraint_scoped
-                             (scope ++ CALLS.moved_by env st1 st'))
+                             (scope ++ CALLS.moved_by env AN st1 st'))
                           (constraint_scoped
-                             (scope ++ CALLS.moved_by env st st'))).
+                             (scope ++ CALLS.moved_by env AN st st'))).
                      --- intros c Hc. apply constraint_scoped_incl with
-                           (scope1 := scope ++ CALLS.moved_by env st1 st').
+                           (scope1 := scope ++ CALLS.moved_by env AN st1 st').
                          2: exact Hc.
                          apply incl_app; [apply incl_appl, incl_refl|].
                          apply incl_appr.
                          exact
                            (CALLS.moved_by_suffix_local
-                              env st st1 st' Hf1).
+                              env AN st st1 st' Hf1).
                      --- exact Hscope2.
                ++ apply Forall_app. split.
                   ** apply
                        (@Forall_impl LST
                           (fun tgt =>
                              st_scoped
-                               (scope ++ CALLS.moved_by env st st1)
+                               (scope ++ CALLS.moved_by env AN st st1)
                                (fst tgt))
                           (fun tgt =>
                              st_scoped
-                               (scope ++ CALLS.moved_by env st st')
+                               (scope ++ CALLS.moved_by env AN st st')
                                (fst tgt))).
                      --- intros tgt Htgt. apply st_scoped_weaken with
-                           (scope1 := scope ++ CALLS.moved_by env st st1).
+                           (scope1 := scope ++ CALLS.moved_by env AN st st1).
                          2: exact Htgt.
                          apply incl_app; [apply incl_appl, incl_refl|].
                          apply incl_appr.
                          exact
                            (CALLS.moved_by_prefix_local
-                              env st st1 st' Hf2).
+                              env AN st st1 st' Hf2).
                      --- exact Htgt1.
                   ** apply
                        (@Forall_impl LST
                           (fun tgt =>
                              st_scoped
-                               (scope ++ CALLS.moved_by env st1 st')
+                               (scope ++ CALLS.moved_by env AN st1 st')
                                (fst tgt))
                           (fun tgt =>
                              st_scoped
-                               (scope ++ CALLS.moved_by env st st')
+                               (scope ++ CALLS.moved_by env AN st st')
                                (fst tgt))).
                      --- intros tgt Htgt. apply st_scoped_weaken with
-                           (scope1 := scope ++ CALLS.moved_by env st1 st').
+                           (scope1 := scope ++ CALLS.moved_by env AN st1 st').
                          2: exact Htgt.
                          apply incl_app; [apply incl_appl, incl_refl|].
                          apply incl_appr.
                          exact
                            (CALLS.moved_by_suffix_local
-                              env st st1 st' Hf1).
+                              env AN st st1 st' Hf1).
                      --- exact Htgt2.
     Qed.
 
@@ -2263,7 +2338,7 @@ Section StreamAmbients.
         Forall (wc_exp P vars) es ->
         Forall (src_exp vars AN) es ->
         NoDup (vars_defined (List.concat eqs) ++ st_ids st) ->
-        (forall x, In x (CALLS.moved_by env st st') -> ~ In x scope) ->
+        (forall x, In x (CALLS.moved_by env AN st st') -> ~ In x scope) ->
         constraints_scoped scope (carried ts) ->
         Forall (fun t => st_scoped scope (fst t)) ts ->
         stream_ambients_scoped scope
@@ -2279,7 +2354,7 @@ Section StreamAmbients.
         listSatisfiable dlt (carried ts) ->
         sec_le sst' stF -> sec_le stLo sst ->
         exists dlt',
-          carries_result_streams scope (CALLS.moved_by env st st')
+          carries_result_streams scope (CALLS.moved_by env AN st st')
             (call_arg_ambients sub bckty (nclocksof es) ins) ts ts'' ce dlt dlt'.
     Proof.
       intros P es ins bck sub bckty ic es' eqs st st' ts sst sst'
@@ -2822,16 +2897,16 @@ Section StreamAmbients.
         - exact Hnd. }
       assert
         (forall x,
-            In x (CALLS.moved_by env st st1) -> ~ In x scope) as Hmv1.
+            In x (CALLS.moved_by env AN st st1) -> ~ In x scope) as Hmv1.
       { intros x Hx. apply Hmv.
         exact
-          (CALLS.moved_by_prefix_local env st st1 st' Hf2 x Hx). }
+          (CALLS.moved_by_prefix_local env AN st st1 st' Hf2 x Hx). }
       assert
         (forall x,
-            In x (CALLS.moved_by env st1 st') -> ~ In x scope) as Hmv2.
+            In x (CALLS.moved_by env AN st1 st') -> ~ In x scope) as Hmv2.
       { intros x Hx. apply Hmv.
         exact
-          (CALLS.moved_by_suffix_local env st st1 st' Hf1 x Hx). }
+          (CALLS.moved_by_suffix_local env AN st st1 st' Hf1 x Hx). }
 
       destruct
         (carries_list_streams_intro P es1 Hall1 true on_ambs
@@ -2846,7 +2921,7 @@ Section StreamAmbients.
       assert (listSatisfiable dlt1 (carried tes2)) as Hsat2'.
       { apply
           (CALLS.listSatisfiable_off
-             scope (carried tes2) (CALLS.moved_by env st st1)
+             scope (carried tes2) (CALLS.moved_by env AN st st1)
              dlt dlt1).
         - exact Hcsc2.
         - exact Hmv1.
@@ -2865,13 +2940,13 @@ Section StreamAmbients.
       assert (stream_rel dlt2 on_ambs tes1 tes1'') as Hrel1'.
       { apply
           (stream_rel_off_scope
-             (scope ++ CALLS.moved_by env st st1)
-             (CALLS.moved_by env st1 st') dlt1 dlt2
+             (scope ++ CALLS.moved_by env AN st st1)
+             (CALLS.moved_by env AN st1 st') dlt1 dlt2
              on_ambs tes1 tes1'').
         - apply
             (@Forall_impl ST
                (st_scoped scope)
-               (st_scoped (scope ++ CALLS.moved_by env st st1))).
+               (st_scoped (scope ++ CALLS.moved_by env AN st st1))).
           + intros a0 Ha0. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Ha0.
@@ -2881,7 +2956,7 @@ Section StreamAmbients.
                (fun src => st_scoped scope (fst src))
                (fun src =>
                   st_scoped
-                    (scope ++ CALLS.moved_by env st st1) (fst src))).
+                    (scope ++ CALLS.moved_by env AN st st1) (fst src))).
           + intros src Hsrc. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Hsrc.
@@ -2891,7 +2966,7 @@ Section StreamAmbients.
           + exact (Hmv2 x Hin Hxin).
           + exact
               (CALLS.moved_by_disjoint_local
-                 env env_inj st st1 st' x Hxin Hin).
+                 env AN env_inj st st1 st' x Hxin Hin).
         - exact Hoff2.
         - exact Hrel1. }
 
@@ -2901,23 +2976,23 @@ Section StreamAmbients.
         rewrite Hoff1.
         2: { intro Hin. apply Hx.
              exact
-               (CALLS.moved_by_prefix_local env st st1 st' Hf2 x Hin). }
+               (CALLS.moved_by_prefix_local env AN st st1 st' Hf2 x Hin). }
         apply Hoff2. intro Hin. apply Hx.
         exact
-          (CALLS.moved_by_suffix_local env st st1 st' Hf1 x Hin).
+          (CALLS.moved_by_suffix_local env AN st st1 st' Hf1 x Hin).
       - split.
         + apply listSatisfiable_app. split; [|exact Hce2].
           exact
             (CALLS.listSatisfiable_off_scope
-               ce1 (scope ++ CALLS.moved_by env st st1)
-               (CALLS.moved_by env st1 st') dlt1 dlt2
+               ce1 (scope ++ CALLS.moved_by env AN st st1)
+               (CALLS.moved_by env AN st1 st') dlt1 dlt2
                Hscope1
                (fun x Hin Hxin =>
                   match in_app_or _ _ _ Hxin with
                   | or_introl Hscope => Hmv2 x Hin Hscope
                   | or_intror Hfirst =>
                       CALLS.moved_by_disjoint_local
-                        env env_inj st st1 st' x Hfirst Hin
+                        env AN env_inj st st1 st' x Hfirst Hin
                   end)
                Hoff2 Hce1).
         + split.
@@ -2930,28 +3005,28 @@ Section StreamAmbients.
                ++ apply
                     (@Forall_impl constraint
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st1))
+                          (scope ++ CALLS.moved_by env AN st st1))
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st'))).
+                          (scope ++ CALLS.moved_by env AN st st'))).
                   ** intros c Hc. apply constraint_scoped_incl with
-                       (scope1 := scope ++ CALLS.moved_by env st st1).
+                       (scope1 := scope ++ CALLS.moved_by env AN st st1).
                      2: exact Hc.
                      apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr.
-                     exact (CALLS.moved_by_prefix_local env st st1 st' Hf2).
+                     exact (CALLS.moved_by_prefix_local env AN st st1 st' Hf2).
                   ** exact Hscope1.
                ++ apply
                     (@Forall_impl constraint
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st1 st'))
+                          (scope ++ CALLS.moved_by env AN st1 st'))
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st'))).
+                          (scope ++ CALLS.moved_by env AN st st'))).
                   ** intros c Hc. apply constraint_scoped_incl with
-                       (scope1 := scope ++ CALLS.moved_by env st1 st').
+                       (scope1 := scope ++ CALLS.moved_by env AN st1 st').
                      2: exact Hc.
                      apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr.
-                     exact (CALLS.moved_by_suffix_local env st st1 st' Hf1).
+                     exact (CALLS.moved_by_suffix_local env AN st st1 st' Hf1).
                   ** exact Hscope2.
             -- destruct Hgs as [Hempty|Hgscope].
                ++ subst tes1. inversion Hrel1'; subst.
@@ -2959,7 +3034,7 @@ Section StreamAmbients.
                   unfold ret in Hj''. inversion Hj''; subst. constructor.
                ++ apply
                     (CALLS.ljoin_list_scoped
-                       (scope ++ CALLS.moved_by env st st') g
+                       (scope ++ CALLS.moved_by env AN st st') g
                        tes1'' tes2'' ts'' yst yst).
                   ** apply in_or_app. left. exact Hgscope.
                   ** exact Hj''.
@@ -2967,39 +3042,39 @@ Section StreamAmbients.
                        (@Forall_impl LST
                           (fun tgt =>
                              st_scoped
-                               (scope ++ CALLS.moved_by env st st1)
+                               (scope ++ CALLS.moved_by env AN st st1)
                                (fst tgt))
                           (fun tgt =>
                              st_scoped
-                               (scope ++ CALLS.moved_by env st st')
+                               (scope ++ CALLS.moved_by env AN st st')
                                (fst tgt))).
                      --- intros tgt Htgt. apply st_scoped_weaken with
-                           (scope1 := scope ++ CALLS.moved_by env st st1).
+                           (scope1 := scope ++ CALLS.moved_by env AN st st1).
                          2: exact Htgt.
                          apply incl_app; [apply incl_appl, incl_refl|].
                          apply incl_appr.
                          exact
                            (CALLS.moved_by_prefix_local
-                              env st st1 st' Hf2).
+                              env AN st st1 st' Hf2).
                      --- exact Htgt1.
                   ** apply
                        (@Forall_impl LST
                           (fun tgt =>
                              st_scoped
-                               (scope ++ CALLS.moved_by env st1 st')
+                               (scope ++ CALLS.moved_by env AN st1 st')
                                (fst tgt))
                           (fun tgt =>
                              st_scoped
-                               (scope ++ CALLS.moved_by env st st')
+                               (scope ++ CALLS.moved_by env AN st st')
                                (fst tgt))).
                      --- intros tgt Htgt. apply st_scoped_weaken with
-                           (scope1 := scope ++ CALLS.moved_by env st1 st').
+                           (scope1 := scope ++ CALLS.moved_by env AN st1 st').
                          2: exact Htgt.
                          apply incl_app; [apply incl_appl, incl_refl|].
                          apply incl_appr.
                          exact
                            (CALLS.moved_by_suffix_local
-                              env st st1 st' Hf1).
+                              env AN st st1 st' Hf1).
                      --- exact Htgt2.
     Qed.
 
@@ -3206,20 +3281,20 @@ Section StreamAmbients.
         - exact Hnd12. }
       assert
         (forall x,
-            In x (CALLS.moved_by env st st0) -> ~ In x scope) as Hmv0.
+            In x (CALLS.moved_by env AN st st0) -> ~ In x scope) as Hmv0.
       { intros x Hx. apply Hmv.
-        exact (CALLS.moved_by_prefix_local env st st0 st' Hf0' x Hx). }
+        exact (CALLS.moved_by_prefix_local env AN st st0 st' Hf0' x Hx). }
       assert
         (forall x,
-            In x (CALLS.moved_by env st0 st1) -> ~ In x scope) as Hmv1.
+            In x (CALLS.moved_by env AN st0 st1) -> ~ In x scope) as Hmv1.
       { intros x Hx. apply Hmv.
-        apply (CALLS.moved_by_suffix_local env st st0 st' Hf0 x).
-        exact (CALLS.moved_by_prefix_local env st0 st1 st' Hf2 x Hx). }
+        apply (CALLS.moved_by_suffix_local env AN st st0 st' Hf0 x).
+        exact (CALLS.moved_by_prefix_local env AN st0 st1 st' Hf2 x Hx). }
       assert
         (forall x,
-            In x (CALLS.moved_by env st1 st') -> ~ In x scope) as Hmv2.
+            In x (CALLS.moved_by env AN st1 st') -> ~ In x scope) as Hmv2.
       { intros x Hx. apply Hmv.
-        exact (CALLS.moved_by_suffix_local env st st1 st' Hf01 x Hx). }
+        exact (CALLS.moved_by_suffix_local env AN st st1 st' Hf01 x Hx). }
 
       assert
         (assign_lexps GL env base_ty rst_ty f0 yst = OK ([th''], yst))
@@ -3289,7 +3364,7 @@ Section StreamAmbients.
       { apply
           (CALLS.listSatisfiable_off
              scope (carried (tf :: tes1r))
-             (CALLS.moved_by env st st0) dlt dlt0).
+             (CALLS.moved_by env AN st st0) dlt dlt0).
         - exact Hcsc1.
         - exact Hmv0.
         - exact Hoff0.
@@ -3309,14 +3384,14 @@ Section StreamAmbients.
       assert (listSatisfiable dlt1 (carried tes2)) as Hsat2'.
       { apply
           (CALLS.listSatisfiable_off
-             scope (carried tes2) (CALLS.moved_by env st0 st1)
+             scope (carried tes2) (CALLS.moved_by env AN st0 st1)
              dlt0 dlt1).
         - exact Hcsc2.
         - exact Hmv1.
         - exact Hoff1.
         - apply
             (CALLS.listSatisfiable_off
-               scope (carried tes2) (CALLS.moved_by env st st0)
+               scope (carried tes2) (CALLS.moved_by env AN st st0)
                dlt dlt0 Hcsc2 Hmv0 Hoff0 Hsat2). }
       destruct
         (carries_list_streams_intro P es2 Hall2 true (amb :: ambs0)
@@ -3330,64 +3405,64 @@ Section StreamAmbients.
       destruct Hres2 as (Hoff2 & Hce2 & Hrel2 & Hscope2 & Htgt2).
 
       assert
-        (incl (CALLS.moved_by env st st0)
-           (CALLS.moved_by env st st')) as Hin0.
-      { exact (CALLS.moved_by_prefix_local env st st0 st' Hf0'). }
+        (incl (CALLS.moved_by env AN st st0)
+           (CALLS.moved_by env AN st st')) as Hin0.
+      { exact (CALLS.moved_by_prefix_local env AN st st0 st' Hf0'). }
       assert
-        (incl (CALLS.moved_by env st0 st1)
-           (CALLS.moved_by env st st')) as Hin1.
+        (incl (CALLS.moved_by env AN st0 st1)
+           (CALLS.moved_by env AN st st')) as Hin1.
       { intros x Hx.
-        apply (CALLS.moved_by_suffix_local env st st0 st' Hf0 x).
+        apply (CALLS.moved_by_suffix_local env AN st st0 st' Hf0 x).
         exact
-          (CALLS.moved_by_prefix_local env st0 st1 st' Hf2 x Hx). }
+          (CALLS.moved_by_prefix_local env AN st0 st1 st' Hf2 x Hx). }
       assert
-        (incl (CALLS.moved_by env st1 st')
-           (CALLS.moved_by env st st')) as Hin2.
-      { exact (CALLS.moved_by_suffix_local env st st1 st' Hf01). }
+        (incl (CALLS.moved_by env AN st1 st')
+           (CALLS.moved_by env AN st st')) as Hin2.
+      { exact (CALLS.moved_by_suffix_local env AN st st1 st' Hf01). }
 
       assert
-        (CALLS.agree_off (CALLS.moved_by env st0 st') dlt0 dlt2)
+        (CALLS.agree_off (CALLS.moved_by env AN st0 st') dlt0 dlt2)
         as Hoff02.
       { intros x Hx.
         rewrite Hoff1.
         2: { intro Hin. apply Hx.
              exact
-               (CALLS.moved_by_prefix_local env st0 st1 st' Hf2 x Hin). }
+               (CALLS.moved_by_prefix_local env AN st0 st1 st' Hf2 x Hin). }
         apply Hoff2. intro Hin. apply Hx.
         exact
-          (CALLS.moved_by_suffix_local env st0 st1 st' Hf1 x Hin). }
+          (CALLS.moved_by_suffix_local env AN st0 st1 st' Hf1 x Hin). }
       assert
         (forall x,
-           In x (CALLS.moved_by env st0 st') ->
-           ~ In x (scope ++ CALLS.moved_by env st st0)) as Hsep0.
+           In x (CALLS.moved_by env AN st0 st') ->
+           ~ In x (scope ++ CALLS.moved_by env AN st st0)) as Hsep0.
       { intros x Hin Hxin. apply in_app_or in Hxin as [Hscope|Hfirst].
         - apply (Hmv x).
           + exact
-              (CALLS.moved_by_suffix_local env st st0 st' Hf0 x Hin).
+              (CALLS.moved_by_suffix_local env AN st st0 st' Hf0 x Hin).
           + exact Hscope.
         - exact
             (CALLS.moved_by_disjoint_local
-               env env_inj st st0 st' x Hfirst Hin). }
+               env AN env_inj st st0 st' x Hfirst Hin). }
       assert
         (forall x,
-           In x (CALLS.moved_by env st1 st') ->
-           ~ In x (scope ++ CALLS.moved_by env st0 st1)) as Hsep1.
+           In x (CALLS.moved_by env AN st1 st') ->
+           ~ In x (scope ++ CALLS.moved_by env AN st0 st1)) as Hsep1.
       { intros x Hin Hxin. apply in_app_or in Hxin as [Hscope|Hfirst].
         - exact (Hmv2 x Hin Hscope).
         - exact
             (CALLS.moved_by_disjoint_local
-               env env_inj st0 st1 st' x Hfirst Hin). }
+               env AN env_inj st0 st1 st' x Hfirst Hin). }
 
       assert (stream_rel dlt2 [clock_amb] [th] [th'']) as Hrel0'.
       { apply
           (stream_rel_off_scope
-             (scope ++ CALLS.moved_by env st st0)
-             (CALLS.moved_by env st0 st') dlt0 dlt2
+             (scope ++ CALLS.moved_by env AN st st0)
+             (CALLS.moved_by env AN st0 st') dlt0 dlt2
              [clock_amb] [th] [th'']).
         - apply
             (@Forall_impl ST
                (st_scoped scope)
-               (st_scoped (scope ++ CALLS.moved_by env st st0))).
+               (st_scoped (scope ++ CALLS.moved_by env AN st st0))).
           + intros a0 Ha0. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Ha0.
@@ -3397,7 +3472,7 @@ Section StreamAmbients.
                (fun src => st_scoped scope (fst src))
                (fun src =>
                   st_scoped
-                    (scope ++ CALLS.moved_by env st st0) (fst src))).
+                    (scope ++ CALLS.moved_by env AN st st0) (fst src))).
           + intros src Hsrc. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Hsrc.
@@ -3427,13 +3502,13 @@ Section StreamAmbients.
            (tf :: tes1r) tes1'') as Hrel1'.
       { apply
           (stream_rel_off_scope
-             (scope ++ CALLS.moved_by env st0 st1)
-             (CALLS.moved_by env st1 st') dlt1 dlt2
+             (scope ++ CALLS.moved_by env AN st0 st1)
+             (CALLS.moved_by env AN st1 st') dlt1 dlt2
              (amb :: ambs0) (tf :: tes1r) tes1'').
         - apply
             (@Forall_impl ST
                (st_scoped scope)
-               (st_scoped (scope ++ CALLS.moved_by env st0 st1))).
+               (st_scoped (scope ++ CALLS.moved_by env AN st0 st1))).
           + intros a0 Ha0. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Ha0.
@@ -3443,7 +3518,7 @@ Section StreamAmbients.
                (fun src => st_scoped scope (fst src))
                (fun src =>
                   st_scoped
-                    (scope ++ CALLS.moved_by env st0 st1) (fst src))).
+                    (scope ++ CALLS.moved_by env AN st0 st1) (fst src))).
           + intros src Hsrc. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Hsrc.
@@ -3460,19 +3535,19 @@ Section StreamAmbients.
         2: { intro Hin. apply Hx. exact (Hin0 x Hin). }
         apply Hoff02. intro Hin. apply Hx.
         exact
-          (CALLS.moved_by_suffix_local env st st0 st' Hf0 x Hin).
+          (CALLS.moved_by_suffix_local env AN st st0 st' Hf0 x Hin).
       - split.
         + apply listSatisfiable_app. split.
           * exact
               (CALLS.listSatisfiable_off_scope
-                 ce0 (scope ++ CALLS.moved_by env st st0)
-                 (CALLS.moved_by env st0 st') dlt0 dlt2
+                 ce0 (scope ++ CALLS.moved_by env AN st st0)
+                 (CALLS.moved_by env AN st0 st') dlt0 dlt2
                  Hscope0 Hsep0 Hoff02 Hce0).
           * apply listSatisfiable_app. split.
             -- exact
                  (CALLS.listSatisfiable_off_scope
-                    ce1 (scope ++ CALLS.moved_by env st0 st1)
-                    (CALLS.moved_by env st1 st') dlt1 dlt2
+                    ce1 (scope ++ CALLS.moved_by env AN st0 st1)
+                    (CALLS.moved_by env AN st1 st') dlt1 dlt2
                     Hscope1 Hsep1 Hoff2 Hce1).
             -- exact Hce2.
         + split.
@@ -3486,11 +3561,11 @@ Section StreamAmbients.
                ++ apply
                     (@Forall_impl constraint
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st0))
+                          (scope ++ CALLS.moved_by env AN st st0))
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st'))).
+                          (scope ++ CALLS.moved_by env AN st st'))).
                   ** intros c Hc. apply constraint_scoped_incl with
-                       (scope1 := scope ++ CALLS.moved_by env st st0).
+                       (scope1 := scope ++ CALLS.moved_by env AN st st0).
                      2: exact Hc.
                      apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr. exact Hin0.
@@ -3499,11 +3574,11 @@ Section StreamAmbients.
                   ** apply
                        (@Forall_impl constraint
                           (constraint_scoped
-                             (scope ++ CALLS.moved_by env st0 st1))
+                             (scope ++ CALLS.moved_by env AN st0 st1))
                           (constraint_scoped
-                             (scope ++ CALLS.moved_by env st st'))).
+                             (scope ++ CALLS.moved_by env AN st st'))).
                      --- intros c Hc. apply constraint_scoped_incl with
-                          (scope1 := scope ++ CALLS.moved_by env st0 st1).
+                          (scope1 := scope ++ CALLS.moved_by env AN st0 st1).
                          2: exact Hc.
                          apply incl_app; [apply incl_appl, incl_refl|].
                          apply incl_appr. exact Hin1.
@@ -3511,22 +3586,22 @@ Section StreamAmbients.
                   ** apply
                        (@Forall_impl constraint
                           (constraint_scoped
-                             (scope ++ CALLS.moved_by env st1 st'))
+                             (scope ++ CALLS.moved_by env AN st1 st'))
                           (constraint_scoped
-                             (scope ++ CALLS.moved_by env st st'))).
+                             (scope ++ CALLS.moved_by env AN st st'))).
                      --- intros c Hc. apply constraint_scoped_incl with
-                          (scope1 := scope ++ CALLS.moved_by env st1 st').
+                          (scope1 := scope ++ CALLS.moved_by env AN st1 st').
                          2: exact Hc.
                          apply incl_app; [apply incl_appl, incl_refl|].
                          apply incl_appr. exact Hin2.
                      --- exact Hscope2.
             -- apply
                  (CALLS.ljoin_list_scoped_head
-                    (scope ++ CALLS.moved_by env st st') th''
+                    (scope ++ CALLS.moved_by env AN st st') th''
                     tes1'' tes2'' ts'' yst yst).
                ++ inversion Htgt0 as [|q qs Hq Hqs]; subst.
                   apply st_scoped_weaken with
-                    (scope1 := scope ++ CALLS.moved_by env st st0).
+                    (scope1 := scope ++ CALLS.moved_by env AN st st0).
                   ** apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr. exact Hin0.
                   ** exact Hq.
@@ -3535,14 +3610,14 @@ Section StreamAmbients.
                     (@Forall_impl LST
                        (fun tgt =>
                           st_scoped
-                            (scope ++ CALLS.moved_by env st0 st1)
+                            (scope ++ CALLS.moved_by env AN st0 st1)
                             (fst tgt))
                        (fun tgt =>
                           st_scoped
-                            (scope ++ CALLS.moved_by env st st')
+                            (scope ++ CALLS.moved_by env AN st st')
                             (fst tgt))).
                   ** intros tgt Htgt. apply st_scoped_weaken with
-                       (scope1 := scope ++ CALLS.moved_by env st0 st1).
+                       (scope1 := scope ++ CALLS.moved_by env AN st0 st1).
                      --- apply incl_app; [apply incl_appl, incl_refl|].
                          apply incl_appr. exact Hin1.
                      --- exact Htgt.
@@ -3551,14 +3626,14 @@ Section StreamAmbients.
                     (@Forall_impl LST
                        (fun tgt =>
                           st_scoped
-                            (scope ++ CALLS.moved_by env st1 st')
+                            (scope ++ CALLS.moved_by env AN st1 st')
                             (fst tgt))
                        (fun tgt =>
                           st_scoped
-                            (scope ++ CALLS.moved_by env st st')
+                            (scope ++ CALLS.moved_by env AN st st')
                             (fst tgt))).
                   ** intros tgt Htgt. apply st_scoped_weaken with
-                       (scope1 := scope ++ CALLS.moved_by env st1 st').
+                       (scope1 := scope ++ CALLS.moved_by env AN st1 st').
                      --- apply incl_app; [apply incl_appl, incl_refl|].
                          apply incl_appr. exact Hin2.
                      --- exact Htgt.
@@ -3786,16 +3861,16 @@ Section StreamAmbients.
              (List.concat eqs1) (List.concat eqs2) (st_ids st) (st_ids st1)
              Hperm1 Hndr). }
       assert
-        (forall x, In x (CALLS.moved_by env st st1) -> ~ In x scope) as Hmv1.
+        (forall x, In x (CALLS.moved_by env AN st st1) -> ~ In x scope) as Hmv1.
       { intros x Hx. apply Hmv.
-        exact (CALLS.moved_by_prefix_local env st st1 st' Hf23 x Hx). }
+        exact (CALLS.moved_by_prefix_local env AN st st1 st' Hf23 x Hx). }
       assert
-        (forall x, In x (CALLS.moved_by env st1 st2) -> ~ In x scope) as Hmv2.
+        (forall x, In x (CALLS.moved_by env AN st1 st2) -> ~ In x scope) as Hmv2.
       { intros x Hx. apply Hmv.
         exact
           (CALLS.moved_by_suffix_local
-             env st st1 st' Hf1 x
-             (CALLS.moved_by_prefix_local env st1 st2 st' Hf3 x Hx)). }
+             env AN st st1 st' Hf1 x
+             (CALLS.moved_by_prefix_local env AN st1 st2 st' Hf3 x Hx)). }
 
       (** the two branch witnesses *)
       destruct
@@ -3811,7 +3886,7 @@ Section StreamAmbients.
       assert (listSatisfiable dlt1 (carried tes2)) as Hsat2'.
       { exact
           (CALLS.listSatisfiable_off
-             scope (carried tes2) (CALLS.moved_by env st st1)
+             scope (carried tes2) (CALLS.moved_by env AN st st1)
              dlt dlt1 Hcsc2 Hmv1 Hoff1 Hsat2). }
       destruct
         (carries_list_streams_intro P es2 Hall2 true on_ambs
@@ -3827,13 +3902,13 @@ Section StreamAmbients.
       assert (stream_rel dlt2 on_ambs tes1 ts1x) as Hrel1'.
       { apply
           (stream_rel_off_scope
-             (scope ++ CALLS.moved_by env st st1)
-             (CALLS.moved_by env st1 st2) dlt1 dlt2
+             (scope ++ CALLS.moved_by env AN st st1)
+             (CALLS.moved_by env AN st1 st2) dlt1 dlt2
              on_ambs tes1 ts1x).
         - apply
             (@Forall_impl ST
                (st_scoped scope)
-               (st_scoped (scope ++ CALLS.moved_by env st st1))).
+               (st_scoped (scope ++ CALLS.moved_by env AN st st1))).
           + intros a0 Ha0. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Ha0.
@@ -3843,7 +3918,7 @@ Section StreamAmbients.
                (fun src => st_scoped scope (fst src))
                (fun src =>
                   st_scoped
-                    (scope ++ CALLS.moved_by env st st1) (fst src))).
+                    (scope ++ CALLS.moved_by env AN st st1) (fst src))).
           + intros src Hsrc. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Hsrc.
@@ -3853,7 +3928,7 @@ Section StreamAmbients.
           + exact (Hmv2 x Hin Hxin).
           + exact
               (CALLS.moved_by_disjoint_local
-                 env env_inj st st1 st2 x Hxin Hin).
+                 env AN env_inj st st1 st2 x Hxin Hin).
         - exact Hoff2.
         - exact Hrel1. }
 
@@ -3954,11 +4029,13 @@ Section StreamAmbients.
       { exact (NoDup_app_l (List.map fst xs) (st_ids st2) Hndx). }
       assert
         (forall b, In b (sec_of (List.map fst xs)) ->
-                   In b (CALLS.moved_by env st2 st')) as Hbnew.
+                   In b (CALLS.moved_by env AN st2 st')) as Hbnew.
       { intros b Hb.
         unfold CALLS.sec_of in Hb. apply in_flat_map in Hb as (x & Hx & Hb).
-        unfold CALLS.moved_by, CALLS.EXPR.moved_by, CALLS.sec_of.
-        apply in_flat_map. exists x. split; [|exact Hb].
+        destruct (Env.find x env) as [b0|] eqn:Ex; [|destruct Hb].
+        destruct Hb as [Hb|[]]. subst b0.
+        refine (CALLS.In_moved_by env AN _ _ x b _
+                  (AN_apart_anns _ _ _ _ Hids x Hx) Ex).
         apply CALLS.new_ids_spec. split.
         - exact
             (idents_for_anns_incl_ids
@@ -3968,15 +4045,15 @@ Section StreamAmbients.
             (NoDup_app_In x (List.map fst xs) (st_ids st2) Hndx Hx). }
       assert
         (forall b, In b (sec_of (List.map fst xs)) ->
-                   ~ In b (scope ++ CALLS.moved_by env st st2)) as Hsepx.
+                   ~ In b (scope ++ CALLS.moved_by env AN st st2)) as Hsepx.
       { intros b Hb Hin. apply in_app_or in Hin as [Hin|Hin].
         - apply (Hmv b); [|exact Hin].
           exact
             (CALLS.moved_by_suffix_local
-               env st st2 st' Hf12 b (Hbnew b Hb)).
+               env AN st st2 st' Hf12 b (Hbnew b Hb)).
         - exact
             (CALLS.moved_by_disjoint_local
-               env env_inj st st2 st' b Hin (Hbnew b Hb)). }
+               env AN env_inj st st2 st' b Hin (Hbnew b Hb)). }
 
       (** the merges' types live in the scope the definitions run at *)
       assert (List.length tes1 = List.length tys) as Hlents1.
@@ -3986,41 +4063,41 @@ Section StreamAmbients.
         exact H7. }
       assert
         (Forall
-           (fun t => st_scoped (scope ++ CALLS.moved_by env st st2) (fst t))
+           (fun t => st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t))
            ts1x) as Htgt1'.
       { apply
           (@Forall_impl LST
-             (fun t => st_scoped (scope ++ CALLS.moved_by env st st1) (fst t))
+             (fun t => st_scoped (scope ++ CALLS.moved_by env AN st st1) (fst t))
              (fun t =>
-                st_scoped (scope ++ CALLS.moved_by env st st2) (fst t))).
+                st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t))).
         - intros t0 Ht0.
           apply st_scoped_weaken with
-            (scope1 := scope ++ CALLS.moved_by env st st1).
+            (scope1 := scope ++ CALLS.moved_by env AN st st1).
           + apply incl_app; [apply incl_appl, incl_refl|].
             apply incl_appr.
-            exact (CALLS.moved_by_prefix_local env st st1 st2 Hf2).
+            exact (CALLS.moved_by_prefix_local env AN st st1 st2 Hf2).
           + exact Ht0.
         - exact Htgt1. }
       assert
         (Forall
-           (fun t => st_scoped (scope ++ CALLS.moved_by env st st2) (fst t))
+           (fun t => st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t))
            ts2x) as Htgt2'.
       { apply
           (@Forall_impl LST
-             (fun t => st_scoped (scope ++ CALLS.moved_by env st1 st2) (fst t))
+             (fun t => st_scoped (scope ++ CALLS.moved_by env AN st1 st2) (fst t))
              (fun t =>
-                st_scoped (scope ++ CALLS.moved_by env st st2) (fst t))).
+                st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t))).
         - intros t0 Ht0.
           apply st_scoped_weaken with
-            (scope1 := scope ++ CALLS.moved_by env st1 st2).
+            (scope1 := scope ++ CALLS.moved_by env AN st1 st2).
           + apply incl_app; [apply incl_appl, incl_refl|].
             apply incl_appr.
-            exact (CALLS.moved_by_suffix_local env st st1 st2 Hf1).
+            exact (CALLS.moved_by_suffix_local env AN st st1 st2 Hf1).
           + exact Ht0.
         - exact Htgt2. }
       assert
         (Forall
-           (fun r => st_scoped (scope ++ CALLS.moved_by env st st2) (fst r))
+           (fun r => st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst r))
            rs) as Hscrs.
       { destruct Hgs as [Hempty|Hgscope].
         - assert (tys = []) as Htys0.
@@ -4031,8 +4108,8 @@ Section StreamAmbients.
           inversion Hallr; subst. constructor.
         - exact
             (CALLS.ljoin_list_scoped
-               (scope ++ CALLS.moved_by env st st2) g ts1x ts2x rs xst xst
-               (in_or_app scope (CALLS.moved_by env st st2) g
+               (scope ++ CALLS.moved_by env AN st st2) g ts1x ts2x rs xst xst
+               (in_or_app scope (CALLS.moved_by env AN st st2) g
                   (or_introl Hgscope))
                Hjr Htgt1' Htgt2'). }
 
@@ -4043,7 +4120,7 @@ Section StreamAmbients.
               forall tf s s',
                 assign_lexp_type GL env base_ty rst_ty e s = OK ([tf], s') ->
                 satisfiable dlt2 (fst tf) (merge a (fst src))
-                /\ st_scoped (scope ++ CALLS.moved_by env st st2) (fst tf))
+                /\ st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst tf))
            ambs
            (unnest_merge ckid (List.concat f1) (List.concat f2) tys (ck, None))
            ts) as Hlift3.
@@ -4089,28 +4166,28 @@ Section StreamAmbients.
       (** the emitted definitions *)
       destruct
         (lifted_defs_streams
-           (scope ++ CALLS.moved_by env st st2) (List.map fst xs)
+           (scope ++ CALLS.moved_by env AN st st2) (List.map fst xs)
            (unnest_merge ckid (List.concat f1) (List.concat f2)
               tys (ck, None))
            ts ambs ced xst xstd dlt2
            Hndfst Hlend Hsepx Hdecl
            (@Forall_impl ST (st_scoped scope)
-              (st_scoped (scope ++ CALLS.moved_by env st st2))
+              (st_scoped (scope ++ CALLS.moved_by env AN st st2))
               (fun a0 Ha0 =>
                  st_scoped_weaken scope
-                   (scope ++ CALLS.moved_by env st st2) a0
-                   (incl_appl (CALLS.moved_by env st st2) (incl_refl scope))
+                   (scope ++ CALLS.moved_by env AN st st2) a0
+                   (incl_appl (CALLS.moved_by env AN st st2) (incl_refl scope))
                    Ha0)
               ambs Hambsc)
            Hpure
            (@Forall_impl LST
               (fun src => st_scoped scope (fst src))
               (fun src =>
-                 st_scoped (scope ++ CALLS.moved_by env st st2) (fst src))
+                 st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst src))
               (fun src Hsrc =>
                  st_scoped_weaken scope
-                   (scope ++ CALLS.moved_by env st st2) (fst src)
-                   (incl_appl (CALLS.moved_by env st st2) (incl_refl scope))
+                   (scope ++ CALLS.moved_by env AN st st2) (fst src)
+                   (incl_appl (CALLS.moved_by env AN st st2) (incl_refl scope))
                    Hsrc)
               ts Htscall)
            Hlift3 Hgend)
@@ -4119,11 +4196,11 @@ Section StreamAmbients.
       (** the minted names are among the ones the whole run moved *)
       assert
         (forall b, In b (sec_of (List.map fst xs)) ->
-                   In b (CALLS.moved_by env st st')) as Hincx.
+                   In b (CALLS.moved_by env AN st st')) as Hincx.
       { intros b Hb.
         exact
           (CALLS.moved_by_suffix_local
-             env st st2 st' Hf12 b (Hbnew b Hb)). }
+             env AN st st2 st' Hf12 b (Hbnew b Hb)). }
 
       (** the results' relation, at the names the pass bound them to *)
       assert (stream_rel dlt3 ambs ts ts'') as Hrelfin.
@@ -4146,13 +4223,13 @@ Section StreamAmbients.
         rewrite Hoff1.
         2: { intro Hin. apply Hx.
              exact
-               (CALLS.moved_by_prefix_local env st st1 st' Hf23 x Hin). }
+               (CALLS.moved_by_prefix_local env AN st st1 st' Hf23 x Hin). }
         rewrite Hoff2.
         2: { intro Hin. apply Hx.
              exact
                (CALLS.moved_by_suffix_local
-                  env st st1 st' Hf1 x
-                  (CALLS.moved_by_prefix_local env st1 st2 st' Hf3 x Hin)). }
+                  env AN st st1 st' Hf1 x
+                  (CALLS.moved_by_prefix_local env AN st1 st2 st' Hf3 x Hin)). }
         apply Hoff3. intro Hin. apply Hx. exact (Hincx x Hin).
       - split.
         + (** every emitted constraint still holds *)
@@ -4160,7 +4237,7 @@ Section StreamAmbients.
           apply listSatisfiable_app. split.
           * apply
               (CALLS.listSatisfiable_off_scope
-                 ce1 (scope ++ CALLS.moved_by env st st1)
+                 ce1 (scope ++ CALLS.moved_by env AN st st1)
                  (sec_of (List.map fst xs)) dlt2 dlt3).
             -- exact Hscope1.
             -- intros y Hy Hin. apply (Hsepx y Hy).
@@ -4168,23 +4245,23 @@ Section StreamAmbients.
                  [now left|].
                right.
                exact
-                 (CALLS.moved_by_prefix_local env st st1 st2 Hf2 y Hin).
+                 (CALLS.moved_by_prefix_local env AN st st1 st2 Hf2 y Hin).
             -- exact Hoff3.
             -- apply
                  (CALLS.listSatisfiable_off_scope
-                    ce1 (scope ++ CALLS.moved_by env st st1)
-                    (CALLS.moved_by env st1 st2) dlt1 dlt2).
+                    ce1 (scope ++ CALLS.moved_by env AN st st1)
+                    (CALLS.moved_by env AN st1 st2) dlt1 dlt2).
                ++ exact Hscope1.
                ++ intros y Hy Hin. apply in_app_or in Hin as [Hin|Hin].
                   ** exact (Hmv2 y Hy Hin).
                   ** exact
                        (CALLS.moved_by_disjoint_local
-                          env env_inj st st1 st2 y Hin Hy).
+                          env AN env_inj st st1 st2 y Hin Hy).
                ++ exact Hoff2.
                ++ exact Hce1.
           * apply
               (CALLS.listSatisfiable_off_scope
-                 ce2 (scope ++ CALLS.moved_by env st1 st2)
+                 ce2 (scope ++ CALLS.moved_by env AN st1 st2)
                  (sec_of (List.map fst xs)) dlt2 dlt3).
             -- exact Hscope2.
             -- intros y Hy Hin. apply (Hsepx y Hy).
@@ -4192,7 +4269,7 @@ Section StreamAmbients.
                  [now left|].
                right.
                exact
-                 (CALLS.moved_by_suffix_local env st st1 st2 Hf1 y Hin).
+                 (CALLS.moved_by_suffix_local env AN st st1 st2 Hf1 y Hin).
             -- exact Hoff3.
             -- exact Hce2.
         + split; [exact Hrelfin|]. split.
@@ -4201,58 +4278,58 @@ Section StreamAmbients.
             -- apply
                  (@Forall_impl constraint
                     (constraint_scoped
-                       ((scope ++ CALLS.moved_by env st st2)
+                       ((scope ++ CALLS.moved_by env AN st st2)
                           ++ sec_of (List.map fst xs)))
                     (constraint_scoped
-                       (scope ++ CALLS.moved_by env st st'))).
+                       (scope ++ CALLS.moved_by env AN st st'))).
                ++ intros c Hc.
                   apply constraint_scoped_incl with
-                    (scope1 := (scope ++ CALLS.moved_by env st st2)
+                    (scope1 := (scope ++ CALLS.moved_by env AN st st2)
                                  ++ sec_of (List.map fst xs)).
                   2: exact Hc.
                   apply incl_app; [apply incl_app|].
                   ** apply incl_appl, incl_refl.
                   ** apply incl_appr.
                      exact
-                       (CALLS.moved_by_prefix_local env st st2 st' Hf3).
+                       (CALLS.moved_by_prefix_local env AN st st2 st' Hf3).
                   ** apply incl_appr. exact Hincx.
                ++ exact Hscoped.
             -- apply Forall_app. split.
                ++ apply
                     (@Forall_impl constraint
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st1))
+                          (scope ++ CALLS.moved_by env AN st st1))
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st'))).
+                          (scope ++ CALLS.moved_by env AN st st'))).
                   ** intros c Hc.
                      apply constraint_scoped_incl with
-                       (scope1 := scope ++ CALLS.moved_by env st st1).
+                       (scope1 := scope ++ CALLS.moved_by env AN st st1).
                      2: exact Hc.
                      apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr.
                      exact
-                       (CALLS.moved_by_prefix_local env st st1 st' Hf23).
+                       (CALLS.moved_by_prefix_local env AN st st1 st' Hf23).
                   ** exact Hscope1.
                ++ apply
                     (@Forall_impl constraint
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st1 st2))
+                          (scope ++ CALLS.moved_by env AN st1 st2))
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st'))).
+                          (scope ++ CALLS.moved_by env AN st st'))).
                   ** intros c Hc.
                      apply constraint_scoped_incl with
-                       (scope1 := scope ++ CALLS.moved_by env st1 st2).
+                       (scope1 := scope ++ CALLS.moved_by env AN st1 st2).
                      2: exact Hc.
                      apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr.
                      apply incl_tran with
-                       (m := CALLS.moved_by env st1 st').
+                       (m := CALLS.moved_by env AN st1 st').
                      --- exact
                            (CALLS.moved_by_prefix_local
-                              env st1 st2 st' Hf3).
+                              env AN st1 st2 st' Hf3).
                      --- exact
                            (CALLS.moved_by_suffix_local
-                              env st st1 st' Hf1).
+                              env AN st st1 st' Hf1).
                   ** exact Hscope2.
           * (** the bound results are names the run minted *)
             apply
@@ -4260,7 +4337,7 @@ Section StreamAmbients.
                  (fun xa t =>
                     exists b, Env.find (fst xa) env = Some b /\ t = lvar b)
                  (fun tgt =>
-                    st_scoped (scope ++ CALLS.moved_by env st st') (fst tgt))
+                    st_scoped (scope ++ CALLS.moved_by env AN st st') (fst tgt))
                  xs ts'' Hevars).
             intros xa t Hxa Hp. destruct Hp as (b & Hb & Ht). subst t.
             rewrite fst_lvar. intros y Hy.
@@ -4547,19 +4624,19 @@ Section StreamAmbients.
              (List.concat eqs1) (List.concat eqs2)
              (st_ids st0) (st_ids st1) Hperm1 Hnd12). }
       assert
-        (forall x, In x (CALLS.moved_by env st st0) -> ~ In x scope) as Hmv0.
+        (forall x, In x (CALLS.moved_by env AN st st0) -> ~ In x scope) as Hmv0.
       { intros x Hx. apply Hmv.
-        exact (CALLS.moved_by_prefix_local env st st0 st' Hf03 x Hx). }
+        exact (CALLS.moved_by_prefix_local env AN st st0 st' Hf03 x Hx). }
       assert
-        (forall x, In x (CALLS.moved_by env st0 st1) -> ~ In x scope) as Hmv1.
+        (forall x, In x (CALLS.moved_by env AN st0 st1) -> ~ In x scope) as Hmv1.
       { intros x Hx. apply Hmv.
-        apply (CALLS.moved_by_suffix_local env st st0 st' Hf0 x).
-        exact (CALLS.moved_by_prefix_local env st0 st1 st' Hf13 x Hx). }
+        apply (CALLS.moved_by_suffix_local env AN st st0 st' Hf0 x).
+        exact (CALLS.moved_by_prefix_local env AN st0 st1 st' Hf13 x Hx). }
       assert
-        (forall x, In x (CALLS.moved_by env st1 st2) -> ~ In x scope) as Hmv2.
+        (forall x, In x (CALLS.moved_by env AN st1 st2) -> ~ In x scope) as Hmv2.
       { intros x Hx. apply Hmv.
-        apply (CALLS.moved_by_suffix_local env st st1 st' Hf01 x).
-        exact (CALLS.moved_by_prefix_local env st1 st2 st' Hf3 x Hx). }
+        apply (CALLS.moved_by_suffix_local env AN st st1 st' Hf01 x).
+        exact (CALLS.moved_by_prefix_local env AN st1 st2 st' Hf3 x Hx). }
 
       (** the scrutinee *)
       assert (Forall (fun t => st_scoped scope (fst t)) [th]) as Hth_scopeds.
@@ -4621,7 +4698,7 @@ Section StreamAmbients.
       assert (listSatisfiable dlt0 (carried (tf :: tes1r))) as Hsat1'.
       { exact
           (CALLS.listSatisfiable_off
-             scope (carried (tf :: tes1r)) (CALLS.moved_by env st st0)
+             scope (carried (tf :: tes1r)) (CALLS.moved_by env AN st st0)
              dlt dlt0 Hcsc1 Hmv0 Hoff0 Hsat1). }
       destruct
         (carries_list_streams_intro P es1 Hall1 true (amb :: ambs0)
@@ -4638,14 +4715,14 @@ Section StreamAmbients.
       assert (listSatisfiable dlt1 (carried tes2)) as Hsat2'.
       { apply
           (CALLS.listSatisfiable_off
-             scope (carried tes2) (CALLS.moved_by env st0 st1)
+             scope (carried tes2) (CALLS.moved_by env AN st0 st1)
              dlt0 dlt1).
         - exact Hcsc2.
         - exact Hmv1.
         - exact Hoff1.
         - exact
             (CALLS.listSatisfiable_off
-               scope (carried tes2) (CALLS.moved_by env st st0)
+               scope (carried tes2) (CALLS.moved_by env AN st st0)
                dlt dlt0 Hcsc2 Hmv0 Hoff0 Hsat2). }
       destruct
         (carries_list_streams_intro P es2 Hall2 true (amb :: ambs0)
@@ -4660,49 +4737,49 @@ Section StreamAmbients.
 
       (** the three witnesses, composed up to the minting stage *)
       assert
-        (CALLS.agree_off (CALLS.moved_by env st0 st2) dlt0 dlt2)
+        (CALLS.agree_off (CALLS.moved_by env AN st0 st2) dlt0 dlt2)
         as Hoff02.
       { intros x Hx.
         rewrite Hoff1.
         2: { intro Hin. apply Hx.
              exact
-               (CALLS.moved_by_prefix_local env st0 st1 st2 Hf2 x Hin). }
+               (CALLS.moved_by_prefix_local env AN st0 st1 st2 Hf2 x Hin). }
         apply Hoff2. intro Hin. apply Hx.
         exact
-          (CALLS.moved_by_suffix_local env st0 st1 st2 Hf1 x Hin). }
+          (CALLS.moved_by_suffix_local env AN st0 st1 st2 Hf1 x Hin). }
       assert
         (forall x,
-           In x (CALLS.moved_by env st0 st2) ->
-           ~ In x (scope ++ CALLS.moved_by env st st0)) as Hsep0.
+           In x (CALLS.moved_by env AN st0 st2) ->
+           ~ In x (scope ++ CALLS.moved_by env AN st st0)) as Hsep0.
       { intros x Hin Hxin. apply in_app_or in Hxin as [Hscope|Hfirst].
         - apply (Hmv x).
-          + apply (CALLS.moved_by_suffix_local env st st0 st' Hf0 x).
+          + apply (CALLS.moved_by_suffix_local env AN st st0 st' Hf0 x).
             exact
-              (CALLS.moved_by_prefix_local env st0 st2 st' Hf3 x Hin).
+              (CALLS.moved_by_prefix_local env AN st0 st2 st' Hf3 x Hin).
           + exact Hscope.
         - exact
             (CALLS.moved_by_disjoint_local
-               env env_inj st st0 st2 x Hfirst Hin). }
+               env AN env_inj st st0 st2 x Hfirst Hin). }
       assert
         (forall x,
-           In x (CALLS.moved_by env st1 st2) ->
-           ~ In x (scope ++ CALLS.moved_by env st0 st1)) as Hsep1.
+           In x (CALLS.moved_by env AN st1 st2) ->
+           ~ In x (scope ++ CALLS.moved_by env AN st0 st1)) as Hsep1.
       { intros x Hin Hxin. apply in_app_or in Hxin as [Hscope|Hfirst].
         - exact (Hmv2 x Hin Hscope).
         - exact
             (CALLS.moved_by_disjoint_local
-               env env_inj st0 st1 st2 x Hfirst Hin). }
+               env AN env_inj st0 st1 st2 x Hfirst Hin). }
 
       assert (stream_rel dlt2 [clock_amb] [th] [th'']) as Hrel0'.
       { apply
           (stream_rel_off_scope
-             (scope ++ CALLS.moved_by env st st0)
-             (CALLS.moved_by env st0 st2) dlt0 dlt2
+             (scope ++ CALLS.moved_by env AN st st0)
+             (CALLS.moved_by env AN st0 st2) dlt0 dlt2
              [clock_amb] [th] [th'']).
         - apply
             (@Forall_impl ST
                (st_scoped scope)
-               (st_scoped (scope ++ CALLS.moved_by env st st0))).
+               (st_scoped (scope ++ CALLS.moved_by env AN st st0))).
           + intros a0 Ha0. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Ha0.
@@ -4712,7 +4789,7 @@ Section StreamAmbients.
                (fun src => st_scoped scope (fst src))
                (fun src =>
                   st_scoped
-                    (scope ++ CALLS.moved_by env st st0) (fst src))).
+                    (scope ++ CALLS.moved_by env AN st st0) (fst src))).
           + intros src Hsrc. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Hsrc.
@@ -4738,13 +4815,13 @@ Section StreamAmbients.
         (stream_rel dlt2 (amb :: ambs0) (tf :: tes1r) ts1x) as Hrel1'.
       { apply
           (stream_rel_off_scope
-             (scope ++ CALLS.moved_by env st0 st1)
-             (CALLS.moved_by env st1 st2) dlt1 dlt2
+             (scope ++ CALLS.moved_by env AN st0 st1)
+             (CALLS.moved_by env AN st1 st2) dlt1 dlt2
              (amb :: ambs0) (tf :: tes1r) ts1x).
         - apply
             (@Forall_impl ST
                (st_scoped scope)
-               (st_scoped (scope ++ CALLS.moved_by env st0 st1))).
+               (st_scoped (scope ++ CALLS.moved_by env AN st0 st1))).
           + intros a0 Ha0. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Ha0.
@@ -4754,7 +4831,7 @@ Section StreamAmbients.
                (fun src => st_scoped scope (fst src))
                (fun src =>
                   st_scoped
-                    (scope ++ CALLS.moved_by env st0 st1) (fst src))).
+                    (scope ++ CALLS.moved_by env AN st0 st1) (fst src))).
           + intros src Hsrc. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Hsrc.
@@ -4872,11 +4949,13 @@ Section StreamAmbients.
       { exact (NoDup_app_l (List.map fst xs) (st_ids st2) Hndx). }
       assert
         (forall b, In b (sec_of (List.map fst xs)) ->
-                   In b (CALLS.moved_by env st2 st')) as Hbnew.
+                   In b (CALLS.moved_by env AN st2 st')) as Hbnew.
       { intros b Hb.
         unfold CALLS.sec_of in Hb. apply in_flat_map in Hb as (x & Hx & Hb).
-        unfold CALLS.moved_by, CALLS.EXPR.moved_by, CALLS.sec_of.
-        apply in_flat_map. exists x. split; [|exact Hb].
+        destruct (Env.find x env) as [b0|] eqn:Ex; [|destruct Hb].
+        destruct Hb as [Hb|[]]. subst b0.
+        refine (CALLS.In_moved_by env AN _ _ x b _
+                  (AN_apart_anns _ _ _ _ Hids x Hx) Ex).
         apply CALLS.new_ids_spec. split.
         - exact
             (idents_for_anns_incl_ids
@@ -4886,72 +4965,72 @@ Section StreamAmbients.
             (NoDup_app_In x (List.map fst xs) (st_ids st2) Hndx Hx). }
       assert
         (forall b, In b (sec_of (List.map fst xs)) ->
-                   ~ In b (scope ++ CALLS.moved_by env st st2)) as Hsepx.
+                   ~ In b (scope ++ CALLS.moved_by env AN st st2)) as Hsepx.
       { intros b Hb Hin. apply in_app_or in Hin as [Hin|Hin].
         - apply (Hmv b); [|exact Hin].
           exact
             (CALLS.moved_by_suffix_local
-               env st st2 st' Hf012 b (Hbnew b Hb)).
+               env AN st st2 st' Hf012 b (Hbnew b Hb)).
         - exact
             (CALLS.moved_by_disjoint_local
-               env env_inj st st2 st' b Hin (Hbnew b Hb)). }
+               env AN env_inj st st2 st' b Hin (Hbnew b Hb)). }
 
       (** what the conditionals' types mention *)
       assert
-        (st_scoped (scope ++ CALLS.moved_by env st st2) (fst th''))
+        (st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst th''))
         as Hthsc.
       { inversion Htgt0 as [|tqa tqs Htqa Htqr]; subst.
         apply st_scoped_weaken with
-          (scope1 := scope ++ CALLS.moved_by env st st0).
+          (scope1 := scope ++ CALLS.moved_by env AN st st0).
         - apply incl_app; [apply incl_appl, incl_refl|].
           apply incl_appr.
-          exact (CALLS.moved_by_prefix_local env st st0 st2 Hf02).
+          exact (CALLS.moved_by_prefix_local env AN st st0 st2 Hf02).
         - exact Htqa. }
       assert
         (Forall
-           (fun t0 => st_scoped (scope ++ CALLS.moved_by env st st2) (fst t0))
+           (fun t0 => st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t0))
            ts1x) as Htgt1'.
       { apply
           (@Forall_impl LST
              (fun t0 =>
-                st_scoped (scope ++ CALLS.moved_by env st0 st1) (fst t0))
+                st_scoped (scope ++ CALLS.moved_by env AN st0 st1) (fst t0))
              (fun t0 =>
-                st_scoped (scope ++ CALLS.moved_by env st st2) (fst t0))).
+                st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t0))).
         - intros tq Htq.
           apply st_scoped_weaken with
-            (scope1 := scope ++ CALLS.moved_by env st0 st1).
+            (scope1 := scope ++ CALLS.moved_by env AN st0 st1).
           + apply incl_app; [apply incl_appl, incl_refl|].
             apply incl_appr. apply incl_tran with
-              (m := CALLS.moved_by env st0 st2).
-            * exact (CALLS.moved_by_prefix_local env st0 st1 st2 Hf2).
-            * exact (CALLS.moved_by_suffix_local env st st0 st2 Hf0).
+              (m := CALLS.moved_by env AN st0 st2).
+            * exact (CALLS.moved_by_prefix_local env AN st0 st1 st2 Hf2).
+            * exact (CALLS.moved_by_suffix_local env AN st st0 st2 Hf0).
           + exact Htq.
         - exact Htgt1. }
       assert
         (Forall
-           (fun t0 => st_scoped (scope ++ CALLS.moved_by env st st2) (fst t0))
+           (fun t0 => st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t0))
            ts2x) as Htgt2'.
       { apply
           (@Forall_impl LST
              (fun t0 =>
-                st_scoped (scope ++ CALLS.moved_by env st1 st2) (fst t0))
+                st_scoped (scope ++ CALLS.moved_by env AN st1 st2) (fst t0))
              (fun t0 =>
-                st_scoped (scope ++ CALLS.moved_by env st st2) (fst t0))).
+                st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t0))).
         - intros tq Htq.
           apply st_scoped_weaken with
-            (scope1 := scope ++ CALLS.moved_by env st1 st2).
+            (scope1 := scope ++ CALLS.moved_by env AN st1 st2).
           + apply incl_app; [apply incl_appl, incl_refl|].
             apply incl_appr.
-            exact (CALLS.moved_by_suffix_local env st st1 st2 Hf01).
+            exact (CALLS.moved_by_suffix_local env AN st st1 st2 Hf01).
           + exact Htq.
         - exact Htgt2. }
       assert
         (Forall
-           (fun r => st_scoped (scope ++ CALLS.moved_by env st st2) (fst r))
+           (fun r => st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst r))
            rs) as Hscrs.
       { exact
           (CALLS.ljoin_list_scoped_head
-             (scope ++ CALLS.moved_by env st st2) th'' ts1x ts2x rs xst xst
+             (scope ++ CALLS.moved_by env AN st st2) th'' ts1x ts2x rs xst xst
              Hthsc Hjr Htgt1' Htgt2'). }
 
       (** the aligned premise the emitted definitions consume *)
@@ -4961,7 +5040,7 @@ Section StreamAmbients.
               forall tf0 s s',
                 assign_lexp_type GL env base_ty rst_ty e s = OK ([tf0], s') ->
                 satisfiable dlt2 (fst tf0) (merge a (fst src))
-                /\ st_scoped (scope ++ CALLS.moved_by env st st2) (fst tf0))
+                /\ st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst tf0))
            (amb :: ambs0)
            (unnest_ite (hd_default f0) (List.concat f1) (List.concat f2)
               (ty :: tys) (ck0, None))
@@ -5008,28 +5087,28 @@ Section StreamAmbients.
       (** the emitted definitions *)
       destruct
         (lifted_defs_streams
-           (scope ++ CALLS.moved_by env st st2) (List.map fst xs)
+           (scope ++ CALLS.moved_by env AN st st2) (List.map fst xs)
            (unnest_ite (hd_default f0) (List.concat f1) (List.concat f2)
               (ty :: tys) (ck0, None))
            ts (amb :: ambs0) ced xst xstd dlt2
            Hndfst Hlend Hsepx Hdecl
            (@Forall_impl ST (st_scoped scope)
-              (st_scoped (scope ++ CALLS.moved_by env st st2))
+              (st_scoped (scope ++ CALLS.moved_by env AN st st2))
               (fun a0 Ha0 =>
                  st_scoped_weaken scope
-                   (scope ++ CALLS.moved_by env st st2) a0
-                   (incl_appl (CALLS.moved_by env st st2) (incl_refl scope))
+                   (scope ++ CALLS.moved_by env AN st st2) a0
+                   (incl_appl (CALLS.moved_by env AN st st2) (incl_refl scope))
                    Ha0)
               (amb :: ambs0) Hambsc)
            Hpure
            (@Forall_impl LST
               (fun src => st_scoped scope (fst src))
               (fun src =>
-                 st_scoped (scope ++ CALLS.moved_by env st st2) (fst src))
+                 st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst src))
               (fun src Hsrc =>
                  st_scoped_weaken scope
-                   (scope ++ CALLS.moved_by env st st2) (fst src)
-                   (incl_appl (CALLS.moved_by env st st2) (incl_refl scope))
+                   (scope ++ CALLS.moved_by env AN st st2) (fst src)
+                   (incl_appl (CALLS.moved_by env AN st st2) (incl_refl scope))
                    Hsrc)
               ts Htsc)
            Hlift3 Hgend)
@@ -5038,32 +5117,32 @@ Section StreamAmbients.
       (** the minted names are among the ones the whole run moved *)
       assert
         (forall b, In b (sec_of (List.map fst xs)) ->
-                   In b (CALLS.moved_by env st st')) as Hincx.
+                   In b (CALLS.moved_by env AN st st')) as Hincx.
       { intros b Hb.
         exact
           (CALLS.moved_by_suffix_local
-             env st st2 st' Hf012 b (Hbnew b Hb)). }
+             env AN st st2 st' Hf012 b (Hbnew b Hb)). }
       assert
         (forall y, In y (sec_of (List.map fst xs)) ->
-                   ~ In y (scope ++ CALLS.moved_by env st st0)) as Hsepx0.
+                   ~ In y (scope ++ CALLS.moved_by env AN st st0)) as Hsepx0.
       { intros y Hy Hin. apply (Hsepx y Hy).
         apply in_app_or in Hin as [Hin|Hin]; apply in_or_app; [now left|].
         right.
-        exact (CALLS.moved_by_prefix_local env st st0 st2 Hf02 y Hin). }
+        exact (CALLS.moved_by_prefix_local env AN st st0 st2 Hf02 y Hin). }
       assert
         (forall y, In y (sec_of (List.map fst xs)) ->
-                   ~ In y (scope ++ CALLS.moved_by env st0 st1)) as Hsepx1.
+                   ~ In y (scope ++ CALLS.moved_by env AN st0 st1)) as Hsepx1.
       { intros y Hy Hin. apply (Hsepx y Hy).
         apply in_app_or in Hin as [Hin|Hin]; apply in_or_app; [now left|].
-        right. apply (CALLS.moved_by_suffix_local env st st0 st2 Hf0 y).
-        exact (CALLS.moved_by_prefix_local env st0 st1 st2 Hf2 y Hin). }
+        right. apply (CALLS.moved_by_suffix_local env AN st st0 st2 Hf0 y).
+        exact (CALLS.moved_by_prefix_local env AN st0 st1 st2 Hf2 y Hin). }
       assert
         (forall y, In y (sec_of (List.map fst xs)) ->
-                   ~ In y (scope ++ CALLS.moved_by env st1 st2)) as Hsepx2.
+                   ~ In y (scope ++ CALLS.moved_by env AN st1 st2)) as Hsepx2.
       { intros y Hy Hin. apply (Hsepx y Hy).
         apply in_app_or in Hin as [Hin|Hin]; apply in_or_app; [now left|].
         right.
-        exact (CALLS.moved_by_suffix_local env st st1 st2 Hf01 y Hin). }
+        exact (CALLS.moved_by_suffix_local env AN st st1 st2 Hf01 y Hin). }
 
       (** the results' relation, at the names the pass bound them to *)
       assert (stream_rel dlt3 (amb :: ambs0) ts ts'') as Hrelfin.
@@ -5086,12 +5165,12 @@ Section StreamAmbients.
         rewrite Hoff0.
         2: { intro Hin. apply Hx.
              exact
-               (CALLS.moved_by_prefix_local env st st0 st' Hf03 x Hin). }
+               (CALLS.moved_by_prefix_local env AN st st0 st' Hf03 x Hin). }
         rewrite Hoff02.
         2: { intro Hin. apply Hx.
-             apply (CALLS.moved_by_suffix_local env st st0 st' Hf0 x).
+             apply (CALLS.moved_by_suffix_local env AN st st0 st' Hf0 x).
              exact
-               (CALLS.moved_by_prefix_local env st0 st2 st' Hf3 x Hin). }
+               (CALLS.moved_by_prefix_local env AN st0 st2 st' Hf3 x Hin). }
         apply Hoff3. intro Hin. apply Hx. exact (Hincx x Hin).
       - split.
         + (** every emitted constraint still holds *)
@@ -5099,28 +5178,28 @@ Section StreamAmbients.
           apply listSatisfiable_app. split.
           * apply
               (CALLS.listSatisfiable_off_scope
-                 ce0 (scope ++ CALLS.moved_by env st st0)
+                 ce0 (scope ++ CALLS.moved_by env AN st st0)
                  (sec_of (List.map fst xs)) dlt2 dlt3
                  Hscope0 Hsepx0 Hoff3).
             exact
               (CALLS.listSatisfiable_off_scope
-                 ce0 (scope ++ CALLS.moved_by env st st0)
-                 (CALLS.moved_by env st0 st2) dlt0 dlt2
+                 ce0 (scope ++ CALLS.moved_by env AN st st0)
+                 (CALLS.moved_by env AN st0 st2) dlt0 dlt2
                  Hscope0 Hsep0 Hoff02 Hce0).
           * apply listSatisfiable_app. split.
             -- apply
                  (CALLS.listSatisfiable_off_scope
-                    ce1 (scope ++ CALLS.moved_by env st0 st1)
+                    ce1 (scope ++ CALLS.moved_by env AN st0 st1)
                     (sec_of (List.map fst xs)) dlt2 dlt3
                     Hscope1 Hsepx1 Hoff3).
                exact
                  (CALLS.listSatisfiable_off_scope
-                    ce1 (scope ++ CALLS.moved_by env st0 st1)
-                    (CALLS.moved_by env st1 st2) dlt1 dlt2
+                    ce1 (scope ++ CALLS.moved_by env AN st0 st1)
+                    (CALLS.moved_by env AN st1 st2) dlt1 dlt2
                     Hscope1 Hsep1 Hoff2 Hce1).
             -- exact
                  (CALLS.listSatisfiable_off_scope
-                    ce2 (scope ++ CALLS.moved_by env st1 st2)
+                    ce2 (scope ++ CALLS.moved_by env AN st1 st2)
                     (sec_of (List.map fst xs)) dlt2 dlt3
                     Hscope2 Hsepx2 Hoff3 Hce2).
         + split; [exact Hrelfin|]. split.
@@ -5129,80 +5208,80 @@ Section StreamAmbients.
             -- apply
                  (@Forall_impl constraint
                     (constraint_scoped
-                       ((scope ++ CALLS.moved_by env st st2)
+                       ((scope ++ CALLS.moved_by env AN st st2)
                           ++ sec_of (List.map fst xs)))
                     (constraint_scoped
-                       (scope ++ CALLS.moved_by env st st'))).
+                       (scope ++ CALLS.moved_by env AN st st'))).
                ++ intros c Hc.
                   apply constraint_scoped_incl with
-                    (scope1 := (scope ++ CALLS.moved_by env st st2)
+                    (scope1 := (scope ++ CALLS.moved_by env AN st st2)
                                  ++ sec_of (List.map fst xs)).
                   2: exact Hc.
                   apply incl_app; [apply incl_app|].
                   ** apply incl_appl, incl_refl.
                   ** apply incl_appr.
                      exact
-                       (CALLS.moved_by_prefix_local env st st2 st' Hf3).
+                       (CALLS.moved_by_prefix_local env AN st st2 st' Hf3).
                   ** apply incl_appr. exact Hincx.
                ++ exact Hscoped.
             -- apply Forall_app. split.
                ++ apply
                     (@Forall_impl constraint
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st0))
+                          (scope ++ CALLS.moved_by env AN st st0))
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st'))).
+                          (scope ++ CALLS.moved_by env AN st st'))).
                   ** intros c Hc.
                      apply constraint_scoped_incl with
-                       (scope1 := scope ++ CALLS.moved_by env st st0).
+                       (scope1 := scope ++ CALLS.moved_by env AN st st0).
                      2: exact Hc.
                      apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr.
                      exact
-                       (CALLS.moved_by_prefix_local env st st0 st' Hf03).
+                       (CALLS.moved_by_prefix_local env AN st st0 st' Hf03).
                   ** exact Hscope0.
                ++ apply Forall_app. split.
                   ** apply
                        (@Forall_impl constraint
                           (constraint_scoped
-                             (scope ++ CALLS.moved_by env st0 st1))
+                             (scope ++ CALLS.moved_by env AN st0 st1))
                           (constraint_scoped
-                             (scope ++ CALLS.moved_by env st st'))).
+                             (scope ++ CALLS.moved_by env AN st st'))).
                      --- intros c Hc.
                          apply constraint_scoped_incl with
-                           (scope1 := scope ++ CALLS.moved_by env st0 st1).
+                           (scope1 := scope ++ CALLS.moved_by env AN st0 st1).
                          2: exact Hc.
                          apply incl_app; [apply incl_appl, incl_refl|].
                          apply incl_appr.
                          apply incl_tran with
-                           (m := CALLS.moved_by env st0 st').
+                           (m := CALLS.moved_by env AN st0 st').
                          +++ exact
                                (CALLS.moved_by_prefix_local
-                                  env st0 st1 st' Hf13).
+                                  env AN st0 st1 st' Hf13).
                          +++ exact
                                (CALLS.moved_by_suffix_local
-                                  env st st0 st' Hf0).
+                                  env AN st st0 st' Hf0).
                      --- exact Hscope1.
                   ** apply
                        (@Forall_impl constraint
                           (constraint_scoped
-                             (scope ++ CALLS.moved_by env st1 st2))
+                             (scope ++ CALLS.moved_by env AN st1 st2))
                           (constraint_scoped
-                             (scope ++ CALLS.moved_by env st st'))).
+                             (scope ++ CALLS.moved_by env AN st st'))).
                      --- intros c Hc.
                          apply constraint_scoped_incl with
-                           (scope1 := scope ++ CALLS.moved_by env st1 st2).
+                           (scope1 := scope ++ CALLS.moved_by env AN st1 st2).
                          2: exact Hc.
                          apply incl_app; [apply incl_appl, incl_refl|].
                          apply incl_appr.
                          apply incl_tran with
-                           (m := CALLS.moved_by env st1 st').
+                           (m := CALLS.moved_by env AN st1 st').
                          +++ exact
                                (CALLS.moved_by_prefix_local
-                                  env st1 st2 st' Hf3).
+                                  env AN st1 st2 st' Hf3).
                          +++ exact
                                (CALLS.moved_by_suffix_local
-                                  env st st1 st' Hf01).
+                                  env AN st st1 st' Hf01).
                      --- exact Hscope2.
           * (** the bound results are names the run minted *)
             apply
@@ -5210,7 +5289,7 @@ Section StreamAmbients.
                  (fun xa t0 =>
                     exists b, Env.find (fst xa) env = Some b /\ t0 = lvar b)
                  (fun tgt =>
-                    st_scoped (scope ++ CALLS.moved_by env st st') (fst tgt))
+                    st_scoped (scope ++ CALLS.moved_by env AN st st') (fst tgt))
                  xs ts'' Hevars).
             intros xa t0 Hxa Hp. destruct Hp as (b & Hb & Ht). subst t0.
             rewrite fst_lvar. intros y Hy.
@@ -5404,14 +5483,14 @@ Section StreamAmbients.
              (List.concat eqss0) (List.concat eqss1)
              (st_ids st) (st_ids st1) Hperm0 Hndr). }
       assert
-        (forall x, In x (CALLS.moved_by env st st1) -> ~ In x scope) as Hmv1.
+        (forall x, In x (CALLS.moved_by env AN st st1) -> ~ In x scope) as Hmv1.
       { intros x Hx. apply Hmv.
-        exact (CALLS.moved_by_prefix_local env st st1 st' Hf23 x Hx). }
+        exact (CALLS.moved_by_prefix_local env AN st st1 st' Hf23 x Hx). }
       assert
-        (forall x, In x (CALLS.moved_by env st1 st2) -> ~ In x scope) as Hmv2.
+        (forall x, In x (CALLS.moved_by env AN st1 st2) -> ~ In x scope) as Hmv2.
       { intros x Hx. apply Hmv.
-        apply (CALLS.moved_by_suffix_local env st st1 st' Hf1 x).
-        exact (CALLS.moved_by_prefix_local env st1 st2 st' Hf3 x Hx). }
+        apply (CALLS.moved_by_suffix_local env AN st st1 st' Hf1 x).
+        exact (CALLS.moved_by_prefix_local env AN st1 st2 st' Hf3 x Hx). }
 
       (** the ambients line up with each operand list *)
       pose proof (ljoin_list_length ts0 us ts sb sst' Hj) as Hjoinlen.
@@ -5436,7 +5515,7 @@ Section StreamAmbients.
       assert (listSatisfiable dlt1 (carried us)) as Hsat1'.
       { exact
           (CALLS.listSatisfiable_off
-             scope (carried us) (CALLS.moved_by env st st1)
+             scope (carried us) (CALLS.moved_by env AN st st1)
              dlt dlt1 Hcsc1 Hmv1 Hoff1 Hsat1). }
       destruct
         (carries_list_streams_intro P es Hall1 false ambs
@@ -5450,22 +5529,22 @@ Section StreamAmbients.
 
       assert
         (forall x,
-           In x (CALLS.moved_by env st1 st2) ->
-           ~ In x (scope ++ CALLS.moved_by env st st1)) as Hsep1.
+           In x (CALLS.moved_by env AN st1 st2) ->
+           ~ In x (scope ++ CALLS.moved_by env AN st st1)) as Hsep1.
       { intros x Hin Hxin. apply in_app_or in Hxin as [Hscope|Hfirst].
         - exact (Hmv2 x Hin Hscope).
         - exact
             (CALLS.moved_by_disjoint_local
-               env env_inj st st1 st2 x Hfirst Hin). }
+               env AN env_inj st st1 st2 x Hfirst Hin). }
       assert (stream_rel dlt2 ambs ts0 ts0x) as Hrel1'.
       { apply
           (stream_rel_off_scope
-             (scope ++ CALLS.moved_by env st st1)
-             (CALLS.moved_by env st1 st2) dlt1 dlt2 ambs ts0 ts0x).
+             (scope ++ CALLS.moved_by env AN st st1)
+             (CALLS.moved_by env AN st1 st2) dlt1 dlt2 ambs ts0 ts0x).
         - apply
             (@Forall_impl ST
                (st_scoped scope)
-               (st_scoped (scope ++ CALLS.moved_by env st st1))).
+               (st_scoped (scope ++ CALLS.moved_by env AN st st1))).
           + intros a0 Ha0. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Ha0.
@@ -5475,7 +5554,7 @@ Section StreamAmbients.
                (fun src => st_scoped scope (fst src))
                (fun src =>
                   st_scoped
-                    (scope ++ CALLS.moved_by env st st1) (fst src))).
+                    (scope ++ CALLS.moved_by env AN st st1) (fst src))).
           + intros src Hsrc. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Hsrc.
@@ -5574,71 +5653,73 @@ Section StreamAmbients.
       { exact (NoDup_app_l (List.map fst xs) (st_ids st2) Hndx). }
       assert
         (forall b, In b (sec_of (List.map fst xs)) ->
-                   In b (CALLS.moved_by env st2 st')) as Hbnew.
+                   In b (CALLS.moved_by env AN st2 st')) as Hbnew.
       { intros b Hb.
         unfold CALLS.sec_of in Hb. apply in_flat_map in Hb as (x & Hx & Hb).
-        unfold CALLS.moved_by, CALLS.EXPR.moved_by, CALLS.sec_of.
-        apply in_flat_map. exists x. split; [|exact Hb].
+        destruct (Env.find x env) as [b0|] eqn:Ex; [|destruct Hb].
+        destruct Hb as [Hb|[]]. subst b0.
+        refine (CALLS.In_moved_by env AN _ _ x b _
+                  (AN_apart_anns _ _ _ _ Hids x Hx) Ex).
         apply CALLS.new_ids_spec. split.
         - exact (idents_for_anns_incl_ids anns xs st2 st' Hids x Hx).
         - exact
             (NoDup_app_In x (List.map fst xs) (st_ids st2) Hndx Hx). }
       assert
         (forall b, In b (sec_of (List.map fst xs)) ->
-                   ~ In b (scope ++ CALLS.moved_by env st st2)) as Hsepx.
+                   ~ In b (scope ++ CALLS.moved_by env AN st st2)) as Hsepx.
       { intros b Hb Hin. apply in_app_or in Hin as [Hin|Hin].
         - apply (Hmv b); [|exact Hin].
           exact
             (CALLS.moved_by_suffix_local
-               env st st2 st' Hf12 b (Hbnew b Hb)).
+               env AN st st2 st' Hf12 b (Hbnew b Hb)).
         - exact
             (CALLS.moved_by_disjoint_local
-               env env_inj st st2 st' b Hin (Hbnew b Hb)). }
+               env AN env_inj st st2 st' b Hin (Hbnew b Hb)). }
 
       (** what the delays' types mention *)
       assert
         (Forall
-           (fun t0 => st_scoped (scope ++ CALLS.moved_by env st st2) (fst t0))
+           (fun t0 => st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t0))
            ts0x) as Htgt1'.
       { apply
           (@Forall_impl LST
              (fun t0 =>
-                st_scoped (scope ++ CALLS.moved_by env st st1) (fst t0))
+                st_scoped (scope ++ CALLS.moved_by env AN st st1) (fst t0))
              (fun t0 =>
-                st_scoped (scope ++ CALLS.moved_by env st st2) (fst t0))).
+                st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t0))).
         - intros tq Htq.
           apply st_scoped_weaken with
-            (scope1 := scope ++ CALLS.moved_by env st st1).
+            (scope1 := scope ++ CALLS.moved_by env AN st st1).
           + apply incl_app; [apply incl_appl, incl_refl|].
             apply incl_appr.
-            exact (CALLS.moved_by_prefix_local env st st1 st2 Hf2).
+            exact (CALLS.moved_by_prefix_local env AN st st1 st2 Hf2).
           + exact Htq.
         - exact Htgt1. }
       assert
         (Forall
-           (fun t0 => st_scoped (scope ++ CALLS.moved_by env st st2) (fst t0))
+           (fun t0 => st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t0))
            usx) as Htgt2'.
       { apply
           (@Forall_impl LST
              (fun t0 =>
-                st_scoped (scope ++ CALLS.moved_by env st1 st2) (fst t0))
+                st_scoped (scope ++ CALLS.moved_by env AN st1 st2) (fst t0))
              (fun t0 =>
-                st_scoped (scope ++ CALLS.moved_by env st st2) (fst t0))).
+                st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t0))).
         - intros tq Htq.
           apply st_scoped_weaken with
-            (scope1 := scope ++ CALLS.moved_by env st1 st2).
+            (scope1 := scope ++ CALLS.moved_by env AN st1 st2).
           + apply incl_app; [apply incl_appl, incl_refl|].
             apply incl_appr.
-            exact (CALLS.moved_by_suffix_local env st st1 st2 Hf1).
+            exact (CALLS.moved_by_suffix_local env AN st st1 st2 Hf1).
           + exact Htq.
         - exact Htgt2. }
       assert
         (Forall
-           (fun r => st_scoped (scope ++ CALLS.moved_by env st st2) (fst r))
+           (fun r => st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst r))
            rs) as Hscrs.
       { exact
           (CALLS.ljoin_list_scoped_plain
-             (scope ++ CALLS.moved_by env st st2) ts0x usx rs xst xst
+             (scope ++ CALLS.moved_by env AN st st2) ts0x usx rs xst xst
              Hjr Htgt1' Htgt2'). }
 
       (** the aligned premise the emitted definitions consume *)
@@ -5648,7 +5729,7 @@ Section StreamAmbients.
               forall tf0 s s',
                 assign_lexp_type GL env base_ty rst_ty e s = OK ([tf0], s') ->
                 satisfiable dlt2 (fst tf0) (merge a (fst src))
-                /\ st_scoped (scope ++ CALLS.moved_by env st st2) (fst tf0))
+                /\ st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst tf0))
            ambs
            (unnest_fby (List.concat ess0) (List.concat ess1) anns)
            ts) as Hlift3.
@@ -5691,27 +5772,27 @@ Section StreamAmbients.
       (** the emitted definitions *)
       destruct
         (lifted_defs_streams
-           (scope ++ CALLS.moved_by env st st2) (List.map fst xs)
+           (scope ++ CALLS.moved_by env AN st st2) (List.map fst xs)
            (unnest_fby (List.concat ess0) (List.concat ess1) anns)
            ts ambs ced xst xstd dlt2
            Hndfst Hlend Hsepx Hdecl
            (@Forall_impl ST (st_scoped scope)
-              (st_scoped (scope ++ CALLS.moved_by env st st2))
+              (st_scoped (scope ++ CALLS.moved_by env AN st st2))
               (fun a0 Ha0 =>
                  st_scoped_weaken scope
-                   (scope ++ CALLS.moved_by env st st2) a0
-                   (incl_appl (CALLS.moved_by env st st2) (incl_refl scope))
+                   (scope ++ CALLS.moved_by env AN st st2) a0
+                   (incl_appl (CALLS.moved_by env AN st st2) (incl_refl scope))
                    Ha0)
               ambs Hambsc)
            Hpure
            (@Forall_impl LST
               (fun src => st_scoped scope (fst src))
               (fun src =>
-                 st_scoped (scope ++ CALLS.moved_by env st st2) (fst src))
+                 st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst src))
               (fun src Hsrc =>
                  st_scoped_weaken scope
-                   (scope ++ CALLS.moved_by env st st2) (fst src)
-                   (incl_appl (CALLS.moved_by env st st2) (incl_refl scope))
+                   (scope ++ CALLS.moved_by env AN st st2) (fst src)
+                   (incl_appl (CALLS.moved_by env AN st st2) (incl_refl scope))
                    Hsrc)
               ts Htscall)
            Hlift3 Hgend)
@@ -5720,11 +5801,11 @@ Section StreamAmbients.
       (** the minted names are among the ones the whole run moved *)
       assert
         (forall b, In b (sec_of (List.map fst xs)) ->
-                   In b (CALLS.moved_by env st st')) as Hincx.
+                   In b (CALLS.moved_by env AN st st')) as Hincx.
       { intros b Hb.
         exact
           (CALLS.moved_by_suffix_local
-             env st st2 st' Hf12 b (Hbnew b Hb)). }
+             env AN st st2 st' Hf12 b (Hbnew b Hb)). }
 
       (** the results' relation, at the names the pass bound them to *)
       assert (stream_rel dlt3 ambs ts ts'') as Hrelfin.
@@ -5747,13 +5828,13 @@ Section StreamAmbients.
         rewrite Hoff1.
         2: { intro Hin. apply Hx.
              exact
-               (CALLS.moved_by_prefix_local env st st1 st' Hf23 x Hin). }
+               (CALLS.moved_by_prefix_local env AN st st1 st' Hf23 x Hin). }
         rewrite Hoff2.
         2: { intro Hin. apply Hx.
              exact
                (CALLS.moved_by_suffix_local
-                  env st st1 st' Hf1 x
-                  (CALLS.moved_by_prefix_local env st1 st2 st' Hf3 x Hin)). }
+                  env AN st st1 st' Hf1 x
+                  (CALLS.moved_by_prefix_local env AN st1 st2 st' Hf3 x Hin)). }
         apply Hoff3. intro Hin. apply Hx. exact (Hincx x Hin).
       - split.
         + (** every emitted constraint still holds *)
@@ -5761,7 +5842,7 @@ Section StreamAmbients.
           apply listSatisfiable_app. split.
           * apply
               (CALLS.listSatisfiable_off_scope
-                 ce1 (scope ++ CALLS.moved_by env st st1)
+                 ce1 (scope ++ CALLS.moved_by env AN st st1)
                  (sec_of (List.map fst xs)) dlt2 dlt3).
             -- exact Hscope1.
             -- intros y Hy Hin. apply (Hsepx y Hy).
@@ -5769,23 +5850,23 @@ Section StreamAmbients.
                  [now left|].
                right.
                exact
-                 (CALLS.moved_by_prefix_local env st st1 st2 Hf2 y Hin).
+                 (CALLS.moved_by_prefix_local env AN st st1 st2 Hf2 y Hin).
             -- exact Hoff3.
             -- apply
                  (CALLS.listSatisfiable_off_scope
-                    ce1 (scope ++ CALLS.moved_by env st st1)
-                    (CALLS.moved_by env st1 st2) dlt1 dlt2).
+                    ce1 (scope ++ CALLS.moved_by env AN st st1)
+                    (CALLS.moved_by env AN st1 st2) dlt1 dlt2).
                ++ exact Hscope1.
                ++ intros y Hy Hin. apply in_app_or in Hin as [Hin|Hin].
                   ** exact (Hmv2 y Hy Hin).
                   ** exact
                        (CALLS.moved_by_disjoint_local
-                          env env_inj st st1 st2 y Hin Hy).
+                          env AN env_inj st st1 st2 y Hin Hy).
                ++ exact Hoff2.
                ++ exact Hce1.
           * apply
               (CALLS.listSatisfiable_off_scope
-                 ce2 (scope ++ CALLS.moved_by env st1 st2)
+                 ce2 (scope ++ CALLS.moved_by env AN st1 st2)
                  (sec_of (List.map fst xs)) dlt2 dlt3).
             -- exact Hscope2.
             -- intros y Hy Hin. apply (Hsepx y Hy).
@@ -5793,7 +5874,7 @@ Section StreamAmbients.
                  [now left|].
                right.
                exact
-                 (CALLS.moved_by_suffix_local env st st1 st2 Hf1 y Hin).
+                 (CALLS.moved_by_suffix_local env AN st st1 st2 Hf1 y Hin).
             -- exact Hoff3.
             -- exact Hce2.
         + split; [exact Hrelfin|]. split.
@@ -5802,58 +5883,58 @@ Section StreamAmbients.
             -- apply
                  (@Forall_impl constraint
                     (constraint_scoped
-                       ((scope ++ CALLS.moved_by env st st2)
+                       ((scope ++ CALLS.moved_by env AN st st2)
                           ++ sec_of (List.map fst xs)))
                     (constraint_scoped
-                       (scope ++ CALLS.moved_by env st st'))).
+                       (scope ++ CALLS.moved_by env AN st st'))).
                ++ intros c Hc.
                   apply constraint_scoped_incl with
-                    (scope1 := (scope ++ CALLS.moved_by env st st2)
+                    (scope1 := (scope ++ CALLS.moved_by env AN st st2)
                                  ++ sec_of (List.map fst xs)).
                   2: exact Hc.
                   apply incl_app; [apply incl_app|].
                   ** apply incl_appl, incl_refl.
                   ** apply incl_appr.
                      exact
-                       (CALLS.moved_by_prefix_local env st st2 st' Hf3).
+                       (CALLS.moved_by_prefix_local env AN st st2 st' Hf3).
                   ** apply incl_appr. exact Hincx.
                ++ exact Hscoped.
             -- apply Forall_app. split.
                ++ apply
                     (@Forall_impl constraint
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st1))
+                          (scope ++ CALLS.moved_by env AN st st1))
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st'))).
+                          (scope ++ CALLS.moved_by env AN st st'))).
                   ** intros c Hc.
                      apply constraint_scoped_incl with
-                       (scope1 := scope ++ CALLS.moved_by env st st1).
+                       (scope1 := scope ++ CALLS.moved_by env AN st st1).
                      2: exact Hc.
                      apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr.
                      exact
-                       (CALLS.moved_by_prefix_local env st st1 st' Hf23).
+                       (CALLS.moved_by_prefix_local env AN st st1 st' Hf23).
                   ** exact Hscope1.
                ++ apply
                     (@Forall_impl constraint
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st1 st2))
+                          (scope ++ CALLS.moved_by env AN st1 st2))
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st'))).
+                          (scope ++ CALLS.moved_by env AN st st'))).
                   ** intros c Hc.
                      apply constraint_scoped_incl with
-                       (scope1 := scope ++ CALLS.moved_by env st1 st2).
+                       (scope1 := scope ++ CALLS.moved_by env AN st1 st2).
                      2: exact Hc.
                      apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr.
                      apply incl_tran with
-                       (m := CALLS.moved_by env st1 st').
+                       (m := CALLS.moved_by env AN st1 st').
                      --- exact
                            (CALLS.moved_by_prefix_local
-                              env st1 st2 st' Hf3).
+                              env AN st1 st2 st' Hf3).
                      --- exact
                            (CALLS.moved_by_suffix_local
-                              env st st1 st' Hf1).
+                              env AN st st1 st' Hf1).
                   ** exact Hscope2.
           * (** the bound results are names the run minted *)
             apply
@@ -5861,7 +5942,7 @@ Section StreamAmbients.
                  (fun xa t =>
                     exists b, Env.find (fst xa) env = Some b /\ t = lvar b)
                  (fun tgt =>
-                    st_scoped (scope ++ CALLS.moved_by env st st') (fst tgt))
+                    st_scoped (scope ++ CALLS.moved_by env AN st st') (fst tgt))
                  xs ts'' Hevars).
             intros xa t Hxa Hp. destruct Hp as (b & Hb & Ht). subst t.
             rewrite fst_lvar. intros y Hy.
@@ -6054,14 +6135,14 @@ Section StreamAmbients.
              (List.concat eqss0) (List.concat eqss1)
              (st_ids st) (st_ids st1) Hperm0 Hndr). }
       assert
-        (forall x, In x (CALLS.moved_by env st st1) -> ~ In x scope) as Hmv1.
+        (forall x, In x (CALLS.moved_by env AN st st1) -> ~ In x scope) as Hmv1.
       { intros x Hx. apply Hmv.
-        exact (CALLS.moved_by_prefix_local env st st1 st' Hf23 x Hx). }
+        exact (CALLS.moved_by_prefix_local env AN st st1 st' Hf23 x Hx). }
       assert
-        (forall x, In x (CALLS.moved_by env st1 st2) -> ~ In x scope) as Hmv2.
+        (forall x, In x (CALLS.moved_by env AN st1 st2) -> ~ In x scope) as Hmv2.
       { intros x Hx. apply Hmv.
-        apply (CALLS.moved_by_suffix_local env st st1 st' Hf1 x).
-        exact (CALLS.moved_by_prefix_local env st1 st2 st' Hf3 x Hx). }
+        apply (CALLS.moved_by_suffix_local env AN st st1 st' Hf1 x).
+        exact (CALLS.moved_by_prefix_local env AN st1 st2 st' Hf3 x Hx). }
 
       (** the ambients line up with each operand list *)
       pose proof (ljoin_list_length ts0 us ts sb sst' Hj) as Hjoinlen.
@@ -6086,7 +6167,7 @@ Section StreamAmbients.
       assert (listSatisfiable dlt1 (carried us)) as Hsat1'.
       { exact
           (CALLS.listSatisfiable_off
-             scope (carried us) (CALLS.moved_by env st st1)
+             scope (carried us) (CALLS.moved_by env AN st st1)
              dlt dlt1 Hcsc1 Hmv1 Hoff1 Hsat1). }
       destruct
         (carries_list_streams_intro P es Hall1 false ambs
@@ -6100,22 +6181,22 @@ Section StreamAmbients.
 
       assert
         (forall x,
-           In x (CALLS.moved_by env st1 st2) ->
-           ~ In x (scope ++ CALLS.moved_by env st st1)) as Hsep1.
+           In x (CALLS.moved_by env AN st1 st2) ->
+           ~ In x (scope ++ CALLS.moved_by env AN st st1)) as Hsep1.
       { intros x Hin Hxin. apply in_app_or in Hxin as [Hscope|Hfirst].
         - exact (Hmv2 x Hin Hscope).
         - exact
             (CALLS.moved_by_disjoint_local
-               env env_inj st st1 st2 x Hfirst Hin). }
+               env AN env_inj st st1 st2 x Hfirst Hin). }
       assert (stream_rel dlt2 ambs ts0 ts0x) as Hrel1'.
       { apply
           (stream_rel_off_scope
-             (scope ++ CALLS.moved_by env st st1)
-             (CALLS.moved_by env st1 st2) dlt1 dlt2 ambs ts0 ts0x).
+             (scope ++ CALLS.moved_by env AN st st1)
+             (CALLS.moved_by env AN st1 st2) dlt1 dlt2 ambs ts0 ts0x).
         - apply
             (@Forall_impl ST
                (st_scoped scope)
-               (st_scoped (scope ++ CALLS.moved_by env st st1))).
+               (st_scoped (scope ++ CALLS.moved_by env AN st st1))).
           + intros a0 Ha0. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Ha0.
@@ -6125,7 +6206,7 @@ Section StreamAmbients.
                (fun src => st_scoped scope (fst src))
                (fun src =>
                   st_scoped
-                    (scope ++ CALLS.moved_by env st st1) (fst src))).
+                    (scope ++ CALLS.moved_by env AN st st1) (fst src))).
           + intros src Hsrc. apply st_scoped_weaken with (scope1 := scope).
             * apply incl_appl, incl_refl.
             * exact Hsrc.
@@ -6224,71 +6305,73 @@ Section StreamAmbients.
       { exact (NoDup_app_l (List.map fst xs) (st_ids st2) Hndx). }
       assert
         (forall b, In b (sec_of (List.map fst xs)) ->
-                   In b (CALLS.moved_by env st2 st')) as Hbnew.
+                   In b (CALLS.moved_by env AN st2 st')) as Hbnew.
       { intros b Hb.
         unfold CALLS.sec_of in Hb. apply in_flat_map in Hb as (x & Hx & Hb).
-        unfold CALLS.moved_by, CALLS.EXPR.moved_by, CALLS.sec_of.
-        apply in_flat_map. exists x. split; [|exact Hb].
+        destruct (Env.find x env) as [b0|] eqn:Ex; [|destruct Hb].
+        destruct Hb as [Hb|[]]. subst b0.
+        refine (CALLS.In_moved_by env AN _ _ x b _
+                  (AN_apart_anns _ _ _ _ Hids x Hx) Ex).
         apply CALLS.new_ids_spec. split.
         - exact (idents_for_anns_incl_ids anns xs st2 st' Hids x Hx).
         - exact
             (NoDup_app_In x (List.map fst xs) (st_ids st2) Hndx Hx). }
       assert
         (forall b, In b (sec_of (List.map fst xs)) ->
-                   ~ In b (scope ++ CALLS.moved_by env st st2)) as Hsepx.
+                   ~ In b (scope ++ CALLS.moved_by env AN st st2)) as Hsepx.
       { intros b Hb Hin. apply in_app_or in Hin as [Hin|Hin].
         - apply (Hmv b); [|exact Hin].
           exact
             (CALLS.moved_by_suffix_local
-               env st st2 st' Hf12 b (Hbnew b Hb)).
+               env AN st st2 st' Hf12 b (Hbnew b Hb)).
         - exact
             (CALLS.moved_by_disjoint_local
-               env env_inj st st2 st' b Hin (Hbnew b Hb)). }
+               env AN env_inj st st2 st' b Hin (Hbnew b Hb)). }
 
       (** what the delays' types mention *)
       assert
         (Forall
-           (fun t0 => st_scoped (scope ++ CALLS.moved_by env st st2) (fst t0))
+           (fun t0 => st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t0))
            ts0x) as Htgt1'.
       { apply
           (@Forall_impl LST
              (fun t0 =>
-                st_scoped (scope ++ CALLS.moved_by env st st1) (fst t0))
+                st_scoped (scope ++ CALLS.moved_by env AN st st1) (fst t0))
              (fun t0 =>
-                st_scoped (scope ++ CALLS.moved_by env st st2) (fst t0))).
+                st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t0))).
         - intros tq Htq.
           apply st_scoped_weaken with
-            (scope1 := scope ++ CALLS.moved_by env st st1).
+            (scope1 := scope ++ CALLS.moved_by env AN st st1).
           + apply incl_app; [apply incl_appl, incl_refl|].
             apply incl_appr.
-            exact (CALLS.moved_by_prefix_local env st st1 st2 Hf2).
+            exact (CALLS.moved_by_prefix_local env AN st st1 st2 Hf2).
           + exact Htq.
         - exact Htgt1. }
       assert
         (Forall
-           (fun t0 => st_scoped (scope ++ CALLS.moved_by env st st2) (fst t0))
+           (fun t0 => st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t0))
            usx) as Htgt2'.
       { apply
           (@Forall_impl LST
              (fun t0 =>
-                st_scoped (scope ++ CALLS.moved_by env st1 st2) (fst t0))
+                st_scoped (scope ++ CALLS.moved_by env AN st1 st2) (fst t0))
              (fun t0 =>
-                st_scoped (scope ++ CALLS.moved_by env st st2) (fst t0))).
+                st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t0))).
         - intros tq Htq.
           apply st_scoped_weaken with
-            (scope1 := scope ++ CALLS.moved_by env st1 st2).
+            (scope1 := scope ++ CALLS.moved_by env AN st1 st2).
           + apply incl_app; [apply incl_appl, incl_refl|].
             apply incl_appr.
-            exact (CALLS.moved_by_suffix_local env st st1 st2 Hf1).
+            exact (CALLS.moved_by_suffix_local env AN st st1 st2 Hf1).
           + exact Htq.
         - exact Htgt2. }
       assert
         (Forall
-           (fun r => st_scoped (scope ++ CALLS.moved_by env st st2) (fst r))
+           (fun r => st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst r))
            rs) as Hscrs.
       { exact
           (CALLS.ljoin_list_scoped_plain
-             (scope ++ CALLS.moved_by env st st2) ts0x usx rs xst xst
+             (scope ++ CALLS.moved_by env AN st st2) ts0x usx rs xst xst
              Hjr Htgt1' Htgt2'). }
 
       (** the aligned premise the emitted definitions consume *)
@@ -6298,7 +6381,7 @@ Section StreamAmbients.
               forall tf0 s s',
                 assign_lexp_type GL env base_ty rst_ty e s = OK ([tf0], s') ->
                 satisfiable dlt2 (fst tf0) (merge a (fst src))
-                /\ st_scoped (scope ++ CALLS.moved_by env st st2) (fst tf0))
+                /\ st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst tf0))
            ambs
            (unnest_arrow (List.concat ess0) (List.concat ess1) anns)
            ts) as Hlift3.
@@ -6341,27 +6424,27 @@ Section StreamAmbients.
       (** the emitted definitions *)
       destruct
         (lifted_defs_streams
-           (scope ++ CALLS.moved_by env st st2) (List.map fst xs)
+           (scope ++ CALLS.moved_by env AN st st2) (List.map fst xs)
            (unnest_arrow (List.concat ess0) (List.concat ess1) anns)
            ts ambs ced xst xstd dlt2
            Hndfst Hlend Hsepx Hdecl
            (@Forall_impl ST (st_scoped scope)
-              (st_scoped (scope ++ CALLS.moved_by env st st2))
+              (st_scoped (scope ++ CALLS.moved_by env AN st st2))
               (fun a0 Ha0 =>
                  st_scoped_weaken scope
-                   (scope ++ CALLS.moved_by env st st2) a0
-                   (incl_appl (CALLS.moved_by env st st2) (incl_refl scope))
+                   (scope ++ CALLS.moved_by env AN st st2) a0
+                   (incl_appl (CALLS.moved_by env AN st st2) (incl_refl scope))
                    Ha0)
               ambs Hambsc)
            Hpure
            (@Forall_impl LST
               (fun src => st_scoped scope (fst src))
               (fun src =>
-                 st_scoped (scope ++ CALLS.moved_by env st st2) (fst src))
+                 st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst src))
               (fun src Hsrc =>
                  st_scoped_weaken scope
-                   (scope ++ CALLS.moved_by env st st2) (fst src)
-                   (incl_appl (CALLS.moved_by env st st2) (incl_refl scope))
+                   (scope ++ CALLS.moved_by env AN st st2) (fst src)
+                   (incl_appl (CALLS.moved_by env AN st st2) (incl_refl scope))
                    Hsrc)
               ts Htscall)
            Hlift3 Hgend)
@@ -6370,11 +6453,11 @@ Section StreamAmbients.
       (** the minted names are among the ones the whole run moved *)
       assert
         (forall b, In b (sec_of (List.map fst xs)) ->
-                   In b (CALLS.moved_by env st st')) as Hincx.
+                   In b (CALLS.moved_by env AN st st')) as Hincx.
       { intros b Hb.
         exact
           (CALLS.moved_by_suffix_local
-             env st st2 st' Hf12 b (Hbnew b Hb)). }
+             env AN st st2 st' Hf12 b (Hbnew b Hb)). }
 
       (** the results' relation, at the names the pass bound them to *)
       assert (stream_rel dlt3 ambs ts ts'') as Hrelfin.
@@ -6397,13 +6480,13 @@ Section StreamAmbients.
         rewrite Hoff1.
         2: { intro Hin. apply Hx.
              exact
-               (CALLS.moved_by_prefix_local env st st1 st' Hf23 x Hin). }
+               (CALLS.moved_by_prefix_local env AN st st1 st' Hf23 x Hin). }
         rewrite Hoff2.
         2: { intro Hin. apply Hx.
              exact
                (CALLS.moved_by_suffix_local
-                  env st st1 st' Hf1 x
-                  (CALLS.moved_by_prefix_local env st1 st2 st' Hf3 x Hin)). }
+                  env AN st st1 st' Hf1 x
+                  (CALLS.moved_by_prefix_local env AN st1 st2 st' Hf3 x Hin)). }
         apply Hoff3. intro Hin. apply Hx. exact (Hincx x Hin).
       - split.
         + (** every emitted constraint still holds *)
@@ -6411,7 +6494,7 @@ Section StreamAmbients.
           apply listSatisfiable_app. split.
           * apply
               (CALLS.listSatisfiable_off_scope
-                 ce1 (scope ++ CALLS.moved_by env st st1)
+                 ce1 (scope ++ CALLS.moved_by env AN st st1)
                  (sec_of (List.map fst xs)) dlt2 dlt3).
             -- exact Hscope1.
             -- intros y Hy Hin. apply (Hsepx y Hy).
@@ -6419,23 +6502,23 @@ Section StreamAmbients.
                  [now left|].
                right.
                exact
-                 (CALLS.moved_by_prefix_local env st st1 st2 Hf2 y Hin).
+                 (CALLS.moved_by_prefix_local env AN st st1 st2 Hf2 y Hin).
             -- exact Hoff3.
             -- apply
                  (CALLS.listSatisfiable_off_scope
-                    ce1 (scope ++ CALLS.moved_by env st st1)
-                    (CALLS.moved_by env st1 st2) dlt1 dlt2).
+                    ce1 (scope ++ CALLS.moved_by env AN st st1)
+                    (CALLS.moved_by env AN st1 st2) dlt1 dlt2).
                ++ exact Hscope1.
                ++ intros y Hy Hin. apply in_app_or in Hin as [Hin|Hin].
                   ** exact (Hmv2 y Hy Hin).
                   ** exact
                        (CALLS.moved_by_disjoint_local
-                          env env_inj st st1 st2 y Hin Hy).
+                          env AN env_inj st st1 st2 y Hin Hy).
                ++ exact Hoff2.
                ++ exact Hce1.
           * apply
               (CALLS.listSatisfiable_off_scope
-                 ce2 (scope ++ CALLS.moved_by env st1 st2)
+                 ce2 (scope ++ CALLS.moved_by env AN st1 st2)
                  (sec_of (List.map fst xs)) dlt2 dlt3).
             -- exact Hscope2.
             -- intros y Hy Hin. apply (Hsepx y Hy).
@@ -6443,7 +6526,7 @@ Section StreamAmbients.
                  [now left|].
                right.
                exact
-                 (CALLS.moved_by_suffix_local env st st1 st2 Hf1 y Hin).
+                 (CALLS.moved_by_suffix_local env AN st st1 st2 Hf1 y Hin).
             -- exact Hoff3.
             -- exact Hce2.
         + split; [exact Hrelfin|]. split.
@@ -6452,58 +6535,58 @@ Section StreamAmbients.
             -- apply
                  (@Forall_impl constraint
                     (constraint_scoped
-                       ((scope ++ CALLS.moved_by env st st2)
+                       ((scope ++ CALLS.moved_by env AN st st2)
                           ++ sec_of (List.map fst xs)))
                     (constraint_scoped
-                       (scope ++ CALLS.moved_by env st st'))).
+                       (scope ++ CALLS.moved_by env AN st st'))).
                ++ intros c Hc.
                   apply constraint_scoped_incl with
-                    (scope1 := (scope ++ CALLS.moved_by env st st2)
+                    (scope1 := (scope ++ CALLS.moved_by env AN st st2)
                                  ++ sec_of (List.map fst xs)).
                   2: exact Hc.
                   apply incl_app; [apply incl_app|].
                   ** apply incl_appl, incl_refl.
                   ** apply incl_appr.
                      exact
-                       (CALLS.moved_by_prefix_local env st st2 st' Hf3).
+                       (CALLS.moved_by_prefix_local env AN st st2 st' Hf3).
                   ** apply incl_appr. exact Hincx.
                ++ exact Hscoped.
             -- apply Forall_app. split.
                ++ apply
                     (@Forall_impl constraint
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st1))
+                          (scope ++ CALLS.moved_by env AN st st1))
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st'))).
+                          (scope ++ CALLS.moved_by env AN st st'))).
                   ** intros c Hc.
                      apply constraint_scoped_incl with
-                       (scope1 := scope ++ CALLS.moved_by env st st1).
+                       (scope1 := scope ++ CALLS.moved_by env AN st st1).
                      2: exact Hc.
                      apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr.
                      exact
-                       (CALLS.moved_by_prefix_local env st st1 st' Hf23).
+                       (CALLS.moved_by_prefix_local env AN st st1 st' Hf23).
                   ** exact Hscope1.
                ++ apply
                     (@Forall_impl constraint
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st1 st2))
+                          (scope ++ CALLS.moved_by env AN st1 st2))
                        (constraint_scoped
-                          (scope ++ CALLS.moved_by env st st'))).
+                          (scope ++ CALLS.moved_by env AN st st'))).
                   ** intros c Hc.
                      apply constraint_scoped_incl with
-                       (scope1 := scope ++ CALLS.moved_by env st1 st2).
+                       (scope1 := scope ++ CALLS.moved_by env AN st1 st2).
                      2: exact Hc.
                      apply incl_app; [apply incl_appl, incl_refl|].
                      apply incl_appr.
                      apply incl_tran with
-                       (m := CALLS.moved_by env st1 st').
+                       (m := CALLS.moved_by env AN st1 st').
                      --- exact
                            (CALLS.moved_by_prefix_local
-                              env st1 st2 st' Hf3).
+                              env AN st1 st2 st' Hf3).
                      --- exact
                            (CALLS.moved_by_suffix_local
-                              env st st1 st' Hf1).
+                              env AN st st1 st' Hf1).
                   ** exact Hscope2.
           * (** the bound results are names the run minted *)
             apply
@@ -6511,7 +6594,7 @@ Section StreamAmbients.
                  (fun xa t =>
                     exists b, Env.find (fst xa) env = Some b /\ t = lvar b)
                  (fun tgt =>
-                    st_scoped (scope ++ CALLS.moved_by env st st') (fst tgt))
+                    st_scoped (scope ++ CALLS.moved_by env AN st st') (fst tgt))
                  xs ts'' Hevars).
             intros xa t Hxa Hp. destruct Hp as (b & Hb & Ht). subst t.
             rewrite fst_lvar. intros y Hy.
@@ -6562,7 +6645,7 @@ Section StreamAmbients.
           = ((Some (Evar r an), eqs3), st') ->
         Env.find r env = Some rty ->
         NoDup (vars_defined eqs3 ++ st_ids st) ->
-        (forall x, In x (CALLS.moved_by env st st') -> ~ In x scope) ->
+        (forall x, In x (CALLS.moved_by env AN st st') -> ~ In x scope) ->
         assign_lexp_type GL env base_ty rst_ty e1 sst = OK ([a1], sst') ->
         constraints_scoped scope (carried [a1]) ->
         st_scoped scope (fst a1) ->
@@ -6571,11 +6654,11 @@ Section StreamAmbients.
         listSatisfiable dlt (carried [a1]) ->
         sec_le sst' stF -> sec_le stLo sst ->
         exists dlt',
-          agree_off (CALLS.moved_by env st st') dlt dlt'
+          agree_off (CALLS.moved_by env AN st st') dlt dlt'
           /\ listSatisfiable dlt' ce
           /\ satisfiable dlt' [rty] (merge amb (fst a1))
-          /\ In rty (scope ++ CALLS.moved_by env st st')
-          /\ constraints_scoped (scope ++ CALLS.moved_by env st st') ce.
+          /\ In rty (scope ++ CALLS.moved_by env AN st st')
+          /\ constraints_scoped (scope ++ CALLS.moved_by env AN st st') ce.
     Proof.
       intros P e1 r an rty eqs3 st st' a1 sst sst' ce xst xst' yst amb dlt
         Hcar Hambsc Hcov Hfound Hwl Hwc Hsx Hns Hun Hr Hnd Hmv Hty Hsc Hsct
@@ -6670,7 +6753,7 @@ Section StreamAmbients.
         { exact Hsx. }
         { exact Hnd1. }
         { intros y Hy. apply Hmv.
-          apply (CALLS.moved_by_prefix_local env st st1 st' Hf1). exact Hy. }
+          apply (CALLS.moved_by_prefix_local env AN st st1 st' Hf1). exact Hy. }
         { exact Hsc. }
         { constructor; [exact Hsct|constructor]. }
         { constructor; [exact Hambsc|constructor]. }
@@ -6687,7 +6770,7 @@ Section StreamAmbients.
 
         assert (satisfiable dlt1 (fst sa) (merge amb (fst a1))) as Hsa
             by (inversion Hrel1 as [|p q w ps qs ws Hpq _]; subst; exact Hpq).
-        assert (st_scoped (scope ++ CALLS.moved_by env st st1) (fst sa))
+        assert (st_scoped (scope ++ CALLS.moved_by env AN st st1) (fst sa))
           as Hsasc
             by (inversion Hts1 as [|z zs Hz _]; subst; exact Hz).
 
@@ -6701,24 +6784,24 @@ Section StreamAmbients.
         assert (In r (new_ids st1 st')) as Hrnew.
         { apply new_ids_spec. split; [|exact Hrst].
           eapply Permutation_in; [exact Hpx|now left]. }
-        assert (In rty (CALLS.moved_by env st1 st')) as Hrtymv.
-        { unfold CALLS.moved_by, CALLS.sec_of. apply in_flat_map.
-          exists r. split; [exact Hrnew|]. rewrite Hr. now left. }
+        assert (In rty (CALLS.moved_by env AN st1 st')) as Hrtymv.
+        { exact (CALLS.In_moved_by env AN st1 st' r rty Hrnew
+                   (AN_apart_fresh _ _ _ _ Hfresh) Hr). }
         assert (forall c, In c (sec_of [r]) ->
-                          In c (CALLS.moved_by env st1 st')) as Hbnew.
+                          In c (CALLS.moved_by env AN st1 st')) as Hbnew.
         { intros c Hc. unfold CALLS.sec_of in Hc. simpl in Hc.
           rewrite Hr in Hc. destruct Hc as [|[]]; subst. exact Hrtymv. }
         assert (forall c, In c (sec_of [r]) ->
-                          ~ In c (scope ++ CALLS.moved_by env st st1))
+                          ~ In c (scope ++ CALLS.moved_by env AN st st1))
           as Hsepx.
         { intros c Hc Hin. apply Hbnew in Hc.
           apply in_app_or in Hin as [Hin|Hin].
           - eapply (Hmv c); [|exact Hin].
-            apply (CALLS.moved_by_suffix_local env st st1 st' Hf0). exact Hc.
-          - exact (CALLS.moved_by_disjoint_local env env_inj st st1 st' c
+            apply (CALLS.moved_by_suffix_local env AN st st1 st' Hf0). exact Hc.
+          - exact (CALLS.moved_by_disjoint_local env AN env_inj st st1 st' c
                      Hin Hc). }
 
-        edestruct (lifted_defs_streams (scope ++ CALLS.moved_by env st st1)
+        edestruct (lifted_defs_streams (scope ++ CALLS.moved_by env AN st st1)
                      [r] [e0] [sa] [amb] ceh xst xstm dlt1)
           as (dlt2 & Hoff2 & Hce2 & Hscope2 & Hrel2).
         { constructor; [intros []|constructor]. }
@@ -6747,19 +6830,19 @@ Section StreamAmbients.
 
         assert (satisfiable dlt2 [rty] (merge amb (fst sa))) as Hhead.
         { inversion Hrel2 as [|p q w ps qs ws Hpq _]; subst. now apply Hpq. }
-        assert (incl (sec_of [r]) (CALLS.moved_by env st st')) as Hincx
+        assert (incl (sec_of [r]) (CALLS.moved_by env AN st st')) as Hincx
             by (intros c Hc;
-                apply (CALLS.moved_by_suffix_local env st st1 st' Hf0);
+                apply (CALLS.moved_by_suffix_local env AN st st1 st' Hf0);
                 now apply Hbnew).
 
         exists dlt2. split; [|split; [|split; [|split]]].
         + eapply CALLS.agree_off_trans.
           * eapply CALLS.agree_off_incl; [|exact Hoff1].
-            apply (CALLS.moved_by_prefix_local env st st1 st' Hf1).
+            apply (CALLS.moved_by_prefix_local env AN st st1 st' Hf1).
           * eapply CALLS.agree_off_incl; [|exact Hoff2]. exact Hincx.
         + apply listSatisfiable_app. split; [exact Hce2|].
           eapply CALLS.listSatisfiable_off_scope
-            with (sc := scope ++ CALLS.moved_by env st st1)
+            with (sc := scope ++ CALLS.moved_by env AN st st1)
                  (xs := sec_of [r]); eauto.
         + eapply satisfiable_trans; [exact Hhead|].
           apply satisfiable_merge_intro; [apply satisfiable_merge_l|].
@@ -6778,12 +6861,12 @@ Section StreamAmbients.
               [|eapply incl_tran; [exact Hincx|apply incl_appr, incl_refl]].
             apply incl_app; [apply incl_appl, incl_refl|].
             apply incl_appr,
-              (CALLS.moved_by_prefix_local env st st1 st' Hf1).
+              (CALLS.moved_by_prefix_local env AN st st1 st' Hf1).
           * eapply Forall_impl; [|exact Hscope1].
             intros cc Hcc. eapply constraint_scoped_incl; [|exact Hcc].
             apply incl_app; [apply incl_appl, incl_refl|].
             apply incl_appr,
-              (CALLS.moved_by_prefix_local env st st1 st' Hf1).
+              (CALLS.moved_by_prefix_local env AN st st1 st' Hf1).
     Qed.
 
     Lemma carries_Eapp_streams :
@@ -6812,7 +6895,7 @@ Section StreamAmbients.
       assert (Forall (src_exp vars AN) es) as Hsrces
         by (eapply src_exp_imm_forall; [|exact Hsx];
             intros e' He'; exact (imm_Eapp_arg f es er anns e' He')).
-      destruct (src_exp_loc vars AN _ Hsx) as (Hanon & Hargcl & _).
+      destruct (src_exp_loc vars AN _ Hsx) as (Hanon & _).
       assert (Forall (nested_src vars AN) es) as Hnsrces
         by (eapply nested_src_args; exact Hsx).
 
@@ -7009,7 +7092,7 @@ Section StreamAmbients.
 
       (** what the source expression carries, taken apart *)
       assert (outs <> []) as Houtsne.
-      { intro Hc. apply Hanne. apply fresh_idents_length in Houts.
+      { intro Hc. apply Hanne. apply out_idents_length in Houts.
         rewrite Hc in Houts. simpl in Houts.
         destruct anns; [reflexivity|discriminate Houts]. }
       assert (match outs with
@@ -7053,32 +7136,31 @@ Section StreamAmbients.
         as Hdef.
       { intros nck Hnck. unfold nclocksof in Hnck.
         apply in_flat_map in Hnck as (e & He & Hne).
-        rewrite Forall_forall in Hargcl.
-        exact (nclockof_types_defined env base_ty vars e (Hargcl e He)
-                 env_total nck Hne). }
+        rewrite Forall_forall in Hwces, Hnsrces.
+        exact (nclockof_types_defined_wc env base_ty P AN vars Hwcg
+                 vars_wcenv env_total env_anon_keys e (Hwces e He)
+                 (proj2 (Hnsrces e He)) nck Hne). }
 
-      (** and each named argument stream carries its own security name, which
-          is what makes the augmentation's actuals cover the callee's clocks;
-          the streams of nested calls are the exception, and no clock
-          variable of a formal goes to one *)
+      (** and each named argument stream carries its own security name --
+          those of nested calls too: a nested call's result is typed by the
+          environment's name for the stream it names *)
       assert (Forall2 (fun t nck => forall w g,
-                           snd nck = Some w -> ~ In w AN ->
+                           snd nck = Some w ->
                            Env.find w env = Some g -> In g (fst t))
-                argts (nclocksof es)) as Hnamed.
-      { eapply (assign_lexps_named_covered (fun w => In w AN) P GL env
-                  base_ty rst_ty vars es Hwles Hwces); [|exact Hargs].
-        intros e f0 es0 ro0 anns0 He Heq w Hw.
-        subst e.
-        destruct (anon_streams_name w anns0 Hw) as (a & Ha).
-        exact (Hanon w a
-                 (nested_call_name_in_anon_in f es er anns _ f0 es0 ro0
-                    anns0 w a He (@Coq.Init.Logic.eq_refl _ _) Ha)). }
+                argts (nclocksof es)) as Hnamed0
+        by (eapply assign_lexps_named_covered_all;
+            [exact Hwles|exact Hwces|exact Hargs]).
+      assert (Forall2 (fun t nck => forall w g,
+                           snd nck = Some w -> ~ (fun _ : ident => False) w ->
+                           Env.find w env = Some g -> In g (fst t))
+                argts (nclocksof es)) as Hnamed
+        by (eapply Forall2_weaken_pt; [|exact Hnamed0];
+            intros t nck H w g Hw _ Hg; exact (H w g Hw Hg)).
       assert (forall i x ck x' u,
                  nth_error (idck nd.(n_in)) i = Some (x, ck) ->
-                 In x' (clock_vars ck) -> sub x' = Some u -> ~ In u AN)
-        as Hbadok
-        by exact (sub_clock_vars_not_anon vars AN bck sub (idck nd.(n_in)) es
-                    Hwi Hargcl env_anon).
+                 In x' (clock_vars ck) -> sub x' = Some u ->
+                 ~ (fun _ : ident => False) u)
+        as Hbadok by (intros; intro F; exact F).
       assert (List.length argts = List.length (nclocksof es)) as Hlargts
           by exact (Forall2_length _ _ _ Hnamed).
 
@@ -7087,7 +7169,7 @@ Section StreamAmbients.
         as ambs_arg eqn:Eambs.
       assert (stream_ambients_scoped scope ambs_arg) as Hambargsc.
       { subst ambs_arg.
-        exact (call_arg_ambients_scoped_named (fun w => In w AN) scope sub bck
+        exact (call_arg_ambients_scoped_named (fun _ : ident => False) scope sub bck
                  ckty (nclocksof es)
                  (idck nd.(n_in)) argts rst_ty_scoped
                  (fun z Hz => clk_types_scoped P es _ ckty Hwcg Hwces Hnsrces
@@ -7117,7 +7199,7 @@ Section StreamAmbients.
       { exact Hsrces. }
       { exact Hnd1. }
       { intros y Hy. apply Hmv.
-        apply (CALLS.moved_by_prefix_local env st st1 st' Hf1'). exact Hy. }
+        apply (CALLS.moved_by_prefix_local env AN st st1 st' Hf1'). exact Hy. }
       { exact Hscarg. }
       { exact Hscargts. }
       { rewrite <- Eambs. exact Hambargsc. }
@@ -7133,18 +7215,18 @@ Section StreamAmbients.
       rewrite <- Eambs in Hrel1.
 
       (** and the no-op pass on top of it, slot by slot *)
-      assert (forall y, In y (CALLS.moved_by env st1 st2) ->
-                        ~ In y (scope ++ CALLS.moved_by env st st1)) as Hsep12.
+      assert (forall y, In y (CALLS.moved_by env AN st1 st2) ->
+                        ~ In y (scope ++ CALLS.moved_by env AN st st1)) as Hsep12.
       { intros y Hin Hy. apply in_app_or in Hy as [Hy|Hy].
         - eapply (Hmv y); [|exact Hy].
-          apply (CALLS.moved_by_suffix_local env st st1 st' Hfa).
-          apply (CALLS.moved_by_prefix_local env st1 st2 st' Hf2'). exact Hin.
-        - exact (CALLS.moved_by_disjoint_local env env_inj st st1 st2 y
+          apply (CALLS.moved_by_suffix_local env AN st st1 st' Hfa).
+          apply (CALLS.moved_by_prefix_local env AN st1 st2 st' Hf2'). exact Hin.
+        - exact (CALLS.moved_by_disjoint_local env AN env_inj st st1 st2 y
                    Hy Hin). }
       assert (LSyn.clocksof (List.concat ess) = LSyn.clocksof es) as Hcl1.
       { rewrite !clocksof_annots.
         erewrite unnest_exps_annots; [reflexivity|exact Hwles|exact Hune0]. }
-      edestruct (noops_step_streams (scope ++ CALLS.moved_by env st st1)
+      edestruct (noops_step_streams (scope ++ CALLS.moved_by env AN st st1)
                    ambs_arg (find_node_incks P f) (List.concat ess)
                    es2 eqs2 st1 st2 argts1 argt ce2
                    xstc xstd xst xst xst sti dlt1)
@@ -7168,19 +7250,19 @@ Section StreamAmbients.
           clock type: that is the ambient the reset's one stream needs, and it
           collapses into what the transfer wants because the source reset type
           already contains that clock type. *)
-      assert (agree_off (CALLS.moved_by env st st2) dlt dlt2) as Hoff12.
+      assert (agree_off (CALLS.moved_by env AN st st2) dlt dlt2) as Hoff12.
       { eapply CALLS.agree_off_trans;
           [eapply CALLS.agree_off_incl; [|exact Hoff1];
-           apply (CALLS.moved_by_prefix_local env st st1 st2 Hfb)
+           apply (CALLS.moved_by_prefix_local env AN st st1 st2 Hfb)
           |eapply CALLS.agree_off_incl; [|exact Hoff2];
-           apply (CALLS.moved_by_suffix_local env st st1 st2 Hfa)]. }
+           apply (CALLS.moved_by_suffix_local env AN st st1 st2 Hfa)]. }
       assert (exists dlt3,
-                 agree_off (CALLS.moved_by env st2 st3) dlt2 dlt3
+                 agree_off (CALLS.moved_by env AN st2 st3) dlt2 dlt3
                  /\ listSatisfiable dlt3 ce3
-                 /\ constraints_scoped (scope ++ CALLS.moved_by env st2 st3) ce3
+                 /\ constraints_scoped (scope ++ CALLS.moved_by env AN st2 st3) ce3
                  /\ satisfiable dlt3 (fst rstty')
                       (merge (merge [rst_ty] ckty) (fst rstty))
-                 /\ st_scoped (scope ++ CALLS.moved_by env st st3) (fst rstty'))
+                 /\ st_scoped (scope ++ CALLS.moved_by env AN st st3) (fst rstty'))
         as (dlt3 & Hoff3 & Hce3' & Hscope3 & Hrelrst & Hscrst').
       { destruct Hshape
           as [(Hern & Hn2 & Heq3 & Hst3 & Hrs')
@@ -7256,18 +7338,18 @@ Section StreamAmbients.
           { exact Hrty. }
           { exact Hnd3. }
           { intros y Hy. apply Hmv.
-            apply (CALLS.moved_by_suffix_local env st st2 st' Hf02).
-            apply (CALLS.moved_by_prefix_local env st2 st3 st' Hfd). exact Hy. }
+            apply (CALLS.moved_by_suffix_local env AN st st2 st' Hf02).
+            apply (CALLS.moved_by_prefix_local env AN st2 st3 st' Hfd). exact Hy. }
           { exact Hty1. }
           { rewrite carried_single, <- Hsndr. exact Hscrst. }
           { exact Hsca1'. }
           { exact Hgen3. }
           { rewrite carried_single, <- Hsndr.
             eapply CALLS.listSatisfiable_off_scope
-              with (sc := scope) (xs := CALLS.moved_by env st st2);
+              with (sc := scope) (xs := CALLS.moved_by env AN st st2);
               [exact Hscrst| |exact Hoff12|exact Hcarrst].
             intros y Hy. apply Hmv.
-            apply (CALLS.moved_by_prefix_local env st st2 st' Hf2'). exact Hy. }
+            apply (CALLS.moved_by_prefix_local env AN st st2 st' Hf2'). exact Hy. }
           { exact Hbstb. }
           { exact Hlsa. }
           exists dlt3. split; [exact Hoff3|]. split; [exact Hce3'|].
@@ -7297,7 +7379,7 @@ Section StreamAmbients.
                  apply in_app_or in Hinr as [Hinr|Hinr];
                    apply in_or_app; [now left|].
                  right.
-                 apply (CALLS.moved_by_suffix_local env st st2 st3 Hf02).
+                 apply (CALLS.moved_by_suffix_local env AN st st2 st3 Hf02).
                  exact Hinr.
               -- apply in_or_app. left.
                  exact (clk_types_scoped P [e1] ckr0 rstck Hwcg
@@ -7334,149 +7416,6 @@ Section StreamAmbients.
       assert (NoDup outt) as Hndoutt
           by (eapply (CALLS.sec_names_NoDup env env_inj);
               [exact Hndfst|exact Houttf]).
-      assert (forall b, In b outt -> In b (CALLS.moved_by env st3 st'))
-        as Houttmv.
-      { intros b Hb.
-        assert (In b (sec_of (List.map fst xs))) as Hbs
-            by (eapply CALLS.Forall2_in_sec_of; eauto).
-        unfold CALLS.sec_of, CALLS.moved_by in *.
-        apply in_flat_map in Hbs as (x & Hx & Hbx).
-        apply in_flat_map. exists x. split; [|exact Hbx].
-        apply new_ids_spec. split.
-        - eapply idents_for_anns'_incl_ids; eauto.
-        - eapply NoDup_app_In; eauto. }
-      assert (incl outt (CALLS.moved_by env st st')) as Houttmv0
-          by (intros b Hb;
-              apply (CALLS.moved_by_suffix_local env st st3 st' Hf03);
-              now apply Houttmv).
-      assert (incl outt (CALLS.moved_by env st2 st')) as Houttmv2
-          by (intros b Hb;
-              apply (CALLS.moved_by_suffix_local env st2 st3 st' Hfc);
-              now apply Houttmv).
-      assert (forall b, In b outt -> ~ In b scope) as Houttsc
-          by (intros b Hb Hc; eapply (Hmv b); [now apply Houttmv0|exact Hc]).
-      assert (Forall (fun o => In o scope) outs) as Houtssc.
-      { rewrite Forall_map in Hsts.
-        eapply Forall_impl; [|exact Hsts].
-        intros o Ho. apply Ho. now left. }
-      assert (List.length outs = List.length outt) as Hlenout.
-      { apply fresh_idents_length in Houts.
-        apply Forall2_length in Houttf.
-        rewrite Houts, <- Houttf, map_length. now symmetry. }
-      edestruct (CALLS.call_outputs_witness scope (merge [rst_ty] ckty)
-                   Hambcsc dlt3 outs outt)
-        as (dlt4 & Hoff4 & Hpairs);
-        [exact Hndoutt|exact Hlenout|exact Houttsc|exact Houtssc|].
-
-      (** the emitted call generates just the instantiated block *)
-      assert (Forall normalized_lexp es2) as Hnorm2
-          by (eapply CALLS.unnest_noops_normalized; eauto).
-      assert (carried argt = []) as Hcargt.
-      { eapply assign_lexps_normalized_pure with (es := es2); [|exact Hargt].
-        eapply Forall_impl; [|exact Hnorm2]. intros; now constructor. }
-      assert (snd rstty' = []) as Hsrst'.
-      { destruct Hshape
-          as [(_ & _ & _ & _ & Hrs')
-             |(e1 & rv & ty0 & ckr0 & nm0 & rty & rstck
-               & _ & _ & _ & _ & Hrs')]; subst rstty'; [reflexivity|].
-        rewrite snd_ljoin, snd_lvar. cbn [snd]. apply cmerge_nil. }
-      assert (ce0 = cs0) as Hce0'
-          by (now rewrite Hce0, Hcargt, Hsrst', !cmerge_nil).
-
-      (** the clock is the same on both sides *)
-      assert (Forall (fun e => numstreams e = 1) (List.concat ess)) as Hns1s
-          by (eapply map_bind2_unnest_exp_numstreams; eauto).
-      assert (ckt = ckty) as Hckeq.
-      { assert (LSyn.clocksof es2 = LSyn.clocksof es) as Hcl2.
-        { eapply CALLS.unnest_call_clocksof;
-            [exact Hwles|exact Hune0|exact Hlck|exact Hns1s|exact Hunn]. }
-        rewrite Hcl2, Hck in Hckt. now inv Hckt. }
-
-      (** the witnesses, composed *)
-      assert (agree_off (CALLS.moved_by env st2 st') dlt2 dlt4) as Hoff34.
-      { eapply CALLS.agree_off_trans.
-        - eapply CALLS.agree_off_incl; [|exact Hoff3].
-          apply (CALLS.moved_by_prefix_local env st2 st3 st' Hfd).
-        - eapply CALLS.agree_off_incl; [|exact Hoff4]. exact Houttmv2. }
-      assert (agree_off (CALLS.moved_by env st1 st') dlt1 dlt4) as Hoff1all.
-      { eapply CALLS.agree_off_trans.
-        - eapply CALLS.agree_off_incl; [|exact Hoff2].
-          apply (CALLS.moved_by_prefix_local env st1 st2 st' Hf2').
-        - eapply CALLS.agree_off_incl; [|exact Hoff34].
-          apply (CALLS.moved_by_suffix_local env st1 st2 st' Hfb). }
-      assert (agree_off (CALLS.moved_by env st st') dlt dlt4) as Hoffall.
-      { eapply CALLS.agree_off_trans.
-        - eapply CALLS.agree_off_incl; [|exact Hoff1].
-          apply (CALLS.moved_by_prefix_local env st st1 st' Hf1').
-        - eapply CALLS.agree_off_incl; [|exact Hoff1all].
-          apply (CALLS.moved_by_suffix_local env st st1 st' Hfa). }
-
-      (** the argument types, at the final witness and per slot *)
-      assert (forall y, In y (CALLS.moved_by env st2 st') ->
-                        ~ In y (scope ++ CALLS.moved_by env st st2)) as Hsep2.
-      { intros y Hin Hy. apply in_app_or in Hy as [Hy|Hy].
-        - eapply (Hmv y); [|exact Hy].
-          apply (CALLS.moved_by_suffix_local env st st2 st' Hf02). exact Hin.
-        - exact (CALLS.moved_by_disjoint_local env env_inj st st2 st' y
-                   Hy Hin). }
-      assert (stream_ambients_scoped (scope ++ CALLS.moved_by env st st1)
-                ambs_arg) as Hambsc1'.
-      { unfold stream_ambients_scoped in Hambargsc |- *.
-        eapply Forall_impl; [|exact Hambargsc]. intros q Hq.
-        eapply st_scoped_weaken; [apply incl_appl, incl_refl|exact Hq]. }
-      assert (stream_ambients_scoped (scope ++ CALLS.moved_by env st st2)
-                ambs_arg) as Hambsc2'.
-      { unfold stream_ambients_scoped in Hambargsc |- *.
-        eapply Forall_impl; [|exact Hambargsc]. intros q Hq.
-        eapply st_scoped_weaken; [apply incl_appl, incl_refl|exact Hq]. }
-      assert (Forall (fun t =>
-                 st_scoped (scope ++ CALLS.moved_by env st st1) (fst t)) argts)
-        as Hsc_argts1'.
-      { eapply Forall_impl; [|exact Hscargts]. intros q Hq.
-        eapply st_scoped_weaken; [apply incl_appl, incl_refl|exact Hq]. }
-      assert (Forall (fun t =>
-                 st_scoped (scope ++ CALLS.moved_by env st st2) (fst t)) argts)
-        as Hsc_argts.
-      { eapply Forall_impl; [|exact Hscargts]. intros q Hq.
-        eapply st_scoped_weaken; [apply incl_appl, incl_refl|exact Hq]. }
-      assert (Forall (fun t =>
-                 st_scoped (scope ++ CALLS.moved_by env st st2) (fst t))
-                argts1) as Hsc_argts1.
-      { eapply Forall_impl; [|exact Hsca1]. intros q Hq.
-        eapply st_scoped_weaken; [|exact Hq].
-        apply incl_app; [apply incl_appl, incl_refl|].
-        apply incl_appr, (CALLS.moved_by_prefix_local env st st1 st2 Hfb). }
-      assert (Forall (fun t =>
-                 st_scoped (scope ++ CALLS.moved_by env st st2) (fst t)) argt)
-        as Hsc_argt.
-      { eapply Forall_impl; [|exact Hsca2]. intros q Hq.
-        eapply st_scoped_weaken; [|exact Hq].
-        apply incl_app.
-        - apply incl_app; [apply incl_appl, incl_refl|].
-          apply incl_appr, (CALLS.moved_by_prefix_local env st st1 st2 Hfb).
-        - apply incl_appr,
-            (CALLS.moved_by_suffix_local env st st1 st2 Hfa). }
-      assert (stream_rel dlt4 ambs_arg argts argt) as Hrelargs.
-      { eapply (stream_rel_compose dlt4 ambs_arg argts argts1 argt).
-        - eapply (stream_rel_off_scope
-                    (scope ++ CALLS.moved_by env st st2)
-                    (CALLS.moved_by env st2 st') dlt2 dlt4
-                    ambs_arg argts argts1);
-            [exact Hambsc2'|exact Hsc_argts|exact Hsc_argts1|exact Hsep2
-            |exact Hoff34|].
-          eapply (stream_rel_off_scope
-                    (scope ++ CALLS.moved_by env st st1)
-                    (CALLS.moved_by env st1 st2) dlt1 dlt2
-                    ambs_arg argts argts1);
-            [exact Hambsc1'|exact Hsc_argts1'|exact Hsca1|exact Hsep12
-            |exact Hoff2|exact Hrel1].
-        - eapply (stream_rel_off_scope
-                    (scope ++ CALLS.moved_by env st st2)
-                    (CALLS.moved_by env st2 st') dlt2 dlt4
-                    ambs_arg argts1 argt);
-            [exact Hambsc2'|exact Hsc_argts1|exact Hsc_argt|exact Hsep2
-            |exact Hoff34|exact Hrel2]. }
-
       (** the reset type the source built is a source type *)
       assert (st_scoped scope (fst rstty)) as Hscrsty.
       { destruct er as [e1|].
@@ -7503,6 +7442,250 @@ Section StreamAmbients.
           rewrite fst_lvar. intros y Hy.
           destruct Hy as [Hy|[]]; subst y. exact rst_ty_scoped. }
 
+      (** which target results the source run names too: a named result is
+          typed by the environment's name for it, which is also the name of
+          the variable unnesting binds it to *)
+      assert (List.map snd xs = anns) as Hxsv
+        by (eapply idents_for_anns'_values; eauto).
+      assert (forall xa, In xa xs -> forall w,
+                stream_name (snd xa) = Some w -> fst xa = w) as Hxnamed
+        by (intros xa Hxa w Hw; eapply idents_for_anns'_named; eauto).
+      assert (forall xa b, In xa xs -> stream_name (snd xa) = None ->
+                Env.find (fst xa) env = Some b ->
+                In b (CALLS.moved_by env AN st3 st')) as Hfreshpos.
+      { intros xa b Hxa Hnone Ex.
+        destruct xa as (x & a0). cbn in Hnone, Ex.
+        refine (CALLS.In_moved_by env AN st3 st' x b _
+                  (AN_apart_anns' _ _ _ _ Hids x a0 Hxa Hnone) Ex).
+        apply new_ids_spec. split.
+        - eapply idents_for_anns'_incl_ids; eauto.
+          apply List.in_map_iff. exists (x, a0). split; [reflexivity|exact Hxa].
+        - eapply NoDup_app_In; eauto.
+          apply List.in_map_iff. exists (x, a0). split; [reflexivity|exact Hxa]. }
+      assert (forall b, In b outt -> ~ In b outs ->
+                In b (CALLS.moved_by env AN st3 st')) as Houttmv.
+      { intros b Hb Hnb.
+        destruct (Forall2_in_right _ (List.map fst xs) outt b Houttf Hb)
+          as (x & Hx & Ex).
+        destruct (proj1 (List.in_map_iff fst xs x) Hx)
+          as ((xq & a0) & Hq & Hxa). cbn in Hq. subst xq.
+        destruct (stream_name a0) as [w|] eqn:Ew.
+        - exfalso. apply Hnb.
+          assert (x = w) as ->
+            by (exact (Hxnamed (x, a0) Hxa w Ew)).
+          apply (out_idents_named env anns outs stb stc Houts w b); [|exact Ex].
+          rewrite <- Hxsv. apply List.in_map_iff.
+          exists (snd (w, a0)). split; [exact Ew|].
+          apply List.in_map_iff. exists (w, a0). split; [reflexivity|exact Hxa].
+        - exact (Hfreshpos (x, a0) b Hxa Ew Ex). }
+      set (outt_f := filter (fun b => if in_dec ident_eq_dec b outs
+                                      then false else true) outt).
+      assert (forall b, In b outt_f -> In b (CALLS.moved_by env AN st3 st'))
+        as Houttmv_f.
+      { intros b Hb. apply filter_In in Hb as (Hb & Hf).
+        apply (Houttmv b Hb). intro Hin.
+        destruct (in_dec ident_eq_dec b outs); [discriminate Hf|contradiction]. }
+      assert (incl outt_f (CALLS.moved_by env AN st st')) as Houttmv0
+          by (intros b Hb;
+              apply (CALLS.moved_by_suffix_local env AN st st3 st' Hf03);
+              now apply Houttmv_f).
+      assert (incl outt_f (CALLS.moved_by env AN st2 st')) as Houttmv2
+          by (intros b Hb;
+              apply (CALLS.moved_by_suffix_local env AN st2 st3 st' Hfc);
+              now apply Houttmv_f).
+      assert (forall b, In b outt_f -> ~ In b scope) as Houttsc
+          by (intros b Hb Hc; eapply (Hmv b); [now apply Houttmv0|exact Hc]).
+      assert (Forall (fun o => In o scope) outs) as Houtssc.
+      { rewrite Forall_map in Hsts.
+        eapply Forall_impl; [|exact Hsts].
+        intros o Ho. apply Ho. now left. }
+      assert (List.length outs = List.length outt) as Hlenout.
+      { apply out_idents_length in Houts.
+        apply Forall2_length in Houttf.
+        rewrite Houts, <- Houttf, map_length. now symmetry. }
+      (** position by position, a target result is either the source's own
+          name -- with the ambient already below it -- or a name the witness
+          is free to set *)
+      assert (In rst_ty (fst rstty)) as Hrstin.
+      { destruct er as [e1|].
+        - destruct Hrst as (t1 & a1 & rck & stm & _ & _ & _ & Hr).
+          rewrite Hr, !fst_ljoin, fst_lvar. apply in_merge_left. now left.
+        - destruct Hrst as (Hr & _). rewrite Hr, fst_lvar. now left. }
+      assert (Hsfresh : call_subst_fresh sg (List.map fst argts) ckty
+                                         (fst rstty) outs).
+      { eapply sig_actuals_fresh; [exact Esg| | | | |exact Hcs].
+        - rewrite Forall_map. eapply Forall_impl; [|exact Hscargts].
+          intros q Hq. exact (CALLS.caller_st_scoped env scope _ Hq).
+        - exact (CALLS.caller_st_scoped env scope _
+                   (fun z Hz => clk_types_scoped P es _ ckty Hwcg Hwces Hnsrces
+                                  (or_introl Hbcksrc) Hbckty z Hz)).
+        - exact (CALLS.caller_st_scoped env scope _ Hscrsty).
+        - eapply Forall_impl; [|exact Houtssc]. intros o Ho. left. exact Ho. }
+      assert (Hambo : forall o, In o outs ->
+                satisfiable dlt3 (merge [rst_ty] ckty) [o]).
+      { intros o Ho.
+        assert (satisfiable dlt (merge (fst rstty) ckty) [o]) as H0
+          by (eapply CALLS.generate_constraints_amb_below_out;
+              [eapply (CALLS.sig_nodup_pipeline GL sig_nodup); exact Esg
+              |exact Hsfresh|exact (proj1 (sig_rooted _ _ Esg))
+              |exact (proj2 (sig_rooted _ _ Esg))|exact Hcs|exact Hcarcs|exact Ho]).
+        assert (satisfiable dlt (merge [rst_ty] ckty) [o]) as H1.
+        { eapply satisfiable_trans; [|exact H0].
+          apply satisfiable_of_incl. intros z Hz.
+          apply in_merge_inv in Hz as [Hz|Hz].
+          - destruct Hz as [Hz|[]]; subst z. apply in_merge_left. exact Hrstin.
+          - apply in_merge_right. exact Hz. }
+        assert (agree_off (CALLS.moved_by env AN st st3) dlt dlt3) as Hoff03.
+        { eapply CALLS.agree_off_trans;
+            [eapply CALLS.agree_off_incl; [|exact Hoff12];
+             apply (CALLS.moved_by_prefix_local env AN st st2 st3 Hfc)
+            |eapply CALLS.agree_off_incl; [|exact Hoff3];
+             apply (CALLS.moved_by_suffix_local env AN st st2 st3 Hf02)]. }
+        eapply CALLS.satisfiable_off; [exact Hoff03| | |exact H1].
+        - intros y Hy Hin.
+          exact (Hmv y (CALLS.moved_by_prefix_local env AN st st3 st' Hfd y Hin)
+                   (Hambcsc y Hy)).
+        - intros y Hy Hin. destruct Hy as [Hy|[]]; subst y.
+          rewrite Forall_forall in Houtssc.
+          exact (Hmv o (CALLS.moved_by_prefix_local env AN st st3 st' Hfd o Hin)
+                   (Houtssc o Ho)). }
+      assert (Hpos : Forall2 (fun o b =>
+                                (o = b /\ satisfiable dlt3 (merge [rst_ty] ckty) [o])
+                                \/ ~ In b scope) outs outt).
+      { pose proof (out_idents_pos env anns outs stb stc Houts) as Hap.
+        rewrite <- Hxsv in Hap.
+        apply Forall2_map_left_gen in Hap.
+        pose proof (Forall2_map_left_gen fst
+                      (fun x b => Env.find x env = Some b) xs outt Houttf)
+          as Hbp.
+        eapply Forall2_impl_In;
+          [|exact (Forall2_align _ _ xs outs outt Hap Hbp)].
+        intros o b Ho Hb (xa & Hxa & Hr & Hs).
+        cbv beta in Hr, Hs.
+        destruct (stream_name (snd xa)) as [w|] eqn:Ew.
+        - left. assert (fst xa = w) as Hfx by exact (Hxnamed xa Hxa w Ew).
+          assert (Env.find w env = Some b) as Hs'
+            by (rewrite <- Hfx; exact Hs).
+          assert (o = b) as Hob by exact (Hr w b Logic.eq_refl Hs').
+          split; [exact Hob|]. rewrite Hob in Ho |- *. exact (Hambo b Ho).
+        - right. intro Hsc. exact (Hmv b (CALLS.moved_by_suffix_local env AN st st3 st' Hf03 b
+                                  (Hfreshpos xa b Hxa Ew Hs)) Hsc). }
+      edestruct (CALLS.call_outputs_witness_sh scope (merge [rst_ty] ckty)
+                   Hambcsc dlt3 outs outt)
+        as (dlt4 & Hoff4 & Hpairs);
+        [exact Hndoutt|exact Hlenout|exact Hpos|exact Houtssc|].
+
+      (** the emitted call generates just the instantiated block *)
+      assert (Forall normalized_lexp es2) as Hnorm2
+          by (eapply CALLS.unnest_noops_normalized; eauto).
+      assert (carried argt = []) as Hcargt.
+      { eapply assign_lexps_normalized_pure with (es := es2); [|exact Hargt].
+        eapply Forall_impl; [|exact Hnorm2]. intros; now constructor. }
+      assert (snd rstty' = []) as Hsrst'.
+      { destruct Hshape
+          as [(_ & _ & _ & _ & Hrs')
+             |(e1 & rv & ty0 & ckr0 & nm0 & rty & rstck
+               & _ & _ & _ & _ & Hrs')]; subst rstty'; [reflexivity|].
+        rewrite snd_ljoin, snd_lvar. cbn [snd]. apply cmerge_nil. }
+      assert (ce0 = cs0) as Hce0'
+          by (now rewrite Hce0, Hcargt, Hsrst', !cmerge_nil).
+
+      (** the clock is the same on both sides *)
+      assert (Forall (fun e => numstreams e = 1) (List.concat ess)) as Hns1s
+          by (eapply map_bind2_unnest_exp_numstreams; eauto).
+      assert (ckt = ckty) as Hckeq.
+      { assert (LSyn.clocksof es2 = LSyn.clocksof es) as Hcl2.
+        { eapply CALLS.unnest_call_clocksof;
+            [exact Hwles|exact Hune0|exact Hlck|exact Hns1s|exact Hunn]. }
+        rewrite Hcl2, Hck in Hckt. now inv Hckt. }
+
+      (** the witnesses, composed *)
+      assert (agree_off (CALLS.moved_by env AN st2 st') dlt2 dlt4) as Hoff34.
+      { eapply CALLS.agree_off_trans.
+        - eapply CALLS.agree_off_incl; [|exact Hoff3].
+          apply (CALLS.moved_by_prefix_local env AN st2 st3 st' Hfd).
+        - eapply CALLS.agree_off_incl; [|exact Hoff4]. exact Houttmv2. }
+      assert (agree_off (CALLS.moved_by env AN st1 st') dlt1 dlt4) as Hoff1all.
+      { eapply CALLS.agree_off_trans.
+        - eapply CALLS.agree_off_incl; [|exact Hoff2].
+          apply (CALLS.moved_by_prefix_local env AN st1 st2 st' Hf2').
+        - eapply CALLS.agree_off_incl; [|exact Hoff34].
+          apply (CALLS.moved_by_suffix_local env AN st1 st2 st' Hfb). }
+      assert (agree_off (CALLS.moved_by env AN st st') dlt dlt4) as Hoffall.
+      { eapply CALLS.agree_off_trans.
+        - eapply CALLS.agree_off_incl; [|exact Hoff1].
+          apply (CALLS.moved_by_prefix_local env AN st st1 st' Hf1').
+        - eapply CALLS.agree_off_incl; [|exact Hoff1all].
+          apply (CALLS.moved_by_suffix_local env AN st st1 st' Hfa). }
+
+      (** the argument types, at the final witness and per slot *)
+      assert (forall y, In y (CALLS.moved_by env AN st2 st') ->
+                        ~ In y (scope ++ CALLS.moved_by env AN st st2)) as Hsep2.
+      { intros y Hin Hy. apply in_app_or in Hy as [Hy|Hy].
+        - eapply (Hmv y); [|exact Hy].
+          apply (CALLS.moved_by_suffix_local env AN st st2 st' Hf02). exact Hin.
+        - exact (CALLS.moved_by_disjoint_local env AN env_inj st st2 st' y
+                   Hy Hin). }
+      assert (stream_ambients_scoped (scope ++ CALLS.moved_by env AN st st1)
+                ambs_arg) as Hambsc1'.
+      { unfold stream_ambients_scoped in Hambargsc |- *.
+        eapply Forall_impl; [|exact Hambargsc]. intros q Hq.
+        eapply st_scoped_weaken; [apply incl_appl, incl_refl|exact Hq]. }
+      assert (stream_ambients_scoped (scope ++ CALLS.moved_by env AN st st2)
+                ambs_arg) as Hambsc2'.
+      { unfold stream_ambients_scoped in Hambargsc |- *.
+        eapply Forall_impl; [|exact Hambargsc]. intros q Hq.
+        eapply st_scoped_weaken; [apply incl_appl, incl_refl|exact Hq]. }
+      assert (Forall (fun t =>
+                 st_scoped (scope ++ CALLS.moved_by env AN st st1) (fst t)) argts)
+        as Hsc_argts1'.
+      { eapply Forall_impl; [|exact Hscargts]. intros q Hq.
+        eapply st_scoped_weaken; [apply incl_appl, incl_refl|exact Hq]. }
+      assert (Forall (fun t =>
+                 st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t)) argts)
+        as Hsc_argts.
+      { eapply Forall_impl; [|exact Hscargts]. intros q Hq.
+        eapply st_scoped_weaken; [apply incl_appl, incl_refl|exact Hq]. }
+      assert (Forall (fun t =>
+                 st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t))
+                argts1) as Hsc_argts1.
+      { eapply Forall_impl; [|exact Hsca1]. intros q Hq.
+        eapply st_scoped_weaken; [|exact Hq].
+        apply incl_app; [apply incl_appl, incl_refl|].
+        apply incl_appr, (CALLS.moved_by_prefix_local env AN st st1 st2 Hfb). }
+      assert (Forall (fun t =>
+                 st_scoped (scope ++ CALLS.moved_by env AN st st2) (fst t)) argt)
+        as Hsc_argt.
+      { eapply Forall_impl; [|exact Hsca2]. intros q Hq.
+        eapply st_scoped_weaken; [|exact Hq].
+        apply incl_app.
+        - apply incl_app; [apply incl_appl, incl_refl|].
+          apply incl_appr, (CALLS.moved_by_prefix_local env AN st st1 st2 Hfb).
+        - apply incl_appr,
+            (CALLS.moved_by_suffix_local env AN st st1 st2 Hfa). }
+      assert (stream_rel dlt4 ambs_arg argts argt) as Hrelargs.
+      { eapply (stream_rel_compose dlt4 ambs_arg argts argts1 argt).
+        - eapply (stream_rel_off_scope
+                    (scope ++ CALLS.moved_by env AN st st2)
+                    (CALLS.moved_by env AN st2 st') dlt2 dlt4
+                    ambs_arg argts argts1);
+            [exact Hambsc2'|exact Hsc_argts|exact Hsc_argts1|exact Hsep2
+            |exact Hoff34|].
+          eapply (stream_rel_off_scope
+                    (scope ++ CALLS.moved_by env AN st st1)
+                    (CALLS.moved_by env AN st1 st2) dlt1 dlt2
+                    ambs_arg argts argts1);
+            [exact Hambsc1'|exact Hsc_argts1'|exact Hsca1|exact Hsep12
+            |exact Hoff2|exact Hrel1].
+        - eapply (stream_rel_off_scope
+                    (scope ++ CALLS.moved_by env AN st st2)
+                    (CALLS.moved_by env AN st2 st') dlt2 dlt4
+                    ambs_arg argts1 argt);
+            [exact Hambsc2'|exact Hsc_argts1|exact Hsc_argt|exact Hsep2
+            |exact Hoff34|exact Hrel2]. }
+
+
+
       (** the callee's inputs are well clocked under its own interface, which
           is what makes a formal's clock variables formals *)
       assert (List.length (idck nd.(n_in)) = List.length argts) as Hlin
@@ -7522,14 +7705,16 @@ Section StreamAmbients.
       { eapply Forall_impl; [|exact Houtssc]. intros o Ho. left. exact Ho. }
       assert (Forall (caller_st env scope) (List.map fst argt)) as Hcs_tgt.
       { rewrite Forall_map. eapply Forall_impl; [|exact Hsc_argt].
-        intros q Hq. exact (CALLS.caller_st_moved env scope _ _ _ Hq). }
+        intros q Hq. exact (CALLS.caller_st_moved env scope AN _ _ _ Hq). }
       assert (caller_st env scope ckt) as Hckt_tgt
           by (rewrite Hckeq; exact Hck_src).
       assert (caller_st env scope (fst rstty')) as Hrs_tgt
-          by exact (CALLS.caller_st_moved env scope _ _ _ Hscrst').
+          by exact (CALLS.caller_st_moved env scope AN _ _ _ Hscrst').
       assert (Forall (caller_name env scope) outt) as Hos_tgt.
       { rewrite Forall_forall. intros b Hb.
-        exact (CALLS.caller_name_moved env scope st st' b (Houttmv0 b Hb)). }
+        destruct (Forall2_in_right _ (List.map fst xs) outt b Houttf Hb)
+          as (x & _ & Ex).
+        right. exists x. exact Ex. }
 
       (** the signature's scope avoids both sides' actuals *)
       assert (forall y,
@@ -7553,7 +7738,7 @@ Section StreamAmbients.
                   -> ~ In y v)
                 (CALLS.augment_actuals env sub (idck nd.(n_in)) argts))
         as Hfaug.
-      { eapply (CALLS.augment_actuals_fresh env (fun w => In w AN) sub
+      { eapply (CALLS.augment_actuals_fresh env (fun _ : ident => False) sub
                   (idck nd.(n_in)) argts (nclocksof es)).
         - exact (Forall2_length _ _ _ Hwi).
         - exact Hlin.
@@ -7579,7 +7764,7 @@ Section StreamAmbients.
           ambient instead of a common one *)
       assert (listSatisfiable dlt4 cs) as Hcs4.
       { eapply CALLS.listSatisfiable_off_scope
-          with (sc := scope) (xs := CALLS.moved_by env st st');
+          with (sc := scope) (xs := CALLS.moved_by env AN st st');
           [exact Hsccs|exact Hmv|exact Hoffall|exact Hcarcs]. }
       rewrite Eambs in Hrelargs.
       assert (listSatisfiable dlt4 cs0) as Hcs04.
@@ -7595,13 +7780,13 @@ Section StreamAmbients.
         - exact (call_args_augmented dlt4 sub ckty (idck nd.(n_in))
                    (nclocksof es) argts argt Hrelargs).
         - rewrite Hckeq. apply satisfiable_merge_r.
-        - eapply CALLS.satisfiable_off with (xs := outt);
+        - eapply CALLS.satisfiable_off with (xs := outt_f);
             [exact Hoff4| | |exact Hrelrst].
           + intros y Hy Hin.
             apply Hscrst' in Hy. apply in_app_or in Hy as [Hy|Hy].
             * eapply (Hmv y); [now apply Houttmv0|exact Hy].
-            * exact (CALLS.moved_by_disjoint_local env env_inj st st3 st' y
-                       Hy (Houttmv y Hin)).
+            * exact (CALLS.moved_by_disjoint_local env AN env_inj st st3 st' y
+                       Hy (Houttmv_f y Hin)).
           + intros y Hy Hin. apply in_merge_inv in Hy as [Hy|Hy].
             * eapply (Houttsc y Hin). now apply Hambcsc.
             * eapply (Houttsc y Hin). now apply Hscrsty.
@@ -7630,39 +7815,39 @@ Section StreamAmbients.
       - apply listSatisfiable_app. split; [rewrite Hce0'; exact Hcs04|].
         apply listSatisfiable_app. split.
         + eapply CALLS.listSatisfiable_off_scope
-            with (sc := scope ++ CALLS.moved_by env st st1)
-                 (xs := CALLS.moved_by env st1 st');
+            with (sc := scope ++ CALLS.moved_by env AN st st1)
+                 (xs := CALLS.moved_by env AN st1 st');
             [exact Hscope1| |exact Hoff1all|exact Hce1'].
           intros y Hy Hin. apply in_app_or in Hin as [Hin|Hin].
           * eapply (Hmv y); [|exact Hin].
-            apply (CALLS.moved_by_suffix_local env st st1 st' Hfa). exact Hy.
-          * exact (CALLS.moved_by_disjoint_local env env_inj st st1 st' y
+            apply (CALLS.moved_by_suffix_local env AN st st1 st' Hfa). exact Hy.
+          * exact (CALLS.moved_by_disjoint_local env AN env_inj st st1 st' y
                      Hin Hy).
         + apply listSatisfiable_app. split.
           * eapply CALLS.listSatisfiable_off_scope
-              with (sc := (scope ++ CALLS.moved_by env st st1)
-                            ++ CALLS.moved_by env st1 st2)
-                   (xs := CALLS.moved_by env st2 st');
+              with (sc := (scope ++ CALLS.moved_by env AN st st1)
+                            ++ CALLS.moved_by env AN st1 st2)
+                   (xs := CALLS.moved_by env AN st2 st');
               [exact Hscope2| |exact Hoff34|exact Hce2'].
             intros y Hy Hin. apply in_app_or in Hin as [Hin|Hin].
             -- apply in_app_or in Hin as [Hin|Hin].
                ++ eapply (Hmv y); [|exact Hin].
-                  apply (CALLS.moved_by_suffix_local env st st2 st' Hf02).
+                  apply (CALLS.moved_by_suffix_local env AN st st2 st' Hf02).
                   exact Hy.
-               ++ exact (CALLS.moved_by_disjoint_local env env_inj st st1 st'
+               ++ exact (CALLS.moved_by_disjoint_local env AN env_inj st st1 st'
                            y Hin
-                           (CALLS.moved_by_suffix_local env st1 st2 st' Hfb
+                           (CALLS.moved_by_suffix_local env AN st1 st2 st' Hfb
                               y Hy)).
-            -- exact (CALLS.moved_by_disjoint_local env env_inj st1 st2 st' y
+            -- exact (CALLS.moved_by_disjoint_local env AN env_inj st1 st2 st' y
                         Hin Hy).
           * eapply CALLS.listSatisfiable_off_scope
-              with (sc := scope ++ CALLS.moved_by env st2 st3)
-                   (xs := outt);
+              with (sc := scope ++ CALLS.moved_by env AN st2 st3)
+                   (xs := outt_f);
               [exact Hscope3| |exact Hoff4|exact Hce3'].
             intros y Hy Hin. apply in_app_or in Hin as [Hin|Hin].
             -- exact (Houttsc y Hy Hin).
-            -- exact (CALLS.moved_by_disjoint_local env env_inj st2 st3 st' y
-                        Hin (Houttmv y Hy)).
+            -- exact (CALLS.moved_by_disjoint_local env AN env_inj st2 st3 st' y
+                        Hin (Houttmv_f y Hy)).
       - exact (call_results_stream_rel dlt4 (merge [rst_ty] ckty) ambs
                  outs outt ts''
                  (cmerge cs (cmerge (carried argts) (snd rstty)))
@@ -7674,41 +7859,51 @@ Section StreamAmbients.
           * rewrite Forall_map. eapply Forall_impl; [|exact Hsc_argt].
             intros q Hq. eapply st_scoped_weaken; [|exact Hq].
             apply incl_app; [apply incl_appl, incl_refl|].
-            apply incl_appr, (CALLS.moved_by_prefix_local env st st2 st' Hf2').
+            apply incl_appr, (CALLS.moved_by_prefix_local env AN st st2 st' Hf2').
           * rewrite Hckeq. eapply st_scoped_weaken;
               [apply incl_appl, incl_refl|].
             intros y Hy. exact (clk_types_scoped P es _ ckty Hwcg Hwces Hnsrces
                                   (or_introl (clk_src_base vars es)) Hck y Hy).
           * eapply st_scoped_weaken; [|exact Hscrst'].
             apply incl_app; [apply incl_appl, incl_refl|].
-            apply incl_appr, (CALLS.moved_by_prefix_local env st st3 st' Hfd).
-          * rewrite Forall_forall. intros b Hb. apply in_or_app. right.
-            now apply Houttmv0.
+            apply incl_appr, (CALLS.moved_by_prefix_local env AN st st3 st' Hfd).
+          * rewrite Forall_forall. intros b Hb.
+            destruct (in_dec ident_eq_dec b outs) as [Ho|Ho].
+            -- apply in_or_app. left. rewrite Forall_forall in Houtssc.
+               exact (Houtssc b Ho).
+            -- apply in_or_app. right. apply Houttmv0.
+               apply filter_In. split; [exact Hb|].
+               destruct (in_dec ident_eq_dec b outs); [contradiction|reflexivity].
         + apply Forall_app. split.
           * eapply Forall_impl; [|exact Hscope1].
             intros cc Hcc. eapply constraint_scoped_incl; [|exact Hcc].
             apply incl_app; [apply incl_appl, incl_refl|].
-            apply incl_appr, (CALLS.moved_by_prefix_local env st st1 st' Hf1').
+            apply incl_appr, (CALLS.moved_by_prefix_local env AN st st1 st' Hf1').
           * apply Forall_app. split.
             -- eapply Forall_impl; [|exact Hscope2].
                intros cc Hcc. eapply constraint_scoped_incl; [|exact Hcc].
                apply incl_app.
                ++ apply incl_app; [apply incl_appl, incl_refl|].
                   apply incl_appr,
-                    (CALLS.moved_by_prefix_local env st st1 st' Hf1').
+                    (CALLS.moved_by_prefix_local env AN st st1 st' Hf1').
                ++ apply incl_appr. eapply incl_tran;
-                    [apply (CALLS.moved_by_prefix_local env st1 st2 st' Hf2')
-                    |apply (CALLS.moved_by_suffix_local env st st1 st' Hfa)].
+                    [apply (CALLS.moved_by_prefix_local env AN st1 st2 st' Hf2')
+                    |apply (CALLS.moved_by_suffix_local env AN st st1 st' Hfa)].
             -- eapply Forall_impl; [|exact Hscope3].
                intros cc Hcc. eapply constraint_scoped_incl; [|exact Hcc].
                apply incl_app; [apply incl_appl, incl_refl|].
                apply incl_appr. eapply incl_tran;
-                 [apply (CALLS.moved_by_prefix_local env st2 st3 st' Hfd)
-                 |apply (CALLS.moved_by_suffix_local env st st2 st' Hf02)].
+                 [apply (CALLS.moved_by_prefix_local env AN st2 st3 st' Hfd)
+                 |apply (CALLS.moved_by_suffix_local env AN st st2 st' Hf02)].
       - eapply CALLS.Forall2_right_In; [exact Hevars'|].
         intros b t Hb Heq. rewrite Heq, fst_lvar.
         intros y Hy. destruct Hy as [Hy|[]]; subst y.
-        apply in_or_app. right. now apply Houttmv0.
+        destruct (in_dec ident_eq_dec b outs) as [Ho|Ho].
+        -- apply in_or_app. left. rewrite Forall_forall in Houtssc.
+           exact (Houtssc b Ho).
+        -- apply in_or_app. right. apply Houttmv0.
+           apply filter_In. split; [exact Hb|].
+           destruct (in_dec ident_eq_dec b outs); [contradiction|reflexivity].
     Qed.
 
 

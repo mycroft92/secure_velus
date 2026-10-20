@@ -81,8 +81,11 @@ Module Type SECLNAMEGEN
                  (Env.empty _);
     do inst_env <- fresh_inst_map_list
                      (map fst (gather_linsts n.(n_eqs))) (Env.empty _);
-    NMret (env', {| nname := n.(n_name); nclk := clk_name; nrst := rst_name;
-                    ninst := inst_env |}).
+    (** the Lustre-only names come last, on top of the settled shared
+        allocation: the streams nested calls name ([anon_in_eqs]) *)
+    do env'' <- fresh_map_list (map fst (anon_in_eqs n.(n_eqs))) env';
+    NMret (env'', {| nname := n.(n_name); nclk := clk_name; nrst := rst_name;
+                     ninst := inst_env |}).
 
   (** * The naming environment's domain
 
@@ -147,25 +150,30 @@ Module Type SECLNAMEGEN
     rewrite Env.gempty in Hb0. discriminate Hb0.
   Qed.
 
-  (** And so, for one Lustre node's own environment. *)
+  (** And so, for one Lustre node's own environment: the two auxiliary
+      names, the declared variables, or the Lustre-only anonymous streams. *)
   Lemma generate_local_env_for_lnode_domain :
     forall n st le aux st' w b,
       generate_local_env_for_lnode n st = OK ((le, aux), st') ->
       Env.find w le = Some b ->
       w = aux.(nclk) \/ w = aux.(nrst)
-      \/ In w (List.map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars))).
+      \/ In w (List.map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))
+      \/ In w (List.map fst (anon_in_eqs n.(n_eqs))).
   Proof.
     intros n st le aux st' w b H Hf.
     unfold generate_local_env_for_lnode in H.
     apply name_bind_inv in H as (clk & st1 & Hclk & H).
     apply name_bind_inv in H as (rst & st2 & Hrst & H).
     apply name_bind_inv in H as (env1 & st3 & Henv & H).
-    apply name_bind_inv in H as (ienv & st4 & Hienv & Hret).
+    apply name_bind_inv in H as (ienv & st4 & Hienv & H).
+    apply name_bind_inv in H as (env2 & st5 & Henv2 & Hret).
     unfold NMret in Hret. inversion Hret; subst le aux st'.
     simpl.
-    apply (fresh_map_list_domain_empty _ st2 env1 st3 w b Henv) in Hf.
-    destruct Hf as [Hf|[Hf|Hf]]; [now left|now right; left|].
-    right. right. exact Hf.
+    destruct (fresh_map_list_domain _ _ _ _ _ w b Henv2 Hf)
+      as [Hin|(b0 & Hb0)]; [now right; right; right|].
+    apply (fresh_map_list_domain_empty _ st2 env1 st3 w b0 Henv) in Hb0.
+    destruct Hb0 as [Hf'|[Hf'|Hf']]; [now left|now right; left|].
+    right. right. left. exact Hf'.
   Qed.
 
   Fixpoint generate_lnode_scoped_env'
@@ -227,19 +235,25 @@ Module Type SECLNAMEGEN
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
     eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
-    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hgen).
+    eapply name_bind_inv in Hgen as (env2 & st5 & Henv2 & Hret).
     unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env aux st'.
+    destruct (fresh_map_list_find_old_or_ge_start _ _ _ _ _ _ _ Henv2 Hfind)
+      as [Hfind0|(nn & Hnn & [_ Hhi])];
+      [|exists nn; split; [exact Hnn|exact Hhi]].
     pose proof
       (fresh_map_list_find_ge_start_from_empty
          ([gensym Ids.sec st; gensym Ids.sec (Pos.succ st)]
             ++ map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars)))
-         (Pos.succ (Pos.succ st)) env0 st3 x ty Hmap Hfind)
+         (Pos.succ (Pos.succ st)) env0 st3 x ty Hmap Hfind0)
       as (nsec & Hsec & [_ Hhi]).
     exists nsec. split; [exact Hsec|].
     eapply Pos.lt_le_trans; [exact Hhi|].
-    eapply fresh_inst_map_list_state_monotone; eauto.
+    eapply Pos.le_trans;
+      [eapply fresh_inst_map_list_state_monotone; eauto
+      |eapply fresh_map_list_state_monotone; eauto].
   Qed.
 
   Lemma generate_local_env_for_lnode_state_monotone :
@@ -252,15 +266,18 @@ Module Type SECLNAMEGEN
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
     eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
-    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hgen).
+    eapply name_bind_inv in Hgen as (env2 & st5 & Henv2 & Hret).
     unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env aux st'.
     eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
     eapply Pos.le_trans; [apply Pos.lt_le_incl, Pos.lt_succ_diag_r|].
     eapply Pos.le_trans;
-      [eapply fresh_map_list_state_monotone; eauto
-      |eapply fresh_inst_map_list_state_monotone; eauto].
+      [eapply fresh_map_list_state_monotone; eauto|].
+    eapply Pos.le_trans;
+      [eapply fresh_inst_map_list_state_monotone; eauto
+      |eapply fresh_map_list_state_monotone; eauto].
   Qed.
 
   Lemma generate_lnode_scoped_env'_bounded :
@@ -361,6 +378,138 @@ Module Type SECLNAMEGEN
       + monadInv Htr. destruct xs as [|xh xt]; reflexivity.
   Qed.
 
+  (** A translated expression names no stream: [fresh_in] only collects the
+      annotations of calls, and the translation rejects every call. *)
+  Lemma to_lexp_fresh_nil :
+    forall e r0, to_lexp e = OK r0 -> fresh_in e = [].
+  Proof.
+    induction e as [c|x a|op e a IHe|op e1 e2 a IHe1 IHe2|e0s es a IH0 IHs|e0s es a IH0 IHs|es x b a IHs|x ets efs a IHt IHf|e ets efs a IHe IHt IHf|f es ro a IHr IHs] using exp_ind2; intros r0 Htr; simpl in Htr.
+    - reflexivity.
+    - reflexivity.
+    - destruct a as [ty ck]. simpl in Htr. monadInv Htr. simpl. now rewrite (IHe _ EQ).
+    - destruct a as [ty ck]. simpl in Htr. monadInv Htr. simpl.
+      now rewrite (IHe1 _ EQ), (IHe2 _ EQ1).
+    - discriminate.
+    - discriminate.
+    - destruct es as [|e [|e' es']]; try discriminate.
+      destruct a as [tys ck]. destruct tys as [|ty [|ty' tys']]; try discriminate.
+      monadInv Htr. simpl. inversion IHs; subst.
+      now rewrite (H1 _ EQ).
+    - discriminate.
+    - discriminate.
+    - discriminate.
+  Qed.
+
+  Lemma to_cexp_fresh_nil :
+    forall e ce, to_cexp e = OK ce -> fresh_in e = [].
+  Proof.
+    induction e as [c|x a|op e a IHe|op e1 e2 a IHe1 IHe2|e0s es a IH0 IHs|e0s es a IH0 IHs|es x b a IHs|x ets efs a IHt IHf|e ets efs a IHe IHt IHf|f es ro a IHr IHs] using exp_ind2; intros ce Htr; simpl in Htr.
+    - reflexivity.
+    - reflexivity.
+    - monadInv Htr. destruct a as [ty ck]. monadInv EQ. simpl.
+      repeat match goal with
+             | H : to_lexp _ = OK _ |- _ =>
+                 rewrite (to_lexp_fresh_nil _ _ H); clear H
+             end; reflexivity.
+    - monadInv Htr. destruct a as [ty ck]. monadInv EQ. simpl.
+      repeat match goal with
+             | H : to_lexp _ = OK _ |- _ =>
+                 rewrite (to_lexp_fresh_nil _ _ H); clear H
+             end; reflexivity.
+    - discriminate.
+    - discriminate.
+    - monadInv Htr. exact (to_lexp_fresh_nil (Ewhen es x b a) _ EQ).
+    - destruct ets as [|et [|et' ets']]; try discriminate.
+      destruct efs as [|ef [|ef' efs']]; try discriminate.
+      destruct a as [tys ck]. destruct tys as [|ty [|ty' tys']]; try discriminate.
+      monadInv Htr. simpl.
+      inversion IHt; subst. inversion IHf; subst.
+      now rewrite (H1 _ EQ), (H3 _ EQ1).
+    - destruct ets as [|et [|et' ets']]; try discriminate.
+      destruct efs as [|ef [|ef' efs']]; try discriminate.
+      destruct a as [tys ck]. destruct tys as [|ty [|ty' tys']]; try discriminate.
+      monadInv Htr. simpl.
+      inversion IHt; subst. inversion IHf; subst.
+      match goal with H : to_lexp e = OK _ |- _ =>
+        rewrite (to_lexp_fresh_nil _ _ H) end.
+      match goal with H : to_cexp et = OK _ |- _ => rewrite (H1 _ H) end.
+      match goal with H : to_cexp ef = OK _ |- _ => rewrite (H3 _ H) end.
+      reflexivity.
+    - discriminate.
+  Qed.
+
+  Lemma to_constant_fresh_nil :
+    forall e k, to_constant e = OK k -> fresh_in e = [].
+  Proof.
+    induction e as [c|x a|op e a IHe|op e1 e2 a IHe1 IHe2|e0s es a IH0 IHs|e0s es a IH0 IHs|es x b a IHs|x ets efs a IHt IHf|e ets efs a IHe IHt IHf|f es ro a IHr IHs] using exp_ind2; intros k Htr; simpl in Htr;
+      try discriminate.
+    - reflexivity.
+    - destruct es as [|e [|e' es']]; try discriminate.
+      simpl. inversion IHs; subst. now rewrite (H1 _ Htr).
+  Qed.
+
+  Lemma mmap_to_lexp_fresh_nil :
+    forall es les, Errors.mmap to_lexp es = OK les -> fresh_ins es = [].
+  Proof.
+    induction es as [|e es IH]; intros les Htr; [reflexivity|].
+    simpl in Htr. monadInv Htr. unfold fresh_ins. simpl.
+    rewrite (to_lexp_fresh_nil _ _ EQ).
+    exact (IH _ EQ1).
+  Qed.
+
+  Opaque to_cexp to_lexp to_constant.
+
+  Lemma to_equation_anon_nil :
+    forall cenv envo eq eq',
+      to_equation cenv envo eq = OK eq' -> anon_in_eq eq = [].
+  Proof.
+    intros cenv envo [xs es] eq' Htr.
+    destruct es as [|e [|e' es']]; simpl in Htr; try discriminate.
+    unfold anon_in_eq, anon_ins. simpl. rewrite app_nil_r.
+    destruct e as [c|x a|op e a|op e1 e2 a|e0s es a|e0s es a|es x b a
+                  |x ets efs a|e ets efs a|f es ro anns];
+      try (destruct xs as [|x0 [|x1 xs']]; simpl in Htr; try discriminate;
+           monadInv Htr;
+           match goal with
+           | H : to_cexp _ = OK _ |- _ => exact (to_cexp_fresh_nil _ _ H)
+           end).
+    - (* Efby *)
+      destruct e0s as [|e0 [|e0' e0s']]; try (destruct xs as [|x0 [|x1 xs']];
+        simpl in Htr; try discriminate; monadInv Htr;
+        match goal with
+        | H : to_cexp _ = OK _ |- _ => exact (to_cexp_fresh_nil _ _ H)
+        end).
+      destruct es as [|e1 [|e1' es']]; try (destruct xs as [|x0 [|x1 xs']];
+        simpl in Htr; try discriminate; monadInv Htr;
+        match goal with
+        | H : to_cexp _ = OK _ |- _ => exact (to_cexp_fresh_nil _ _ H)
+        end).
+      destruct xs as [|x0 [|x1 xs']]; simpl in Htr; try discriminate.
+      destruct (envo x0); simpl in Htr; try discriminate.
+      monadInv Htr. simpl.
+      rewrite (to_constant_fresh_nil _ _ EQ), (to_lexp_fresh_nil _ _ EQ0).
+      reflexivity.
+    - (* Eapp *)
+      destruct ro as [er|]; simpl in Htr.
+      + destruct er; try discriminate.
+        destruct a as [ty [ckx nm]]. monadInv Htr. simpl.
+        rewrite (mmap_to_lexp_fresh_nil _ _ EQ). reflexivity.
+      + monadInv Htr. exact (mmap_to_lexp_fresh_nil _ _ EQ).
+  Qed.
+
+  Transparent to_cexp to_lexp to_constant.
+
+  Lemma mmap_to_equation_anon_nil :
+    forall cenv envo eqs neqs,
+      Errors.mmap (to_equation cenv envo) eqs = OK neqs ->
+      anon_in_eqs eqs = [].
+  Proof.
+    induction eqs as [|eq eqs IH]; intros neqs Htr; [reflexivity|].
+    simpl in Htr. monadInv Htr. unfold anon_in_eqs. simpl.
+    rewrite (to_equation_anon_nil _ _ _ _ EQ).
+    exact (IH _ EQ1).
+  Qed.
+
   Lemma mmap_to_equation_gather :
     forall cenv envo eqs neqs,
       Errors.mmap (to_equation cenv envo) eqs = OK neqs ->
@@ -382,6 +531,14 @@ Module Type SECLNAMEGEN
     eapply mmap_to_equation_gather; eauto.
   Qed.
 
+  Lemma to_node_anon_nil :
+    forall n n' Hp,
+      to_node n Hp = OK n' -> anon_in_eqs n.(n_eqs) = [].
+  Proof.
+    intros n n' Hp Htr. tonodeInv Htr.
+    eapply mmap_to_equation_anon_nil; eauto.
+  Qed.
+
   (** One node: the environment allocated for a Lustre node is the very one
       allocated for its transcription.  Transcription keeps the name and the
       three variable lists definitionally, and by the lemma above it keeps the
@@ -395,6 +552,7 @@ Module Type SECLNAMEGEN
   Proof.
     intros n n' Hp Htr.
     unfold generate_local_env_for_lnode, NAMEGEN.generate_local_env_for_node.
+    rewrite (to_node_anon_nil _ _ _ Htr). simpl map.
     rewrite (to_node_in _ _ _ Htr), (to_node_vars _ _ _ Htr),
             (to_node_out _ _ _ Htr), (to_node_name _ _ _ Htr).
     rewrite <- (to_node_gather_insts _ _ _ Htr).

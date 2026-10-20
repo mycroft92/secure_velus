@@ -120,6 +120,12 @@ Module Type FRESHKERNEL
         fresh_ident pref b st = (id, st') ->
         st_anns st' = (id, b)::(st_anns st).
 
+    (** The name is [gensym] of the prefix, whatever the state: what keeps
+        generated names apart from every name that is not [gensym pref _]. *)
+    Conjecture fresh_ident_gensym : forall pref b id st st',
+        fresh_ident pref b st = (id, st') ->
+        exists n, id = gensym pref n.
+
     Conjecture fresh_ident_st_valid : forall pref b id st st' aft,
         fresh_ident pref b st = (id, st') ->
         st_valid_after st pref aft ->
@@ -383,6 +389,14 @@ Module FreshKernel(Import Ids : IDS) : FRESHKERNEL(Ids).
       intros.
       destruct st. inv H.
       reflexivity.
+    Qed.
+
+    Fact fresh_ident_gensym : forall pref b id st st',
+        fresh_ident pref b st = (id, st') ->
+        exists n, id = gensym pref n.
+    Proof.
+      intros pref b id [n l] st' H. simpl in H. inv H.
+      eexists; reflexivity.
     Qed.
 
     Fact fresh_ident_st_valid :

@@ -3084,11 +3084,12 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
               (fun e => SC.option_to_sec (SECCETYPING.assign_exp_type ty_env e))
               exps st_clk = OK (inptyp, st_inp) ->
             get_mappings xs ty_env = Some outtyp ->
-            node_outputs_raw_spec_clocked callee
-              (SIGPROOFS.lat_valuation dlt_sig callee_sig inptyp ckty
-                 [sig.(s_reset)] outtyp)
-              (SIGPROOFS.lat_valuation dlt_raw callee_sig inptyp ckty
-                 [sig.(s_reset)] outtyp)) ->
+            exists dlt_w,
+              SecT.agree_on (signature_scope callee_sig)
+                (SIGPROOFS.lat_valuation dlt_raw callee_sig inptyp ckty
+                 [sig.(s_reset)] outtyp) dlt_w /\
+              node_security all_nodes G envs aux_names callee dlt_w dlt_w /\
+              node_outputs_raw_spec_clocked callee dlt_w dlt_w) ->
         (forall xs ck f exps r ckr callee callee_sig
                 ckty rty rstty inptyp outtyp st_clk st_rst st_inp,
             In (EqApp xs ck f exps (Some (r, ckr))) n.(n_eqs) ->
@@ -3105,13 +3106,12 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
               (fun e => SC.option_to_sec (SECCETYPING.assign_exp_type ty_env e))
               exps st_rst = OK (inptyp, st_inp) ->
             get_mappings xs ty_env = Some outtyp ->
-            forall k_reset,
-              reset_control_low_eq_upto ty_env dlt_raw t r H H' k_reset ->
-            node_outputs_raw_spec_clocked callee
-              (SIGPROOFS.lat_valuation dlt_sig callee_sig inptyp ckty
-                 ([sig.(s_reset)] ⊔ ([rty] ⊔ rstty)) outtyp)
-              (SIGPROOFS.lat_valuation dlt_raw callee_sig inptyp ckty
-                 ([sig.(s_reset)] ⊔ ([rty] ⊔ rstty)) outtyp)) ->
+            exists dlt_w,
+              SecT.agree_on (signature_scope callee_sig)
+                (SIGPROOFS.lat_valuation dlt_raw callee_sig inptyp ckty
+                 ([sig.(s_reset)] ⊔ ([rty] ⊔ rstty)) outtyp) dlt_w /\
+              node_security all_nodes G envs aux_names callee dlt_w dlt_w /\
+              node_outputs_raw_spec_clocked callee dlt_w dlt_w) ->
         SecT.listSatisfiable dlt_raw raw ->
         Forall (Indexed.sem_equation all_nodes bk H) n.(n_eqs) ->
         Forall (Indexed.sem_equation all_nodes bk' H') n.(n_eqs) ->
@@ -3279,13 +3279,14 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  eapply mmap_assign_exp_type_state_irrel.
                  exact Hinp0.
                }
-               pose proof
-                (Hcallsec_node
+               destruct
+                (Hcallout
                     (xh :: xt) ck f exps callee nsig_c
                     ckty0 inptyp0 outtyp0 SC.init_state SC.init_state
                     Heqin Hfindcallee Hfindsigc Hck0_init Hinp0_init Hout0)
-                 as Hcallee_secure.
-               destruct Hcallee_secure as
+                 as (dlt_w & Hagw & Hsecw & Hspecw).
+               pose proof Hsecw as Hsecw_keep.
+               destruct Hsecw as
                    [ty_env_c sig_c
                     clk_id_c rst_id_c clk_type_c rst_type_c
                     inp_c out_c locals_c raw_c st_n_c
@@ -3308,7 +3309,9 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                        s_clk := clk_type_c;
                        s_constraints := SymTypes.simplify raw_c locals_c |}).
                rewrite Hsigdef_c in Hfindsig_c, Hfindsigc, Hsiggen_c,
-                 Hsatsig_c, Hagree_c, Hcallsec_c, Hresetsec_c.
+                 Hsatsig_c, Hagree_c, Hcallsec_c, Hresetsec_c, Hagw;
+                 try rewrite Hsigdef_c in Hspecw;
+                 try rewrite Hsigdef_c in Hsecw_keep.
                set (caller_scope := inp ++ out ++ locals ++ clk_type :: rst_type :: nil).
                set (dlt_sig_c :=
                       SIGPROOFS.lat_valuation dlt_sig callee_sig_cur inptyp0 ckty0
@@ -3662,12 +3665,13 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                    exact (Hdeps z Hdep_xz Hlowz j1 Hj1).
                  - exact Hj0.
                }
-               pose proof
-                 (Hcallout
-                    (xh :: xt) ck callee.(n_name) exps callee callee_sig_cur
-                    ckty0 inptyp0 outtyp0 SC.init_state SC.init_state
-                    Heqin Hfindcallee Hfindsigc Hck0_init Hinp0_init Hout0)
-                 as Hcallee_out_raw.
+               assert (Hscope_in_w : forall x0, In x0 (map fst callee.(n_in)) ->
+             exists a0, Env.find x0 ty_env_c = Some a0 /\ In a0 (signature_scope callee_sig_cur)).
+  { intros x0 Hx0. eapply get_mappings_scope_incl; [exact Hinp_c|exact Hx0|].
+    intros a0 Ha0. unfold signature_scope, callee_sig_cur. simpl.
+    apply in_or_app. left. exact Ha0. }
+pose proof (history_low_eq_upto_agree _ _ _ _ _ _ _ _ _ Hagw Hscope_in_w Hlowin_c) as Hlowin_w.
+pose proof Hspecw as Hcallee_out_raw.
                assert
                  (Hsigdef_cur :
                     callee_sig_cur =
@@ -3690,13 +3694,8 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                     Hfindcallee Hfindenv_c Hfindsigc Hsiggen_c
                     Haux_c Hclk_c Hrst_c Hinp_c Hout_c Hlocals_c
                     Hraw_c Hsigdef_cur
-                    (SecureNode all_nodes G envs aux_names callee dlt_sig_c dlt_raw_c
-                       ty_env_c callee_sig_cur clk_id_c rst_id_c clk_type_c rst_type_c
-                       inp_c out_c locals_c raw_c st_n_c
-                       Hfindcallee Hfindenv_c Hfindsigc Hsiggen_c
-                       Haux_c Hclk_c Hrst_c Hinp_c Hout_c Hlocals_c Hraw_c
-                       Hsigdef_cur Hsatsig_c Hagree_c Hsatraw_c Hcallsec_c Hresetsec_c)
-                    Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hclock_eq0 Hlowin_c).
+                    Hsecw_keep
+                    Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hclock_eq0 Hlowin_w).
                pose proof
                  (get_mappings_from_node_eq _ _ _ _ Hout_c)
                  as Hout_c_eq.
@@ -3756,9 +3755,15 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                    eapply SecT.nth_error_In_local.
                    exact Hnthout.
                }
+               assert (Hlowyo_w : low_var ty_env_c dlt_w t yo).
+               { eapply low_var_agree; [exact Hagw| |exact Hlowyo].
+                 exists yty_out. split; [exact Hfindyo|].
+                 unfold signature_scope, callee_sig_cur. simpl.
+                 apply in_or_app. right. apply in_or_app. left.
+                 eapply SecT.nth_error_In_local. exact Hnthyty_out. }
                eapply
                  (eqapp_output_transport_pointwise
-                    ty_env_c dlt_raw_c t
+                    ty_env_c dlt_w t
                     H H' Hc Hc' callee
                     (xh :: xt) ys ys' 0 i x yo); eauto.
             }
@@ -3852,14 +3857,15 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  eapply mmap_assign_exp_type_state_irrel.
                  exact Hinp0.
                }
-               pose proof
-                (Hresetsec_node
+               destruct
+                (Hresetout
                     (xh :: xt) ck f exps r ckr callee nsig_c
                     ckty0 rty0 rstty0 inptyp0 outtyp0
                     SC.init_state SC.init_state SC.init_state
                     Heqin Hfindcallee Hfindsigc Hck0_init Hr0 Hrst0_init Hinp0_init Hout0)
-                 as Hcallee_secure.
-               destruct Hcallee_secure as
+                 as (dlt_w & Hagw & Hsecw & Hspecw).
+               pose proof Hsecw as Hsecw_keep.
+               destruct Hsecw as
                    [ty_env_c sig_c
                     clk_id_c rst_id_c clk_type_c rst_type_c
                     inp_c out_c locals_c raw_c st_n_c
@@ -3882,7 +3888,9 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                        s_clk := clk_type_c;
                        s_constraints := SymTypes.simplify raw_c locals_c |}).
                rewrite Hsigdef_c in Hfindsig_c, Hfindsigc, Hsiggen_c,
-                 Hsatsig_c, Hagree_c, Hcallsec_c, Hresetsec_c.
+                 Hsatsig_c, Hagree_c, Hcallsec_c, Hresetsec_c, Hagw;
+                 try rewrite Hsigdef_c in Hspecw;
+                 try rewrite Hsigdef_c in Hsecw_keep.
                set (caller_scope := inp ++ out ++ locals ++ clk_type :: rst_type :: nil).
                set (dlt_sig_c :=
                       SIGPROOFS.lat_valuation dlt_sig callee_sig_cur inptyp0 ckty0
@@ -4352,15 +4360,13 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  intros j_mask Hj_mask.
                  eapply clock_of_mask_eq_upto; eauto.
                }
-               pose proof
-                 (Hresetout
-                    (xh :: xt) ck callee.(n_name) exps r ckr callee callee_sig_cur
-                    ckty0 rty0 rstty0 inptyp0 outtyp0
-                    SC.init_state SC.init_state SC.init_state
-                    Heqin Hfindcallee Hfindsigc Hck0_init Hr0 Hrst0_init Hinp0_init Hout0
-                    0
-                    Hreset_ctrl0)
-                 as Hcallee_out_raw.
+               assert (Hscope_in_w : forall x0, In x0 (map fst callee.(n_in)) ->
+             exists a0, Env.find x0 ty_env_c = Some a0 /\ In a0 (signature_scope callee_sig_cur)).
+  { intros x0 Hx0. eapply get_mappings_scope_incl; [exact Hinp_c|exact Hx0|].
+    intros a0 Ha0. unfold signature_scope, callee_sig_cur. simpl.
+    apply in_or_app. left. exact Ha0. }
+pose proof (history_low_eq_upto_agree _ _ _ _ _ _ _ _ _ Hagw Hscope_in_w Hlowin_c) as Hlowin_w.
+pose proof Hspecw as Hcallee_out_raw.
                assert
                  (Hsigdef_cur :
                     callee_sig_cur =
@@ -4384,13 +4390,8 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                     Hfindcallee Hfindenv_c Hfindsigc Hsiggen_c
                     Haux_c Hclk_c Hrst_c Hinp_c Hout_c Hlocals_c
                     Hraw_c Hsigdef_cur
-                    (SecureNode all_nodes G envs aux_names callee dlt_sig_c dlt_raw_c
-                       ty_env_c callee_sig_cur clk_id_c rst_id_c clk_type_c rst_type_c
-                       inp_c out_c locals_c raw_c st_n_c
-                       Hfindcallee Hfindenv_c Hfindsigc Hsiggen_c
-                       Haux_c Hclk_c Hrst_c Hinp_c Hout_c Hlocals_c Hraw_c
-                       Hsigdef_cur Hsatsig_c Hagree_c Hsatraw_c Hcallsec_c Hresetsec_c)
-                    Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hclock_eq0 Hlowin_c).
+                    Hsecw_keep
+                    Hsatraw_c Hsem_eqs_c Hsem_eqs_c' Hclock_eq0 Hlowin_w).
                pose proof
                  (get_mappings_from_node_eq _ _ _ _ Hout_c)
                  as Hout_c_eq.
@@ -4450,9 +4451,15 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                    eapply SecT.nth_error_In_local.
                    exact Hnthout.
                }
+               assert (Hlowyo_w : low_var ty_env_c dlt_w t yo).
+               { eapply low_var_agree; [exact Hagw| |exact Hlowyo].
+                 exists yty_out0. split; [exact Hfindyo|].
+                 unfold signature_scope, callee_sig_cur. simpl.
+                 apply in_or_app. right. apply in_or_app. left.
+                 eapply SecT.nth_error_In_local. exact Hnthyty0. }
                eapply
                  (eqapp_reset_output_transport_pointwise
-                    ty_env_c dlt_raw_c t
+                    ty_env_c dlt_w t
                     H H' Hc Hc' callee
                     (xh :: xt) ys ys' rs rs' kr kr' 0 i x yo); eauto.
           * assert (Hx : x = x0).

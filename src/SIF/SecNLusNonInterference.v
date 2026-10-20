@@ -86,7 +86,14 @@ Module Type SECNLUSNONINTERFERENCE
         node_outputs_raw_spec_clocked all_nodes G envs aux_names n dlt_sig dlt_raw.
     Proof.
       intros n dlt_sig dlt_raw Hsecure.
-      induction Hsecure.
+      induction Hsecure using node_security_mind with
+        (P0 := fun _ _ _ c0 cs0 dsc0 drc0 _ =>
+                 exists dlt_w,
+                   agree_on (signature_scope cs0) drc0 dlt_w /\
+                   node_security all_nodes G envs aux_names c0 dlt_w dlt_w /\
+                   node_outputs_raw_spec_clocked all_nodes G envs aux_names
+                     c0 dlt_w dlt_w).
+      2:{ exists dlt_w. repeat split; assumption. }
       intros k ty_env' sig' t bk bk' Hhist Hhist'
              clk_id' rst_id' clk_type' rst_type'
              inp' out' locals' raw' st_n'
@@ -110,64 +117,12 @@ Module Type SECNLUSNONINTERFERENCE
                  ckty inptyp outtyp st_clk st_inp
                  Heqin Hfindcallee Hfindsigc Hck0 Hinp0 Hout0.
           rewrite Hsig_eq in Hck0 |- *.
-          match goal with
-          | Hrec :
-              forall (xs : list ident) (ck : clock) (f : ident)
-                     (exps : list exp) (callee : node)
-                     (callee_sig : signature) (ckty : SymTypes.ST)
-                     (inptyp : list SymTypes.ST) (outtyp : list ident)
-                     (st_clk st_inp : sec_state),
-                In (EqApp xs ck f exps None) (n_eqs nd) ->
-                find_node f all_nodes = Some callee ->
-                find_signature f G = Some callee_sig ->
-                option_to_sec (assign_clk_type ty_env (s_clk sig) ck)
-                  SC.init_state = OK (ckty, st_clk) ->
-                SC.mmap
-                  (fun e : exp => option_to_sec (assign_exp_type ty_env e))
-                  exps st_clk = OK (inptyp, st_inp) ->
-                get_mappings xs ty_env = Some outtyp ->
-                node_outputs_raw_spec_clocked all_nodes G envs aux_names
-                  callee
-                  (lat_valuation dlt_sig callee_sig inptyp ckty
-                     [s_reset sig] outtyp)
-                  (lat_valuation dlt_raw callee_sig inptyp ckty
-                     [s_reset sig] outtyp) |- _ =>
-              eapply Hrec; eauto
-          end.
+          eauto.
         + intros xs ck f exps r ckr callee callee_sig
                  ckty rty rstty inptyp outtyp st_clk st_rst st_inp
-                 Heqin Hfindcallee Hfindsigc Hck0 Hr0 Hrst0 Hinp0 Hout0
-                 k_reset Hreset_ctrl.
+                 Heqin Hfindcallee Hfindsigc Hck0 Hr0 Hrst0 Hinp0 Hout0.
           rewrite Hsig_eq in Hck0, Hrst0 |- *.
-          match goal with
-          | Hrec :
-              forall (xs : list ident) (ck : clock) (f : ident)
-                     (exps : list exp) (r : ident) (ckr : clock)
-                     (callee : node) (callee_sig : signature)
-                     (ckty : SymTypes.ST) (rty : ident)
-                     (rstty : SymTypes.ST) (inptyp : list SymTypes.ST)
-                     (outtyp : list ident)
-                     (st_clk st_rst st_inp : sec_state),
-                In (EqApp xs ck f exps (Some (r, ckr))) (n_eqs nd) ->
-                find_node f all_nodes = Some callee ->
-                find_signature f G = Some callee_sig ->
-                option_to_sec (assign_clk_type ty_env (s_clk sig) ck)
-                  SC.init_state = OK (ckty, st_clk) ->
-                Env.find r ty_env = Some rty ->
-                option_to_sec (assign_clk_type ty_env (s_clk sig) ckr)
-                  st_clk = OK (rstty, st_rst) ->
-                SC.mmap
-                  (fun e : exp => option_to_sec (assign_exp_type ty_env e))
-                  exps st_rst = OK (inptyp, st_inp) ->
-                get_mappings xs ty_env = Some outtyp ->
-                node_outputs_raw_spec_clocked all_nodes G envs aux_names
-                  callee
-                  (lat_valuation dlt_sig callee_sig inptyp ckty
-                     ([s_reset sig] ⊔ ([rty] ⊔ rstty)) outtyp)
-                  (lat_valuation dlt_raw callee_sig inptyp ckty
-                     ([s_reset sig] ⊔ ([rty] ⊔ rstty)) outtyp) |- _ =>
-              eapply Hrec; eauto
-          end.
+          eauto.
     Qed.
 
     (** This is the main NLustre noninterference theorem.  For a generated node signature, a source security witness, and two executions with low-equivalent inputs, it proves that the observable outputs agree at every allowed security level.  The translated STC theorem later reuses this result through the source-to-target bridge instead of reproving noninterference directly on STC. *)

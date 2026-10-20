@@ -150,6 +150,7 @@ src/SIF/SecNLusTyping.v
 src/SIF/SecNLusConstraintExport.v
 src/SIF/SecNLusTypingCorrectness.v
 src/SIF/SecNLusTypingTotality.v
+src/SIF/SecLusClockNames.v
 src/SIF/SecLusUnnestingBase.v
 src/SIF/SecLusUnnestingExpr.v
 src/SIF/SecLusUnnestingCalls.v

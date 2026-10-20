@@ -1387,6 +1387,48 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
 
   End GENERATED_LOW_OBSERVATION.
 
+  (** Observation depends on a valuation only through the security names of
+      the observed variables, so two valuations that agree on a set holding
+      those names observe alike. *)
+  Lemma low_var_agree :
+    forall ty_env d d' t S x,
+      SecT.agree_on S d d' ->
+      (exists a, Env.find x ty_env = Some a /\ In a S) ->
+      low_var ty_env d t x -> low_var ty_env d' t x.
+  Proof.
+    intros ty_env d d' t S x Hag (a & Hfa & Hin) (b & Hfb & Hle).
+    rewrite Hfa in Hfb. inversion Hfb; subst b.
+    exists a. split; [exact Hfa|]. rewrite <- (Hag a Hin). exact Hle.
+  Qed.
+
+  Lemma get_mappings_scope_incl :
+    forall A (xs : list (ident * A)) env tys x S,
+      get_mappings_from_node xs env = Some tys ->
+      In x (map fst xs) ->
+      incl tys S ->
+      exists a, Env.find x env = Some a /\ In a S.
+  Proof.
+    intros A xs env tys x S Hmap Hx Hincl.
+    apply fst_InMembers in Hx.
+    destruct (get_mappings_from_node_inmembers _ _ _ _ _ Hx Hmap)
+      as (a & Hfind & Hin).
+    exists a. split; [exact Hfind|apply Hincl; exact Hin].
+  Qed.
+
+  Lemma history_low_eq_upto_agree :
+    forall ty_env d d' t S X H H' k,
+      SecT.agree_on S d d' ->
+      (forall x, In x X -> exists a, Env.find x ty_env = Some a /\ In a S) ->
+      history_low_eq_upto ty_env d t X H H' k ->
+      history_low_eq_upto ty_env d' t X H H' k.
+  Proof.
+    intros ty_env d d' t S X H H' k Hag HX Hl j Hj x Hx Hlow.
+    apply (Hl j Hj x Hx).
+    destruct (HX x Hx) as (a & Hfa & Hin).
+    destruct Hlow as (b & Hfb & Hle). rewrite Hfa in Hfb. inversion Hfb; subst b.
+    exists a. split; [exact Hfa|]. rewrite (Hag a Hin). exact Hle.
+  Qed.
+
   Section GENERATED_NODE_SECURITY.
     Variable all_nodes : global.
     Variable G : secglobal.
@@ -1925,7 +1967,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
                 (fun e => SC.option_to_sec (SECCETYPING.assign_exp_type ty_env e))
                 exps st_clk = OK (inptyp, st_inp) ->
               get_mappings xs ty_env = Some outtyp ->
-              node_security callee
+              callee_secure nd dlt_sig dlt_raw callee callee_sig
                 (SIGPROOFS.lat_valuation dlt_sig callee_sig inptyp ckty
                    [sig.(s_reset)] outtyp)
                 (SIGPROOFS.lat_valuation dlt_raw callee_sig inptyp ckty
@@ -1947,12 +1989,34 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
                 (fun e => SC.option_to_sec (SECCETYPING.assign_exp_type ty_env e))
                 exps st_rst = OK (inptyp, st_inp) ->
               get_mappings xs ty_env = Some outtyp ->
-              node_security callee
+              callee_secure nd dlt_sig dlt_raw callee callee_sig
                 (SIGPROOFS.lat_valuation dlt_sig callee_sig inptyp ckty
                    ([sig.(s_reset)] ⊔ ([rty] ⊔ rstty)) outtyp)
                 (SIGPROOFS.lat_valuation dlt_raw callee_sig inptyp ckty
                    ([sig.(s_reset)] ⊔ ([rty] ⊔ rstty)) outtyp)) ->
-          node_security nd dlt_sig dlt_raw.
+          node_security nd dlt_sig dlt_raw
+
+    (** A callee is secure at a call site when it is secure at a valuation
+        [w] that agrees with the one the call induces on the callee's
+        signature scope.  The callee's locals are not the caller's business:
+        its interface is what the call sees, so each call instance takes its
+        own valuation of them.  The callee is read at [(w, w)]: the
+        signature-level valuation the call induces is arbitrary off the
+        callee's scope (it holds whatever the caller's valuation holds at the
+        callee's local names), so letting it reach the callee's own call
+        clauses would make the predicate unsatisfiable. *)
+    with callee_secure
+      (nd : node) (dlt_sig dlt_raw : ground_instantiation)
+      : node -> signature -> ground_instantiation -> ground_instantiation
+        -> Prop :=
+    | CalleeSecure :
+        forall callee callee_sig dlt_sig_c dlt_raw_c dlt_w,
+          SecT.agree_on (signature_scope callee_sig) dlt_raw_c dlt_w ->
+          node_security callee dlt_w dlt_w ->
+          callee_secure nd dlt_sig dlt_raw callee callee_sig dlt_sig_c dlt_raw_c.
+
+  Scheme node_security_mind := Induction for node_security Sort Prop
+    with callee_secure_mind := Induction for callee_secure Sort Prop.
 
   End GENERATED_NODE_SECURITY.
 

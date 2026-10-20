@@ -1062,7 +1062,8 @@ Module Type SECLUSNLUSTRANSLATION
                      s_reset := rst_type;
                      s_clk   := clk_type;
                      s_constraints :=
-                       simplify (collapse cns) (locals ++ minted st st') |}.
+                       simplify (collapse cns)
+                         (locals ++ anon_images env n ++ minted st st') |}.
   Proof.
     intros G n env aux_names lsig st st' H.
     unfold generate_lnode_sig in H.
@@ -1404,12 +1405,14 @@ Module Type SECLUSNLUSTRANSLATION
                 Hctx Hself Hndeqs Hmmap Hwceqs Hcns2)
       as (cs & Hcs & Hent).
     rewrite Hcns in Hcs. inv Hcs.
+    assert (Hai : anon_images env n = []).
+    { unfold anon_images. rewrite (SECLNG.to_node_anon_nil n _ Hp Htr). reflexivity. }
     subst. split; [reflexivity|]. split.
     - unfold SIGPROOFS.signatures_preserved. split.
       + repeat split; reflexivity.
-      + simpl. rewrite minted_refl, app_nil_r.
+      + simpl. rewrite Hai, minted_refl. simpl. rewrite app_nil_r.
         apply entails_simplify_collapse; auto.
-    - simpl. rewrite minted_refl, app_nil_r.
+    - simpl. rewrite Hai, minted_refl. simpl. rewrite app_nil_r.
       pose proof (entails_rhs _ _ Hent) as Hre.
       destruct Hwf as (Hndw & Hlenw).
       apply simplify_rhs_perm_here.

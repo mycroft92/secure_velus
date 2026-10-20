@@ -98,6 +98,18 @@ Import UNN.Fresh.Tactics.
     Variable stLo     : sec_state.
     Variable stF     : sec_state.
     Variable AN      : list ident.
+
+    Hypothesis AN_apart_anns :
+      forall anns xs st st',
+        idents_for_anns anns st = (xs, st') ->
+        forall x, In x (List.map fst xs) -> ~ In x AN.
+    Hypothesis AN_apart_fresh :
+      forall (b : type * clock) x st st',
+        fresh_ident norm1 b st = (x, st') -> ~ In x AN.
+    Hypothesis AN_apart_anns' :
+      forall anns xs st st',
+      idents_for_anns' anns st = (xs, st') ->
+      forall x a, In (x, a) xs -> stream_name a = None -> ~ In x AN.
     Variable amb     : ST.
 
     Hypothesis env_inj : env_injective env.
@@ -172,6 +184,15 @@ Import UNN.Fresh.Tactics.
     Hypothesis env_anon :
       forall w, In w AN -> ~ In w (List.map fst vars).
 
+    (** The node's clocking, and the anonymous streams of its calls as
+        environment keys: the naming pass names them.  Together with
+        [wc_exp_clock_names] these make every clock of a source expression
+        typed. *)
+    Hypothesis vars_wcenv : wc_env vars.
+
+    Hypothesis env_anon_keys :
+      forall w, In w AN -> exists b, Env.find w env = Some b.
+
     (** Every signature's clock and reset formals are sources of all of its
         constraints.  True of generated signatures because every equation's
         rule emits [ambient ckty] on the left; it is what turns a satisfied
@@ -190,18 +211,23 @@ Import UNN.Fresh.Tactics.
         it, and takes [wc_global P] as the premise it already has. *)
     Hypothesis scalar_wcg : forall P : global, wc_global P.
 
+    (** The scalar chain, like [scalar_wcg], is for nodes whose calls name no
+        result. *)
+    Hypothesis scalar_nonamed :
+      forall (anns : list ann) w, ~ In (Some w) (List.map stream_name anns).
+
     Local Notation sec_of := (CALLS.sec_of env).
-    Local Notation moved_by := (CALLS.moved_by env).
+    Local Notation moved_by := (CALLS.moved_by env AN).
     Local Notation carries_at :=
-      (CALLS.carries_at GL env base_ty rst_ty vars cenv scope stLo stF amb).
+      (CALLS.carries_at GL env base_ty rst_ty vars cenv scope AN stLo stF amb).
     Local Notation carries :=
-      (CALLS.carries GL env base_ty rst_ty vars cenv scope stLo stF amb).
+      (CALLS.carries GL env base_ty rst_ty vars cenv scope AN stLo stF amb).
     Local Notation carries_list :=
-      (CALLS.carries_list GL env base_ty rst_ty vars cenv scope stLo stF amb).
+      (CALLS.carries_list GL env base_ty rst_ty vars cenv scope AN stLo stF amb).
     Local Notation lifted_defs_local :=
       (CALLS.lifted_defs GL env base_ty rst_ty cenv amb env_inj).
     Local Notation carries_list_intro_local :=
-      (CALLS.carries_list_intro GL env base_ty rst_ty vars cenv scope stLo stF amb
+      (CALLS.carries_list_intro GL env base_ty rst_ty vars cenv scope AN stLo stF amb
          env_inj amb_scoped).
     Local Notation sig_nodup_pipeline_local :=
       (CALLS.sig_nodup_pipeline GL sig_nodup).
@@ -212,16 +238,18 @@ Import UNN.Fresh.Tactics.
     Local Notation unnest_arrow_types_local :=
       (CALLS.unnest_arrow_types GL env base_ty rst_ty).
     Local Notation carries_Eapp_local :=
-      (CALLS.carries_Eapp GL env base_ty rst_ty vars cenv scope stLo stF amb
+      (CALLS.carries_Eapp GL env base_ty rst_ty vars cenv scope AN
+         AN_apart_fresh AN_apart_anns' scalar_nonamed stLo stF amb
          env_inj amb_scoped sig_good sig_nodup source_types_scoped
          source_lexps_scoped rst_ty_scoped clk_types_scoped sig_scoped
          sig_actuals_fresh).
     Local Notation noops_operand_types_local :=
       (CALLS.noops_operand_types GL env base_ty rst_ty cenv).
     Local Notation noops_step_local :=
-      (CALLS.noops_step GL env base_ty rst_ty cenv amb env_inj).
+      (CALLS.noops_step GL env base_ty rst_ty cenv AN AN_apart_fresh amb env_inj).
     Local Notation reset_step_local :=
-      (CALLS.reset_step GL env base_ty rst_ty vars cenv scope stLo stF amb env_inj
+      (CALLS.reset_step GL env base_ty rst_ty vars cenv scope AN AN_apart_fresh
+         stLo stF amb env_inj
          amb_scoped).
     Local Notation amb_pair_local := (CALLS.amb_pair amb).
 
@@ -235,45 +263,50 @@ Import UNN.Fresh.Tactics.
       (clocks_covered env base_ty rst_ty).
     Local Notation state_clocks_found_local := (state_clocks_found cenv).
     Local Notation carries_at_streams_local :=
-      (carries_at_streams GL env base_ty rst_ty cenv vars scope stLo stF AN).
+      (carries_at_streams GL env base_ty rst_ty cenv AN vars scope stLo stF).
     Local Notation carries_streams_local :=
-      (carries_streams GL env base_ty rst_ty cenv vars scope stLo stF AN).
+      (carries_streams GL env base_ty rst_ty cenv AN vars scope stLo stF).
     Local Notation carries_list_streams_local :=
-      (carries_list_streams GL env base_ty rst_ty cenv vars scope stLo stF AN).
+      (carries_list_streams GL env base_ty rst_ty cenv AN vars scope stLo stF).
     Local Notation carries_exp_streams_local :=
-      (carries_exp_streams GL env base_ty rst_ty cenv env_inj vars scope stLo stF AN
-         sig_good sig_nodup sig_scoped sig_actuals_fresh source_types_scoped_g
+      (carries_exp_streams GL env base_ty rst_ty cenv env_inj AN
+         AN_apart_anns AN_apart_fresh AN_apart_anns' vars scope stLo stF
+         sig_good sig_nodup sig_scoped sig_actuals_fresh sig_rooted
+         source_types_scoped_g
          source_lexps_scoped_g rst_ty_scoped clk_types_scoped_g
-         env_total env_anon).
+         env_total vars_wcenv env_anon_keys).
     Local Notation call_args_streams_local :=
-      (call_args_streams GL env base_ty rst_ty cenv env_inj vars scope stLo stF AN).
+      (call_args_streams GL env base_ty rst_ty cenv env_inj AN vars scope stLo stF).
     Local Notation reset_step_streams_local :=
-      (reset_step_streams GL env base_ty rst_ty cenv env_inj vars scope stLo stF AN).
+      (reset_step_streams GL env base_ty rst_ty cenv env_inj AN AN_apart_fresh
+         vars scope stLo stF).
     Local Notation noops_step_streams_local :=
-      (noops_step_streams GL env base_ty rst_ty cenv env_inj).
+      (noops_step_streams GL env base_ty rst_ty cenv env_inj AN AN_apart_fresh).
     Local Notation call_arg_ambients_local := (call_arg_ambients env rst_ty).
     Local Notation carries_exps_streams_local :=
-      (carries_exps_streams GL env base_ty rst_ty cenv env_inj vars scope stLo stF AN
-         sig_good sig_nodup sig_scoped sig_actuals_fresh source_types_scoped_g
+      (carries_exps_streams GL env base_ty rst_ty cenv env_inj AN
+         AN_apart_anns AN_apart_fresh AN_apart_anns' vars scope stLo stF
+         sig_good sig_nodup sig_scoped sig_actuals_fresh sig_rooted
+         source_types_scoped_g
          source_lexps_scoped_g rst_ty_scoped clk_types_scoped_g
-         env_total env_anon).
+         env_total vars_wcenv env_anon_keys).
 
     Local Lemma eq_moved_by_prefix :
       forall st st1 st', st_follows st1 st' ->
         incl (moved_by st st1) (moved_by st st').
-    Proof. apply (CALLS.moved_by_prefix_local env). Qed.
+    Proof. apply (CALLS.moved_by_prefix_local env AN). Qed.
 
     Local Lemma eq_moved_by_suffix :
       forall st st1 st', st_follows st st1 ->
         incl (moved_by st1 st') (moved_by st st').
-    Proof. apply (CALLS.moved_by_suffix_local env). Qed.
+    Proof. apply (CALLS.moved_by_suffix_local env AN). Qed.
 
     Local Lemma eq_moved_by_disjoint :
       forall sta stb stc x,
         In x (moved_by sta stb) -> ~ In x (moved_by stb stc).
     Proof.
       intros sta stb stc x Hin1 Hin2.
-      exact (CALLS.moved_by_disjoint_local env env_inj sta stb stc x Hin1 Hin2).
+      exact (CALLS.moved_by_disjoint_local env AN env_inj sta stb stc x Hin1 Hin2).
     Qed.
 
     (** * The expression level, closed
@@ -2116,6 +2149,7 @@ Import UNN.Fresh.Tactics.
                                    | Eapp _ _ _ _ => False | _ => True end)
                     (snd eq)) eqs ->
         Forall (wc_equation Pg vars) eqs ->
+        Forall (fun eq => Forall (named_ok vars) (snd eq)) eqs ->
         Forall (fun eq =>
                   Forall (lexp_carried_closed GL env base_ty rst_ty vars ns)
                     (snd eq)) eqs ->
@@ -2124,16 +2158,17 @@ Import UNN.Fresh.Tactics.
           = OK (cs, s') ->
         constraints_clock_closed env base_ty vars ns cs.
     Proof.
-      intros Pg ns eqs cs s s' Hbase Hrst Hcv Hwcv Hndv Hne Hwc Hcar Hns H.
+      intros Pg ns eqs cs s s' Hbase Hrst Hcv Hwcv Hndv Hne Hwc Hnn Hcar Hns H.
       eapply generate_leqns_constraints_clock_closed; [|exact Hns|exact H].
-      rewrite Forall_forall in Hne, Hwc, Hcar |- *.
+      rewrite Forall_forall in Hne, Hwc, Hnn, Hcar |- *.
       intros (xs, es) Hin c s1 s2 Hns1 Hgen.
-      specialize (Hne _ Hin). specialize (Hwc _ Hin). specialize (Hcar _ Hin).
-      simpl in Hne, Hcar.
+      specialize (Hne _ Hin). specialize (Hwc _ Hin). specialize (Hnn _ Hin).
+      specialize (Hcar _ Hin).
+      simpl in Hne, Hnn, Hcar.
       destruct Hwc as (Hwces & _ & Hxck).
       exact (generate_leqn_constraint_clock_closed_plain GL env base_ty rst_ty
                vars cenv Pg ns xs es c s1 s2 env_inj Hndv Hbase Hrst Hcv Hwcv
-               Hne Hwces Hxck Hcar Hns1 Hgen).
+               Hne Hwces Hnn Hxck Hcar Hns1 Hgen).
     Qed.
 
     Lemma state_pure_single :
@@ -4079,7 +4114,7 @@ Import UNN.Fresh.Tactics.
     Lemma caller_st_moved' :
       forall st1 st2 t,
         st_scoped (scope ++ moved_by st1 st2) t -> caller_st env scope t.
-    Proof. intros st1 st2 t H. exact (CALLS.caller_st_moved env scope st1 st2 t H). Qed.
+    Proof. intros st1 st2 t H. exact (CALLS.caller_st_moved env scope AN st1 st2 t H). Qed.
 
     Lemma eqn_carries_call :
       forall (P : global) (xs : list ident) f args er anns
@@ -4969,7 +5004,7 @@ Import UNN.Fresh.Tactics.
       assert (Forall (src_exp vars AN) args) as Hsrces
         by (eapply src_exp_imm_forall; [|exact Hsx];
             intros e' He'; exact (imm_Eapp_arg f args er anns e' He')).
-      destruct (src_exp_loc vars AN _ Hsx) as (Hanon & Hargcl & _).
+      destruct (src_exp_loc vars AN _ Hsx) as (Hanon & _).
       assert (Forall (nested_src vars AN) args) as Hnsrces
         by (eapply nested_src_args; exact Hsx).
 
@@ -5235,31 +5270,31 @@ Import UNN.Fresh.Tactics.
         as Hdef.
       { intros nck Hnck. unfold nclocksof in Hnck.
         apply in_flat_map in Hnck as (e & He & Hne).
-        rewrite Forall_forall in Hargcl.
-        exact (nclockof_types_defined env base_ty vars e (Hargcl e He)
-                 env_total nck Hne). }
+        rewrite Forall_forall in Hwces, Hnsrces.
+        exact (nclockof_types_defined_wc env base_ty P AN vars Hwcg
+                 vars_wcenv env_total env_anon_keys e (Hwces e He)
+                 (proj2 (Hnsrces e He)) nck Hne). }
 
-      (** and each named argument stream carries its own security name, except
-          the streams of nested calls, whose names no clock variable of a
-          formal goes to *)
+      (** and each named argument stream carries its own security name --
+          those of nested calls too: a nested call's result is typed by the
+          environment's name for the stream it names *)
       assert (Forall2 (fun t nck => forall w g,
-                           snd nck = Some w -> ~ In w AN ->
+                           snd nck = Some w ->
                            Env.find w env = Some g -> In g (fst t))
-                argts (nclocksof args)) as Hnamed.
-      { eapply (assign_lexps_named_covered (fun w => In w AN) P GL env
-                  base_ty rst_ty vars args Hwles Hwces); [|exact Hargs].
-        intros e f0 es0 ro0 anns0 He Heq w Hw.
-        subst e.
-        destruct (anon_streams_name w anns0 Hw) as (a & Ha).
-        exact (Hanon w a
-                 (nested_call_name_in_anon_in f args er anns _ f0 es0 ro0
-                    anns0 w a He (@Coq.Init.Logic.eq_refl _ _) Ha)). }
+                argts (nclocksof args)) as Hnamed0
+        by (eapply assign_lexps_named_covered_all;
+            [exact Hwles|exact Hwces|exact Hargs]).
+      assert (Forall2 (fun t nck => forall w g,
+                           snd nck = Some w -> ~ (fun _ : ident => False) w ->
+                           Env.find w env = Some g -> In g (fst t))
+                argts (nclocksof args)) as Hnamed
+        by (eapply Forall2_weaken_pt; [|exact Hnamed0];
+            intros t nck H w g Hw _ Hg; exact (H w g Hw Hg)).
       assert (forall i x ck x' u,
                  nth_error (idck nd.(n_in)) i = Some (x, ck) ->
-                 In x' (clock_vars ck) -> sub x' = Some u -> ~ In u AN)
-        as Hbadok
-        by exact (sub_clock_vars_not_anon vars AN bck sub (idck nd.(n_in))
-                    args Hwi Hargcl env_anon).
+                 In x' (clock_vars ck) -> sub x' = Some u ->
+                 ~ (fun _ : ident => False) u)
+        as Hbadok by (intros; intro F; exact F).
       assert (List.length argts = List.length (nclocksof args)) as Hlargts
           by exact (Forall2_length _ _ _ Hnamed).
 
@@ -5271,7 +5306,7 @@ Import UNN.Fresh.Tactics.
                   (idck nd.(n_in))) as ambs_arg eqn:Eambs.
       assert (stream_ambients_scoped scope ambs_arg) as Hambargsc.
       { subst ambs_arg.
-        exact (call_arg_ambients_scoped_named env rst_ty (fun w => In w AN)
+        exact (call_arg_ambients_scoped_named env rst_ty (fun _ : ident => False)
                  scope sub bck ckty
                  (nclocksof args) (idck nd.(n_in)) argts rst_ty_scoped
                  Hambcsc' Hwcin Hwi Hnamed
@@ -5752,7 +5787,7 @@ Import UNN.Fresh.Tactics.
                   -> ~ In y v)
                 (CALLS.augment_actuals env sub (idck nd.(n_in)) argts))
         as Hfaug.
-      { eapply (CALLS.augment_actuals_fresh env (fun w => In w AN) sub
+      { eapply (CALLS.augment_actuals_fresh env (fun _ : ident => False) sub
                   (idck nd.(n_in)) argts (nclocksof args)).
         - exact (Forall2_length _ _ _ Hwi).
         - exact Hlin.

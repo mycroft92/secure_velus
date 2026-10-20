@@ -80,6 +80,52 @@ Module Type SECLTYPING
     Variable base_ty : ident.                (* the node's base clock *)
     Variable rst_ty  : ident.                (* the node's ambient reset level *)
 
+    (** The names a nested call's result flows are typed by.  A flow the
+        elaborator named -- because some clock depends on it -- is typed by
+        the security name the environment holds for that name, exactly as the
+        call equation unnesting turns it into looks its outputs up; any other
+        flow gets a fresh name, as before.  Without this a clock that mentions
+        the name would be typed by an environment entry nothing constrains. *)
+    Definition out_ident (a : LSyn.ann) : Sec ident :=
+      match LSyn.stream_name a with
+      | Some w =>
+          match Env.find w env with
+          | Some b => ret b
+          | None => SC.fresh_ident
+          end
+      | None => SC.fresh_ident
+      end.
+
+    Fixpoint out_idents_raw (anns : list LSyn.ann) : Sec (list ident) :=
+      match anns with
+      | [] => ret []
+      | a :: anns' =>
+          do x <- out_ident a;
+          do xs <- out_idents_raw anns';
+          ret (x :: xs)
+      end.
+
+    Fixpoint nodup_ident_dec (l : list ident) : {NoDup l} + {~ NoDup l}.
+    Proof.
+      destruct l as [|x l]; [left; constructor|].
+      destruct (nodup_ident_dec l) as [H|H];
+        [|right; intro H'; inversion H'; auto].
+      destruct (In_dec ident_eq_dec x l) as [Hi|Hi];
+        [right; intro H'; inversion H'; auto|left; constructor; auto].
+    Defined.
+
+    (** A call's result names are distinct.  The run refuses a call whose
+        names are not -- two flows named alike, or a named flow whose
+        environment name a fresh one coincides with -- so the distinctness a
+        call block needs is a fact about every run that succeeds, not a
+        hypothesis on the program. *)
+    Definition out_idents (anns : list LSyn.ann) : Sec (list ident) :=
+      do xs <- out_idents_raw anns;
+      match nodup_ident_dec xs with
+      | left _ => ret xs
+      | right _ => error (msg "security typing: duplicate call result names")
+      end.
+
     Definition single (ts : list LST) : Sec LST :=
       match ts with
       | [t] => ret t
@@ -195,7 +241,7 @@ Module Type SECLTYPING
           match find_signature f G with
           | None => error (MSG "Signature not found for: " :: [CTX f])
           | Some sg =>
-              do outs <- fresh_idents (List.length anns);
+              do outs <- out_idents anns;
               do cs   <- generate_constraints sg (map fst argts) ckty
                                               (fst rstty) outs;
               let held := cmerge cs (cmerge (carried argts) (snd rstty)) in
@@ -1547,6 +1593,15 @@ Module Type SECLTYPING
   Definition lnode_clock_env (n : node) : Env.t (type * clock) :=
     Env.adds' n.(n_vars) (Env.adds' n.(n_in) (Env.from_list n.(n_out))).
 
+  (** The environment names of the streams the node's nested calls name.  The
+      raw constraint set has them as targets, like it has a minted result name,
+      and the published signature eliminates them with it: they are internal. *)
+  Definition anon_images (env : Env.t ident) (n : node) : list ident :=
+    flat_map (fun p => match Env.find (fst p) env with
+                       | Some b => [b]
+                       | None => []
+                       end) (anon_in_eqs n.(n_eqs)).
+
   Definition generate_lnode_sig (G : secglobal) (n : node)
     (env : Env.t ident) (aux_names : list node_aux_names) (st0 : sec_state)
     : res (signature * sec_state) :=
@@ -1566,7 +1621,8 @@ Module Type SECLTYPING
                s_out   := out;
                s_reset := rst_type;
                s_clk   := clk_type;
-               s_constraints := simplify (collapse cs) (locals ++ minted st0 st1) |}, st1)
+               s_constraints := simplify (collapse cs)
+                                  (locals ++ anon_images env n ++ minted st0 st1) |}, st1)
     end.
 
   Definition generate_lnode_sig_scoped_env (G : secglobal) (n : node)

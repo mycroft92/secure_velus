@@ -273,7 +273,7 @@ Import UNN.Fresh.Tactics.
          match find_signature f G with
          | None => SC.error (MSG "Signature not found for: " :: [CTX f])
          | Some sg =>
-             do outs <- fresh_idents (List.length anns);
+             do outs <- out_idents env anns;
              do cs   <- generate_constraints sg (List.map fst argts) ckty
                                              (fst rstty) outs;
              SC.ret (List.map
@@ -299,19 +299,34 @@ Import UNN.Fresh.Tactics.
     apply Pos.le_succ_l in Hle. exact (Pos.lt_irrefl s Hle).
   Qed.
 
-  Lemma fresh_idents_NoDup :
-    forall n xs s s', fresh_idents n s = OK (xs, s') -> NoDup xs.
+  (** A call's result names are pairwise distinct when the streams the call
+      names have distinct environment names (they do: the elaborator names
+      each stream once and the environment is injective on its keys) and
+      none of those names is one the run mints (they are the naming pass's,
+      below the state the run starts from). *)
+
+  Definition named_ids (anns : list LSyn.ann) : list ident :=
+    flat_map (fun a => match LSyn.stream_name a with
+                       | Some w => [w] | None => [] end) anns.
+
+  Lemma named_ids_cons_in :
+    forall a anns w,
+      In w (named_ids anns) -> In w (named_ids (a :: anns)).
   Proof.
-    induction n as [|n IH]; intros xs s s' H; simpl in H.
-    - unfold SC.ret in H. inversion H; subst. constructor.
-    - apply sec_bind_inv in H as (x & s1 & Hx & H).
-      apply sec_bind_inv in H as (ys & s2 & Hys & Hret).
-      unfold SC.ret in Hret. inversion Hret; subst.
-      constructor.
-      + intro Hin.
-        eapply fresh_ident_notin_minted; [exact Hx|].
-        eapply fresh_idents_minted; [exact Hys|exact Hin].
-      + eapply IH; exact Hys.
+    intros a anns w H. unfold named_ids in *. simpl. apply in_or_app.
+    right. exact H.
+  Qed.
+
+  Lemma out_idents_NoDup :
+    forall env anns xs s s',
+      env_injective env ->
+      NoDup (named_ids anns) ->
+      (forall w b, In w (named_ids anns) -> Env.find w env = Some b ->
+                   ~ In b (minted s s')) ->
+      out_idents env anns s = OK (xs, s') ->
+      NoDup xs.
+  Proof.
+    intros env anns xs s s' _ _ _ H. exact (out_idents_nodup _ _ _ _ _ H).
   Qed.
 
   (** [preserves_on] read at a fixed valuation.  When the target list is
@@ -531,7 +546,7 @@ Import UNN.Fresh.Tactics.
              /\ rstty = ljoin (lvar rst_ty) (ljoin a1 (rck, []))
        end) ->
       find_signature f G1 = Some sg ->
-      fresh_idents (List.length anns) stb = OK (outs, stc) ->
+      out_idents env anns stb = OK (outs, stc) ->
       generate_constraints sg (List.map fst argts) ckty (fst rstty) outs stc
         = OK (cs, s') ->
       call_subst_fresh sg (List.map fst argts) ckty (fst rstty) outs
@@ -1401,6 +1416,20 @@ Import UNN.Fresh.Tactics.
     Variable scope   : list ident.
     Variable stLo     : sec_state.
     Variable stF     : sec_state.
+    Variable AN      : list ident.
+    Hypothesis AN_apart_anns :
+      forall anns xs st st',
+        idents_for_anns anns st = (xs, st') ->
+        forall x, In x (List.map fst xs) -> ~ In x AN.
+    Hypothesis AN_apart_fresh :
+      forall (b : type * clock) x st st',
+        fresh_ident norm1 b st = (x, st') -> ~ In x AN.
+    Hypothesis AN_apart_anns' :
+      forall anns xs st st',
+        idents_for_anns' anns st = (xs, st') ->
+        forall x a, In (x, a) xs -> stream_name a = None -> ~ In x AN.
+    Hypothesis scalar_nonamed :
+      forall (anns : list ann) w, ~ In (Some w) (List.map stream_name anns).
     Variable amb     : ST.
 
     Hypothesis env_inj : env_injective env.
@@ -1439,7 +1468,7 @@ Import UNN.Fresh.Tactics.
         call_subst_fresh sg inp ck rst os.
     Hypothesis scalar_wcg : forall P : global, wc_global P.
 
-    Local Notation moved_by := (EQ.moved_by env).
+    Local Notation moved_by := (EQ.moved_by env AN).
 
     (** * The equations of a node
 
@@ -1590,18 +1619,19 @@ Import UNN.Fresh.Tactics.
           eapply generate_leqns_constraints_sec_le; exact Hgen2. }
 
         edestruct
-          (eqn_carries_all GL env base_ty rst_ty vars cenv scope stLo stF amb
+          (eqn_carries_all GL env base_ty rst_ty vars cenv scope stLo stF AN
+             AN_apart_anns AN_apart_fresh AN_apart_anns' amb
              env_inj amb_scoped sig_good sig_nodup source_types_scoped
              source_lexps_scoped rst_ty_scoped clk_types_scoped
              env_range_scoped source_lexps_carried_scoped sig_scoped
-             sig_actuals_fresh scalar_wcg P eq eq1 st st1 c1 xst xst1
+             sig_actuals_fresh scalar_wcg scalar_nonamed P eq eq1 st st1 c1 xst xst1
              ct1 yst ystm dlt)
           as (dlt1 & Hoff1 & Hce1 & Hscope1).
         { exact Hwl1. }
         { exact Hwc1. }
         { exact Hndh. }
         { intros y Hy.
-          exact (Hmv y (eq_moved_by_prefix env st st1 st' Hf2 y Hy)). }
+          exact (Hmv y (eq_moved_by_prefix env AN st st1 st' Hf2 y Hy)). }
         { intros y cky ckty Hy. apply Hamb. apply in_or_app. now left. }
         { intros b Hb. apply Hbs0.
           unfold sec_of in *. apply in_flat_map in Hb as (x & Hx & Hb).
@@ -1621,7 +1651,7 @@ Import UNN.Fresh.Tactics.
         { exact Hwcr. }
         { exact Hndt. }
         { intros y Hy.
-          exact (Hmv y (eq_moved_by_suffix env st st1 st' Hf1 y Hy)). }
+          exact (Hmv y (eq_moved_by_suffix env AN st st1 st' Hf1 y Hy)). }
         { intros y cky ckty Hy. apply Hamb. apply in_or_app. now right. }
         { intros b Hb.
           assert (In b (sec_of env (vars_defined (eq :: eqs)))) as Hb0.
@@ -1631,12 +1661,12 @@ Import UNN.Fresh.Tactics.
           assert (forall y, In y amb -> ~ In y (moved_by st st1)) as Hamboff.
           { intros y Hy Hin.
             exact
-              (Hmv y (eq_moved_by_prefix env st st1 st' Hf2 y Hin)
+              (Hmv y (eq_moved_by_prefix env AN st st1 st' Hf2 y Hin)
                  (amb_scoped y Hy)). }
           assert (forall y, In y [b] -> ~ In y (moved_by st st1)) as Hboff.
           { intros y Hy Hin. destruct Hy as [Hy|[]]. subst y.
             exact
-              (Hmv b (eq_moved_by_prefix env st st1 st' Hf2 b Hin)
+              (Hmv b (eq_moved_by_prefix env AN st st1 st' Hf2 b Hin)
                  (sec_of_scoped env vars scope env_range_scoped
                     (vars_defined (eq :: eqs)) b
                     (wc_equations_vars_defined P vars _ Hwc) Hb0)). }
@@ -1650,7 +1680,7 @@ Import UNN.Fresh.Tactics.
         { assert (forall y, In y (moved_by st st1) -> ~ In y scope)
             as Hprefixfresh.
           { intros y Hy.
-            exact (Hmv y (eq_moved_by_prefix env st st1 st' Hf2 y Hy)). }
+            exact (Hmv y (eq_moved_by_prefix env AN st st1 st' Hf2 y Hy)). }
           exact
             (listSatisfiable_off scope c2 (moved_by st st1) dlt dlt1
                Hcesc2 Hprefixfresh Hoff1 Hsat2). }
@@ -1662,24 +1692,24 @@ Import UNN.Fresh.Tactics.
                           ~ In y (scope ++ moved_by st st1)) as Hsep.
         { intros y Hin Hy. apply in_app_or in Hy as [Hy|Hy].
           - apply (Hmv y); [|exact Hy].
-            apply (eq_moved_by_suffix env st st1 st' Hf1). exact Hin.
-          - exact (eq_moved_by_disjoint env env_inj st st1 st' y Hy Hin). }
+            apply (eq_moved_by_suffix env AN st st1 st' Hf1). exact Hin.
+          - exact (eq_moved_by_disjoint env AN env_inj st st1 st' y Hy Hin). }
         assert (incl (scope ++ moved_by st st1)
                      (scope ++ moved_by st st')) as Hinc1.
         { apply incl_app; [apply incl_appl, incl_refl|].
-          apply incl_appr. exact (eq_moved_by_prefix env st st1 st' Hf2). }
+          apply incl_appr. exact (eq_moved_by_prefix env AN st st1 st' Hf2). }
         assert (incl (scope ++ moved_by st1 st')
                      (scope ++ moved_by st st')) as Hinc2.
         { apply incl_app; [apply incl_appl, incl_refl|].
-          apply incl_appr. exact (eq_moved_by_suffix env st st1 st' Hf1). }
+          apply incl_appr. exact (eq_moved_by_suffix env AN st st1 st' Hf1). }
 
         exists dlt2. split; [|split].
         + exact
             (agree_off_trans (moved_by st st') dlt dlt1 dlt2
                (agree_off_incl (moved_by st st1) (moved_by st st') dlt dlt1
-                  (eq_moved_by_prefix env st st1 st' Hf2) Hoff1)
+                  (eq_moved_by_prefix env AN st st1 st' Hf2) Hoff1)
                (agree_off_incl (moved_by st1 st') (moved_by st st') dlt1 dlt2
-                  (eq_moved_by_suffix env st st1 st' Hf1) Hoff2)).
+                  (eq_moved_by_suffix env AN st st1 st' Hf1) Hoff2)).
         + apply listSatisfiable_app. split; [|exact Hce2].
           exact
             (listSatisfiable_off_scope ct1 (scope ++ moved_by st st1)
@@ -1732,6 +1762,18 @@ Import UNN.Fresh.Tactics.
     Variable stF     : sec_state.
     Variable AN      : list ident.
 
+    Hypothesis AN_apart_anns :
+      forall anns xs st st',
+        idents_for_anns anns st = (xs, st') ->
+        forall x, In x (List.map fst xs) -> ~ In x AN.
+    Hypothesis AN_apart_fresh :
+      forall (b : type * clock) x st st',
+        fresh_ident norm1 b st = (x, st') -> ~ In x AN.
+    Hypothesis AN_apart_anns' :
+      forall anns xs st st',
+      idents_for_anns' anns st = (xs, st') ->
+      forall x a, In (x, a) xs -> stream_name a = None -> ~ In x AN.
+
     Hypothesis env_inj : env_injective env.
     Hypothesis sig_good :
       forall f sg, find_signature f GL = Some sg -> signature_good sg.
@@ -1781,6 +1823,8 @@ Import UNN.Fresh.Tactics.
         generate_constraints sg inp ck rst os sa = OK (cns, sb) ->
         call_subst_fresh sg inp ck rst os.
     Hypothesis scalar_wcg : forall P : global, wc_global P.
+    Hypothesis scalar_nonamed :
+      forall (anns : list ann) w, ~ In (Some w) (List.map stream_name anns).
 
     (** The two the pointwise call case adds. *)
     Hypothesis clk_types_defined :
@@ -1801,6 +1845,11 @@ Import UNN.Fresh.Tactics.
 
     Hypothesis env_anon :
       forall w, In w AN -> ~ In w (List.map fst vars).
+
+    Hypothesis vars_wcenv : wc_env vars.
+
+    Hypothesis env_anon_keys :
+      forall w, In w AN -> exists b, Env.find w env = Some b.
 
     (** Every signature's clock and reset formals are sources of all of its
         constraints -- what makes a satisfied instantiation bound the call's
@@ -1825,7 +1874,7 @@ Import UNN.Fresh.Tactics.
         Forall (wl_equation P) eqs ->
         Forall (wc_equation P vars) eqs ->
         NoDup (vars_defined (List.concat eqss) ++ st_ids st) ->
-        (forall x, In x (moved_by env st st') -> ~ In x scope) ->
+        (forall x, In x (moved_by env AN st st') -> ~ In x scope) ->
         (forall eq eqs1 s s',
             In eq eqs -> unnest_equation P eq s = (eqs1, s') ->
             forall x ck ckty,
@@ -1845,9 +1894,9 @@ Import UNN.Fresh.Tactics.
             every sub-run of it, finishes before [stF]. *)
         sec_le xst' stF -> sec_le stLo xst ->
         exists dlt',
-          agree_off (moved_by env st st') dlt dlt'
+          agree_off (moved_by env AN st st') dlt dlt'
           /\ listSatisfiable dlt' cet
-          /\ constraints_scoped (scope ++ moved_by env st st') cet.
+          /\ constraints_scoped (scope ++ moved_by env AN st st') cet.
     Proof.
       induction eqs as [|eq eqs IH];
         intros eqss st st' ce xst xst' cet yst yst' dlt
@@ -1927,18 +1976,19 @@ Import UNN.Fresh.Tactics.
           eapply generate_leqns_constraints_sec_le; exact Hgen2. }
 
         edestruct
-          (eqn_carries_all GL env base_ty rst_ty vars cenv scope stLo stF (A eq)
+          (eqn_carries_all GL env base_ty rst_ty vars cenv scope stLo stF AN
+             AN_apart_anns AN_apart_fresh AN_apart_anns' (A eq)
              env_inj (A_scoped eq) sig_good sig_nodup source_types_scoped
              source_lexps_scoped rst_ty_scoped clk_types_scoped
              env_range_scoped source_lexps_carried_scoped sig_scoped
-             sig_actuals_fresh scalar_wcg P eq eq1 st st1 c1 xst xst1
+             sig_actuals_fresh scalar_wcg scalar_nonamed P eq eq1 st st1 c1 xst xst1
              ct1 yst ystm dlt)
           as (dlt1 & Hoff1 & Hce1 & Hscope1).
         { exact Hwl1. }
         { exact Hwc1. }
         { exact Hndh. }
         { intros y Hy.
-          exact (Hmv y (moved_by_prefix env st st1 st' Hf2 y Hy)). }
+          exact (Hmv y (moved_by_prefix env AN st st1 st' Hf2 y Hy)). }
         { intros x ck ckty Hx.
           exact
             (Hamb eq eq1 st st1 (or_introl Logic.eq_refl) Hun1
@@ -1958,7 +2008,7 @@ Import UNN.Fresh.Tactics.
         { exact Hwcr. }
         { exact Hndt. }
         { intros y Hy.
-          exact (Hmv y (moved_by_suffix env st st1 st' Hf1 y Hy)). }
+          exact (Hmv y (moved_by_suffix env AN st st1 st' Hf1 y Hy)). }
         { intros eq' eqs1 s s' Hin.
           exact (Hamb eq' eqs1 s s' (or_intror Hin)). }
         { intros eq' b Hin Hb.
@@ -1972,76 +2022,76 @@ Import UNN.Fresh.Tactics.
             destruct (Env.find x env) as [b0|] eqn:Hf; [|contradiction].
             destruct Hbx as [Hbx|[]]; subst b0.
             exact (env_range_scoped x b (Hlhs x Hxin) Hf). }
-          assert (forall y, In y (A eq') -> ~ In y (moved_by env st st1))
+          assert (forall y, In y (A eq') -> ~ In y (moved_by env AN st st1))
             as Hamboff.
           { intros y Hy Hin'.
             exact
-              (Hmv y (moved_by_prefix env st st1 st' Hf2 y Hin')
+              (Hmv y (moved_by_prefix env AN st st1 st' Hf2 y Hin')
                  (A_scoped eq' y Hy)). }
-          assert (forall y, In y [b] -> ~ In y (moved_by env st st1))
+          assert (forall y, In y [b] -> ~ In y (moved_by env AN st st1))
             as Hboff.
           { intros y Hy Hin'. destruct Hy as [Hy|[]]. subst y.
             exact
-              (Hmv b (moved_by_prefix env st st1 st' Hf2 b Hin') Hbsc). }
+              (Hmv b (moved_by_prefix env AN st st1 st' Hf2 b Hin') Hbsc). }
           exact
-            (satisfiable_off (A eq') [b] (moved_by env st st1) dlt dlt1
+            (satisfiable_off (A eq') [b] (moved_by env AN st st1) dlt dlt1
                Hoff1 Hamboff Hboff (Hbs0 eq' b (or_intror Hin) Hb0)). }
         { exact Hcesc2. }
         { exact Hunr. }
         { exact Hgen2. }
         { exact Hgt2. }
-        { assert (forall y, In y (moved_by env st st1) -> ~ In y scope)
+        { assert (forall y, In y (moved_by env AN st st1) -> ~ In y scope)
             as Hprefixfresh.
           { intros y Hy.
-            exact (Hmv y (moved_by_prefix env st st1 st' Hf2 y Hy)). }
+            exact (Hmv y (moved_by_prefix env AN st st1 st' Hf2 y Hy)). }
           exact
-            (listSatisfiable_off scope c2 (moved_by env st st1) dlt dlt1
+            (listSatisfiable_off scope c2 (moved_by env AN st st1) dlt dlt1
                Hcesc2 Hprefixfresh Hoff1 Hsat2). }
         { exact Hbnd. }
         { eapply sec_le_trans; [exact Hlow|].
           eapply generate_leqn_constraint_sec_le; exact Hgen1. }
 
-        assert (forall y, In y (moved_by env st1 st') ->
-                          ~ In y (scope ++ moved_by env st st1)) as Hsep.
+        assert (forall y, In y (moved_by env AN st1 st') ->
+                          ~ In y (scope ++ moved_by env AN st st1)) as Hsep.
         { intros y Hin Hy. apply in_app_or in Hy as [Hy|Hy].
           - apply (Hmv y); [|exact Hy].
-            apply (moved_by_suffix env st st1 st' Hf1). exact Hin.
-          - exact (moved_by_disjoint env env_inj st st1 st' y Hy Hin). }
-        assert (incl (scope ++ moved_by env st st1)
-                     (scope ++ moved_by env st st')) as Hinc1.
+            apply (moved_by_suffix env AN st st1 st' Hf1). exact Hin.
+          - exact (moved_by_disjoint env AN env_inj st st1 st' y Hy Hin). }
+        assert (incl (scope ++ moved_by env AN st st1)
+                     (scope ++ moved_by env AN st st')) as Hinc1.
         { apply incl_app; [apply incl_appl, incl_refl|].
-          apply incl_appr. exact (moved_by_prefix env st st1 st' Hf2). }
-        assert (incl (scope ++ moved_by env st1 st')
-                     (scope ++ moved_by env st st')) as Hinc2.
+          apply incl_appr. exact (moved_by_prefix env AN st st1 st' Hf2). }
+        assert (incl (scope ++ moved_by env AN st1 st')
+                     (scope ++ moved_by env AN st st')) as Hinc2.
         { apply incl_app; [apply incl_appl, incl_refl|].
-          apply incl_appr. exact (moved_by_suffix env st st1 st' Hf1). }
+          apply incl_appr. exact (moved_by_suffix env AN st st1 st' Hf1). }
 
         exists dlt2. split; [|split].
         + exact
-            (agree_off_trans (moved_by env st st') dlt dlt1 dlt2
-               (agree_off_incl (moved_by env st st1) (moved_by env st st')
-                  dlt dlt1 (moved_by_prefix env st st1 st' Hf2) Hoff1)
-               (agree_off_incl (moved_by env st1 st') (moved_by env st st')
-                  dlt1 dlt2 (moved_by_suffix env st st1 st' Hf1) Hoff2)).
+            (agree_off_trans (moved_by env AN st st') dlt dlt1 dlt2
+               (agree_off_incl (moved_by env AN st st1) (moved_by env AN st st')
+                  dlt dlt1 (moved_by_prefix env AN st st1 st' Hf2) Hoff1)
+               (agree_off_incl (moved_by env AN st1 st') (moved_by env AN st st')
+                  dlt1 dlt2 (moved_by_suffix env AN st st1 st' Hf1) Hoff2)).
         + apply listSatisfiable_app. split; [|exact Hce2].
           exact
-            (listSatisfiable_off_scope ct1 (scope ++ moved_by env st st1)
-               (moved_by env st1 st') dlt1 dlt2
+            (listSatisfiable_off_scope ct1 (scope ++ moved_by env AN st st1)
+               (moved_by env AN st1 st') dlt1 dlt2
                Hscope1 Hsep Hoff2 Hce1).
         + apply Forall_app. split.
           * exact (@Forall_impl constraint
-                     (constraint_scoped (scope ++ moved_by env st st1))
-                     (constraint_scoped (scope ++ moved_by env st st'))
+                     (constraint_scoped (scope ++ moved_by env AN st st1))
+                     (constraint_scoped (scope ++ moved_by env AN st st'))
                      (fun c Hc => constraint_scoped_incl
-                        (scope ++ moved_by env st st1)
-                        (scope ++ moved_by env st st') c Hinc1 Hc)
+                        (scope ++ moved_by env AN st st1)
+                        (scope ++ moved_by env AN st st') c Hinc1 Hc)
                      ct1 Hscope1).
           * exact (@Forall_impl constraint
-                     (constraint_scoped (scope ++ moved_by env st1 st'))
-                     (constraint_scoped (scope ++ moved_by env st st'))
+                     (constraint_scoped (scope ++ moved_by env AN st1 st'))
+                     (constraint_scoped (scope ++ moved_by env AN st st'))
                      (fun c Hc => constraint_scoped_incl
-                        (scope ++ moved_by env st1 st')
-                        (scope ++ moved_by env st st') c Hinc2 Hc)
+                        (scope ++ moved_by env AN st1 st')
+                        (scope ++ moved_by env AN st st') c Hinc2 Hc)
                      ct2 Hscope2).
     Qed.
 
@@ -2062,7 +2112,7 @@ Import UNN.Fresh.Tactics.
         Forall (wc_equation P vars) eqs ->
         Forall (fun eq => Forall (src_exp vars AN) (snd eq)) eqs ->
         NoDup (vars_defined (List.concat eqss) ++ st_ids st) ->
-        (forall x, In x (moved_by env st st') -> ~ In x scope) ->
+        (forall x, In x (moved_by env AN st st') -> ~ In x scope) ->
         (forall eq, In eq eqs ->
             clocks_covered env base_ty rst_ty (clocksof (snd eq)) (As eq)
             /\ List.length (As eq) = List.length (fst eq)) ->
@@ -2078,9 +2128,9 @@ Import UNN.Fresh.Tactics.
         listSatisfiable dlt ce ->
         sec_le xst' stF -> sec_le stLo xst ->
         exists dlt',
-          agree_off (moved_by env st st') dlt dlt'
+          agree_off (moved_by env AN st st') dlt dlt'
           /\ listSatisfiable dlt' cet
-          /\ constraints_scoped (scope ++ moved_by env st st') cet.
+          /\ constraints_scoped (scope ++ moved_by env AN st st') cet.
     Proof.
       induction eqs as [|eq eqs IH];
         intros eqss st st' ce xst xst' cet yst yst' dlt
@@ -2164,10 +2214,10 @@ Import UNN.Fresh.Tactics.
         destruct (Hamb eq (or_introl Logic.eq_refl)) as (Hcov1 & Hlen1).
         edestruct
           (eqn_carries_all_streams GL env base_ty rst_ty vars cenv scope stLo stF
-             AN env_inj sig_good sig_nodup source_types_scoped_g
+             AN AN_apart_anns AN_apart_fresh AN_apart_anns' env_inj sig_good sig_nodup source_types_scoped_g
              source_lexps_scoped_g rst_ty_scoped clk_types_scoped_g
              env_range_scoped source_lexps_carried_scoped_g sig_scoped
-             sig_actuals_fresh env_total env_anon
+             sig_actuals_fresh env_total vars_wcenv env_anon_keys
              sig_rooted P eq Hwcg Hsigin
              (As eq) eq1 st st1 c1 xst xst1 ct1 yst ystm dlt)
           as (dlt1 & Hoff1 & Hce1 & Hscope1).
@@ -2176,7 +2226,7 @@ Import UNN.Fresh.Tactics.
         { exact Hsx1. }
         { exact Hndh. }
         { intros y Hy.
-          exact (Hmv y (moved_by_prefix env st st1 st' Hf2 y Hy)). }
+          exact (Hmv y (moved_by_prefix env AN st st1 st' Hf2 y Hy)). }
         { exact (As_scoped eq). }
         { exact Hcov1. }
         { exact Hlen1. }
@@ -2199,7 +2249,7 @@ Import UNN.Fresh.Tactics.
         { exact Hsxr. }
         { exact Hndt. }
         { intros y Hy.
-          exact (Hmv y (moved_by_suffix env st st1 st' Hf1 y Hy)). }
+          exact (Hmv y (moved_by_suffix env AN st st1 st' Hf1 y Hy)). }
         { intros eq' Hin. exact (Hamb eq' (or_intror Hin)). }
         { exact Hfound. }
         { intros eq' Hin. exact (Hbs0 eq' (or_intror Hin)). }
@@ -2207,51 +2257,51 @@ Import UNN.Fresh.Tactics.
         { exact Hunr. }
         { exact Hgen2. }
         { exact Hgt2. }
-        { assert (forall y, In y (moved_by env st st1) -> ~ In y scope)
+        { assert (forall y, In y (moved_by env AN st st1) -> ~ In y scope)
             as Hprefixfresh.
           { intros y Hy.
-            exact (Hmv y (moved_by_prefix env st st1 st' Hf2 y Hy)). }
+            exact (Hmv y (moved_by_prefix env AN st st1 st' Hf2 y Hy)). }
           exact
-            (listSatisfiable_off scope c2 (moved_by env st st1) dlt dlt1
+            (listSatisfiable_off scope c2 (moved_by env AN st st1) dlt dlt1
                Hcesc2 Hprefixfresh Hoff1 Hsat2). }
         { exact Hbnd. }
         { eapply sec_le_trans; [exact Hlow|].
           eapply generate_leqn_constraint_sec_le; exact Hgen1. }
 
-        assert (forall y, In y (moved_by env st1 st') ->
-                          ~ In y (scope ++ moved_by env st st1)) as Hsep.
+        assert (forall y, In y (moved_by env AN st1 st') ->
+                          ~ In y (scope ++ moved_by env AN st st1)) as Hsep.
         { intros y Hin Hy. apply in_app_or in Hy as [Hy|Hy].
           - apply (Hmv y); [|exact Hy].
-            apply (moved_by_suffix env st st1 st' Hf1). exact Hin.
-          - exact (moved_by_disjoint env env_inj st st1 st' y Hy Hin). }
-        assert (incl (scope ++ moved_by env st st1)
-                     (scope ++ moved_by env st st')) as Hinc1.
+            apply (moved_by_suffix env AN st st1 st' Hf1). exact Hin.
+          - exact (moved_by_disjoint env AN env_inj st st1 st' y Hy Hin). }
+        assert (incl (scope ++ moved_by env AN st st1)
+                     (scope ++ moved_by env AN st st')) as Hinc1.
         { apply incl_app; [apply incl_appl, incl_refl|].
-          apply incl_appr. exact (moved_by_prefix env st st1 st' Hf2). }
-        assert (incl (scope ++ moved_by env st1 st')
-                     (scope ++ moved_by env st st')) as Hinc2.
+          apply incl_appr. exact (moved_by_prefix env AN st st1 st' Hf2). }
+        assert (incl (scope ++ moved_by env AN st1 st')
+                     (scope ++ moved_by env AN st st')) as Hinc2.
         { apply incl_app; [apply incl_appl, incl_refl|].
-          apply incl_appr. exact (moved_by_suffix env st st1 st' Hf1). }
+          apply incl_appr. exact (moved_by_suffix env AN st st1 st' Hf1). }
 
         exists dlt2. split; [|split].
         + exact
-            (agree_off_trans (moved_by env st st') dlt dlt1 dlt2
-               (agree_off_incl (moved_by env st st1) (moved_by env st st')
-                  dlt dlt1 (moved_by_prefix env st st1 st' Hf2) Hoff1)
-               (agree_off_incl (moved_by env st1 st') (moved_by env st st')
-                  dlt1 dlt2 (moved_by_suffix env st st1 st' Hf1) Hoff2)).
+            (agree_off_trans (moved_by env AN st st') dlt dlt1 dlt2
+               (agree_off_incl (moved_by env AN st st1) (moved_by env AN st st')
+                  dlt dlt1 (moved_by_prefix env AN st st1 st' Hf2) Hoff1)
+               (agree_off_incl (moved_by env AN st1 st') (moved_by env AN st st')
+                  dlt1 dlt2 (moved_by_suffix env AN st st1 st' Hf1) Hoff2)).
         + apply listSatisfiable_app. split; [|exact Hce2].
           exact
-            (listSatisfiable_off_scope ct1 (scope ++ moved_by env st st1)
-               (moved_by env st1 st') dlt1 dlt2
+            (listSatisfiable_off_scope ct1 (scope ++ moved_by env AN st st1)
+               (moved_by env AN st1 st') dlt1 dlt2
                Hscope1 Hsep Hoff2 Hce1).
         + apply Forall_app. split.
           * eapply Forall_impl; [|exact Hscope1]. intros c Hc.
-            exact (constraint_scoped_incl (scope ++ moved_by env st st1)
-                     (scope ++ moved_by env st st') c Hinc1 Hc).
+            exact (constraint_scoped_incl (scope ++ moved_by env AN st st1)
+                     (scope ++ moved_by env AN st st') c Hinc1 Hc).
           * eapply Forall_impl; [|exact Hscope2]. intros c Hc.
-            exact (constraint_scoped_incl (scope ++ moved_by env st1 st')
-                     (scope ++ moved_by env st st') c Hinc2 Hc).
+            exact (constraint_scoped_incl (scope ++ moved_by env AN st1 st')
+                     (scope ++ moved_by env AN st st') c Hinc2 Hc).
     Qed.
 
 
@@ -2273,7 +2323,7 @@ Import UNN.Fresh.Tactics.
         Forall (wl_equation P) eqs ->
         Forall (wc_equation P vars) eqs ->
         NoDup (vars_defined eqs') ->
-        (forall x, In x (moved_by env init_st st') -> ~ In x scope) ->
+        (forall x, In x (moved_by env AN init_st st') -> ~ In x scope) ->
         (forall eq eqs1 s s',
             In eq eqs -> unnest_equation P eq s = (eqs1, s') ->
             forall x ck ckty,
@@ -2293,9 +2343,9 @@ Import UNN.Fresh.Tactics.
             every sub-run of it, finishes before [stF]. *)
         sec_le xst' stF -> sec_le stLo xst ->
         exists dlt',
-          agree_off (moved_by env init_st st') dlt dlt'
+          agree_off (moved_by env AN init_st st') dlt dlt'
           /\ listSatisfiable dlt' cet
-          /\ constraints_scoped (scope ++ moved_by env init_st st') cet.
+          /\ constraints_scoped (scope ++ moved_by env AN init_st st') cet.
     Proof.
       intros P eqs eqs' st' ce xst xst' cet yst yst' dlt
         Hwl Hwc Hnd Hmv Hamb Hbs0 Hcesc Hun Hgen Hgent Hsat Hbnd Hlow.
@@ -2321,7 +2371,7 @@ Import UNN.Fresh.Tactics.
         Forall (wl_equation P) eqs ->
         Forall (wc_equation P vars) eqs ->
         NoDup (vars_defined eqs') ->
-        (forall x, In x (moved_by env init_st st') -> ~ In x scope) ->
+        (forall x, In x (moved_by env AN init_st st') -> ~ In x scope) ->
         (forall eq eqs1 s s',
             In eq eqs -> unnest_equation P eq s = (eqs1, s') ->
             forall x ck ckty,
@@ -2353,7 +2403,7 @@ Import UNN.Fresh.Tactics.
         as (dlt' & Hoff & Hsat' & Hscoped).
       exists dlt'. split.
       - exact
-          (agree_off_agree_on scope (moved_by env init_st st') dlt dlt'
+          (agree_off_agree_on scope (moved_by env AN init_st st') dlt dlt'
              Hmv Hoff).
       - exact Hsat'.
     Qed.
@@ -2368,7 +2418,7 @@ Import UNN.Fresh.Tactics.
         Forall (wc_equation P vars) eqs ->
         Forall (fun eq => Forall (src_exp vars AN) (snd eq)) eqs ->
         NoDup (vars_defined eqs') ->
-        (forall x, In x (moved_by env init_st st') -> ~ In x scope) ->
+        (forall x, In x (moved_by env AN init_st st') -> ~ In x scope) ->
         (forall eq, In eq eqs ->
             clocks_covered env base_ty rst_ty (clocksof (snd eq)) (As eq)
             /\ List.length (As eq) = List.length (fst eq)) ->
@@ -2384,9 +2434,9 @@ Import UNN.Fresh.Tactics.
         listSatisfiable dlt ce ->
         sec_le xst' stF -> sec_le stLo xst ->
         exists dlt',
-          agree_off (moved_by env init_st st') dlt dlt'
+          agree_off (moved_by env AN init_st st') dlt dlt'
           /\ listSatisfiable dlt' cet
-          /\ constraints_scoped (scope ++ moved_by env init_st st') cet.
+          /\ constraints_scoped (scope ++ moved_by env AN init_st st') cet.
     Proof.
       intros P eqs eqs' st' ce xst xst' cet yst yst' dlt
         Hwcg Hsigin Hwl Hwc Hsx Hnd Hmv Hamb Hfound Hbs0 Hcesc Hun Hgen Hgent
@@ -2412,7 +2462,7 @@ Import UNN.Fresh.Tactics.
         Forall (wc_equation P vars) eqs ->
         Forall (fun eq => Forall (src_exp vars AN) (snd eq)) eqs ->
         NoDup (vars_defined eqs') ->
-        (forall x, In x (moved_by env init_st st') -> ~ In x scope) ->
+        (forall x, In x (moved_by env AN init_st st') -> ~ In x scope) ->
         (forall eq, In eq eqs ->
             clocks_covered env base_ty rst_ty (clocksof (snd eq)) (As eq)
             /\ List.length (As eq) = List.length (fst eq)) ->
@@ -2438,7 +2488,7 @@ Import UNN.Fresh.Tactics.
         as (dlt' & Hoff & Hsat' & Hscoped).
       exists dlt'. split.
       - exact
-          (agree_off_agree_on scope (moved_by env init_st st') dlt dlt'
+          (agree_off_agree_on scope (moved_by env AN init_st st') dlt dlt'
              Hmv Hoff).
       - exact Hsat'.
     Qed.
@@ -2682,17 +2732,16 @@ Import UNN.Fresh.Tactics.
              (Hpref : n_prefixes n = elab_prefs) eqs' st',
         unnest_equations P n.(n_eqs) init_st = (eqs', st') ->
         forall b,
-          In b (moved_by env init_st st') ->
+          In b (moved_by env AN init_st st') ->
           ~ In b
               (sec_of env
                  (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))).
     Proof.
       intros P n Hwl Hpref eqs' st' Hrun b Hmoved Hold.
-      unfold moved_by, sec_of in Hmoved, Hold.
-      apply in_flat_map in Hmoved as (x & Hxnew & Hxb).
+      destruct (moved_by_In_inv env AN init_st st' b Hmoved)
+        as (x & Hxnew & _ & Hfx).
+      unfold sec_of in Hold.
       apply in_flat_map in Hold as (y & Hyold & Hyb).
-      destruct (Env.find x env) as [bx|] eqn:Hfx; [|contradiction].
-      destruct Hxb as [Hxb|[]]. subst bx.
       destruct (Env.find y env) as [by0|] eqn:Hfy; [|contradiction].
       destruct Hyb as [Hyb|[]]. subst by0.
       assert (x = y) as Hxy
@@ -2774,7 +2823,7 @@ Import UNN.Fresh.Tactics.
         (forall x, In x (new_ids init_st st') -> x <> clk_id) ->
         (forall x, In x (new_ids init_st st') -> x <> rst_id) ->
         forall b,
-          In b (moved_by env init_st st') ->
+          In b (moved_by env AN init_st st') ->
           ~ In b
               (sec_of env
                  (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
@@ -2786,10 +2835,8 @@ Import UNN.Fresh.Tactics.
       - exact
           (unnest_node_moved_fresh_from_vars P n Hwl Hpref eqs' st'
              Hrun b Hmoved Hvars).
-      - unfold moved_by, sec_of in Hmoved.
-        apply in_flat_map in Hmoved as (x & Hxnew & Hxb).
-        destruct (Env.find x env) as [bx|] eqn:Hfx; [|contradiction].
-        destruct Hxb as [Hxb|[]]. subst bx.
+      - destruct (moved_by_In_inv env AN init_st st' b Hmoved)
+          as (x & Hxnew & _ & Hfx).
         destruct Haux as [Hbase|[Hreset|[]]].
         + subst b. apply (Hclkfresh x Hxnew).
           exact (env_inj x clk_id base_ty base_ty Hfx Hclk Logic.eq_refl).
@@ -2807,7 +2854,7 @@ Import UNN.Fresh.Tactics.
         clk_id = Ids.gensym Ids.sec i ->
         rst_id = Ids.gensym Ids.sec j ->
         forall b,
-          In b (moved_by env init_st st') ->
+          In b (moved_by env AN init_st st') ->
           ~ In b
               (sec_of env
                  (List.map fst (n.(n_in) ++ n.(n_vars) ++ n.(n_out)))
@@ -2857,7 +2904,9 @@ Import UNN.Fresh.Tactics.
                      s_out   := out;
                      s_reset := rst_type;
                      s_clk   := clk_type;
-                     s_constraints := simplify (collapse cns) (locals ++ minted st st') |}.
+                     s_constraints := simplify (collapse cns)
+                                       (locals ++ anon_images env n
+                                        ++ minted st st') |}.
     Proof.
       intros G n aux sg st st' H.
       unfold generate_lnode_sig in H.
@@ -2884,7 +2933,7 @@ Import UNN.Fresh.Tactics.
                       s_reset := rst_type; s_clk := clk_type;
                       s_constraints :=
                         simplify (collapse cns)
-                          (locals ++ minted st s7) |}
+                          (locals ++ anon_images env n ++ minted st s7) |}
               /\ st' = s7) as (? & ?)
           by (inversion H; auto); subst sg; subst st'.
       exists clk_id, rst_id, clk_type, rst_type, inp, out, locals, cns.
@@ -3088,7 +3137,7 @@ Import UNN.Fresh.Tactics.
         Forall (wl_equation P) n.(n_eqs) ->
         Forall (wc_equation P vars) n.(n_eqs) ->
         (forall x,
-            In x (moved_by env init_st
+            In x (moved_by env AN init_st
                     (snd (unnest_equations P n.(n_eqs) init_st))) ->
             ~ In x scope) ->
         (forall eq eqs1 s s',
@@ -3157,7 +3206,7 @@ Import UNN.Fresh.Tactics.
         Forall (wc_equation P vars) n.(n_eqs) ->
         Forall (fun eq => Forall (src_exp vars AN) (snd eq)) n.(n_eqs) ->
         (forall x,
-            In x (moved_by env init_st
+            In x (moved_by env AN init_st
                     (snd (unnest_equations P n.(n_eqs) init_st))) ->
             ~ In x scope) ->
         (forall eq, In eq n.(n_eqs) ->
@@ -3319,7 +3368,7 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints G env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) st0 = OK (cns, ct1) ->
-            forall x, In x (locals ++ minted st0 ct1) -> ~ In x scope0) ->
+            forall x, In x (locals ++ anon_images env n ++ minted st0 ct1) -> ~ In x scope0) ->
         generate_lnode_sig G n env aux st0 = OK (sg, st1) ->
         generate_lnode_sig G (unnest_node P n Hwl Hpref) env aux st0
           = OK (sg', st1') ->
@@ -3416,7 +3465,7 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints G1 env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) st0 = OK (cns, ct1) ->
-            forall x, In x (locals ++ minted st0 ct1) -> ~ In x scope0) ->
+            forall x, In x (locals ++ anon_images env n ++ minted st0 ct1) -> ~ In x scope0) ->
         generate_lnode_sig G1 n env aux st0 = OK (sg, st1) ->
         generate_lnode_sig G2 (unnest_node P n Hwl Hpref) env aux st0
           = OK (sg', st1') ->
@@ -3523,7 +3572,7 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints G1 env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS = OK (cns, ct1) ->
-            forall x, In x (locals ++ minted stS ct1) -> ~ In x scope0) ->
+            forall x, In x (locals ++ anon_images env n ++ minted stS ct1) -> ~ In x scope0) ->
         generate_lnode_sig G1 n env aux stS = OK (sg, stS1) ->
         generate_lnode_sig G2 (unnest_node P n Hwl Hpref) env aux stT
           = OK (sg', stT1) ->
@@ -3613,7 +3662,7 @@ Import UNN.Fresh.Tactics.
         Forall (wl_equation P) n.(n_eqs) ->
         Forall (wc_equation P vars) n.(n_eqs) ->
         (forall y,
-            In y (moved_by env init_st
+            In y (moved_by env AN init_st
                     (snd (unnest_equations P n.(n_eqs) init_st))) ->
             ~ In y scope) ->
         (** the ambient premises: what the streams contract removes *)
@@ -3643,7 +3692,7 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints accS env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS0 = OK (cns, ct1) ->
-            forall y, In y (locals ++ minted stS0 ct1) -> ~ In y scope0) ->
+            forall y, In y (locals ++ anon_images env n ++ minted stS0 ct1) -> ~ In y scope0) ->
         (** the program-level facts about the published pair *)
         signature_good sgS ->
         NoDup (signature_scope sgS) ->
@@ -3727,7 +3776,7 @@ Import UNN.Fresh.Tactics.
         Forall (wc_equation P vars) n.(n_eqs) ->
         Forall (fun eq => Forall (src_exp vars AN) (snd eq)) n.(n_eqs) ->
         (forall y,
-            In y (moved_by env init_st
+            In y (moved_by env AN init_st
                     (snd (unnest_equations P n.(n_eqs) init_st))) ->
             ~ In y scope) ->
         (** the pointwise ambient premises *)
@@ -3752,7 +3801,7 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints accS env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS0 = OK (cns, ct1) ->
-            forall y, In y (locals ++ minted stS0 ct1) -> ~ In y scope0) ->
+            forall y, In y (locals ++ anon_images env n ++ minted stS0 ct1) -> ~ In y scope0) ->
         (** the program-level facts about the published pair *)
         signature_good sgS ->
         NoDup (signature_scope sgS) ->

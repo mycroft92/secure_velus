@@ -1285,13 +1285,13 @@ Module Type SECNLUSTYPINGCORRECTNESS
   Qed.
 
   Corollary generate_all_source_signatures_scoped:
-    forall all_nodes env aux_names G,
-      Clo.wc_global all_nodes ->
+    forall P all_nodes env aux_names G,
+      Forall (Clo.wc_node P) all_nodes ->
       generate_node_env all_nodes = OK (env, aux_names) ->
       SECNLUSTYPING.generate_all_signatures all_nodes env aux_names = OK G ->
       secglobal_scoped G.
   Proof.
-    intros all_nodes env aux_names G Hwc Henvgen Hgen.
+    intros P all_nodes env aux_names G Hwc Henvgen Hgen.
     eapply SECNLUSTYPING.generate_all_signatures_scoped; eauto.
     eapply NAMEGEN.generate_node_env_injective; eauto.
   Qed.
@@ -1333,15 +1333,15 @@ Module Type SECNLUSTYPINGCORRECTNESS
 
   (** This is the main global correctness theorem for generated source signatures.  It threads the scoped environment through the whole NLustre global and proves that every generated signature is structurally good, so its visible constraints have the shape expected by later call and noninterference arguments. *)
   Theorem generate_all_source_signatures_good_scoped_env':
-    forall prefix nodes acc envs aux_names G,
+    forall P prefix nodes acc envs aux_names G,
       generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
-      Clo.wc_global nodes ->
+      Forall (Clo.wc_node P) nodes ->
       secglobal_scoped acc ->
       secglobal_good acc ->
       SECNLUSTYPING.generate_all_signatures_scoped_env' acc nodes envs aux_names = OK G ->
       secglobal_good G.
   Proof.
-    intros prefix nodes.
+    intros P prefix nodes.
     revert prefix.
     induction nodes as [|n nodes IH];
       intros prefix acc envs aux_names G
@@ -1349,7 +1349,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
     - simpl in Hgen.
       inversion Hgen; subst G.
       exact Hacc_good.
-    - inversion Hwc as [|n' ns Hwc_tail Hwc_head]; subst n' ns.
+    - inversion Hwc as [|n' ns Hwc_head Hwc_tail]; subst n' ns.
       simpl in Hgen.
       destruct (SECNLUSTYPING.generate_node_sig_scoped_env acc n envs aux_names)
         as [sig|e_sig] eqn:Hsig.
@@ -1422,7 +1422,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
         rewrite Hsigdef_local.
         exact
           (generate_node_sig_good_from_local_env
-             acc nodes n local_env rec aux_names st_pref st_local
+             acc P n local_env rec aux_names st_pref st_local
              clk_type rst_type inp out locals raw st_n
              Hlocal Haux_match Hacc_scoped Hwc_head
              Hclk Hrst Hinp Hout Hlocals Hraw).
@@ -1457,7 +1457,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
         {
           exact
             (SECNLUSTYPING.generate_node_sig_scoped
-               acc nodes n local_env aux_names sig
+               acc P n local_env aux_names sig
                Hacc_scoped Hinj_local Hwc_head Hsig).
         }
         exact (secglobal_scoped_cons sig acc Hsig_scoped Hacc_scoped).
@@ -1479,15 +1479,15 @@ Module Type SECNLUSTYPINGCORRECTNESS
   Qed.
 
   Corollary generate_all_source_signatures_good_scoped_env:
-    forall all_nodes envs aux_names G,
+    forall P all_nodes envs aux_names G,
       generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-      Clo.wc_global all_nodes ->
+      Forall (Clo.wc_node P) all_nodes ->
       SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G ->
       secglobal_good G.
   Proof.
-    intros all_nodes envs aux_names G Henvsgen Hwc Hgen.
+    intros P all_nodes envs aux_names G Henvsgen Hwc Hgen.
     eapply generate_all_source_signatures_good_scoped_env'
-      with (prefix := []) (acc := []); eauto.
+      with (P := P) (prefix := []) (acc := []); eauto.
     - apply secglobal_scoped_nil.
     - apply secglobal_good_nil.
   Qed.
@@ -2234,11 +2234,11 @@ Module Type SECNLUSTYPINGCORRECTNESS
   Qed.
 
   Theorem generated_signature_constraints_mention_reset_scoped_env':
-    forall prefix nodes acc envs aux_names envs_pref aux_pref st G,
+    forall P prefix nodes acc envs aux_names envs_pref aux_pref st G,
       NAMEGEN.generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
         = OK ((envs_pref, aux_pref), st) ->
       generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
-      Clo.wc_global nodes ->
+      Forall (Clo.wc_node P) nodes ->
       (forall f sig lhs y,
           SIG.find_signature f acc = Some sig ->
           In (lhs, [y]) sig.(s_constraints) ->
@@ -2253,7 +2253,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
         In (lhs, [y]) sig.(s_constraints) ->
         In sig.(s_reset) lhs.
   Proof.
-    intros prefix nodes.
+    intros P prefix nodes.
     revert prefix.
     induction nodes as [|n nodes IH];
       intros prefix acc envs aux_names envs_pref aux_pref st G
@@ -2261,7 +2261,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
              f sig lhs y Hfindsig Hin.
     - simpl in Hgen. inversion Hgen; subst G.
       eapply Hmentionacc; eauto.
-    - inversion Hwc as [|n' ns Hwc_tail Hwc_head]; subst n' ns.
+    - inversion Hwc as [|n' ns Hwc_head Hwc_tail]; subst n' ns.
       simpl in Hgen.
       destruct (SECNLUSTYPING.generate_node_sig_scoped_env acc n envs aux_names)
         as [nsig|e_sig] eqn:Hnsig; try discriminate.
@@ -2317,7 +2317,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
                 constraints_mention rst_type (SymTypes.simplify raw locals)).
       {
         eapply generate_node_sig_constraints_mention_reset_from_local_env
-          with (P := nodes) (rec := rec) (st := st) (st' := st_local); eauto.
+          with (P := P) (rec := rec) (st := st) (st' := st_local); eauto.
       }
       assert (Hnsigprop :
                 forall lhs0 y0,
@@ -2416,15 +2416,15 @@ Module Type SECNLUSTYPINGCORRECTNESS
   Qed.
 
   Theorem generated_signature_constraints_mention_reset_scoped_env:
-    forall all_nodes envs aux_names G f sig y lhs,
+    forall P all_nodes envs aux_names G f sig y lhs,
       generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-      Clo.wc_global all_nodes ->
+      Forall (Clo.wc_node P) all_nodes ->
       SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G ->
       SIG.find_signature f G = Some sig ->
       findST sig.(s_constraints) y = Some lhs ->
       In sig.(s_reset) lhs.
   Proof.
-    intros all_nodes envs aux_names G f sig y lhs
+    intros P all_nodes envs aux_names G f sig y lhs
            Henvsgen Hwc Hgen Hfindsig Hfindlhs.
     unfold SECNLUSTYPING.generate_all_signatures_scoped_env in Hgen.
     assert (Hpref0 :
@@ -2444,7 +2444,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
     { intros f0 sig0 Hfind0. simpl in Hfind0. discriminate. }
     pose proof
       (generated_signature_constraints_mention_reset_scoped_env'
-         [] all_nodes [] envs aux_names (Env.empty _) [] NAMEGEN.init_state G
+         P [] all_nodes [] envs aux_names (Env.empty _) [] NAMEGEN.init_state G
          Hpref0 Henvsgen Hwc
          Hmention0 Hnd0
          (SIG.secglobal_scope_bounded_above_nil NAMEGEN.init_state)
@@ -2774,11 +2774,11 @@ Module Type SECNLUSTYPINGCORRECTNESS
   Qed.
 
   Theorem generated_signature_constraints_mention_clock_scoped_env':
-    forall prefix nodes acc envs aux_names envs_pref aux_pref st G,
+    forall P prefix nodes acc envs aux_names envs_pref aux_pref st G,
       NAMEGEN.generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
         = OK ((envs_pref, aux_pref), st) ->
       generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
-      Clo.wc_global nodes ->
+      Forall (Clo.wc_node P) nodes ->
       (forall f sig lhs y,
           SIG.find_signature f acc = Some sig ->
           In (lhs, [y]) sig.(s_constraints) ->
@@ -2793,7 +2793,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
         In (lhs, [y]) sig.(s_constraints) ->
         In sig.(s_clk) lhs.
   Proof.
-    intros prefix nodes.
+    intros P prefix nodes.
     revert prefix.
     induction nodes as [|n nodes IH];
       intros prefix acc envs aux_names envs_pref aux_pref st G
@@ -2801,7 +2801,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
              f sig lhs y Hfindsig Hin.
     - simpl in Hgen. inversion Hgen; subst G.
       eapply Hmentionacc; eauto.
-    - inversion Hwc as [|n' ns Hwc_tail Hwc_head]; subst n' ns.
+    - inversion Hwc as [|n' ns Hwc_head Hwc_tail]; subst n' ns.
       simpl in Hgen.
       destruct (SECNLUSTYPING.generate_node_sig_scoped_env acc n envs aux_names)
         as [nsig|e_sig] eqn:Hnsig; try discriminate.
@@ -2857,7 +2857,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
                 constraints_mention clk_type (SymTypes.simplify raw locals)).
       {
         eapply generate_node_sig_constraints_mention_clock_from_local_env
-          with (P := nodes) (rec := rec) (st := st) (st' := st_local); eauto.
+          with (P := P) (rec := rec) (st := st) (st' := st_local); eauto.
       }
       assert (Hnsigprop :
                 forall lhs0 y0,
@@ -2956,15 +2956,15 @@ Module Type SECNLUSTYPINGCORRECTNESS
   Qed.
 
   Theorem generated_signature_constraints_mention_clock_scoped_env:
-    forall all_nodes envs aux_names G f sig y lhs,
+    forall P all_nodes envs aux_names G f sig y lhs,
       generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-      Clo.wc_global all_nodes ->
+      Forall (Clo.wc_node P) all_nodes ->
       SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G ->
       SIG.find_signature f G = Some sig ->
       findST sig.(s_constraints) y = Some lhs ->
       In sig.(s_clk) lhs.
   Proof.
-    intros all_nodes envs aux_names G f sig y lhs
+    intros P all_nodes envs aux_names G f sig y lhs
            Henvsgen Hwc Hgen Hfindsig Hfindlhs.
     unfold SECNLUSTYPING.generate_all_signatures_scoped_env in Hgen.
     assert (Hpref0 :
@@ -2984,7 +2984,7 @@ Module Type SECNLUSTYPINGCORRECTNESS
     { intros f0 sig0 Hfind0. simpl in Hfind0. discriminate. }
     pose proof
       (generated_signature_constraints_mention_clock_scoped_env'
-         [] all_nodes [] envs aux_names (Env.empty _) [] NAMEGEN.init_state G
+         P [] all_nodes [] envs aux_names (Env.empty _) [] NAMEGEN.init_state G
          Hpref0 Henvsgen Hwc
          Hmention0 Hnd0
          (SIG.secglobal_scope_bounded_above_nil NAMEGEN.init_state)

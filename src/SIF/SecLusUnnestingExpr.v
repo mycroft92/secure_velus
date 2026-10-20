@@ -106,6 +106,22 @@ Import UNN.Fresh.Tactics.
         the source node's own variables, and the names the security monad
         mints for its nested calls. *)
     Variable scope   : list ident.
+
+    (** The node's anonymous streams: the names of its nested calls' results.
+        Unnesting reuses them as the names of the variables it creates, and
+        their security names are visible to the source run (a clock over such
+        a name mentions them), so they are not part of what a run may move. *)
+    Variable AN      : list ident.
+
+    (** The variables unnesting makes up are fresh generated names, which no
+        anonymous stream of the node is: its own are atoms or [elab] names. *)
+    Hypothesis AN_apart_anns :
+      forall anns xs st st',
+        idents_for_anns anns st = (xs, st') ->
+        forall x, In x (List.map fst xs) -> ~ In x AN.
+    Hypothesis AN_apart_fresh :
+      forall (b : type * clock) x st st',
+        fresh_ident norm1 b st = (x, st') -> ~ In x AN.
     Variable stLo     : sec_state.
     Variable stF     : sec_state.
 
@@ -139,7 +155,34 @@ Import UNN.Fresh.Tactics.
         (st_ids st').
 
     Definition moved_by (st st' : fresh_st (type * clock)) : list ident :=
-      sec_of (new_ids st st').
+      sec_of (filter (fun x => if in_dec ident_eq_dec x AN then false else true)
+                (new_ids st st')).
+
+    Lemma In_moved_by :
+      forall st st' x b,
+        In x (new_ids st st') -> ~ In x AN -> Env.find x env = Some b ->
+        In b (moved_by st st').
+    Proof.
+      intros st st' x b Hx Hn Hb. unfold moved_by, sec_of.
+      apply in_flat_map. exists x. split.
+      - apply filter_In. split; [exact Hx|].
+        destruct (in_dec ident_eq_dec x AN); [contradiction|reflexivity].
+      - rewrite Hb. now left.
+    Qed.
+
+    Lemma moved_by_In_inv :
+      forall st st' b,
+        In b (moved_by st st') ->
+        exists x, In x (new_ids st st') /\ ~ In x AN /\ Env.find x env = Some b.
+    Proof.
+      intros st st' b Hb. unfold moved_by, sec_of in Hb.
+      apply in_flat_map in Hb as (x & Hx & Hb).
+      apply filter_In in Hx as (Hx & Hn).
+      destruct (Env.find x env) as [b0|] eqn:Ex; [|destruct Hb].
+      destruct Hb as [Hb|[]]. subst b0. exists x.
+      split; [exact Hx|]. split; [|exact Ex].
+      destruct (in_dec ident_eq_dec x AN); [discriminate Hn|exact n].
+    Qed.
 
     Lemma new_ids_spec :
       forall st st' x,
@@ -185,15 +228,31 @@ Import UNN.Fresh.Tactics.
       apply in_flat_map. exists x. auto.
     Qed.
 
+    Lemma filter_AN_incl :
+      forall l1 l2,
+        incl l1 l2 ->
+        incl (filter (fun x => if in_dec ident_eq_dec x AN then false else true) l1)
+             (filter (fun x => if in_dec ident_eq_dec x AN then false else true) l2).
+    Proof.
+      intros l1 l2 H x Hx. apply filter_In in Hx as (Hx & Hf).
+      apply filter_In. split; [apply H; exact Hx|exact Hf].
+    Qed.
+
     Corollary moved_by_prefix :
       forall st st1 st', st_follows st1 st' ->
         incl (moved_by st st1) (moved_by st st').
-    Proof. intros. apply sec_of_incl, new_ids_prefix; auto. Qed.
+    Proof.
+      intros. unfold moved_by. apply sec_of_incl, filter_AN_incl, new_ids_prefix;
+        auto.
+    Qed.
 
     Corollary moved_by_suffix :
       forall st st1 st', st_follows st st1 ->
         incl (moved_by st1 st') (moved_by st st').
-    Proof. intros. apply sec_of_incl, new_ids_suffix; auto. Qed.
+    Proof.
+      intros. unfold moved_by. apply sec_of_incl, filter_AN_incl, new_ids_suffix;
+        auto.
+    Qed.
 
     (** The complement of [agree_on]: the two valuations coincide everywhere
         *outside* a set.  This, and not [agree_on], is what the induction can
@@ -496,12 +555,11 @@ Import UNN.Fresh.Tactics.
         NoDup (vars_defined eqs ++ st_ids st) ->
         In x (vars_defined eqs) ->
         Env.find x env = Some b ->
+        ~ In x AN ->
         In b (moved_by st st').
     Proof.
-      intros eqs st st' x b Hperm Hnd Hx Hb.
-      unfold moved_by, sec_of. apply in_flat_map.
-      exists x. split; [eapply vars_defined_in_new_ids; eauto|].
-      rewrite Hb. now left.
+      intros eqs st st' x b Hperm Hnd Hx Hb Hn.
+      eapply In_moved_by; [eapply vars_defined_in_new_ids; eauto|exact Hn|exact Hb].
     Qed.
 
     Lemma vars_defined_incl_l :
@@ -738,12 +796,8 @@ Import UNN.Fresh.Tactics.
         In x (moved_by sta stb) -> ~ In x (moved_by stb stc).
     Proof.
       intros sta stb stc x Hx Hy.
-      unfold moved_by, sec_of in *.
-      apply in_flat_map in Hx as (u & Hu & Hx).
-      apply in_flat_map in Hy as (v & Hv & Hy).
-      destruct (Env.find u env) as [bu|] eqn:Eu; simpl in Hx; [|contradiction].
-      destruct (Env.find v env) as [bv|] eqn:Ev; simpl in Hy; [|contradiction].
-      destruct Hx as [Hx|[]]; destruct Hy as [Hy|[]]; subst.
+      apply moved_by_In_inv in Hx as (u & Hu & _ & Eu).
+      apply moved_by_In_inv in Hy as (v & Hv & _ & Ev).
       assert (u = v) as ? by (eapply env_inj; eauto); subst.
       apply new_ids_spec in Hu as (Hu & _).
       apply new_ids_spec in Hv as (_ & Hv). contradiction.
@@ -2950,9 +3004,12 @@ Import UNN.Fresh.Tactics.
         - eapply NoDup_app_In; eauto. }
       assert (forall b, In b (sec_of (List.map fst xs)) ->
                         In b (moved_by st2 st')) as Hbnew.
-      { intros b Hb. unfold sec_of, moved_by in *.
+      { intros b Hb. unfold sec_of in Hb.
         apply in_flat_map in Hb as (x & Hx & Hb).
-        apply in_flat_map. exists x. split; auto. }
+        destruct (Env.find x env) as [b0|] eqn:Ex; [|destruct Hb].
+        destruct Hb as [Hb|[]]. subst b0.
+        exact (In_moved_by _ _ x b (Hxnew x Hx)
+                 (AN_apart_anns _ _ _ _ Hids x Hx) Ex). }
       assert (forall b, In b (sec_of (List.map fst xs)) ->
                         ~ In b (scope ++ moved_by st st2)) as Hsepx.
       { intros b Hb Hin. apply Hbnew in Hb.
@@ -3272,9 +3329,12 @@ Import UNN.Fresh.Tactics.
         - eapply NoDup_app_In; eauto. }
       assert (forall b, In b (sec_of (List.map fst xs)) ->
                         In b (moved_by st2 st')) as Hbnew.
-      { intros b Hb. unfold sec_of, moved_by in *.
+      { intros b Hb. unfold sec_of in Hb.
         apply in_flat_map in Hb as (x & Hx & Hb).
-        apply in_flat_map. exists x. split; auto. }
+        destruct (Env.find x env) as [b0|] eqn:Ex; [|destruct Hb].
+        destruct Hb as [Hb|[]]. subst b0.
+        exact (In_moved_by _ _ x b (Hxnew x Hx)
+                 (AN_apart_anns _ _ _ _ Hids x Hx) Ex). }
       assert (forall b, In b (sec_of (List.map fst xs)) ->
                         ~ In b (scope ++ moved_by st st2)) as Hsepx.
       { intros b Hb Hin. apply Hbnew in Hb.
@@ -3763,9 +3823,11 @@ Import UNN.Fresh.Tactics.
           by (eapply NoDup_app_l; exact Hndx).
       assert (forall b, In b (sec_of (List.map fst xs)) ->
                         In b (moved_by st2 st')) as Hbnew.
-      { intros b Hb. unfold sec_of, moved_by in *.
+      { intros b Hb. unfold sec_of in Hb.
         apply in_flat_map in Hb as (x & Hx & Hb).
-        apply in_flat_map. exists x. split; auto.
+        destruct (Env.find x env) as [b0|] eqn:Ex; [|destruct Hb].
+        destruct Hb as [Hb|[]]. subst b0.
+        refine (In_moved_by _ _ x b _ (AN_apart_anns _ _ _ _ Hids x Hx) Ex).
         apply new_ids_spec. split.
         - eapply idents_for_anns_incl_ids; eauto.
         - eapply NoDup_app_In; eauto. }
@@ -4293,9 +4355,11 @@ Import UNN.Fresh.Tactics.
           by (eapply NoDup_app_l; exact Hndx).
       assert (forall b, In b (sec_of (List.map fst xs)) ->
                         In b (moved_by st2 st')) as Hbnew.
-      { intros b Hb. unfold sec_of, moved_by in *.
+      { intros b Hb. unfold sec_of in Hb.
         apply in_flat_map in Hb as (x & Hx & Hb).
-        apply in_flat_map. exists x. split; auto.
+        destruct (Env.find x env) as [b0|] eqn:Ex; [|destruct Hb].
+        destruct Hb as [Hb|[]]. subst b0.
+        refine (In_moved_by _ _ x b _ (AN_apart_anns _ _ _ _ Hids x Hx) Ex).
         apply new_ids_spec. split.
         - eapply idents_for_anns_incl_ids; eauto.
         - eapply NoDup_app_In; eauto. }

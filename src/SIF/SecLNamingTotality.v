@@ -219,6 +219,44 @@ Module Type SECLNAMINGTOTALITY
     apply Permutation_app_head, Permutation_app_comm.
   Qed.
 
+  Lemma anon_stream_not_sec :
+    forall (n : node) w i,
+      PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs) ->
+      InMembers w (anon_in_eqs n.(n_eqs)) ->
+      w <> Ids.gensym Ids.sec i.
+  Proof.
+    intros n w i Hsub Hin.
+    destruct n.(n_good) as [Hgood _].
+    rewrite Forall_forall in Hgood.
+    apply atom_or_gensym_not_sec_gensym.
+    apply AtomOrGensym_mono with (p := n.(n_prefixes)); [exact Hsub|].
+    apply Hgood. rewrite !map_app. apply in_or_app. right.
+    apply in_or_app. right. apply in_or_app. right.
+    now apply fst_InMembers.
+  Qed.
+
+  Lemma declared_not_anon :
+    forall (n : node) w,
+      In w (List.map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars))) ->
+      ~ InMembers w (anon_in_eqs n.(n_eqs)).
+  Proof.
+    intros n w Hin.
+    apply (NoDupMembers_app_InMembers w
+             (n.(n_in) ++ n.(n_vars) ++ n.(n_out))
+             (anon_in_eqs n.(n_eqs))).
+    - rewrite <- !app_assoc. exact n.(n_nodup).
+    - apply fst_InMembers.
+      eapply Permutation_in; [apply Permutation_sym, lnode_keys_perm|exact Hin].
+  Qed.
+
+  Lemma lnode_anon_NoDup :
+    forall (n : node), NoDup (List.map fst (anon_in_eqs n.(n_eqs))).
+  Proof.
+    intro n. apply fst_NoDupMembers.
+    pose proof n.(n_nodup) as H.
+    rewrite !app_assoc in H. apply NoDupMembers_app_r in H. exact H.
+  Qed.
+
   (** * The Lustre naming pass succeeds on every node
 
       Both allocation lists are duplicate-free and the environment it fills
@@ -245,12 +283,26 @@ Module Type SECLNAMINGTOTALITY
       as (ienv & st2 & Hienv).
     { apply lnode_gather_linsts_NoDup. }
     { intros k _ Hin. eapply Env.Props.P.F.empty_in_iff; exact Hin. }
+    destruct (fresh_map_list_ok
+                (List.map fst (anon_in_eqs n.(n_eqs))) env' st2)
+      as (env'' & st3 & Henv2).
+    { apply lnode_anon_NoDup. }
+    { intros k Hk Hin. apply Env.Props.P.F.in_find_iff in Hin.
+      destruct (Env.find k env') as [b|] eqn:Hf; [|apply Hin; reflexivity].
+      destruct (fresh_map_list_domain_empty _ _ _ _ k b Henv Hf)
+        as [Hc|[Hc|Hc]].
+      - eapply anon_stream_not_sec; [exact Hsub|apply fst_InMembers; exact Hk|].
+        exact (eq_sym Hc).
+      - eapply anon_stream_not_sec; [exact Hsub|apply fst_InMembers; exact Hk|].
+        exact (eq_sym Hc).
+      - eapply declared_not_anon; [exact Hc|apply fst_InMembers; exact Hk]. }
     do 3 eexists.
     unfold generate_local_env_for_lnode.
     eapply NMbind_ok; [reflexivity|].
     eapply NMbind_ok; [reflexivity|].
     eapply NMbind_ok; [exact Henv|].
-    eapply NMbind_ok; [exact Hienv|reflexivity].
+    eapply NMbind_ok; [exact Hienv|].
+    eapply NMbind_ok; [exact Henv2|reflexivity].
   Qed.
 
   (** * And covers what the generators look up *)
@@ -268,13 +320,16 @@ Module Type SECLNAMINGTOTALITY
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
     eapply name_bind_inv in Hgen as (env0 & st3 & Henv & Hgen).
-    eapply name_bind_inv in Hgen as (ienv & st4 & Hienv & Hret).
+    eapply name_bind_inv in Hgen as (ienv & st4 & Hienv & Hgen).
+    eapply name_bind_inv in Hgen as (env2 & st5 & Henv2 & Hret).
     unfold NMret in Hret. inversion Hret; subst env rec st'.
     simpl in Hin.
-    eapply fresh_map_list_binds; [exact Henv|].
-    simpl. destruct Hin as [Hk|[Hk|Hk]]; auto.
-    right; right.
-    eapply Permutation_in; [apply lnode_keys_perm|exact Hk].
+    assert (exists ty, Env.find x env0 = Some ty) as (ty0 & Hty0).
+    { eapply fresh_map_list_binds; [exact Henv|].
+      simpl. destruct Hin as [Hk|[Hk|Hk]]; auto.
+      right; right.
+      eapply Permutation_in; [apply lnode_keys_perm|exact Hk]. }
+    exists ty0. eapply fresh_map_list_preserves_find; eauto.
   Qed.
 
   Corollary generate_local_env_for_lnode_covers :
@@ -372,36 +427,6 @@ Module Type SECLNAMINGTOTALITY
       never in the environment, and [assign_clk_type] cannot have succeeded
       on a clock naming it. *)
 
-  Lemma anon_stream_not_sec :
-    forall (n : node) w i,
-      PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs) ->
-      InMembers w (anon_in_eqs n.(n_eqs)) ->
-      w <> Ids.gensym Ids.sec i.
-  Proof.
-    intros n w i Hsub Hin.
-    destruct n.(n_good) as [Hgood _].
-    rewrite Forall_forall in Hgood.
-    apply atom_or_gensym_not_sec_gensym.
-    apply AtomOrGensym_mono with (p := n.(n_prefixes)); [exact Hsub|].
-    apply Hgood. rewrite !map_app. apply in_or_app. right.
-    apply in_or_app. right. apply in_or_app. right.
-    now apply fst_InMembers.
-  Qed.
-
-  Lemma declared_not_anon :
-    forall (n : node) w,
-      In w (List.map fst (n.(n_in) ++ n.(n_out) ++ n.(n_vars))) ->
-      ~ InMembers w (anon_in_eqs n.(n_eqs)).
-  Proof.
-    intros n w Hin.
-    apply (NoDupMembers_app_InMembers w
-             (n.(n_in) ++ n.(n_vars) ++ n.(n_out))
-             (anon_in_eqs n.(n_eqs))).
-    - rewrite <- !app_assoc. exact n.(n_nodup).
-    - apply fst_InMembers.
-      eapply Permutation_in; [apply Permutation_sym, lnode_keys_perm|exact Hin].
-  Qed.
-
   (** * Two separations the scope choice rests on
 
       Taking [scope] to be the published signature's own scope --
@@ -439,36 +464,7 @@ Module Type SECLNAMINGTOTALITY
   Qed.
 
 
-  Theorem env_key_not_anon :
-    forall (n : node) st le aux st' w b,
-      PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs) ->
-      generate_local_env_for_lnode n st = OK ((le, aux), st') ->
-      Env.find w le = Some b ->
-      ~ InMembers w (anon_in_eqs n.(n_eqs)).
-  Proof.
-    intros n st le aux st' w b Hsub Hgen Hf.
-    (** what the two auxiliary names are *)
-    assert (aux.(nclk) = Ids.gensym Ids.sec st
-            /\ aux.(nrst) = Ids.gensym Ids.sec (Pos.succ st)) as (Hclk & Hrst).
-    { unfold generate_local_env_for_lnode in Hgen.
-      apply name_bind_inv in Hgen as (c & s1 & Hc & Hgen).
-      apply name_bind_inv in Hgen as (r & s2 & Hr & Hgen).
-      apply name_bind_inv in Hgen as (e1 & s3 & He1 & Hgen).
-      apply name_bind_inv in Hgen as (i1 & s4 & Hi1 & Hret).
-      unfold NMret in Hret. inversion Hret; subst le aux st'.
-      unfold fresh_ident_gen in Hc, Hr.
-      inversion Hc; subst c s1. inversion Hr; subst r s2.
-      simpl. split; reflexivity. }
-    destruct (generate_local_env_for_lnode_domain n st le aux st' w b Hgen Hf)
-      as [Hw|[Hw|Hw]].
-    - rewrite Hclk in Hw. intro Hanon.
-      exact (anon_stream_not_sec n w st Hsub Hanon Hw).
-    - rewrite Hrst in Hw. intro Hanon.
-      exact (anon_stream_not_sec n w (Pos.succ st) Hsub Hanon Hw).
-    - exact (declared_not_anon n w Hw).
-  Qed.
-
-  (** * And so: a call argument's fresh streams are never environment keys
+  (** * Anonymous streams of a call's arguments
 
       [anon_in] of a call is the fresh streams of its arguments, so anything
       an argument introduces -- in particular the named output of a *nested*
@@ -507,23 +503,6 @@ Module Type SECLNAMINGTOTALITY
     exists (anon_in_eq eq). split; [|exact (in_map anon_in_eq eqs eq Heq)].
     unfold anon_in_eq, anon_ins. apply in_concat.
     exists (anon_in e). split; [exact Hw|exact (in_map anon_in (snd eq) e He)].
-  Qed.
-
-  Theorem call_arg_fresh_not_env_key :
-    forall (n : node) st le aux st' eq f es er anns e w a,
-      PS.Subset n.(n_prefixes) (PSP.of_list gensym_prefs) ->
-      generate_local_env_for_lnode n st = OK ((le, aux), st') ->
-      In eq n.(n_eqs) ->
-      In (Eapp f es er anns) (snd eq) ->
-      In e es ->
-      In (w, a) (fresh_in e) ->
-      forall b, Env.find w le <> Some b.
-  Proof.
-    intros n st le aux st' eq f es er anns e w a Hsub Hgen Heq Hcall He Hw b Hf.
-    apply (env_key_not_anon n st le aux st' w b Hsub Hgen Hf).
-    apply (anon_in_exp_in_eqs n.(n_eqs) eq (Eapp f es er anns) w a);
-      [exact Heq|exact Hcall|].
-    exact (fresh_in_arg_in_anon_in f es er anns e w a He Hw).
   Qed.
 
   (** A named nested call is one such stream, by the definition of
@@ -683,7 +662,8 @@ Module Type SECLNAMINGTOTALITY
         apply name_bind_inv in Hloc as (c1 & s1 & _ & Hloc).
         apply name_bind_inv in Hloc as (c2 & s2 & _ & Hloc).
         apply name_bind_inv in Hloc as (c3 & s3 & _ & Hloc).
-        apply name_bind_inv in Hloc as (c4 & s4 & _ & Hret0).
+        apply name_bind_inv in Hloc as (c4 & s4 & _ & Hloc).
+        apply name_bind_inv in Hloc as (c5 & s5 & _ & Hret0).
         unfold NMret in Hret0. inversion Hret0. reflexivity. }
       rewrite (IH envs1 (r0 :: acc) st2 envs' aux st' x Hrec
                  ltac:(intro Hc; apply Hnin; now right)).
@@ -728,7 +708,8 @@ Module Type SECLNAMINGTOTALITY
         apply name_bind_inv in Hloc as (c1 & s1 & _ & Hl).
         apply name_bind_inv in Hl as (c2 & s2 & _ & Hl).
         apply name_bind_inv in Hl as (c3 & s3 & _ & Hl).
-        apply name_bind_inv in Hl as (c4 & s4 & _ & Hret0).
+        apply name_bind_inv in Hl as (c4 & s4 & _ & Hl).
+        apply name_bind_inv in Hl as (c5 & s5 & _ & Hret0).
         unfold NMret in Hret0. inversion Hret0. reflexivity. }
       exists le0, r0, st, st1.
       split; [exact Hloc|split].
@@ -813,7 +794,8 @@ Module Type SECLNAMINGTOTALITY
     eapply name_bind_inv in Hgen as (clk_name & st1 & Hclk & Hgen).
     eapply name_bind_inv in Hgen as (rst_name & st2 & Hrst & Hgen).
     eapply name_bind_inv in Hgen as (env0 & st3 & Hmap & Hgen).
-    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hret).
+    eapply name_bind_inv in Hgen as (inst_env0 & st3i & Hinstgen & Hgen).
+    eapply name_bind_inv in Hgen as (env2 & st5 & Henv2 & Hret).
     unfold fresh_ident_gen in Hclk. inversion Hclk; subst clk_name st1.
     unfold fresh_ident_gen in Hrst. inversion Hrst; subst rst_name st2.
     unfold NMret in Hret. inversion Hret; subst env aux st'.

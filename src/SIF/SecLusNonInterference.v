@@ -172,6 +172,68 @@ Module Type SECLUSNONINTERFERENCE
       component alongside each type -- [map fst] is the part a callee is
       instantiated at. *)
 
+  (** * Calls inside expressions
+
+      Immediate and transitive subexpressions, restated here so that this
+      file does not depend on the unnesting development. *)
+  Inductive imm_subexp : exp -> exp -> Prop :=
+  | isub_Eunop : forall op e a, imm_subexp e (Eunop op e a)
+  | isub_Ebinop_l : forall op e1 e2 a, imm_subexp e1 (Ebinop op e1 e2 a)
+  | isub_Ebinop_r : forall op e1 e2 a, imm_subexp e2 (Ebinop op e1 e2 a)
+  | isub_Efby_0 : forall e0s es a e, In e e0s -> imm_subexp e (Efby e0s es a)
+  | isub_Efby_1 : forall e0s es a e, In e es -> imm_subexp e (Efby e0s es a)
+  | isub_Earrow_0 : forall e0s es a e, In e e0s -> imm_subexp e (Earrow e0s es a)
+  | isub_Earrow_1 : forall e0s es a e, In e es -> imm_subexp e (Earrow e0s es a)
+  | isub_Ewhen : forall es x b a e, In e es -> imm_subexp e (Ewhen es x b a)
+  | isub_Emerge_t : forall x ets efs a e, In e ets -> imm_subexp e (Emerge x ets efs a)
+  | isub_Emerge_f : forall x ets efs a e, In e efs -> imm_subexp e (Emerge x ets efs a)
+  | isub_Eite_c : forall c ets efs a, imm_subexp c (Eite c ets efs a)
+  | isub_Eite_t : forall c ets efs a e, In e ets -> imm_subexp e (Eite c ets efs a)
+  | isub_Eite_f : forall c ets efs a e, In e efs -> imm_subexp e (Eite c ets efs a)
+  | isub_Eapp_arg : forall f es ro anns e, In e es -> imm_subexp e (Eapp f es ro anns)
+  | isub_Eapp_rst : forall f es r anns, imm_subexp r (Eapp f es (Some r) anns).
+
+  Inductive subexp : exp -> exp -> Prop :=
+  | subexp_refl : forall e, subexp e e
+  | subexp_step : forall e'' e' e, imm_subexp e' e -> subexp e'' e' -> subexp e'' e.
+
+  (** A call's result flows are all named, and the environment has a
+      security name for each.  Such a call's valuation does not depend on the
+      monad state it is read at: the result names are looked up, not minted.
+      This is what lets a predicate speak of a *nested* call's valuation
+      without tracking where in the run it sits.  Flows the elaborator leaves
+      unnamed get a freshly minted name whose identity depends on the run;
+      the predicate below says nothing about such calls. *)
+  Definition named_results (env : Env.t ident) (anns : list LSyn.ann) : Prop :=
+    Forall (fun a => exists w b, LSyn.stream_name a = Some w /\ Env.find w env = Some b)
+           anns.
+
+  Definition apps_named (env : Env.t ident) (e : exp) : Prop :=
+    forall f es ro anns,
+      subexp (Eapp f es ro anns) e -> named_results env anns.
+
+  (** What a call is instantiated at: the argument types, the reset level it
+      receives and its base clock, replaying the steps [assign_lexp_type]
+      takes in its call case, in the same order. *)
+  Definition app_data (G : secglobal) (env : Env.t ident) (base_ty rst_ty : ident)
+             (es : list exp) (er : option exp)
+    : Sec (list LST * LST * ST) :=
+    do argts <- assign_lexps G env base_ty rst_ty es;
+    do rstty <- (match er with
+                 | None => ret (lvar rst_ty)
+                 | Some e1 =>
+                     do t1  <- assign_lexp_type G env base_ty rst_ty e1;
+                     do a1  <- single t1;
+                     do rck <- option_to_sec
+                                 (assign_clk_type env base_ty
+                                    (hd Cbase (LSyn.clockof e1)));
+                     ret (ljoin (lvar rst_ty) (ljoin a1 (rck, [])))
+                 end);
+    do ckty <- option_to_sec
+                 (assign_clk_type env base_ty
+                    (find_base_clock (LSyn.clocksof es)));
+    ret (argts, rstty, ckty).
+
   Section GENERATED_LNODE_SECURITY.
     Variable all_lnodes : list node.
     Variable GL : secglobal.
@@ -201,13 +263,15 @@ Module Type SECLUSNONINTERFERENCE
                    s_reset := rst_type;
                    s_clk   := clk_type;
                    s_constraints :=
-                     SymTypes.simplify raw (locals ++ minted st0 st_n) |} ->
+                     SymTypes.simplify (collapse raw)
+                       (locals ++ anon_images ty_env nd ++ minted st0 st_n) |} ->
           signature_satisfied dlt_sig sig ->
           agree_on (signature_scope sig) dlt_sig dlt_raw ->
           listSatisfiable dlt_raw raw ->
 
           (forall xs f args a callee callee_sig ckty argts outtyp sta stb,
               In (xs, [Eapp f args None a]) nd.(n_eqs) ->
+              Forall (apps_named ty_env) args ->
               find_node f all_lnodes = Some callee ->
               find_signature f GL = Some callee_sig ->
               assign_clk_type ty_env sig.(s_clk)
@@ -215,7 +279,7 @@ Module Type SECLUSNONINTERFERENCE
               assign_lexps GL ty_env sig.(s_clk) sig.(s_reset) args sta
                 = OK (argts, stb) ->
               get_mappings xs ty_env = Some outtyp ->
-              lnode_security callee
+              lcallee_secure callee callee_sig
                 (SIGPROOFS.lat_valuation dlt_sig callee_sig (map fst argts) ckty
                    [sig.(s_reset)] outtyp)
                 (SIGPROOFS.lat_valuation dlt_raw callee_sig (map fst argts) ckty
@@ -225,6 +289,7 @@ Module Type SECLUSNONINTERFERENCE
                   ckty rty rstck argts outtyp sta stb,
               In (xs, [Eapp f args (Some (Evar r (rty0, (ckr, nm)))) a])
                  nd.(n_eqs) ->
+              Forall (apps_named ty_env) args ->
               find_node f all_lnodes = Some callee ->
               find_signature f GL = Some callee_sig ->
               assign_clk_type ty_env sig.(s_clk)
@@ -234,12 +299,48 @@ Module Type SECLUSNONINTERFERENCE
               assign_lexps GL ty_env sig.(s_clk) sig.(s_reset) args sta
                 = OK (argts, stb) ->
               get_mappings xs ty_env = Some outtyp ->
-              lnode_security callee
+              lcallee_secure callee callee_sig
                 (SIGPROOFS.lat_valuation dlt_sig callee_sig (map fst argts) ckty
                    (merge [sig.(s_reset)] (merge [rty] rstck)) outtyp)
                 (SIGPROOFS.lat_valuation dlt_raw callee_sig (map fst argts) ckty
                    (merge [sig.(s_reset)] (merge [rty] rstck)) outtyp)) ->
-          lnode_security nd dlt_sig dlt_raw.
+
+          (* every call nested inside an equation's expression, provided the
+             expression's calls all have named results *)
+          (forall xs es e f args ro anns callee callee_sig
+                  argts rstty ckty outs sta stm stb,
+              In (xs, es) nd.(n_eqs) ->
+              In e es ->
+              apps_named ty_env (Eapp f args ro anns) ->
+              (exists e1, imm_subexp e1 e /\ subexp (Eapp f args ro anns) e1) ->
+              find_node f all_lnodes = Some callee ->
+              find_signature f GL = Some callee_sig ->
+              app_data GL ty_env sig.(s_clk) sig.(s_reset) args ro sta
+                = OK ((argts, rstty, ckty), stm) ->
+              out_idents ty_env anns stm = OK (outs, stb) ->
+              lcallee_secure callee callee_sig
+                (SIGPROOFS.lat_valuation dlt_sig callee_sig (map fst argts) ckty
+                   (fst rstty) outs)
+                (SIGPROOFS.lat_valuation dlt_raw callee_sig (map fst argts) ckty
+                   (fst rstty) outs)) ->
+          lnode_security nd dlt_sig dlt_raw
+
+    (** A callee is secure at a call site when it is secure at the signature
+        valuation the call induces, for some raw valuation agreeing with the
+        induced one on the callee's signature scope: the callee's locals are
+        its own business, and each call instance may take a different
+        valuation of them.  (The NLustre [callee_secure].) *)
+    with lcallee_secure
+      : node -> signature -> ground_instantiation -> ground_instantiation
+        -> Prop :=
+    | LCalleeSecure :
+        forall callee callee_sig dlt_sig_c dlt_raw_c dlt_w,
+          agree_on (signature_scope callee_sig) dlt_raw_c dlt_w ->
+          lnode_security callee dlt_w dlt_w ->
+          lcallee_secure callee callee_sig dlt_sig_c dlt_raw_c.
+
+    Scheme lnode_security_mind := Induction for lnode_security Sort Prop
+      with lcallee_secure_mind := Induction for lcallee_secure Sort Prop.
 
   End GENERATED_LNODE_SECURITY.
 
@@ -290,6 +391,51 @@ Module Type SECLUSNONINTERFERENCE
       the pull-back walks back to the source equation and then to its shape.
       [to_equation] produces an [EqApp] only from an [Eapp], so the shape is
       forced. *)
+
+  (** A translated expression contains no call, so the named-results
+      condition holds of it vacuously. *)
+  Lemma to_lexp_apps_named :
+    forall e le env, to_lexp e = OK le -> apps_named env e.
+  Proof.
+    induction e using exp_ind2; intros le env0 Htr f' es' ro' anns' Hs;
+      simpl in Htr.
+    - inversion Hs; subst; match goal with Hi : imm_subexp _ _ |- _ => inversion Hi end.
+    - inversion Hs; subst; match goal with Hi : imm_subexp _ _ |- _ => inversion Hi end.
+    - destruct a; monadInv Htr.
+      inversion Hs; subst.
+      match goal with Hi : imm_subexp _ _ |- _ => inversion Hi; subst end.
+      refine (IHe _ _ EQ _ _ _ _ _); eassumption.
+    - destruct a; monadInv Htr.
+      inversion Hs; subst.
+      match goal with Hi : imm_subexp _ _ |- _ => inversion Hi; subst end.
+      + refine (IHe1 _ _ EQ _ _ _ _ _); eassumption.
+      + refine (IHe2 _ _ EQ1 _ _ _ _ _); eassumption.
+    - discriminate.
+    - discriminate.
+    - destruct es as [|e0 [|e1 es2]]; try discriminate.
+      destruct a as [tys ck]. destruct tys as [|ty [|ty' tys']]; try discriminate.
+      monadInv Htr.
+      inversion Hs; subst.
+      match goal with Hi : imm_subexp _ _ |- _ => inversion Hi; subst end.
+      match goal with Hin : In _ [_] |- _ => destruct Hin as [Hin|Hin]; [|destruct Hin]; subst end.
+      match goal with Hf : Forall _ [_] |- _ => inversion Hf; subst end.
+      match goal with Hh : forall le0 env1, to_lexp _ = OK le0 -> apps_named env1 _ |- _ =>
+        refine (Hh _ _ EQ _ _ _ _ _); eassumption end.
+    - discriminate.
+    - discriminate.
+    - discriminate.
+  Qed.
+
+  Lemma mmap_to_lexp_apps_named :
+    forall args les env,
+      Errors.mmap to_lexp args = OK les -> Forall (apps_named env) args.
+  Proof.
+    induction args as [|a args IH]; intros les env Hm; simpl in Hm.
+    - constructor.
+    - monadInv Hm. constructor.
+      + eapply to_lexp_apps_named; eauto.
+      + eapply IH; eauto.
+  Qed.
 
   Lemma to_equation_EqApp_inv :
     forall cenv envo eq xs ck f les,
@@ -625,12 +771,24 @@ Module Type SECLUSNONINTERFERENCE
   Proof.
     intros all_lnodes P Hp GL GN envs aux_names Htg Hord Hsig Hdom Hctxs
            nd0 dlt_sig0 dlt_raw0 Hsec.
-    induction Hsec as
-      [nd dlt_sig dlt_raw ty_env lsig clk_id rst_id clk_type rst_type
+    revert nd0 dlt_sig0 dlt_raw0 Hsec.
+    refine (lnode_security_mind all_lnodes GL envs aux_names
+              (fun nd dlt_sig dlt_raw _ =>
+                 forall nd' Hpn, to_node nd Hpn = OK nd' ->
+                   node_security P GN envs aux_names nd' dlt_sig dlt_raw)
+              (fun c csig dsc drc _ =>
+                 forall c' (Hpc : PS.Equal (n_prefixes c) (PSP.of_list gensym_prefs)),
+                   to_node c Hpc = OK c' ->
+                   exists w, agree_on (signature_scope csig) drc w /\
+                     node_security P GN envs aux_names c' w w)
+              _ _).
+    2:{ intros callee csig dsc drc w Hag Hsec IH c' Hpc Htc.
+        exists w. split; [exact Hag|exact (IH c' Hpc Htc)]. }
+    intros nd dlt_sig dlt_raw ty_env lsig clk_id rst_id clk_type rst_type
        inp out locals rawL st0 st_n
        Hfnd Hfenv Hfsig Hgen Haux Hclk Hrst Hinp Hout Hlocals Hraw
-       Hsigdef Hsatsig Hagree HsatL Hcall IHcall Hrcall IHrcall].
-    intros nd' Hpn Htn.
+       Hsigdef Hsatsig Hagree HsatL Hcall IHcall Hrcall IHrcall Hnest IHnest
+       nd' Hpn Htn.
     pose proof (to_node_name _ _ _ Htn) as Hname.
     destruct (Hctxs nd nd' Hpn ty_env clk_id rst_id clk_type rst_type
                 Hfnd Htn Hfenv Haux Hclk Hrst)
@@ -705,23 +863,19 @@ Module Type SECLUSNONINTERFERENCE
                      = OK (map (fun t => (t, [])) inptyp, init_state))
         by (eapply to_lexps_assign_eq; eassumption).
       destruct Hfields as (Hfin & Hfout & Hfrst & Hfclk).
-      specialize (Hcall xs f args a lcallee lcallee_sig ckty
-                    (map (fun t => (t, [])) inptyp) outtyp init_state init_state
-                    Hineq HfindL HfindLsig
-                    ltac:(rewrite Hfclk; exact Hckty)
-                    ltac:(rewrite Hfclk, Hfrst; exact Hlex)
-                    Houttyp).
       specialize (IHcall xs f args a lcallee lcallee_sig ckty
                     (map (fun t => (t, [])) inptyp) outtyp init_state init_state
-                    Hineq HfindL HfindLsig
+                    Hineq (mmap_to_lexp_apps_named _ _ _ Hles) HfindL HfindLsig
                     ltac:(rewrite Hfclk; exact Hckty)
                     ltac:(rewrite Hfclk, Hfrst; exact Hlex)
-                    Houttyp callee Hpc Htc).
-      rewrite map_map in IHcall. simpl in IHcall. rewrite map_id in IHcall.
-      rewrite Hfrst in IHcall.
-      erewrite (lat_valuation_fields_agree dlt_sig) in IHcall by exact Hfieldsc.
-      erewrite (lat_valuation_fields_agree dlt_raw) in IHcall by exact Hfieldsc.
-      exact IHcall.
+                    Houttyp callee Hpc Htc) as (dlt_w & Hagw & Hsecw).
+      rewrite map_map in Hagw. simpl in Hagw.
+      rewrite map_id in Hagw.
+      rewrite Hfrst in Hagw.
+      erewrite (lat_valuation_fields_agree dlt_raw) in Hagw by exact Hfieldsc.
+      rewrite (signature_scope_agree _ _ Hfieldsc) in Hagw.
+      exact (CalleeSecure P GN envs aux_names nd' dlt_sig dlt_raw callee callee_sig
+               _ _ dlt_w Hagw Hsecw).
     - (* the reset call sites *)
       intros xs ck f exps r ckr callee callee_sig ckty rty rstty inptyp outtyp
              st_clk st_rst st_inp HinEq HfindCallee HfindCalleeSig Hckty Hrty
@@ -744,29 +898,22 @@ Module Type SECLUSNONINTERFERENCE
                      = OK (map (fun t => (t, [])) inptyp, init_state))
         by (eapply to_lexps_assign_eq; eassumption).
       destruct Hfields as (Hfin & Hfout & Hfrst & Hfclk).
-      specialize (Hrcall xs f args r ty0 ckr nm a lcallee lcallee_sig ckty
-                    rty rstty (map (fun t => (t, [])) inptyp) outtyp
-                    init_state init_state
-                    Hineq HfindL HfindLsig
-                    ltac:(rewrite Hfclk; exact Hckty)
-                    Hrty
-                    ltac:(rewrite Hfclk; exact Hrstty)
-                    ltac:(rewrite Hfclk, Hfrst; exact Hlex)
-                    Houttyp).
       specialize (IHrcall xs f args r ty0 ckr nm a lcallee lcallee_sig ckty
                     rty rstty (map (fun t => (t, [])) inptyp) outtyp
                     init_state init_state
-                    Hineq HfindL HfindLsig
+                    Hineq (mmap_to_lexp_apps_named _ _ _ Hles) HfindL HfindLsig
                     ltac:(rewrite Hfclk; exact Hckty)
                     Hrty
                     ltac:(rewrite Hfclk; exact Hrstty)
                     ltac:(rewrite Hfclk, Hfrst; exact Hlex)
-                    Houttyp callee Hpc Htc).
-      rewrite map_map in IHrcall. simpl in IHrcall. rewrite map_id in IHrcall.
-      rewrite Hfrst in IHrcall.
-      erewrite (lat_valuation_fields_agree dlt_sig) in IHrcall by exact Hfieldsc.
-      erewrite (lat_valuation_fields_agree dlt_raw) in IHrcall by exact Hfieldsc.
-      exact IHrcall.
+                    Houttyp callee Hpc Htc) as (dlt_w & Hagw & Hsecw).
+      rewrite map_map in Hagw. simpl in Hagw.
+      rewrite map_id in Hagw.
+      rewrite Hfrst in Hagw.
+      erewrite (lat_valuation_fields_agree dlt_raw) in Hagw by exact Hfieldsc.
+      rewrite (signature_scope_agree _ _ Hfieldsc) in Hagw.
+      exact (CalleeSecure P GN envs aux_names nd' dlt_sig dlt_raw callee callee_sig
+               _ _ dlt_w Hagw Hsecw).
   Qed.
 
   (** * Noninterference for a Lustre node

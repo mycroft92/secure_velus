@@ -2249,7 +2249,7 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints G1 env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS = OK (cns, ct1) ->
-            forall x, In x (locals ++ minted stS ct1) -> ~ In x scope0) ->
+            forall x, In x (locals ++ anon_images env n ++ minted stS ct1) -> ~ In x scope0) ->
         generate_lnode_sig G1 n env aux stS = OK (sg, stS1) ->
         generate_lnode_sig G2 (normfby_node Q c n Hunt Hpref) env aux stT
           = OK (sg', stT1) ->
@@ -2295,7 +2295,9 @@ Import UNN.Fresh.Tactics.
                   (NoDup_vars_defined_n_eqs n) Hlo Hcs1)
         as (cs1' & Hcs1' & Hentails).
       apply (preserves_on_simplify scope0 (collapse cs1) (collapse cs2)
-               (l1 ++ minted stS stS1) (l2 ++ minted stT stT1)).
+               (l1 ++ anon_images env n ++ minted stS stS1)
+               (l2 ++ anon_images env (normfby_node Q c n Hunt Hpref)
+                ++ minted stT stT1)).
       - apply collapse_wf. exact (Hwf cs1 stS1 Hcs1).
       - exact (Hdisj l1 cs1 stS1 Hl1 Hcs1).
       - apply preserves_on_collapse2.
@@ -3260,7 +3262,7 @@ Import UNN.Fresh.Tactics.
             get_mappings_from_node n.(n_vars) env = Some locals ->
             generate_leqns_constraints accS env base_ty rst_ty
               (lnode_clock_env n) n.(n_eqs) stS0 = OK (cns, ct1) ->
-            forall y, In y (locals ++ minted stS0 ct1) -> ~ In y scope0) ->
+            forall y, In y (locals ++ anon_images env n ++ minted stS0 ct1) -> ~ In y scope0) ->
         (** the program-level facts about the published pair *)
         signature_good sgS ->
         NoDup (signature_scope sgS) ->

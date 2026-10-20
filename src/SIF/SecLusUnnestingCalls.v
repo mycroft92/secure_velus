@@ -95,6 +95,21 @@ Import UNN.Fresh.Tactics.
     Variable vars    : list (ident * clock).
     Variable cenv    : Env.t (type * clock).
     Variable scope   : list ident.
+    Variable AN      : list ident.
+    Hypothesis AN_apart_anns :
+      forall anns xs st st',
+        idents_for_anns anns st = (xs, st') ->
+        forall x, In x (List.map fst xs) -> ~ In x AN.
+    Hypothesis AN_apart_fresh :
+      forall (b : type * clock) x st st',
+        fresh_ident norm1 b st = (x, st') -> ~ In x AN.
+    Hypothesis AN_apart_anns' :
+      forall anns xs st st',
+      idents_for_anns' anns st = (xs, st') ->
+      forall x a, In (x, a) xs -> stream_name a = None -> ~ In x AN.
+    (** The scalar chain is the one that holds when no result is named. *)
+    Hypothesis scalar_nonamed :
+      forall (anns : list ann) w, ~ In (Some w) (List.map stream_name anns).
     Variable stLo     : sec_state.
     Variable stF     : sec_state.
     Variable amb     : ST.
@@ -135,17 +150,17 @@ Import UNN.Fresh.Tactics.
         call_subst_fresh sg inp ck rst os.
 
     Local Notation sec_of := (EXPR.sec_of env).
-    Local Notation moved_by := (EXPR.moved_by env).
+    Local Notation moved_by := (EXPR.moved_by env AN).
     Local Notation carries_at :=
-      (EXPR.carries_at GL env base_ty rst_ty vars cenv scope stLo stF amb).
+      (EXPR.carries_at GL env base_ty rst_ty vars cenv scope AN stLo stF amb).
     Local Notation carries :=
-      (EXPR.carries GL env base_ty rst_ty vars cenv scope stLo stF amb).
+      (EXPR.carries GL env base_ty rst_ty vars cenv scope AN stLo stF amb).
     Local Notation carries_list :=
-      (EXPR.carries_list GL env base_ty rst_ty vars cenv scope stLo stF amb).
+      (EXPR.carries_list GL env base_ty rst_ty vars cenv scope AN stLo stF amb).
     Local Notation lifted_defs_local :=
       (EXPR.lifted_defs GL env base_ty rst_ty cenv amb env_inj).
     Local Notation carries_list_intro_local :=
-      (EXPR.carries_list_intro GL env base_ty rst_ty vars cenv scope stLo stF amb
+      (EXPR.carries_list_intro GL env base_ty rst_ty vars cenv scope AN stLo stF amb
          env_inj amb_scoped).
     Local Notation sig_nodup_pipeline_local :=
       (EXPR.sig_nodup_pipeline GL sig_nodup).
@@ -3530,6 +3545,23 @@ Import UNN.Fresh.Tactics.
         eapply UNN.Fresh.Facts.fresh_ident_vars_perm; eauto.
     Qed.
 
+    Lemma unnest_noops_exp_notAN :
+      forall ck e e' eqs st st' x,
+        unnest_noops_exp ck e st = ((e', eqs), st') ->
+        In x (vars_defined eqs) -> ~ In x AN.
+    Proof.
+      intros ck e e' eqs st st' x H Hx.
+      unfold unnest_noops_exp in H.
+      destruct (hd _ _) as (ty & ck0 & o).
+      destruct (is_noops_exp ck e) eqn:Enoop; repeat inv_bind.
+      - simpl in Hx. contradiction.
+      - simpl in Hx. destruct Hx as [<-|[]].
+        match goal with
+        | Hf : fresh_ident _ _ _ = (_, _) |- _ =>
+            exact (AN_apart_fresh _ _ _ _ Hf)
+        end.
+    Qed.
+
     Lemma unnest_noops_exps_nil_l :
       forall es es2 eqs2 st st',
         unnest_noops_exps [] es st = ((es2, eqs2), st') ->
@@ -3679,6 +3711,7 @@ Import UNN.Fresh.Tactics.
         { exact Hgent. }
 
         (** and the head *)
+        pose proof Hh as Hhx.
         apply unnest_noops_exp_inv in Hh
           as [(? & ? & ?)|(x & an & ? & ? & Hpx)]; subst.
         + (** kept: the same expression, so the same type, nothing emitted *)
@@ -3700,8 +3733,8 @@ Import UNN.Fresh.Tactics.
           { apply new_ids_spec. split; [|exact Hxst].
             eapply Permutation_in; [exact Hpx|now left]. }
           assert (In b (moved_by st st1)) as Hbmv.
-          { unfold moved_by, sec_of. apply in_flat_map.
-            exists x. split; [exact Hxnew|]. rewrite Hb. now left. }
+          { refine (EXPR.In_moved_by env AN st st1 x b Hxnew _ Hb).
+            eapply unnest_noops_exp_notAN; [exact Hhx|simpl; now left]. }
           assert (forall c, In c (sec_of [x]) -> In c (moved_by st st1)) as Hbnew.
           { intros c Hc. unfold sec_of in Hc. simpl in Hc.
             rewrite Hb in Hc. destruct Hc as [|[]]; subst. exact Hbmv. }
@@ -3922,8 +3955,8 @@ Import UNN.Fresh.Tactics.
         { apply new_ids_spec. split; [|exact Hrst].
           eapply Permutation_in; [exact Hpx|now left]. }
         assert (In rty (moved_by st1 st')) as Hrtymv.
-        { unfold moved_by, sec_of. apply in_flat_map.
-          exists r. split; [exact Hrnew|]. rewrite Hr. now left. }
+        { exact (EXPR.In_moved_by env AN st1 st' r rty Hrnew
+                   (AN_apart_fresh _ _ _ _ Hfresh) Hr). }
         assert (forall c, In c (sec_of [r]) -> In c (moved_by st1 st')) as Hbnew.
         { intros c Hc. unfold sec_of in Hc. simpl in Hc.
           rewrite Hr in Hc. destruct Hc as [|[]]; subst. exact Hrtymv. }
@@ -4183,6 +4216,112 @@ Import UNN.Fresh.Tactics.
       split; apply Lat.order_refl, Lat.eq_refl.
     Qed.
 
+
+    (** The same, when some result of the emitted call is a name the source
+        run also uses: a named result of a nested call is typed by the
+        environment's name for it, which is also the name of the variable
+        unnesting binds the result to.  At such a position the source value
+        already dominates the ambient (the call's block puts the ambient below
+        every result), so the witness has nothing to do there, and what it
+        moves is only the positions whose name the source does not use. *)
+
+    Lemma hm_ext_merge_absorb :
+      forall dlt a o,
+        satisfiable dlt a [o] ->
+        hm_ext dlt (merge a [o]) = dlt o.
+    Proof.
+      intros dlt a o Hsat. unfold satisfiable in Hsat.
+      rewrite hm_ext_single in Hsat.
+      apply eq_no_red. apply order_antisym.
+      - unfold merge. rewrite hm_ext_merge_eq.
+        apply join_least_upper_bound.
+        + eapply order_trans; [exact Hsat|].
+          apply join_least_upper_bound; [apply order_refl, eq_refl|].
+          apply bottom_is_bottom.
+        + rewrite hm_ext_single.
+          apply join_least_upper_bound; [apply order_refl, eq_refl|].
+          apply bottom_is_bottom.
+      - unfold merge. rewrite hm_ext_merge_eq.
+        eapply order_trans; [|apply join_bound2].
+        rewrite hm_ext_single. apply join_bound1.
+    Qed.
+
+    Lemma Forall2_conj_pt :
+      forall {A B : Type} (P Q : A -> B -> Prop) l1 l2,
+        Forall2 P l1 l2 -> Forall2 Q l1 l2 ->
+        Forall2 (fun a b => P a b /\ Q a b) l1 l2.
+    Proof.
+      intros A B P Q l1 l2 H. induction H as [|a b l1 l2 Hab Hr IH];
+        intros HQ; inversion HQ; subst; constructor; auto.
+    Qed.
+
+    Lemma call_outputs_witness_sh :
+      forall dlt (outs bs : list ident),
+        NoDup bs ->
+        List.length outs = List.length bs ->
+        Forall2 (fun o b => (o = b /\ satisfiable dlt amb [o])
+                            \/ ~ In b scope) outs bs ->
+        Forall (fun o => In o scope) outs ->
+        exists dlt',
+          agree_off (filter (fun b => if in_dec ident_eq_dec b outs
+                                      then false else true) bs) dlt dlt'
+          /\ Forall2 (amb_pair dlt') outs bs.
+    Proof.
+      intros dlt outs bs Hnd Hlen Hpos Hos.
+      remember (fun o => hm_ext dlt (merge amb [o])) as fv eqn:Efv.
+      assert (Hlen' : List.length bs = List.length (List.map fv outs))
+        by (rewrite map_length; now symmetry).
+      assert (Hgen : forall (os bs0 : list ident) C,
+                 List.length os = List.length bs0 ->
+                 incl (combine bs0 (List.map fv os)) C ->
+                 Forall2 (fun o b => In (b, fv o) C) os bs0).
+      { induction os as [|o os IH]; intros bs0 C Hl Hincl;
+          destruct bs0 as [|b bs0]; simpl in Hl; try discriminate;
+          [constructor|].
+        constructor.
+        - apply Hincl. simpl. now left.
+        - eapply IH; [congruence|].
+          intros q Hq. apply Hincl. simpl. now right. }
+      assert (Hin : Forall2 (fun o b => In (b, fv o)
+                               (combine bs (List.map fv outs))) outs bs)
+        by (apply Hgen; [exact Hlen|apply incl_refl]).
+      pose proof (Forall2_conj_pt _ _ _ _ Hpos Hin) as Hboth.
+      (** the witness leaves every visible name alone *)
+      assert (HA : forall x, In x scope ->
+                    upds bs (List.map fv outs) dlt x = dlt x).
+      { intros x Hx. destruct (in_dec ident_eq_dec x bs) as [Hb|Hb].
+        - destruct (Forall2_in_right _ outs bs x Hboth Hb)
+            as (o & Ho & [(Hox & Hsat)|Hn] & Hinb);
+            [|exfalso; exact (Hn Hx)].
+          subst o.
+          rewrite (upds_nth bs (List.map fv outs) dlt x (fv x) Hnd Hlen' Hinb).
+          rewrite Efv. exact (hm_ext_merge_absorb dlt amb x Hsat).
+        - symmetry. exact (upds_agree_off bs (List.map fv outs) dlt x Hb). }
+      exists (upds bs (List.map fv outs) dlt).
+      split.
+      - intros x Hx. destruct (in_dec ident_eq_dec x bs) as [Hb|Hb].
+        + assert (In x outs) as Ho.
+          { destruct (in_dec ident_eq_dec x outs) as [Ho|Ho]; [exact Ho|].
+            exfalso. apply Hx. apply filter_In. split; [exact Hb|].
+            destruct (in_dec ident_eq_dec x outs); [contradiction|reflexivity]. }
+          rewrite Forall_forall in Hos.
+          symmetry. exact (HA x (Hos x Ho)).
+        + exact (upds_agree_off bs (List.map fv outs) dlt x Hb).
+      - eapply Forall2_impl_In; [|exact Hboth].
+        intros o b Ho Hb (_ & Hinob).
+        assert (upds bs (List.map fv outs) dlt b = fv o) as Hbv
+          by (eapply upds_nth; eauto).
+        assert (hm_ext (upds bs (List.map fv outs) dlt) (merge amb [o])
+                = hm_ext dlt (merge amb [o])) as Hstable.
+        { apply hm_ext_agree_on_st. intros x Hx. apply HA.
+          apply in_merge_inv in Hx as [Hx|Hx].
+          - now apply amb_scoped.
+          - destruct Hx as [Hx|[]]; subst. rewrite Forall_forall in Hos.
+            now apply Hos. }
+        unfold amb_pair, satisfiable.
+        rewrite Hstable, hm_ext_single, Hbv, Efv, <- join_bottom_eq1.
+        split; apply Lat.order_refl, Lat.eq_refl.
+    Qed.
 
     (** The no-op pass leaves the arguments normalized: it either keeps one
         or replaces it with a variable. *)
@@ -4551,7 +4690,7 @@ Import UNN.Fresh.Tactics.
 
       (** what the source expression carries, taken apart *)
       assert (outs <> []) as Houtsne.
-      { intro Hc. apply Hanne. apply fresh_idents_length in Houts.
+      { intro Hc. apply Hanne. apply out_idents_length in Houts.
         rewrite Hc in Houts. simpl in Houts.
         destruct anns; [reflexivity|discriminate Houts]. }
       assert (match outs with
@@ -4762,9 +4901,21 @@ Import UNN.Fresh.Tactics.
       { intros b Hb.
         assert (In b (sec_of (List.map fst xs))) as Hbs
             by (eapply Forall2_in_sec_of; eauto).
-        unfold sec_of, moved_by in *.
+        unfold sec_of in Hbs.
         apply in_flat_map in Hbs as (x & Hx & Hbx).
-        apply in_flat_map. exists x. split; [|exact Hbx].
+        destruct (Env.find x env) as [b0|] eqn:Ex; [|destruct Hbx].
+        destruct Hbx as [Hbx|[]]. subst b0.
+        destruct (proj1 (List.in_map_iff fst xs x) Hx) as ((xq & a0) & Hx0 & Hxa).
+        cbn in Hx0. subst xq.
+        assert (stream_name a0 = None) as Ha0.
+        { pose proof (idents_for_anns'_values anns xs st3 st' Hids) as Hv.
+          assert (In a0 anns) as Hin0.
+          { rewrite <- Hv. apply List.in_map_iff. exists (x, a0). split; [reflexivity|exact Hxa]. }
+          destruct (stream_name a0) as [w|] eqn:Ew; [|reflexivity].
+          exfalso. apply (scalar_nonamed anns w).
+          apply List.in_map_iff. exists a0. split; [exact Ew|exact Hin0]. }
+        refine (EXPR.In_moved_by env AN st3 st' x b _
+                  (AN_apart_anns' _ _ _ _ Hids x a0 Hxa Ha0) Ex).
         apply new_ids_spec. split.
         - eapply idents_for_anns'_incl_ids; eauto.
         - eapply NoDup_app_In; eauto. }
@@ -4781,7 +4932,7 @@ Import UNN.Fresh.Tactics.
         eapply Forall_impl; [|exact Hsts].
         intros o Ho. apply Ho. now left. }
       assert (List.length outs = List.length outt) as Hlenout.
-      { apply fresh_idents_length in Houts.
+      { apply out_idents_length in Houts.
         apply Forall2_length in Houttf.
         rewrite Houts, <- Houttf, map_length. now symmetry. }
       edestruct (call_outputs_witness dlt3 outs outt)

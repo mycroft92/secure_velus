@@ -259,10 +259,8 @@ Module Check (Lat : Lattice).
       generated against the naming of its normalised form, are entailed by the
       NLustre signatures of the transcription of that form.  The two
       Lustre-to-Lustre legs are [LegN.normalization_signatures_preserved];
-      what is assumed beyond the program's typing and clocking is the source
-      guard (a nested call's output names are the node's anonymous streams,
-      and the clocks of a call's arguments and reset are over declared
-      variables).  The closure of generated callee signatures under the
+      nothing is assumed beyond the program's typing and clocking (the former
+      source guard is a theorem of well-clockedness).  The closure of generated callee signatures under the
       declared clocks is proved ([LegN.sig_inputs_step]). *)
   Module U := L.Norm.Norm.Unnesting.
   Module NFm := L.Norm.Norm.NormFby.
@@ -274,7 +272,6 @@ Module Check (Lat : Lattice).
            (Hpref1 : Forall (fun n => L.Syn.n_prefixes n = NFm.norm1_prefs)
                        (U.unnest_global G Hwl Hpr)),
       L.Clo.wc_global G -> L.Typ.wt_global G ->
-      Forall LegN.source_guard G ->
       forall envs aux stN st GS GT GM P Hp GN,
         ConcreteSecLNameGen.generate_lnode_scoped_env_st
           (rev (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1))
@@ -297,10 +294,10 @@ Module Check (Lat : Lattice).
         SECNLUSTYPING.generate_all_signatures_scoped_env P envs aux = OK GN ->
         Leg.Signature_entails GS GN.
   Proof.
-    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard envs aux stN st GS GT GM P
+    intros G Hwl Hpr Hunt Hpref1 Hwc Hwt envs aux stN st GS GT GM P
       Hp GN Hnaming Hle Hord HgS HgT HgM Htr Hnames Hwcp HgN.
     destruct (LegN.normalization_signatures_preserved G Hwl Hpr Hunt Hpref1
-                Hwc Hwt Hguard envs aux stN st GS GT GM Hnaming Hle HgS HgT
+                Hwc Hwt envs aux stN st GS GT GM Hnaming Hle HgS HgT
                 HgM) as (_ & Hsp).
     assert (Hnotself :
               Forall (fun m => ~ L.Ord.Is_node_in m.(L.Syn.n_name)
@@ -315,7 +312,7 @@ Module Check (Lat : Lattice).
       as (Hent & Hsc & _ & _).
     eapply source_signature_entails;
       [exact (fun f sg1 Hf => Hsp f sg1 Hf)|exact Hent
-      |exact (LegN.source_signatures_good G Hwl Hpr Hunt Hpref1 Hwc Hwt Hguard
+      |exact (LegN.source_signatures_good G Hwl Hpr Hunt Hpref1 Hwc Hwt
                 envs aux stN st GS Hnaming Hle HgS)
       |exact Hsc].
   Qed.

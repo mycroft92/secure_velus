@@ -858,17 +858,17 @@ Module Type SECNLUSTYPING
       generate_all_signatures_scoped_env' [] node_list envs aux_names.
 
     Theorem generate_all_signatures_scoped':
-        forall nodes acc env aux_names G,
-        wc_global nodes ->
+        forall P nodes acc env aux_names G,
+        Forall (wc_node P) nodes ->
         secglobal_scoped acc ->
         env_injective env ->
         generate_all_signatures' acc nodes env aux_names = OK G ->
         secglobal_scoped G.
     Proof.
-      induction nodes as [|n nodes IH]; intros acc env aux_names G
+      intros P. induction nodes as [|n nodes IH]; intros acc env aux_names G
                                               Hwc Hacc Hinj Hgen.
       - simpl in Hgen. inversion Hgen; subst. exact Hacc.
-      - inversion Hwc as [|n' ns Hwc_tail Hwc_head]; subst n' ns.
+      - inversion Hwc as [|n' ns Hwc_head Hwc_tail]; subst n' ns.
         simpl in Hgen.
           destruct (generate_node_sig acc n env aux_names) as [sig|] eqn:Hsig;
             simpl in Hgen;
@@ -884,13 +884,13 @@ Module Type SECNLUSTYPING
 
     (** This is the main global scopedness theorem for generated NLustre signatures.  From a well-clocked global and an injective shared naming environment, it proves that every generated signature only mentions identifiers from its visible interface and local scope.  The source-side correctness, translation, and noninterference files all reuse this global invariant. *)
     Corollary generate_all_signatures_scoped:
-      forall nodes env aux_names G,
-        wc_global nodes ->
+      forall P nodes env aux_names G,
+        Forall (wc_node P) nodes ->
         env_injective env ->
         generate_all_signatures nodes env aux_names = OK G ->
         secglobal_scoped G.
     Proof.
-      intros nodes env aux_names G Hwc Hinj Hgen.
+      intros P nodes env aux_names G Hwc Hinj Hgen.
       unfold generate_all_signatures in Hgen.
       eapply generate_all_signatures_scoped'; eauto.
       apply secglobal_scoped_nil.

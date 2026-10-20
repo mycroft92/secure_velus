@@ -49,6 +49,7 @@ From Velus Require Import SIF.SecMonadStep.
 From Velus Require Import SIF.SIFSignature.
 From Velus Require Import SIF.NameInterface.
 From Velus Require Import SIF.SecLTyping.
+From Velus Require Import SIF.SecLusClockNames.
 
 From compcert Require Import common.Errors.
 
@@ -79,6 +80,9 @@ Module SecLusUnnestingBase
 
   Import SECMONADNotations.
   Import UNN.Fresh.Tactics.
+
+  Module CNAMES := SecLusClockNames Ids Op LSyn LClo.
+  Include CNAMES.
 
   (** * The security side of a call expression
 
@@ -333,6 +337,181 @@ Module SecLusUnnestingBase
         exact (IH ys s1 s' Hys z Hz).
   Qed.
 
+  (** * The result names of a nested call
+
+      [out_ident] types a flow the elaborator named by the environment's
+      security name for it, and any other flow by a fresh one.  So a call's
+      result names are no longer all minted: the named ones are images of the
+      environment, which is how the call equation that unnesting produces
+      looks them up. *)
+
+  Lemma out_ident_cases :
+    forall env a x s s',
+      out_ident env a s = OK (x, s') ->
+      (s' = s /\ exists w, LSyn.stream_name a = Some w
+                          /\ Env.find w env = Some x)
+      \/ SC.fresh_ident s = OK (x, s').
+  Proof.
+    intros env a x s s' H. unfold out_ident in H.
+    destruct (LSyn.stream_name a) as [w|] eqn:Ew.
+    - destruct (Env.find w env) as [b|] eqn:Eb.
+      + unfold SC.ret in H. inversion H; subst. left. split; [reflexivity|].
+        exists w. split; [reflexivity|exact Eb].
+      + right. exact H.
+    - right. exact H.
+  Qed.
+
+  Lemma out_ident_sec_le :
+    forall env a x s s', out_ident env a s = OK (x, s') -> sec_le s s'.
+  Proof.
+    intros env a x s s' H.
+    destruct (out_ident_cases env a x s s' H) as [(-> & _)|H'].
+    - apply sec_le_refl.
+    - exact (fresh_ident_sec_le x s s' H').
+  Qed.
+
+  Lemma out_idents_raw_length :
+    forall env anns outs s s',
+      out_idents_raw env anns s = OK (outs, s') ->
+      List.length outs = List.length anns.
+  Proof.
+    intros env anns. induction anns as [|a anns IH]; intros outs s s' H;
+      simpl in H.
+    - unfold SC.ret in H. inversion H; subst. reflexivity.
+    - apply sec_bind_inv in H as (x & s1 & Hx & H).
+      apply sec_bind_inv in H as (ys & s2 & Hys & Hret).
+      unfold SC.ret in Hret. inversion Hret; subst. simpl. f_equal.
+      eapply IH; eauto.
+  Qed.
+
+  Lemma out_idents_raw_sec_le :
+    forall env anns outs s s',
+      out_idents_raw env anns s = OK (outs, s') -> sec_le s s'.
+  Proof.
+    intros env anns. induction anns as [|a anns IH]; intros outs s s' H;
+      simpl in H.
+    - unfold SC.ret in H. inversion H; subst. apply sec_le_refl.
+    - apply sec_bind_inv in H as (x & s1 & Hx & H).
+      apply sec_bind_inv in H as (ys & s2 & Hys & Hret).
+      unfold SC.ret in Hret. inversion Hret; subst.
+      apply (sec_le_trans _ s1 _);
+        [exact (out_ident_sec_le env a x s s1 Hx)|exact (IH ys s1 s' Hys)].
+  Qed.
+
+  (** Every result name is either minted in the run's window or the
+      environment's name for a named flow of the call. *)
+  Lemma out_idents_raw_origin :
+    forall env anns outs s s',
+      out_idents_raw env anns s = OK (outs, s') ->
+      forall x, In x outs ->
+        In x (minted s s')
+        \/ exists w, In (Some w) (List.map LSyn.stream_name anns)
+                    /\ Env.find w env = Some x.
+  Proof.
+    intros env anns. induction anns as [|a anns IH]; intros outs s s' H;
+      simpl in H.
+    - unfold SC.ret in H. inversion H; subst. intros x [].
+    - apply sec_bind_inv in H as (x0 & s1 & Hx & H).
+      apply sec_bind_inv in H as (ys & s2 & Hys & Hret).
+      unfold SC.ret in Hret. inversion Hret; subst.
+      intros z [Hz|Hz].
+      + subst z. destruct (out_ident_cases env a x0 s s1 Hx)
+          as [(-> & w & Hw & Hf)|Hfr].
+        * right. exists w. split; [|exact Hf]. simpl. left. now rewrite Hw.
+        * left. apply (minted_window s s s1 s');
+            [apply sec_le_refl|exact (out_idents_raw_sec_le env anns ys s1 s' Hys)|].
+          exact (fresh_ident_minted x0 s s1 Hfr).
+      + destruct (IH ys s1 s' Hys z Hz) as [Hm|(w & Hw & Hf)].
+        * left. apply (minted_window s s1 s' s');
+            [exact (out_ident_sec_le env a x0 s s1 Hx)|apply sec_le_refl|exact Hm].
+        * right. exists w. split; [|exact Hf]. simpl. now right.
+  Qed.
+
+  (** A named flow of the call is typed by the environment's name for it. *)
+  Lemma out_idents_raw_named :
+    forall env anns outs s s',
+      out_idents_raw env anns s = OK (outs, s') ->
+      forall w b,
+        In (Some w) (List.map LSyn.stream_name anns) ->
+        Env.find w env = Some b -> In b outs.
+  Proof.
+    intros env anns. induction anns as [|a anns IH]; intros outs s s' H w b Hw Hb;
+      simpl in H.
+    - destruct Hw.
+    - apply sec_bind_inv in H as (x & s1 & Hx & H).
+      apply sec_bind_inv in H as (ys & s2 & Hys & Hret).
+      unfold SC.ret in Hret. inversion Hret; subst.
+      simpl in Hw. destruct Hw as [Hw|Hw].
+      + left. unfold out_ident in Hx. rewrite Hw, Hb in Hx.
+        unfold SC.ret in Hx. inversion Hx; subst. reflexivity.
+      + right. exact (IH ys s1 s' Hys w b Hw Hb).
+  Qed.
+
+  (** The run that checks distinctness, read through the one that does not. *)
+  Lemma out_idents_inv :
+    forall env anns outs s s',
+      out_idents env anns s = OK (outs, s') ->
+      out_idents_raw env anns s = OK (outs, s') /\ NoDup outs.
+  Proof.
+    intros env anns outs s s' H. unfold out_idents in H.
+    apply sec_bind_inv in H as (xs & s1 & Hr & H).
+    destruct (nodup_ident_dec xs) as [Hnd|Hnd].
+    - unfold SC.ret in H. inversion H; subst. split; assumption.
+    - discriminate H.
+  Qed.
+
+  Lemma out_idents_length :
+    forall env anns outs s s',
+      out_idents env anns s = OK (outs, s') ->
+      List.length outs = List.length anns.
+  Proof.
+    intros env anns outs s s' H.
+    destruct (out_idents_inv _ _ _ _ _ H) as (Hr & _).
+    exact (out_idents_raw_length _ _ _ _ _ Hr).
+  Qed.
+
+  Lemma out_idents_sec_le :
+    forall env anns outs s s',
+      out_idents env anns s = OK (outs, s') -> sec_le s s'.
+  Proof.
+    intros env anns outs s s' H.
+    destruct (out_idents_inv _ _ _ _ _ H) as (Hr & _).
+    exact (out_idents_raw_sec_le _ _ _ _ _ Hr).
+  Qed.
+
+  Lemma out_idents_origin :
+    forall env anns outs s s',
+      out_idents env anns s = OK (outs, s') ->
+      forall x, In x outs ->
+        In x (minted s s')
+        \/ exists w, In (Some w) (List.map LSyn.stream_name anns)
+                    /\ Env.find w env = Some x.
+  Proof.
+    intros env anns outs s s' H.
+    destruct (out_idents_inv _ _ _ _ _ H) as (Hr & _).
+    exact (out_idents_raw_origin _ _ _ _ _ Hr).
+  Qed.
+
+  Lemma out_idents_named :
+    forall env anns outs s s',
+      out_idents env anns s = OK (outs, s') ->
+      forall w b,
+        In (Some w) (List.map LSyn.stream_name anns) ->
+        Env.find w env = Some b -> In b outs.
+  Proof.
+    intros env anns outs s s' H.
+    destruct (out_idents_inv _ _ _ _ _ H) as (Hr & _).
+    exact (out_idents_raw_named _ _ _ _ _ Hr).
+  Qed.
+
+  Lemma out_idents_nodup :
+    forall env anns outs s s',
+      out_idents env anns s = OK (outs, s') -> NoDup outs.
+  Proof.
+    intros env anns outs s s' H.
+    exact (proj2 (out_idents_inv _ _ _ _ _ H)).
+  Qed.
+
   (** * The scoping context of a typing run, stated once
 
       These three were declared, identically, in five separate sections --
@@ -367,12 +546,6 @@ Module SecLusUnnestingBase
       base clock of a call's arguments (a common suffix of their clocks) does.
       A clock that mentions a variable unnesting created is not a source
       clock, and the scoping hypotheses are not asked of it. *)
-  Fixpoint ck_vars (ck : clock) : list ident :=
-    match ck with
-    | Cbase => []
-    | Con ck' x _ => x :: ck_vars ck'
-    end.
-
   Definition clk_src (vars : list (ident * clock)) (es : list exp)
       (ck : clock) : Prop :=
     incl (ck_vars ck) (List.map fst vars ++ flat_map ck_vars (clocksof es)).
@@ -873,7 +1046,7 @@ Module SecLusUnnestingBase
                   /\ rstty = ljoin (lvar rst_ty) (ljoin a1 (rck, []))
             end)
         /\ find_signature f G = Some sg
-        /\ fresh_idents (List.length anns) stb = OK (outs, stc)
+        /\ out_idents env anns stb = OK (outs, stc)
         /\ generate_constraints sg (List.map fst argts) ckty (fst rstty) outs stc
            = OK (cs, st')
         /\ ts = List.map
@@ -963,7 +1136,7 @@ Module SecLusUnnestingBase
       as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
           & Hargs & Hck & Hrst & Esg & Houts & Hcs & Hts).
     subst ts. rewrite map_length.
-    eapply fresh_idents_length; eauto.
+    eapply out_idents_length; eauto.
   Qed.
 
   (** * Why the carried component is empty after unnesting
@@ -1069,7 +1242,7 @@ Module SecLusUnnestingBase
     subst ts. rewrite carried_uniform.
     destruct outs as [|o os] eqn:Eouts.
     - exfalso. apply Hne.
-      apply fresh_idents_length in Houts. simpl in Houts.
+      apply out_idents_length in Houts. simpl in Houts.
       destruct anns; [reflexivity|discriminate].
     - reflexivity.
   Qed.
@@ -1416,7 +1589,7 @@ Module SecLusUnnestingBase
       as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
           & _ & _ & _ & _ & Houts & _ & Hts).
     exists outs. split.
-    - eapply fresh_idents_length; eauto.
+    - eapply out_idents_length; eauto.
     - subst ts. now rewrite !map_map.
   Qed.
 
@@ -1976,7 +2149,7 @@ Module SecLusUnnestingBase
              exact (H t1 sta stm Ht1).
           -- destruct Hrst as (_ & ?); subst stb. apply sec_le_refl.
         * apply (sec_le_trans _ stc _).
-          -- exact (fresh_idents_sec_le (List.length a) outs stb stc Houts).
+          -- exact (out_idents_sec_le env a outs stb stc Houts).
           -- exact (state_pure_sec_le _ cs stc s'
                       (state_pure_generate_constraints sg
                          (List.map fst argts) ckty (fst rstty) outs) Hcs).
@@ -2066,7 +2239,7 @@ Module SecLusUnnestingBase
                 = Some rck
              /\ rstty = ljoin (lvar rst_ty) (ljoin a1 (rck, []))
        end) ->
-      fresh_idents (List.length anns) stb = OK (outs, stc) ->
+      out_idents env anns stb = OK (outs, stc) ->
       generate_constraints sg (List.map fst argts) ckty (fst rstty) outs stc
         = OK (cs, st') ->
       sec_le sta stb /\ sec_le stb stc /\ sec_le stc st'.
@@ -2079,7 +2252,7 @@ Module SecLusUnnestingBase
         apply single_inv in Hsg as (_ & ?); subst stb.
         exact (assign_lexp_type_sec_le G env base_ty rst_ty e1 t1 sta stm Ht1).
       + destruct Hrst as (_ & ?); subst stb. apply sec_le_refl.
-    - exact (fresh_idents_sec_le (List.length anns) outs stb stc Houts).
+    - exact (out_idents_sec_le env anns outs stb stc Houts).
     - exact (state_pure_sec_le _ cs stc st'
                (state_pure_generate_constraints sg (List.map fst argts)
                   ckty (fst rstty) outs) Hcs).
@@ -2559,12 +2732,12 @@ Module SecLusUnnestingBase
       apply assign_lexp_Eapp_inv in Hty
         as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
             & _ & _ & _ & _ & Houts & _ & ?); subst.
-      apply fresh_idents_length in Houts.
+      apply out_idents_length in Houts.
       simpl. rewrite map_length. assumption.
     - apply assign_lexp_Eapp_inv in Hty
         as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
             & _ & _ & _ & _ & Houts & _ & ?); subst.
-      apply fresh_idents_length in Houts.
+      apply out_idents_length in Houts.
       simpl. rewrite map_length. assumption.
   Qed.
 
@@ -2820,6 +2993,30 @@ Module SecLusUnnestingBase
     exists ckty, g. auto.
   Qed.
 
+  (** Immediate and transitive subexpressions, defined ahead of the clock
+      closure induction, which needs to push a hypothesis about a call's named
+      streams down to the subexpressions. *)
+  Inductive imm_sub : exp -> exp -> Prop :=
+  | imm_Eunop : forall op e a, imm_sub e (Eunop op e a)
+  | imm_Ebinop_l : forall op e1 e2 a, imm_sub e1 (Ebinop op e1 e2 a)
+  | imm_Ebinop_r : forall op e1 e2 a, imm_sub e2 (Ebinop op e1 e2 a)
+  | imm_Efby_0 : forall e0s es a e, In e e0s -> imm_sub e (Efby e0s es a)
+  | imm_Efby_1 : forall e0s es a e, In e es -> imm_sub e (Efby e0s es a)
+  | imm_Earrow_0 : forall e0s es a e, In e e0s -> imm_sub e (Earrow e0s es a)
+  | imm_Earrow_1 : forall e0s es a e, In e es -> imm_sub e (Earrow e0s es a)
+  | imm_Ewhen : forall es x b a e, In e es -> imm_sub e (Ewhen es x b a)
+  | imm_Emerge_t : forall x ets efs a e, In e ets -> imm_sub e (Emerge x ets efs a)
+  | imm_Emerge_f : forall x ets efs a e, In e efs -> imm_sub e (Emerge x ets efs a)
+  | imm_Eite_c : forall c ets efs a, imm_sub c (Eite c ets efs a)
+  | imm_Eite_t : forall c ets efs a e, In e ets -> imm_sub e (Eite c ets efs a)
+  | imm_Eite_f : forall c ets efs a e, In e efs -> imm_sub e (Eite c ets efs a)
+  | imm_Eapp_arg : forall f es ro anns e, In e es -> imm_sub e (Eapp f es ro anns)
+  | imm_Eapp_rst : forall f es r anns, imm_sub r (Eapp f es (Some r) anns).
+
+  Inductive sub_exp : exp -> exp -> Prop :=
+  | sub_refl : forall e, sub_exp e e
+  | sub_step : forall e'' e' e, imm_sub e' e -> sub_exp e'' e' -> sub_exp e'' e.
+
   Section LexpClockClosed.
 
     Variable G       : secglobal.
@@ -2831,6 +3028,32 @@ Module SecLusUnnestingBase
 
     Hypothesis Hinj : env_injective env.
     Hypothesis Hndv : NoDupMembers vars.
+
+    (** The streams a nested call names are not declared variables.  A node
+        guarantees it of its anonymous streams ([n_nodup]); here it is what
+        makes a call's named result, typed by the environment's name for it,
+        carry no declared variable's clock obligation. *)
+    Definition named_ok (e : exp) : Prop :=
+      forall f es r anns w,
+        sub_exp (Eapp f es r anns) e ->
+        In (Some w) (List.map LSyn.stream_name anns) ->
+        ~ In w (List.map fst vars).
+
+    Lemma named_ok_imm :
+      forall e' e, imm_sub e' e -> named_ok e -> named_ok e'.
+    Proof.
+      intros e' e Himm H f es r anns w Hs Hw.
+      exact (H f es r anns w (sub_step _ _ _ Himm Hs) Hw).
+    Qed.
+
+    Lemma named_ok_forall :
+      forall l e,
+        (forall e', In e' l -> imm_sub e' e) -> named_ok e ->
+        Forall named_ok l.
+    Proof.
+      intros l e Himm H. apply Forall_forall. intros e' He'.
+      exact (named_ok_imm e' e (Himm e' He') H).
+    Qed.
 
     Local Notation closed ns t ck :=
       (lst_clock_closed env base_ty vars ns t ck).
@@ -3093,6 +3316,7 @@ Module SecLusUnnestingBase
         window it is talking about. *)
     Definition lexp_clock_closed (e : exp) : Prop :=
       wc_exp P vars e ->
+      named_ok e ->
       forall ts s s' ns,
         incl (minted s s') ns ->
         assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
@@ -3102,23 +3326,25 @@ Module SecLusUnnestingBase
       forall es,
         Forall lexp_clock_closed es ->
         Forall (wc_exp P vars) es ->
+        Forall named_ok es ->
         forall ts s s' ns,
           incl (minted s s') ns ->
           assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
           Forall2 (lst_clock_closed env base_ty vars ns) ts (clocksof es).
     Proof.
-      induction es as [|e es IH]; intros Hall Hwc ts s s' ns Hns H.
+      induction es as [|e es IH]; intros Hall Hwc Hnnl ts s s' ns Hns H.
       - apply (assign_lexps_carried_nil G env base_ty rst_ty) in H
           as (? & _ & ?); subst ts. constructor.
       - apply assign_lexps_carried_cons in H
           as (t & r & sa & Ht & Hr & ? & _); subst ts.
         inversion Hall as [|e0 es0 He Her]; subst.
         inversion Hwc as [|e1 es1 Hwce Hwcr]; subst.
+        inversion Hnnl as [|e2 es2 Hnne Hnnr]; subst.
         unfold clocksof. simpl flat_map. apply Forall2_app.
-        + apply (He Hwce t s sa ns); [|exact Ht].
+        + apply (He Hwce Hnne t s sa ns); [|exact Ht].
           apply (minted_incl_sub s s sa s' ns); [apply sec_le_refl| |exact Hns].
           eapply assign_lexps_sec_le; exact Hr.
-        + apply (IH Her Hwcr r sa s' ns); [|exact Hr].
+        + apply (IH Her Hwcr Hnnr r sa s' ns); [|exact Hr].
           apply (minted_incl_sub s sa s' s' ns);
             [|apply sec_le_refl|exact Hns].
           eapply assign_lexp_type_sec_le; exact Ht.
@@ -3133,14 +3359,14 @@ Module SecLusUnnestingBase
       intro e. induction e using exp_ind2.
 
       - (** Econst: the bottom type mentions nothing *)
-        intros Hwc ts s s' ns Hns Hrun.
+        intros Hwc Hnn ts s s' ns Hns Hrun.
         rewrite assign_lexp_Econst in Hrun. unfold SC.ret in Hrun.
         assert (ts = [lbot]) as ? by (inversion Hrun; reflexivity); subst ts.
         simpl clockof. constructor; [|constructor].
         intros ckty b Hck Hnm Hb. simpl in Hb. contradiction.
 
       - (** Evar: its own name, and it is declared on the clock asked about *)
-        intros Hwc ts s s' ns Hns Hrun.
+        intros Hwc Hnn ts s s' ns Hns Hrun.
         pose proof (wc_Evar_inv' x a Hwc) as Hin.
         rewrite assign_lexp_Evar in Hrun.
         apply sec_bind_inv in Hrun as (g & s1 & Hg & Hret).
@@ -3155,14 +3381,14 @@ Module SecLusUnnestingBase
         intros z Hz. now apply in_merge_left.
 
       - (** Eunop: same type, same clock *)
-        intros Hwc ts s s' ns Hns Hrun.
+        intros Hwc Hnn ts s s' ns Hns Hrun.
         apply wc_Eunop_inv' in Hwc as (Hwce & Hcke).
         rewrite assign_lexp_Eunop in Hrun.
         simpl clockof. rewrite <- Hcke.
-        exact (IHe Hwce ts s s' ns Hns Hrun).
+        exact (IHe Hwce (named_ok_imm _ _ (imm_Eunop op e a) Hnn) ts s s' ns Hns Hrun).
 
       - (** Ebinop: two single flows on one clock *)
-        intros Hwc ts s s' ns Hns Hrun.
+        intros Hwc Hnn ts s s' ns Hns Hrun.
         apply wc_Ebinop_inv' in Hwc as (Hwc1 & Hwc2 & Hck1 & Hck2).
         rewrite assign_lexp_Ebinop in Hrun.
         apply sec_bind_inv in Hrun as (t1 & sa & Ht1 & Hrun).
@@ -3176,12 +3402,12 @@ Module SecLusUnnestingBase
             by (inversion Hret; auto); subst ts; subst sb.
         assert (Forall2 (lst_clock_closed env base_ty vars ns)
                   [a1] (clockof e1)) as Hcl1.
-        { apply (IHe1 Hwc1 [a1] s sa ns); [|exact Ht1].
+        { apply (IHe1 Hwc1 (named_ok_imm _ _ (imm_Ebinop_l op e1 e2 a) Hnn) [a1] s sa ns); [|exact Ht1].
           apply (minted_incl_sub s s sa s' ns); [apply sec_le_refl| |exact Hns].
           eapply assign_lexp_type_sec_le; exact Ht2. }
         assert (Forall2 (lst_clock_closed env base_ty vars ns)
                   [a2] (clockof e2)) as Hcl2.
-        { apply (IHe2 Hwc2 [a2] sa s' ns); [|exact Ht2].
+        { apply (IHe2 Hwc2 (named_ok_imm _ _ (imm_Ebinop_r op e1 e2 a) Hnn) [a2] sa s' ns); [|exact Ht2].
           apply (minted_incl_sub s sa s' s' ns);
             [|apply sec_le_refl|exact Hns].
           eapply assign_lexp_type_sec_le; exact Ht1. }
@@ -3193,7 +3419,7 @@ Module SecLusUnnestingBase
                  a1 a2 (clock_of_nclock a) Hp1 Hp2).
 
       - (** Efby: one join per stream, all on the annotation's clock *)
-        intros Hwc ts s s' ns Hns Hrun.
+        intros Hwc Hnn ts s s' ns Hns Hrun.
         apply wc_Efby_inv' in Hwc as (Hwc0 & Hwc1 & Hc0 & Hc1).
         rewrite assign_lexp_Efby in Hrun.
         apply sec_bind_inv in Hrun as (ts0 & sa & Hts0 & Hrun).
@@ -3202,18 +3428,18 @@ Module SecLusUnnestingBase
             by (rewrite (ljoin_list_pure ts0 us ts sb s' Hj); apply sec_le_refl).
         simpl clockof.
         eapply ljoin_list_closed; [exact Hj| |].
-        + rewrite Hc0. apply (assign_lexps_closed_of e0s H Hwc0 ts0 s sa ns);
+        + rewrite Hc0. apply (assign_lexps_closed_of e0s H Hwc0 (named_ok_forall e0s _ (fun e' H' => imm_Efby_0 e0s es a e' H') Hnn) ts0 s sa ns);
             [|exact Hts0].
           apply (minted_incl_sub s s sa s' ns); [apply sec_le_refl| |exact Hns].
           apply (sec_le_trans _ sb _); [|exact Hbs'].
           eapply assign_lexps_sec_le; exact Hus.
-        + rewrite Hc1. apply (assign_lexps_closed_of es H0 Hwc1 us sa sb ns);
+        + rewrite Hc1. apply (assign_lexps_closed_of es H0 Hwc1 (named_ok_forall es _ (fun e' H' => imm_Efby_1 e0s es a e' H') Hnn) us sa sb ns);
             [|exact Hus].
           apply (minted_incl_sub s sa sb s' ns); [|exact Hbs'|exact Hns].
           eapply assign_lexps_sec_le; exact Hts0.
 
       - (** Earrow: the same body *)
-        intros Hwc ts s s' ns Hns Hrun.
+        intros Hwc Hnn ts s s' ns Hns Hrun.
         apply wc_Earrow_inv' in Hwc as (Hwc0 & Hwc1 & Hc0 & Hc1).
         rewrite assign_lexp_Earrow in Hrun.
         apply sec_bind_inv in Hrun as (ts0 & sa & Hts0 & Hrun).
@@ -3222,18 +3448,18 @@ Module SecLusUnnestingBase
             by (rewrite (ljoin_list_pure ts0 us ts sb s' Hj); apply sec_le_refl).
         simpl clockof.
         eapply ljoin_list_closed; [exact Hj| |].
-        + rewrite Hc0. apply (assign_lexps_closed_of e0s H Hwc0 ts0 s sa ns);
+        + rewrite Hc0. apply (assign_lexps_closed_of e0s H Hwc0 (named_ok_forall e0s _ (fun e' H' => imm_Earrow_0 e0s es a e' H') Hnn) ts0 s sa ns);
             [|exact Hts0].
           apply (minted_incl_sub s s sa s' ns); [apply sec_le_refl| |exact Hns].
           apply (sec_le_trans _ sb _); [|exact Hbs'].
           eapply assign_lexps_sec_le; exact Hus.
-        + rewrite Hc1. apply (assign_lexps_closed_of es H0 Hwc1 us sa sb ns);
+        + rewrite Hc1. apply (assign_lexps_closed_of es H0 Hwc1 (named_ok_forall es _ (fun e' H' => imm_Earrow_1 e0s es a e' H') Hnn) us sa sb ns);
             [|exact Hus].
           apply (minted_incl_sub s sa sb s' ns); [|exact Hbs'|exact Hns].
           eapply assign_lexps_sec_le; exact Hts0.
 
       - (** Ewhen: the sampling name is added, and the clock deepens by it *)
-        intros Hwc ts s s' ns Hns Hrun. destruct a as (tys & cl).
+        intros Hwc Hnn ts s s' ns Hns Hrun. destruct a as (tys & cl).
         apply wc_Ewhen_inv' in Hwc as (ck & Hcl & Hwces & Hin & Heq & Hlen).
         rewrite assign_lexp_Ewhen in Hrun.
         apply sec_bind_inv in Hrun as (ts0 & sa & Hts0 & Hrun).
@@ -3244,7 +3470,7 @@ Module SecLusUnnestingBase
           as (? & ?) by (inversion Hret; auto); subst ts; subst sa.
         assert (Forall2 (lst_clock_closed env base_ty vars ns)
                   ts0 (clocksof es)) as Hts
-            by exact (assign_lexps_closed_of es H Hwces ts0 s s' ns Hns Hts0).
+            by exact (assign_lexps_closed_of es H Hwces (named_ok_forall es _ (fun e' H' => imm_Ewhen es x b _ e' H') Hnn) ts0 s s' ns Hns Hts0).
         assert (List.length ts0 = List.length tys) as Hl
             by (apply Forall2_length in Hts; congruence).
         assert (clock_of_nclock (tys, cl) = Con ck x b) as Hcc by exact Hcl.
@@ -3253,7 +3479,7 @@ Module SecLusUnnestingBase
           [exact (Forall2_eq_clock _ ts0 (clocksof es) ck Hts Heq)|exact Hl].
 
       - (** Emerge: the branches run deeper; the sampling name pays for it *)
-        intros Hwc ts s s' ns Hns Hrun. destruct a as (tys & cl).
+        intros Hwc Hnn ts s s' ns Hns Hrun. destruct a as (tys & cl).
         apply wc_Emerge_inv' in Hwc
           as (ck & Hcl & Hwct & Hwcf & Hin & Heqt & Heqf & Hlt & Hlf).
         rewrite assign_lexp_Emerge in Hrun.
@@ -3265,13 +3491,13 @@ Module SecLusUnnestingBase
             by (rewrite (ljoin_list_pure _ us ts sb s' Hj); apply sec_le_refl).
         assert (Forall2 (lst_clock_closed env base_ty vars ns)
                   ts0 (clocksof ets)) as Hts.
-        { apply (assign_lexps_closed_of ets H Hwct ts0 s sa ns); [|exact Hts0].
+        { apply (assign_lexps_closed_of ets H Hwct (named_ok_forall ets _ (fun e' H' => imm_Emerge_t x ets efs _ e' H') Hnn) ts0 s sa ns); [|exact Hts0].
           apply (minted_incl_sub s s sa s' ns); [apply sec_le_refl| |exact Hns].
           apply (sec_le_trans _ sb _); [|exact Hbs'].
           eapply assign_lexps_sec_le; exact Hus. }
         assert (Forall2 (lst_clock_closed env base_ty vars ns)
                   us (clocksof efs)) as Hus'.
-        { apply (assign_lexps_closed_of efs H0 Hwcf us sa sb ns); [|exact Hus].
+        { apply (assign_lexps_closed_of efs H0 Hwcf (named_ok_forall efs _ (fun e' H' => imm_Emerge_f x ets efs _ e' H') Hnn) us sa sb ns); [|exact Hus].
           apply (minted_incl_sub s sa sb s' ns); [|exact Hbs'|exact Hns].
           eapply assign_lexps_sec_le; exact Hts0. }
         assert (List.length ts0 = List.length tys) as Hl
@@ -3285,7 +3511,7 @@ Module SecLusUnnestingBase
           |exact Hl].
 
       - (** Eite: everything on the same clock *)
-        intros Hwc ts s s' ns Hns Hrun. destruct a as (tys & cl).
+        intros Hwc Hnn ts s s' ns Hns Hrun. destruct a as (tys & cl).
         apply wc_Eite_inv' in Hwc
           as (ck & Hcl & Hwce & Hwct & Hwcf & Hcke & Heqt & Heqf & Hlt & Hlf).
         rewrite assign_lexp_Eite in Hrun.
@@ -3303,21 +3529,21 @@ Module SecLusUnnestingBase
         assert (lst_clock_closed env base_ty vars ns th ck) as Hthc.
         { assert (Forall2 (lst_clock_closed env base_ty vars ns)
                     [th] (clockof e)) as Hh.
-          { apply (IHe Hwce [th] s sa ns); [|exact Ht0].
+          { apply (IHe Hwce (named_ok_imm _ _ (imm_Eite_c e ets efs _) Hnn) [th] s sa ns); [|exact Ht0].
             apply (minted_incl_sub s s sa s' ns);
               [apply sec_le_refl| |exact Hns].
             exact (sec_le_trans _ _ _ Hac Hcs'). }
           rewrite Hcke in Hh. now inversion Hh. }
         assert (Forall2 (lst_clock_closed env base_ty vars ns)
                   ts0 (clocksof ets)) as Hts.
-        { apply (assign_lexps_closed_of ets H Hwct ts0 sa sb ns); [|exact Hts0].
+        { apply (assign_lexps_closed_of ets H Hwct (named_ok_forall ets _ (fun e' H' => imm_Eite_t e ets efs _ e' H') Hnn) ts0 sa sb ns); [|exact Hts0].
           apply (minted_incl_sub s sa sb s' ns); [| |exact Hns].
           - eapply assign_lexp_type_sec_le; exact Ht0.
           - apply (sec_le_trans _ sc _); [|exact Hcs'].
             eapply assign_lexps_sec_le; exact Hus. }
         assert (Forall2 (lst_clock_closed env base_ty vars ns)
                   us (clocksof efs)) as Hus'.
-        { apply (assign_lexps_closed_of efs H0 Hwcf us sb sc ns); [|exact Hus].
+        { apply (assign_lexps_closed_of efs H0 Hwcf (named_ok_forall efs _ (fun e' H' => imm_Eite_f e ets efs _ e' H') Hnn) us sb sc ns); [|exact Hus].
           apply (minted_incl_sub s sb sc s' ns); [|exact Hcs'|exact Hns].
           apply (sec_le_trans _ sa _);
             [eapply assign_lexp_type_sec_le; exact Ht0
@@ -3332,30 +3558,36 @@ Module SecLusUnnestingBase
           |exact (Forall2_eq_clock _ us (clocksof efs) _ Hus' Heqf)
           |exact Hl].
 
-      - (** Eapp: every result name was minted by this run, so no name the
-            statement speaks about is one of them *)
-        intros Hwc ts s s' ns Hns Hrun.
+      - (** Eapp: a result name is either minted by this run, hence outside the
+            set, or the environment's name for a stream the call names, which
+            is no declared variable's name *)
+        intros Hwc Hnn ts s s' ns Hns Hrun.
         apply assign_lexp_Eapp_inv in Hrun
           as (sg & argts & rstty & ckty0 & outs & cs & sta & stb & stc
               & Hargs & _ & Hrst & _ & Houts & Hcs & Hts).
         pose proof (assign_lexp_Eapp_stages_le G env base_ty rst_ty es ro a
                       s s' sg argts rstty ckty0 outs cs sta stb stc
                       Hargs Hrst Houts Hcs) as (Hab & Hbc & Hcs').
-        assert (incl outs ns) as Hmo.
-        { intros y Hy.
-          apply (minted_incl_sub s stb stc s' ns);
+        assert (incl (minted stb stc) ns) as Hmin.
+        { apply (minted_incl_sub s stb stc s' ns);
             [apply (sec_le_trans _ sta _);
              [eapply assign_lexps_sec_le; exact Hargs|exact Hab]
-            |exact Hcs'|exact Hns|].
-          exact (fresh_idents_minted (List.length a) outs stb stc Houts y Hy). }
+            |exact Hcs'|exact Hns]. }
         subst ts. simpl clockof.
         apply Forall2_all_In.
         + rewrite !map_length.
-          exact (fresh_idents_length (List.length a) outs stb stc Houts).
+          exact (out_idents_length env a outs stb stc Houts).
         + intros t Ht ck ckty b Hck Hnm Hb.
           apply in_map_iff in Ht as (o & Ho & Hin).
           subst t. simpl in Hb. destruct Hb as [Hb|[]]; subst b.
-          exfalso. exact (Hnm (Hmo o Hin)).
+          destruct (out_idents_origin env a outs stb stc Houts o Hin)
+            as [Hm|(w & Hw & Hf)].
+          * exfalso. exact (Hnm (Hmin o Hm)).
+          * intros v ckv ckvty Hv Hvin Hckv. exfalso.
+            assert (v = w) as ->
+                by (exact (Hinj v w o o Hv Hf Logic.eq_refl)).
+            apply (Hnn f es ro a w (sub_refl _) Hw).
+            apply in_map_iff. exists (w, ckv). split; [reflexivity|exact Hvin].
     Qed.
 
   End LexpClockClosed.
@@ -3625,6 +3857,7 @@ Module SecLusUnnestingBase
       (forall y ck, find_clock cenv y = OK ck -> In (y, ck) vars) ->
       (forall y ck, In (y, ck) vars -> wc_clock vars ck) ->
       wc_exp Pg vars e ->
+      named_ok vars e ->
       (forall ck, find_clock cenv x = OK ck -> clockof e = [ck]) ->
       lexp_carried_closed G env base_ty rst_ty vars ns e ->
       incl (minted s s') ns ->
@@ -3632,14 +3865,14 @@ Module SecLusUnnestingBase
       constraints_clock_closed env base_ty vars ns cs.
   Proof.
     intros G env base_ty rst_ty vars cenv Pg ns x e cs s s'
-      Hinj Hnd Hbase Hrst Hcv Hwcv Hwce Hcke Hcar Hns H.
+      Hinj Hnd Hbase Hrst Hcv Hwcv Hwce Hnn Hcke Hcar Hns H.
     apply generate_ldef_constraint_inv in H
       as (ck & ckty & sa & rho & b & Hck & Hcka & Hty & Hb & ?); subst cs.
     assert (lst_clock_closed env base_ty vars ns (sa, rho) ck) as Hcl.
     { assert (Forall2 (lst_clock_closed env base_ty vars ns)
                 [(sa, rho)] (clockof e)) as Hf
           by exact (assign_lexp_type_clock_closed G env base_ty rst_ty Pg vars
-                      Hinj Hnd e Hwce [(sa, rho)] s s' ns Hns Hty).
+                      Hinj Hnd e Hwce Hnn [(sa, rho)] s s' ns Hns Hty).
       rewrite (Hcke ck Hck) in Hf. now inversion Hf. }
     apply constraints_clock_closed_cmerge. split.
     - constructor; [|constructor].
@@ -3665,6 +3898,7 @@ Module SecLusUnnestingBase
       (forall y ck, find_clock cenv y = OK ck -> In (y, ck) vars) ->
       (forall y ck, In (y, ck) vars -> wc_clock vars ck) ->
       Forall (wc_exp Pg vars) es ->
+      Forall (named_ok vars) es ->
       Forall2 (fun x ck => In (x, ck) vars) xs (clocksof es) ->
       Forall (lexp_carried_closed G env base_ty rst_ty vars ns) es ->
       incl (minted s s') ns ->
@@ -3672,7 +3906,7 @@ Module SecLusUnnestingBase
       constraints_clock_closed env base_ty vars ns cs.
   Proof.
     intros G env base_ty rst_ty vars cenv Pg ns xs es cs s s'
-      Hinj Hnd Hbase Hrst Hcv Hwcv Hwces Hxck Hcar Hns H.
+      Hinj Hnd Hbase Hrst Hcv Hwcv Hwces Hnnl Hxck Hcar Hns H.
     unfold generate_lgen_constraint in H.
     apply sec_bind_inv in H as (ts & s1 & Hts & H).
     apply sec_bind_inv in H as (bs & s2 & Hbs & Hlv).
@@ -3685,7 +3919,7 @@ Module SecLusUnnestingBase
     assert (Forall2 (lst_clock_closed env base_ty vars ns) ts (clocksof es))
       as Hcls.
     { eapply (assign_lexps_closed_of G env base_ty rst_ty Pg vars es);
-        [|exact Hwces|exact Hns1|exact Hts].
+        [|exact Hwces|exact Hnnl|exact Hns1|exact Hts].
       apply Forall_forall. intros e0 _.
       exact (assign_lexp_type_clock_closed G env base_ty rst_ty Pg vars
                Hinj Hnd e0). }
@@ -3721,6 +3955,7 @@ Module SecLusUnnestingBase
       Forall (fun e => match e with
                        | Eapp _ _ _ _ => False | _ => True end) es ->
       Forall (wc_exp Pg vars) es ->
+      Forall (named_ok vars) es ->
       Forall2 (fun x ck => In (x, ck) vars) xs (clocksof es) ->
       Forall (lexp_carried_closed G env base_ty rst_ty vars ns) es ->
       incl (minted s s') ns ->
@@ -3729,25 +3964,26 @@ Module SecLusUnnestingBase
       constraints_clock_closed env base_ty vars ns cs.
   Proof.
     intros G env base_ty rst_ty vars cenv Pg ns xs es cs s s'
-      Hinj Hnd Hbase Hrst Hcv Hwcv Hne Hwces Hxck Hcar Hns H.
+      Hinj Hnd Hbase Hrst Hcv Hwcv Hne Hwces Hnnl Hxck Hcar Hns H.
     destruct es as [|e [|e2 es2]].
 
     - (** nothing on the right: the general rule *)
       eapply generate_lgen_constraint_clock_closed;
         [exact Hinj|exact Hnd|exact Hbase|exact Hrst|exact Hcv|exact Hwcv
-        |exact Hwces|exact Hxck|exact Hcar|exact Hns|exact H].
+        |exact Hwces|exact Hnnl|exact Hxck|exact Hcar|exact Hns|exact H].
 
     - (** one expression: the definition rule when it defines one variable *)
       inversion Hne as [|e0 es0 Hnee _]; subst.
       inversion Hwces as [|e1 es1 Hwce _]; subst.
       inversion Hcar as [|e3 es3 Hcare _]; subst.
+      inversion Hnnl as [|e4 es4 Hnne _]; subst.
       rewrite <- generate_lone_is_leqn in H.
       assert (clocksof [e] = clockof e) as Hcl1
           by (unfold clocksof; simpl; now rewrite app_nil_r).
       destruct xs as [|x [|x2 xs2]].
       + eapply generate_lgen_constraint_clock_closed;
           [exact Hinj|exact Hnd|exact Hbase|exact Hrst|exact Hcv|exact Hwcv
-          |exact Hwces|exact Hxck|exact Hcar|exact Hns|].
+          |exact Hwces|exact Hnnl|exact Hxck|exact Hcar|exact Hns|].
         destruct e; (exact H || contradiction).
       + assert (forall ck, find_clock cenv x = OK ck -> clockof e = [ck])
           as Hcke.
@@ -3760,18 +3996,18 @@ Module SecLusUnnestingBase
           now rewrite <- Hcl1. }
         eapply generate_ldef_constraint_clock_closed;
           [exact Hinj|exact Hnd|exact Hbase|exact Hrst|exact Hcv|exact Hwcv
-          |exact Hwce|exact Hcke|exact Hcare|exact Hns|].
+          |exact Hwce|exact Hnne|exact Hcke|exact Hcare|exact Hns|].
         destruct e; (exact H || contradiction).
       + eapply generate_lgen_constraint_clock_closed;
           [exact Hinj|exact Hnd|exact Hbase|exact Hrst|exact Hcv|exact Hwcv
-          |exact Hwces|exact Hxck|exact Hcar|exact Hns|].
+          |exact Hwces|exact Hnnl|exact Hxck|exact Hcar|exact Hns|].
         destruct e; (exact H || contradiction).
 
     - (** two or more, and none of them a call: the general rule again *)
       rewrite gen_leqn_cons2, (has_lcall_false _ Hne) in H.
       eapply generate_lgen_constraint_clock_closed;
         [exact Hinj|exact Hnd|exact Hbase|exact Hrst|exact Hcv|exact Hwcv
-        |exact Hwces|exact Hxck|exact Hcar|exact Hns|exact H].
+        |exact Hwces|exact Hnnl|exact Hxck|exact Hcar|exact Hns|exact H].
   Qed.
 
   (** * Transporting the property through [simplify]
@@ -4096,6 +4332,74 @@ Module SecLusUnnestingBase
       as (cky & Hyv).
     exact (Henv y cky Hyv).
   Qed.
+
+  (** The same, from clocking alone.  The names in a source expression's
+      clocks are declared variables or streams the expression names itself
+      ([wc_exp_clock_names]); the naming pass gave the first kind and the
+      second kind ([anon_in_eqs]) a security name each. *)
+  Lemma nclockof_types_defined_wc :
+    forall env base_ty (P : global) (AN : list ident)
+           (vars : list (ident * clock)),
+      wc_global P -> wc_env vars ->
+      (forall x ck, In (x, ck) vars -> exists b, Env.find x env = Some b) ->
+      (forall w, In w AN -> exists b, Env.find w env = Some b) ->
+      forall e,
+        wc_exp P vars e ->
+        (forall w a, In (w, a) (fresh_in e) -> In w AN) ->
+        forall nck, In nck (nclockof e) ->
+          exists ckty, assign_clk_type env base_ty (stripname nck) = Some ckty.
+  Proof.
+    intros env base_ty P AN vars Hg Hwenv Henv Hanv e Hwc Hfr nck Hnck.
+    assert (In (stripname nck) (clockof e)) as Hin.
+    { rewrite clockof_nclockof. apply in_map_iff.
+      exists nck. split; [reflexivity|exact Hnck]. }
+    apply assign_clk_type_total_of_vars. intros x Hx.
+    rewrite <- ck_vars_eq in Hx.
+    destruct (wc_exp_clock_names P vars Hg Hwenv e Hwc _ Hin x Hx)
+      as [Hv|Hf].
+    - apply in_map_iff in Hv as ((x' & ck') & Hxe & Hvin). cbn in Hxe. subst x'.
+      exact (Henv x ck' Hvin).
+    - apply InMembers_In in Hf as (a & Ha).
+      exact (Hanv x (Hfr x a Ha)).
+  Qed.
+
+  (** The results of a call that carry a name carry the environment's name
+      for it, position by position -- the property that makes a clock over a
+      nested call's result mention the very name the result is typed by. *)
+  Lemma out_idents_raw_pos :
+    forall env anns outs s s',
+      out_idents_raw env anns s = OK (outs, s') ->
+      Forall2 (fun a o => forall w g, LSyn.stream_name a = Some w ->
+                                      Env.find w env = Some g -> o = g)
+        anns outs.
+  Proof.
+    intros env anns. induction anns as [|a anns IH]; intros outs s s' H;
+      simpl in H.
+    - unfold SC.ret in H. inversion H; subst. constructor.
+    - apply sec_bind_inv in H as (x & s1 & Hx & H).
+      apply sec_bind_inv in H as (ys & s2 & Hys & Hret).
+      unfold SC.ret in Hret. inversion Hret; subst.
+      constructor; [|exact (IH ys s1 s' Hys)].
+      intros w g Hw Hg.
+      destruct (out_ident_cases env a x s s1 Hx)
+        as [(_ & w0 & Hw0 & Hf0)|Hfr].
+      + rewrite Hw in Hw0. inversion Hw0; subst w0.
+        rewrite Hg in Hf0. inversion Hf0; reflexivity.
+      + unfold out_ident in Hx. rewrite Hw, Hg in Hx.
+        unfold SC.ret in Hx. inversion Hx; subst. reflexivity.
+  Qed.
+
+  Lemma out_idents_pos :
+    forall env anns outs s s',
+      out_idents env anns s = OK (outs, s') ->
+      Forall2 (fun a o => forall w g, LSyn.stream_name a = Some w ->
+                                      Env.find w env = Some g -> o = g)
+        anns outs.
+  Proof.
+    intros env anns outs s s' H.
+    exact (out_idents_raw_pos _ _ _ _ _ (proj1 (out_idents_inv _ _ _ _ _ H))).
+  Qed.
+
 
   (** The generator reads the call's base clock off the arguments, as
       [find_base_clock (clocksof es)]; clocking calls it [bck].  They agree,
@@ -4440,6 +4744,154 @@ Module SecLusUnnestingBase
       + eapply (IH Hwlr Hwcr); [|exact Hr].
         intros e' f es' ro anns Hin Heq w Hw.
         exact (Hanon e' f es' ro anns (or_intror Hin) Heq w Hw).
+  Qed.
+
+  Lemma named_pos_forall2 :
+    forall env (anns : list LSyn.ann) (outs : list ident)
+           (cs : list SymTypes.constraint),
+      Forall2 (fun a o => forall w g, LSyn.stream_name a = Some w ->
+                                      Env.find w env = Some g -> o = g)
+        anns outs ->
+      Forall2 (fun t nck => forall w g, snd nck = Some w ->
+                                        Env.find w env = Some g -> In g (fst t))
+        (List.map (fun o => (([o] : ST), cs)) outs) (List.map snd anns).
+  Proof.
+    intros env anns outs cs H. induction H as [|a o anns outs Hh Ht IH].
+    - constructor.
+    - simpl. constructor; [|exact IH].
+      intros w g Hw Hg. cbn [fst]. left. exact (Hh w g Hw Hg).
+  Qed.
+
+  Lemma Forall2_weaken_pt :
+    forall {A B : Type} (P Q : A -> B -> Prop) l1 l2,
+      (forall a b, P a b -> Q a b) -> Forall2 P l1 l2 -> Forall2 Q l1 l2.
+  Proof.
+    intros A B P Q l1 l2 H Hf. induction Hf; constructor; auto.
+  Qed.
+
+  Lemma assign_lexp_named_covered_all :
+    forall P G env base_ty rst_ty vars e,
+      wl_exp P e ->
+      wc_exp P vars e ->
+      forall ts s s',
+        assign_lexp_type G env base_ty rst_ty e s = OK (ts, s') ->
+        Forall2 (fun t nck => forall w g,
+                     snd nck = Some w ->
+                     Env.find w env = Some g -> In g (fst t))
+          ts (nclockof e).
+  Proof.
+    intros P G env base_ty rst_ty vars e Hwl Hwc ts s s' Hty.
+    destruct e as [c|x a|op e1 a|op e1 e2 a|e0s es anns|e0s es anns
+                  |es x b a|x ets efs a|e0 ets efs a|f es ro anns].
+    - assert (List.length ts = List.length (nclockof (Econst c))) as Hlen'.
+      { rewrite (assign_lexp_type_length P G env base_ty rst_ty _ Hwl ts s s' Hty).
+        symmetry. apply length_nclockof_numstreams. }
+      eapply Forall2_weaken_pt;
+        [|apply (named_covered_vacuous (fun _ => False) env _ ts Hlen')].
+      + intros t nck H w g Hw Hg. exact (H w g Hw (fun F => F) Hg).
+      + apply unnamed_no_key. simpl. now repeat constructor.
+    - rewrite assign_lexp_Evar in Hty.
+      apply sec_bind_inv in Hty as (g0 & s1 & Hg0 & Hret).
+      apply find_env_inv in Hg0 as (Hg0 & ?); subst s1.
+      unfold SC.ret in Hret.
+      assert (ts = [lvar g0]) as ? by (inversion Hret; reflexivity); subst ts.
+      simpl nclockof. constructor; [|constructor].
+      inv Hwc.
+      + cbn [snd]. intros w g Hw Hg.
+        assert (w = x) as ? by (inversion Hw; reflexivity); subst w.
+        rewrite Hg0 in Hg. apply option_Some_inj in Hg; subst g.
+        rewrite fst_lvar. now left.
+      + cbn [snd]. intros w g Hw. discriminate.
+    - assert (List.length ts = List.length (nclockof (Eunop op e1 a))) as Hlen'.
+      { rewrite (assign_lexp_type_length P G env base_ty rst_ty _ Hwl ts s s' Hty).
+        symmetry. apply length_nclockof_numstreams. }
+      eapply Forall2_weaken_pt;
+        [|apply (named_covered_vacuous (fun _ => False) env _ ts Hlen')].
+      + intros t nck H w g Hw Hg. exact (H w g Hw (fun F => F) Hg).
+      + apply unnamed_no_key. inv Hwc. simpl. now repeat constructor.
+    - assert (List.length ts = List.length (nclockof (Ebinop op e1 e2 a))) as Hlen'.
+      { rewrite (assign_lexp_type_length P G env base_ty rst_ty _ Hwl ts s s' Hty).
+        symmetry. apply length_nclockof_numstreams. }
+      eapply Forall2_weaken_pt;
+        [|apply (named_covered_vacuous (fun _ => False) env _ ts Hlen')].
+      + intros t nck H w g Hw Hg. exact (H w g Hw (fun F => F) Hg).
+      + apply unnamed_no_key. inv Hwc. simpl. now repeat constructor.
+    - assert (List.length ts = List.length (nclockof (Efby e0s es anns))) as Hlen'.
+      { rewrite (assign_lexp_type_length P G env base_ty rst_ty _ Hwl ts s s' Hty).
+        symmetry. apply length_nclockof_numstreams. }
+      eapply Forall2_weaken_pt;
+        [|apply (named_covered_vacuous (fun _ => False) env _ ts Hlen')].
+      + intros t nck H w g Hw Hg. exact (H w g Hw (fun F => F) Hg).
+      + apply unnamed_no_key. inv Hwc. simpl nclockof. rewrite Forall_map.
+        match goal with H : Forall unnamed_stream anns |- _ =>
+          eapply Forall_impl; [|exact H] end.
+        intros ann Hann. exact Hann.
+    - assert (List.length ts = List.length (nclockof (Earrow e0s es anns))) as Hlen'.
+      { rewrite (assign_lexp_type_length P G env base_ty rst_ty _ Hwl ts s s' Hty).
+        symmetry. apply length_nclockof_numstreams. }
+      eapply Forall2_weaken_pt;
+        [|apply (named_covered_vacuous (fun _ => False) env _ ts Hlen')].
+      + intros t nck H w g Hw Hg. exact (H w g Hw (fun F => F) Hg).
+      + apply unnamed_no_key. inv Hwc. simpl nclockof. rewrite Forall_map.
+        match goal with H : Forall unnamed_stream anns |- _ =>
+          eapply Forall_impl; [|exact H] end.
+        intros ann Hann. exact Hann.
+    - assert (List.length ts = List.length (nclockof (Ewhen es x b a))) as Hlen'.
+      { rewrite (assign_lexp_type_length P G env base_ty rst_ty _ Hwl ts s s' Hty).
+        symmetry. apply length_nclockof_numstreams. }
+      eapply Forall2_weaken_pt;
+        [|apply (named_covered_vacuous (fun _ => False) env _ ts Hlen')].
+      + intros t nck H w g Hw Hg. exact (H w g Hw (fun F => F) Hg).
+      + apply unnamed_no_key. inv Hwc. simpl nclockof. rewrite Forall_map.
+        apply Forall_forall. intros ? _. reflexivity.
+    - assert (List.length ts = List.length (nclockof (Emerge x ets efs a))) as Hlen'.
+      { rewrite (assign_lexp_type_length P G env base_ty rst_ty _ Hwl ts s s' Hty).
+        symmetry. apply length_nclockof_numstreams. }
+      eapply Forall2_weaken_pt;
+        [|apply (named_covered_vacuous (fun _ => False) env _ ts Hlen')].
+      + intros t nck H w g Hw Hg. exact (H w g Hw (fun F => F) Hg).
+      + apply unnamed_no_key. inv Hwc. simpl nclockof. rewrite Forall_map.
+        apply Forall_forall. intros ? _. reflexivity.
+    - assert (List.length ts = List.length (nclockof (Eite e0 ets efs a))) as Hlen'.
+      { rewrite (assign_lexp_type_length P G env base_ty rst_ty _ Hwl ts s s' Hty).
+        symmetry. apply length_nclockof_numstreams. }
+      eapply Forall2_weaken_pt;
+        [|apply (named_covered_vacuous (fun _ => False) env _ ts Hlen')].
+      + intros t nck H w g Hw Hg. exact (H w g Hw (fun F => F) Hg).
+      + apply unnamed_no_key. inv Hwc. simpl nclockof. rewrite Forall_map.
+        apply Forall_forall. intros ? _. reflexivity.
+    - (** a call: each result is typed by the environment's name for it *)
+      apply assign_lexp_Eapp_inv in Hty
+        as (sg & argts & rstty & ckty & outs & cs & sta & stb & stc
+            & _ & _ & _ & _ & Houts & _ & ?); subst ts.
+      pose proof (out_idents_pos env anns outs stb stc Houts) as Hpos.
+      simpl nclockof.
+      exact (named_pos_forall2 env anns outs _ Hpos).
+  Qed.
+
+  Lemma assign_lexps_named_covered_all :
+    forall P G env base_ty rst_ty vars es,
+      Forall (wl_exp P) es ->
+      Forall (wc_exp P vars) es ->
+      forall ts s s',
+        assign_lexps G env base_ty rst_ty es s = OK (ts, s') ->
+        Forall2 (fun t nck => forall w g,
+                     snd nck = Some w ->
+                     Env.find w env = Some g -> In g (fst t))
+          ts (nclocksof es).
+  Proof.
+    intros P G env base_ty rst_ty vars es.
+    induction es as [|e es IH]; intros Hwl Hwc ts s s' H.
+    - apply (assign_lexps_carried_nil G env base_ty rst_ty) in H
+        as (? & _ & ?); subst ts. constructor.
+    - apply assign_lexps_carried_cons in H
+        as (t & r & sa & Ht & Hr & ? & _); subst ts.
+      inversion Hwl as [|e0 es0 Hwle Hwlr]; subst.
+      inversion Hwc as [|e1 es1 Hwce Hwcr]; subst.
+      unfold nclocksof. simpl flat_map. apply Forall2_app.
+      + eapply (assign_lexp_named_covered_all P G env base_ty rst_ty vars e
+                  Hwle Hwce); exact Ht.
+      + exact (IH Hwlr Hwcr r sa s' Hr).
   Qed.
 
   Lemma nth_error_combine :
@@ -4803,39 +5255,18 @@ Module SecLusUnnestingBase
 
       [AN] is the node's anonymous names ([anon_in_eqs]). *)
 
-  Inductive imm_sub : exp -> exp -> Prop :=
-  | imm_Eunop : forall op e a, imm_sub e (Eunop op e a)
-  | imm_Ebinop_l : forall op e1 e2 a, imm_sub e1 (Ebinop op e1 e2 a)
-  | imm_Ebinop_r : forall op e1 e2 a, imm_sub e2 (Ebinop op e1 e2 a)
-  | imm_Efby_0 : forall e0s es a e, In e e0s -> imm_sub e (Efby e0s es a)
-  | imm_Efby_1 : forall e0s es a e, In e es -> imm_sub e (Efby e0s es a)
-  | imm_Earrow_0 : forall e0s es a e, In e e0s -> imm_sub e (Earrow e0s es a)
-  | imm_Earrow_1 : forall e0s es a e, In e es -> imm_sub e (Earrow e0s es a)
-  | imm_Ewhen : forall es x b a e, In e es -> imm_sub e (Ewhen es x b a)
-  | imm_Emerge_t : forall x ets efs a e, In e ets -> imm_sub e (Emerge x ets efs a)
-  | imm_Emerge_f : forall x ets efs a e, In e efs -> imm_sub e (Emerge x ets efs a)
-  | imm_Eite_c : forall c ets efs a, imm_sub c (Eite c ets efs a)
-  | imm_Eite_t : forall c ets efs a e, In e ets -> imm_sub e (Eite c ets efs a)
-  | imm_Eite_f : forall c ets efs a e, In e efs -> imm_sub e (Eite c ets efs a)
-  | imm_Eapp_arg : forall f es ro anns e, In e es -> imm_sub e (Eapp f es ro anns)
-  | imm_Eapp_rst : forall f es r anns, imm_sub r (Eapp f es (Some r) anns).
-
-  Inductive sub_exp : exp -> exp -> Prop :=
-  | sub_refl : forall e, sub_exp e e
-  | sub_step : forall e'' e' e, imm_sub e' e -> sub_exp e'' e' -> sub_exp e'' e.
-
   (** What one expression must satisfy: its anonymous streams are among the
-      node's, and a call's arguments are clocked over the declared variables. *)
+      node's, and the streams a call names are the node's anonymous streams or
+      declared variables.  (It used to ask a call's arguments to be clocked
+      over the declared variables as well; that is now a theorem of
+      well-clockedness, [wc_exp_clock_names].) *)
   Definition src_loc (vars : list (ident * clock)) (AN : list ident)
       (e : exp) : Prop :=
     (forall w a, In (w, a) (anon_in e) -> In w AN)
     /\ match e with
-       | Eapp _ es ro _ =>
-           Forall (fun e' => Forall (wc_clock vars) (clockof e')) es
-           /\ match ro with
-              | Some r => Forall (wc_clock vars) (clockof r)
-              | None => True
-              end
+       | Eapp _ _ _ anns =>
+           forall w, In (Some w) (List.map stream_name anns) ->
+                     In w AN \/ In w (List.map fst vars)
        | _ => True
        end.
 
@@ -4905,8 +5336,7 @@ Module SecLusUnnestingBase
   Definition nested_src (vars : list (ident * clock)) (AN : list ident)
       (e : exp) : Prop :=
     src_exp vars AN e
-    /\ (forall w a, In (w, a) (fresh_in e) -> In w AN)
-    /\ Forall (wc_clock vars) (clockof e).
+    /\ (forall w a, In (w, a) (fresh_in e) -> In w AN).
 
   Lemma nested_src_args :
     forall vars AN f es r anns,
@@ -4914,7 +5344,7 @@ Module SecLusUnnestingBase
       Forall (nested_src vars AN) es.
   Proof.
     intros vars AN f es r anns H. apply Forall_forall. intros e He.
-    split; [|split].
+    split.
     - exact (src_exp_imm vars AN e _ (imm_Eapp_arg f es r anns e He) H).
     - intros w a Hw. destruct (src_exp_loc vars AN _ H) as (Hanon & _).
       apply (Hanon w a).
@@ -4922,8 +5352,6 @@ Module SecLusUnnestingBase
       { unfold fresh_ins. apply in_concat.
         exists (fresh_in e). split; [exact Hw|exact (in_map fresh_in es e He)]. }
       destruct r as [r|]; simpl; [apply in_or_app; now left|exact Hins].
-    - destruct (src_exp_loc vars AN _ H) as (_ & Hcl & _).
-      rewrite Forall_forall in Hcl. exact (Hcl e He).
   Qed.
 
   Lemma nested_src_reset :
@@ -4931,11 +5359,10 @@ Module SecLusUnnestingBase
       src_exp vars AN (Eapp f es (Some r) anns) ->
       nested_src vars AN r.
   Proof.
-    intros vars AN f es r anns H. split; [|split].
+    intros vars AN f es r anns H. split.
     - exact (src_exp_imm vars AN r _ (imm_Eapp_rst f es r anns) H).
     - intros w a Hw. destruct (src_exp_loc vars AN _ H) as (Hanon & _).
       apply (Hanon w a). simpl. apply in_or_app. right. exact Hw.
-    - destruct (src_exp_loc vars AN _ H) as (_ & _ & Hcl). exact Hcl.
   Qed.
 
   (** The same three statements, about source expressions only ([src_exp]):
