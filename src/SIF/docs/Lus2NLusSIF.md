@@ -42,21 +42,29 @@ Theorem source_signatures_entail_nlustre :
                      (U.unnest_global G Hwl Hpr)),
     L.Clo.wc_global G -> L.Typ.wt_global G ->
     forall envs aux stN st GS GT GM P Hp GN,
-      generate_lnode_scoped_env_st
+      ConcreteSecLNameGen.generate_lnode_scoped_env_st
         (rev (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1))
         = OK (envs, aux, stN) ->
-      sec_le stN st ->
-      NFm-normalised program is L.Ord.Ordered_nodes ->
-      generate_all_lsignatures_scoped_env (rev G) envs aux st = OK GS ->
-      generate_all_lsignatures_scoped_env (rev (U.unnest_global G Hwl Hpr)) envs aux st = OK GT ->
-      generate_all_lsignatures_scoped_env (rev (normfby_global ...)) envs aux st = OK GM ->
-      TR.Tr.to_global (normfby_global ...) Hp = OK P ->
-      NAMEGEN.generate_node_scoped_env (rev P) = OK (envs, aux) ->
-      NL.Ord.Ordered_nodes P -> NL.Clo.wc_global P ->
+      LegN.sec_le stN st ->
+      L.Ord.Ordered_nodes
+        (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1) ->
+      ConcreteSecLTyping.generate_all_lsignatures_scoped_env (rev G) envs aux
+        st = OK GS ->
+      ConcreteSecLTyping.generate_all_lsignatures_scoped_env
+        (rev (U.unnest_global G Hwl Hpr)) envs aux st = OK GT ->
+      ConcreteSecLTyping.generate_all_lsignatures_scoped_env
+        (rev (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1))
+        envs aux st = OK GM ->
+      TR.Tr.to_global
+        (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1) Hp
+        = OK P ->
+      ConcreteNameGen.generate_node_scoped_env (rev P) = OK (envs, aux) ->
+      NL.Ord.Ordered_nodes P ->
+      NL.Clo.wc_global P ->
       SECNLUSTYPING.generate_all_signatures_scoped_env (rev P) envs aux = OK GN ->
-      Signature_entails GS GN.
+      Leg.Signature_entails GS GN.
 ```
-(abbreviated; the exact statement is in the file.)  `Signature_entails GS GN` says every
+`Signature_entails GS GN` says every
 source signature `n1` has a same-named NLustre signature `n2` with `Signature_head_entails n1 n2`
 (same interface, `preserves_on` the scope, and the call clause).  Its reading for policies is
 `source_policy_realised`: a valuation satisfying a source signature's stored constraints
