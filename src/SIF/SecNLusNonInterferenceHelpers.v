@@ -173,7 +173,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
 
     Lemma signature_satisfied_replays_raw:
       forall P n ty_env sig dlt,
-        NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+        NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
         Clo.wc_node P n ->
         find_node n.(n_name) all_nodes = Some n ->
         find_node_env n.(n_name) envs = Some ty_env ->
@@ -208,8 +208,9 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
           (clk_id & rst_id & clk_type & rst_type & inp & out & locals & raw & st_n
            & Haux & Hclk & Hrst & Hinp & Hout & Hlocals & Hraw & Hsigdef).
       pose proof (find_node_In _ _ _ Hfindnode) as [_ Hin].
+      apply in_rev in Hin.
       apply in_split in Hin as (prefix & suffix & Hall).
-      subst all_nodes.
+      rewrite Hall in Henvsgen.
       unfold NAMEGEN.generate_node_scoped_env in Henvsgen.
       destruct
         (NAMEGEN.generate_node_scoped_env'
@@ -1195,6 +1196,28 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         rewrite Hsuffix2. repeat rewrite <- app_assoc. reflexivity.
     Qed.
 
+    Lemma find_nodes_linear_order_rev:
+      forall n1 n2,
+        NoDup (map n_name all_nodes) ->
+        find_node n1.(n_name) all_nodes = Some n1 ->
+        find_node n2.(n_name) all_nodes = Some n2 ->
+        n1.(n_name) <> n2.(n_name) ->
+        (exists prefix mid suffix,
+            rev all_nodes = prefix ++ n1 :: mid ++ n2 :: suffix)
+        \/ (exists prefix mid suffix,
+            rev all_nodes = prefix ++ n2 :: mid ++ n1 :: suffix).
+    Proof.
+      intros n1 n2 Hnd Hf1 Hf2 Hneq.
+      destruct (find_nodes_linear_order n1 n2 Hnd Hf1 Hf2 Hneq)
+        as [(p & m & s & H)|(p & m & s & H)].
+      - right. exists (rev s), (rev m), (rev p). rewrite H.
+        rewrite !rev_app_distr. simpl. rewrite rev_app_distr. simpl.
+        repeat rewrite <- app_assoc. simpl. reflexivity.
+      - left. exists (rev s), (rev m), (rev p). rewrite H.
+        rewrite !rev_app_distr. simpl. rewrite rev_app_distr. simpl.
+        repeat rewrite <- app_assoc. simpl. reflexivity.
+    Qed.
+
     Lemma find_node_unique_nodup:
       forall f n1 n2,
         NoDup (map n_name all_nodes) ->
@@ -1232,9 +1255,32 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
         + exact IH.
     Qed.
 
+    Lemma wc_nodes_rev:
+      forall Pg,
+        Ordered_nodes Pg -> Clo.wc_global Pg ->
+        Forall (Clo.wc_node Pg) (rev Pg).
+    Proof.
+      intros Pg Hord Hwc.
+      pose proof (Ordered_nodes_nodup_names Pg Hord) as Hnd.
+      assert (Hfind : forall (L : global) n,
+                 NoDup (map n_name L) -> In n L ->
+                 find_node n.(n_name) L = Some n).
+      { induction L as [|nd L IH]; intros n Hnd' Hin; [inversion Hin|].
+        simpl in Hnd'. inversion Hnd' as [|x xs Hnotin Hnd'']; subst x xs.
+        destruct Hin as [Heq|Hin].
+        - subst nd. simpl. rewrite ident_eqb_refl. reflexivity.
+        - simpl. destruct (ident_eqb nd.(n_name) n.(n_name)) eqn:Hname.
+          + exfalso. apply ident_eqb_eq in Hname.
+            apply Hnotin. rewrite Hname. now apply in_map.
+          + apply IH; assumption. }
+      apply Forall_forall. intros n Hin. apply in_rev in Hin.
+      eapply Clo.wc_find_node'; [exact Hord|exact Hwc|].
+      apply Hfind; assumption.
+    Qed.
+
     Lemma generated_sig_scope_nodup_scoped_env:
       forall n ty_env clk_id rst_id clk_type rst_type inp out,
-        NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+        NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
         find_node n.(n_name) all_nodes = Some n ->
         find_node_env n.(n_name) envs = Some ty_env ->
         get_node_aux n.(n_name) aux_names = Some (clk_id, rst_id) ->
@@ -1254,8 +1300,9 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       intros n ty_env clk_id rst_id clk_type rst_type inp out
              Henvsgen Hfindnode Hfindenv Haux Hclk Hrst Hinp Hout.
       pose proof (find_node_In _ _ _ Hfindnode) as (_ & Hinnode).
+      apply in_rev in Hinnode.
       apply in_split in Hinnode as (prefix & suffix & Hall).
-      subst all_nodes.
+      rewrite Hall in Henvsgen.
       unfold NAMEGEN.generate_node_scoped_env in Henvsgen.
       destruct
         (NAMEGEN.generate_node_scoped_env'
@@ -1361,7 +1408,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       forall caller callee
              caller_env callee_env callee_sig
              clk_id rst_id clk_type rst_type inp out locals,
-        NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+        NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
         NoDup (map n_name all_nodes) ->
         find_node caller.(n_name) all_nodes = Some caller ->
         find_node callee.(n_name) all_nodes = Some callee ->
@@ -1387,13 +1434,13 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
              Hauxcaller Hclkcaller Hrstcaller
              Hinpcaller Houtcaller Hlocalscaller.
       pose proof
-        (find_nodes_linear_order
+        (find_nodes_linear_order_rev
            caller callee Hndnames Hfindcaller Hfindcallee Hneq)
         as Hord.
       unfold NAMEGEN.generate_node_scoped_env in Henvsgen.
       destruct
         (NAMEGEN.generate_node_scoped_env'
-           all_nodes (Env.empty _) [] NAMEGEN.init_state)
+           (rev all_nodes) (Env.empty _) [] NAMEGEN.init_state)
         as [[[envs' aux'] st_final]|] eqn:Hrun;
         try discriminate.
       inversion Henvsgen; subst envs' aux'; clear Henvsgen.
@@ -1402,7 +1449,7 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       destruct Hord as
           [(prefix & mid & suffix & Hall)
           |(prefix & mid & suffix & Hall)];
-        subst all_nodes.
+        rewrite Hall in Hrun.
       - edestruct NAMEGEN.generate_node_scoped_env'_split_node
           as (envs_pref_cal & aux_pref_cal & st_pref_cal
               & local_env_cal & rec_cal & st_local_cal
@@ -1861,10 +1908,10 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       (nd : node) (dlt_sig dlt_raw : ground_instantiation) : Prop :=
       forall k ty_env sig t bk bk' H H'
              clk_id rst_id clk_type rst_type inp out locals raw st_n,
-        NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+        NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
         Ordered_nodes all_nodes ->
         Clo.wc_global all_nodes ->
-        SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G ->
+        SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names = OK G ->
         NLCaus.nl_global_causal all_nodes ->
         find_node nd.(n_name) all_nodes = Some nd ->
         find_node_env nd.(n_name) envs = Some ty_env ->
@@ -1894,10 +1941,10 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       (nd : node) (dlt_sig dlt_raw : ground_instantiation) : Prop :=
       forall k ty_env sig t bk bk' H H'
              clk_id rst_id clk_type rst_type inp out locals raw st_n,
-        NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+        NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
         Ordered_nodes all_nodes ->
         Clo.wc_global all_nodes ->
-        SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G ->
+        SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names = OK G ->
         NLCaus.nl_global_causal all_nodes ->
         find_node nd.(n_name) all_nodes = Some nd ->
         find_node_env nd.(n_name) envs = Some ty_env ->
@@ -3049,10 +3096,10 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
       forall n dlt_sig dlt_raw
              ty_env sig t bk bk' H H'
              clk_id rst_id clk_type rst_type inp out locals raw st_n,
-        NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+        NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
         Ordered_nodes all_nodes ->
         Clo.wc_global all_nodes ->
-        SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G ->
+        SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names = OK G ->
         NLCaus.nl_global_causal all_nodes ->
         find_node n.(n_name) all_nodes = Some n ->
         find_node_env n.(n_name) envs = Some ty_env ->
@@ -3547,9 +3594,10 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                }
                assert (HgoodG : SIG.secglobal_good G).
                {
-                 eapply SECNLUSTYPINGCORRECTNESS.generate_all_source_signatures_good_scoped_env.
+                 eapply SECNLUSTYPINGCORRECTNESS.generate_all_source_signatures_good_scoped_env
+                   with (P := all_nodes).
                  - exact Henvsgen.
-                 - exact Hwcglob.
+                 - exact (wc_nodes_rev all_nodes Hord Hwcglob).
                  - exact Hallsig.
                }
                assert (Hsiggood_c : SIG.signature_good callee_sig_cur).
@@ -3566,9 +3614,9 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  intros y lhs Hfindlhs.
                  eapply
                    (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_reset_scoped_env
-                      all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                      all_nodes (rev all_nodes) envs aux_names G callee.(n_name) callee_sig_cur y lhs).
                  - exact Henvsgen.
-                 - exact Hwcglob.
+                 - exact (wc_nodes_rev all_nodes Hord Hwcglob).
                  - exact Hallsig.
                  - exact Hfindsigc.
                  - exact Hfindlhs.
@@ -3582,9 +3630,9 @@ Module Type SECNLUSNONINTERFERENCEHELPERS
                  intros y lhs Hfindlhs.
                  eapply
                    (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_clock_scoped_env
-                      all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                      all_nodes (rev all_nodes) envs aux_names G callee.(n_name) callee_sig_cur y lhs).
                  - exact Henvsgen.
-                 - exact Hwcglob.
+                 - exact (wc_nodes_rev all_nodes Hord Hwcglob).
                  - exact Hallsig.
                  - exact Hfindsigc.
                  - exact Hfindlhs.
@@ -4188,9 +4236,10 @@ pose proof Hspecw as Hcallee_out_raw.
                }
                assert (HgoodG : SIG.secglobal_good G).
                {
-                 eapply SECNLUSTYPINGCORRECTNESS.generate_all_source_signatures_good_scoped_env.
+                 eapply SECNLUSTYPINGCORRECTNESS.generate_all_source_signatures_good_scoped_env
+                   with (P := all_nodes).
                  - exact Henvsgen.
-                 - exact Hwcglob.
+                 - exact (wc_nodes_rev all_nodes Hord Hwcglob).
                  - exact Hallsig.
                }
                assert (Hsiggood_c : SIG.signature_good callee_sig_cur).
@@ -4207,9 +4256,9 @@ pose proof Hspecw as Hcallee_out_raw.
                  intros y lhs Hfindlhs.
                  eapply
                    (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_reset_scoped_env
-                      all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                      all_nodes (rev all_nodes) envs aux_names G callee.(n_name) callee_sig_cur y lhs).
                  - exact Henvsgen.
-                 - exact Hwcglob.
+                 - exact (wc_nodes_rev all_nodes Hord Hwcglob).
                  - exact Hallsig.
                  - exact Hfindsigc.
                  - exact Hfindlhs.
@@ -4223,9 +4272,9 @@ pose proof Hspecw as Hcallee_out_raw.
                  intros y lhs Hfindlhs.
                  eapply
                    (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_clock_scoped_env
-                      all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                      all_nodes (rev all_nodes) envs aux_names G callee.(n_name) callee_sig_cur y lhs).
                  - exact Henvsgen.
-                 - exact Hwcglob.
+                 - exact (wc_nodes_rev all_nodes Hord Hwcglob).
                  - exact Hallsig.
                  - exact Hfindsigc.
                  - exact Hfindlhs.

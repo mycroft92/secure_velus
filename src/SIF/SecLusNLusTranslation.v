@@ -1691,14 +1691,14 @@ Module Type SECLUSNLUSTRANSLATION
   Qed.
 
   Theorem generate_all_signatures_entails_scoped_inv' :
-    forall prefix nsL nsP accL accN envs aux_names
+    forall Pw prefix nsL nsP accL accN envs aux_names
            envs_pref aux_pref stn st GLout stf GNout,
       transcribed nsL nsP ->
       Forall (fun m => ~ LOrd.Is_node_in m.(n_name) m.(n_eqs)) nsL ->
       generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
         = OK ((envs_pref, aux_pref), stn) ->
       generate_node_scoped_env (prefix ++ nsP) = OK (envs, aux_names) ->
-      NLClo.wc_global nsP ->
+      Forall (NLClo.wc_node Pw) nsP ->
       Signature_entails accL accN ->
       secglobal_scoped accN ->
       secglobal_good accN ->
@@ -1711,7 +1711,7 @@ Module Type SECLUSNLUSTRANSLATION
       /\ (forall g sg, find_signature g GNout = Some sg ->
                        NoDup (signature_scope sg)).
   Proof.
-    intros prefix nsL nsP accL accN envs aux_names envs_pref aux_pref stn st
+    intros Pw prefix nsL nsP accL accN envs aux_names envs_pref aux_pref stn st
            GLout stf GNout Htr.
     revert prefix accL accN envs_pref aux_pref stn st GLout stf GNout.
     induction Htr as [|nL nP nsL nsP HnodeP Htr IH];
@@ -1722,7 +1722,7 @@ Module Type SECLUSNLUSTRANSLATION
       exact (conj Hent (conj Hscoped (conj Hgood Hndacc))).
     - destruct HnodeP as [Hp Htn].
       inversion Hnotselfs as [|? ? Hnotself Hnotselfs_tl]; subst.
-      inversion Hwc as [|nP' nsP' Hwc_tail Hwc_head]; subst nP' nsP'.
+      inversion Hwc as [|nP' nsP' Hwc_head Hwc_tail]; subst nP' nsP'.
       simpl in Hl, Hn.
       destruct (generate_lnode_sig_scoped_env accL nL envs aux_names st)
         as [[lsig st1]|] eqn:El; [|discriminate].
@@ -1761,7 +1761,7 @@ Module Type SECLUSNLUSTRANSLATION
       assert (Hscopefresh :
                 SECNLC.node_scope_fresh_in_env nP local_env aux_names accN)
         by (eapply SECNLC.node_scope_fresh_in_env_from_bounds; eauto).
-      destruct (generated_node_head_entails nsP accL accN nL nP Hp local_env rec
+      destruct (generated_node_head_entails Pw accL accN nL nP Hp local_env rec
                   aux_names nsig lsig stn st_local st st1
                   Htn Hlocal Hauxlocal Hwc_head Hnotself Hent Hscopefresh
                   Hscoped Hgood Hndacc En El)
@@ -1789,14 +1789,14 @@ Module Type SECLUSNLUSTRANSLATION
   Qed.
 
   Theorem generate_all_signatures_entails_scoped' :
-    forall prefix nsL nsP accL accN envs aux_names
+    forall Pw prefix nsL nsP accL accN envs aux_names
            envs_pref aux_pref stn st GLout stf GNout,
       transcribed nsL nsP ->
       Forall (fun m => ~ LOrd.Is_node_in m.(n_name) m.(n_eqs)) nsL ->
       generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
         = OK ((envs_pref, aux_pref), stn) ->
       generate_node_scoped_env (prefix ++ nsP) = OK (envs, aux_names) ->
-      NLClo.wc_global nsP ->
+      Forall (NLClo.wc_node Pw) nsP ->
       Signature_entails accL accN ->
       secglobal_scoped accN ->
       secglobal_good accN ->
@@ -1825,24 +1825,24 @@ Module Type SECLUSNLUSTRANSLATION
   Qed.
 
   Corollary generate_all_signatures_entails_scoped :
-    forall G P Hp envs aux_names st GLout GNout,
-      to_global G Hp = OK P ->
+    forall Pw G P envs aux_names st GLout GNout,
+      transcribed G P ->
       Forall (fun m => ~ LOrd.Is_node_in m.(n_name) m.(n_eqs)) G ->
       generate_node_scoped_env P = OK (envs, aux_names) ->
-      NLClo.wc_global P ->
+      Forall (NLClo.wc_node Pw) P ->
       generate_all_lsignatures_scoped_env G envs aux_names st = OK GLout ->
       SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GNout ->
       Signature_entails GLout GNout.
   Proof.
-    intros G P Hp envs aux_names st GLout GNout Htr Hnotselfs Henvsgen Hwc
+    intros Pw G P envs aux_names st GLout GNout Htr Hnotselfs Henvsgen Hwc
            Hl Hn.
     unfold generate_all_lsignatures_scoped_env in Hl.
     destruct (generate_all_lsignatures' [] G envs aux_names st)
       as [[sigs stf]|] eqn:El; [|discriminate]. inversion Hl; subst sigs.
     unfold SECNL.generate_all_signatures_scoped_env in Hn.
-    eapply (generate_all_signatures_entails_scoped' nil G P nil nil envs aux_names
+    eapply (generate_all_signatures_entails_scoped' Pw nil G P nil nil envs aux_names
               (Env.empty _) nil NAMEGEN.init_state st GLout stf GNout).
-    - eapply to_global_transcribed; exact Htr.
+    - exact Htr.
     - exact Hnotselfs.
     - reflexivity.
     - simpl. exact Henvsgen.
@@ -1857,11 +1857,11 @@ Module Type SECLUSNLUSTRANSLATION
   Qed.
 
   Corollary generate_all_signatures_entails_scoped_inv :
-    forall G P Hp envs aux_names st GLout GNout,
-      to_global G Hp = OK P ->
+    forall Pw G P envs aux_names st GLout GNout,
+      transcribed G P ->
       Forall (fun m => ~ LOrd.Is_node_in m.(n_name) m.(n_eqs)) G ->
       generate_node_scoped_env P = OK (envs, aux_names) ->
-      NLClo.wc_global P ->
+      Forall (NLClo.wc_node Pw) P ->
       generate_all_lsignatures_scoped_env G envs aux_names st = OK GLout ->
       SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GNout ->
       Signature_entails GLout GNout
@@ -1869,15 +1869,15 @@ Module Type SECLUSNLUSTRANSLATION
       /\ (forall g sg, find_signature g GNout = Some sg ->
                        NoDup (signature_scope sg)).
   Proof.
-    intros G P Hp envs aux_names st GLout GNout Htr Hnotselfs Henvsgen Hwc
+    intros Pw G P envs aux_names st GLout GNout Htr Hnotselfs Henvsgen Hwc
            Hl Hn.
     unfold generate_all_lsignatures_scoped_env in Hl.
     destruct (generate_all_lsignatures' [] G envs aux_names st)
       as [[sigs stf]|] eqn:El; [|discriminate]. inversion Hl; subst sigs.
     unfold SECNL.generate_all_signatures_scoped_env in Hn.
-    eapply (generate_all_signatures_entails_scoped_inv' nil G P nil nil envs aux_names
+    eapply (generate_all_signatures_entails_scoped_inv' Pw nil G P nil nil envs aux_names
               (Env.empty _) nil NAMEGEN.init_state st GLout stf GNout).
-    - eapply to_global_transcribed; exact Htr.
+    - exact Htr.
     - exact Hnotselfs.
     - reflexivity.
     - simpl. exact Henvsgen.
@@ -1901,23 +1901,6 @@ Module Type SECLUSNLUSTRANSLATION
       [SecLNameInterface.to_global_lscoped_env] computes from either program.  That is preservation for the leg, and the direction
       noninterference needs -- a secure Lustre program stays secure after
       transcription. *)
-
-  Corollary to_global_signatures_entail :
-    forall G P Hp envs aux_names st GLout GNout,
-      to_global G Hp = OK P ->
-      LClo.wc_global G ->
-      LOrd.Ordered_nodes G ->
-      SECLNG.generate_lnode_scoped_env G = OK (envs, aux_names) ->
-      generate_all_lsignatures_scoped_env G envs aux_names st = OK GLout ->
-      SECNL.generate_all_signatures_scoped_env P envs aux_names = OK GNout ->
-      Signature_entails GLout GNout.
-  Proof.
-    intros G P Hp envs aux_names st GLout GNout Htr Hwc Hord Henvsgen Hl Hn.
-    rewrite (SECLNG.to_global_lscoped_env _ _ _ Htr) in Henvsgen.
-    eapply generate_all_signatures_entails_scoped; eauto.
-    - now apply Ordered_nodes_not_self.
-    - eapply TRC.wc_transcription; eauto.
-  Qed.
 
   (** * The two globals have the same domain
 

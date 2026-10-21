@@ -361,10 +361,10 @@ Module Type SECOBCNONINTERFERENCE
   Theorem translated_class_noninterference_outputs:
     forall all_nodes Gsrc Gstc envs aux_names sys ty_env
            dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
       NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names
         = OK Gsrc ->
       NLCaus.nl_global_causal all_nodes ->
       find_node_env (Stc.Syn.s_name sys) envs = Some ty_env ->
@@ -400,10 +400,10 @@ Module Type SECOBCNONINTERFERENCE
   Corollary translated_class_noninterference_outputs_obc:
     forall all_nodes Gsrc Gstc envs aux_names sys ty_env
            dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
       NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names
         = OK Gsrc ->
       NLCaus.nl_global_causal all_nodes ->
       find_node_env (Stc.Syn.s_name sys) envs = Some ty_env ->
@@ -476,10 +476,10 @@ Module Type SECOBCNONINTERFERENCE
            dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
       cls = TransObc.translate_system (Sched.schedule_system sys) ->
       Obc.Syn.find_method step cls.(Obc.Syn.c_methods) = Some stepm ->
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
       NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names
         = OK Gsrc ->
       NLCaus.nl_global_causal all_nodes ->
       find_node_env (Stc.Syn.s_name sys) envs = Some ty_env ->
@@ -546,20 +546,99 @@ Module Type SECOBCNONINTERFERENCE
       last leg by [ChainEnv.generated_program_signatures_preserved_obc_scheduled].
       Nothing is reproved here. *)
 
+  (** * Well-clocking along the reversed program
+
+      The signature generators fold over the reversed program, so the clocking
+      facts they consume are "each system of the reversed program is
+      well-clocked against the whole program".  They follow from the program's
+      [wc_program] and [Ordered_systems]. *)
+
+  Lemma stc_find_in :
+    forall Q s,
+      Stc.Ord.Ordered_systems Q -> In s Q ->
+      exists P', Stc.Syn.find_system s.(Stc.Syn.s_name) Q = Some (s, P').
+  Proof.
+    induction Q as [|b Q IH]; intros s Hord Hin; [inversion Hin|].
+    inversion Hord as [|b' Q' Hord' _ Hnames]; subst.
+    simpl. destruct (ident_eqb b.(Stc.Syn.s_name) s.(Stc.Syn.s_name)) eqn:E.
+    - apply ident_eqb_eq in E. destruct Hin as [Heq|Hin].
+      + subst b. exists Q. reflexivity.
+      + exfalso. rewrite Forall_forall in Hnames.
+        exact (Hnames s Hin E).
+    - destruct Hin as [Heq|Hin].
+      + subst b. rewrite ident_eqb_refl in E. discriminate.
+      + apply IH; assumption.
+  Qed.
+
+  Lemma stc_wc_rev :
+    forall Q,
+      Stc.Ord.Ordered_systems Q -> Stc.Clo.wc_program Q ->
+      Forall (Stc.Clo.wc_system Q) (rev Q).
+  Proof.
+    intros Q Hord Hwc. apply Forall_forall. intros s Hin. apply in_rev in Hin.
+    destruct (stc_find_in Q s Hord Hin) as (P' & Hfind).
+    eapply Stc.Clo.wc_find_system'; [exact Hord|exact Hwc|exact Hfind].
+  Qed.
+
+  Lemma translate_rev :
+    forall l, TransNL.translate (rev l) = rev (TransNL.translate l).
+  Proof. intros l. unfold TransNL.translate. apply map_rev. Qed.
+
+  Lemma schedule_rev :
+    forall l, Sched.schedule (rev l) = rev (Sched.schedule l).
+  Proof. intros l. unfold Sched.schedule. apply map_rev. Qed.
+
+  Lemma wc_translate_rev :
+    forall all_nodes,
+      NL.Ord.Ordered_nodes all_nodes ->
+      Stc.Clo.wc_program (TransNL.translate all_nodes) ->
+      Forall (Stc.Clo.wc_system (TransNL.translate all_nodes))
+        (TransNL.translate (rev all_nodes)).
+  Proof.
+    intros all_nodes Hord Hwc. rewrite translate_rev.
+    apply stc_wc_rev; [|exact Hwc].
+    exact (NLStcCorr.Ordered_nodes_systems _ Hord).
+  Qed.
+
+  Lemma wc_schedule_rev :
+    forall all_nodes,
+      NL.Ord.Ordered_nodes all_nodes ->
+      Stc.Clo.wc_program (TransNL.translate all_nodes) ->
+      Forall (Stc.Clo.wc_system (Sched.schedule (TransNL.translate all_nodes)))
+        (Sched.schedule (TransNL.translate (rev all_nodes))).
+  Proof.
+    intros all_nodes Hord Hwc. rewrite translate_rev, schedule_rev.
+    apply stc_wc_rev.
+    - apply Sched.scheduler_ordered. exact (NLStcCorr.Ordered_nodes_systems _ Hord).
+    - apply Sched.scheduler_wc_program. exact Hwc.
+  Qed.
+
+  Lemma well_scheduled_rev :
+    forall all_nodes,
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate (rev all_nodes))).
+  Proof.
+    intros all_nodes H. unfold Stc.Wdef.Well_scheduled in *.
+    rewrite translate_rev, schedule_rev.
+    apply Forall_forall. intros x Hx. apply in_rev in Hx.
+    exact (proj1 (Forall_forall _ _) H x Hx).
+  Qed.
+
   Lemma class_security_from_node_security:
     forall all_nodes Gsrc Gstc Gstcs Gobc envs aux_names n dlt_sig dlt_raw,
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
       Stc.Clo.wc_program (TransNL.translate all_nodes) ->
-      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate (rev all_nodes))) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names
         = OK Gsrc ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env
-        (TransNL.translate all_nodes) envs aux_names = OK Gstc ->
+        (TransNL.translate (rev all_nodes)) envs aux_names = OK Gstc ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env
-        (Sched.schedule (TransNL.translate all_nodes)) envs aux_names = OK Gstcs ->
+        (Sched.schedule (TransNL.translate (rev all_nodes))) envs aux_names = OK Gstcs ->
       SECOBCTYPING.generate_all_class_signatures_scoped_env
-        (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
+        (TransObc.translate (Sched.schedule (TransNL.translate (rev all_nodes))))
         envs aux_names = OK Gobc ->
       find_node n.(NL.Syn.n_name) all_nodes = Some n ->
       NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw ->
@@ -567,26 +646,29 @@ Module Type SECOBCNONINTERFERENCE
         (TransNL.translate_node n) dlt_sig dlt_raw.
   Proof.
     intros all_nodes Gsrc Gstc Gstcs Gobc envs aux_names n dlt_sig dlt_raw
-           Henvsgen Hwcnl Hwcstc Hsch Hallsrc Hallstc Hallstcs Hallobc
+           Henvsgen Hordnl Hwcnl Hwcstc Hsch Hallsrc Hallstc Hallstcs Hallobc
            Hfindnode Hsec.
     assert (Hsys : StcNI.system_security all_nodes Gsrc Gstc envs aux_names
                      (TransNL.translate_node n) dlt_sig dlt_raw)
       by (eapply StcNI.system_security_from_node_security;
-          [exact Henvsgen|exact Hwcnl|exact Hallsrc|exact Hallstc
+          [exact Henvsgen|exact Hordnl|exact Hwcnl|exact Hallsrc|exact Hallstc
           |exact Hfindnode|exact Hsec]).
     pose proof Hsys as Hsys0.
     destruct Hsys0 as (n0 & nsig & ssig & _ & _ & _ & Hfindstc & _ & _).
     (* the scheduling step *)
     assert (Hpres : sig_env_preserved Gstc Gstcs).
     { eapply ChainEnv.generated_signatures_preserved_by_scheduling;
-        [exact Henvsgen|apply ChainEnv.translate_names|exact Hwcstc|exact Hsch
+        [exact Henvsgen|apply ChainEnv.translate_names
+        |exact (wc_translate_rev all_nodes Hordnl Hwcstc)
+        |exact (wc_schedule_rev all_nodes Hordnl Hwcstc)|exact Hsch
         |exact Hallstc|exact Hallstcs]. }
     destruct (Hpres _ _ Hfindstc)
       as (ssigs & Hfindstcs & Hpresss & _ & _ & _).
     (* the Stc-to-Obc leg *)
     destruct (ChainEnv.generated_program_signatures_preserved_obc_scheduled
-                all_nodes envs aux_names Gstcs Gobc
-                Henvsgen (Sched.scheduler_wc_program _ Hwcstc) Hsch
+                (Sched.schedule (TransNL.translate all_nodes))
+                (rev all_nodes) envs aux_names Gstcs Gobc
+                Henvsgen (wc_schedule_rev all_nodes Hordnl Hwcstc) Hsch
                 Hallstcs Hallobc
                 (Stc.Syn.s_name (TransNL.translate_node n)) ssigs Hfindstcs)
       as (osig & Hfindobc & Hhead).
@@ -623,10 +705,10 @@ Module Type SECOBCNONINTERFERENCE
            dlt_sig dlt_raw t xss xss' yss yss' ins ins' outs outs',
       cls = TransObc.translate_system (Sched.schedule_system sys) ->
       Obc.Syn.find_method step cls.(Obc.Syn.c_methods) = Some stepm ->
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
       NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names
         = OK Gsrc ->
       NLCaus.nl_global_causal all_nodes ->
       find_node_env (Stc.Syn.s_name sys) envs = Some ty_env ->
@@ -711,42 +793,45 @@ Module Type SECOBCNONINTERFERENCE
       success out.  No behaviour is involved. *)
   Theorem generate_all_signatures_chain_ok:
     forall all_nodes envs aux_names Gsrc,
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
       Stc.Clo.wc_program (TransNL.translate all_nodes) ->
-      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate (rev all_nodes))) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names
         = OK Gsrc ->
       exists Gstc Gstcs Gobc,
         SECSTCTYPING.generate_all_sys_signatures_scoped_env
-          (TransNL.translate all_nodes) envs aux_names = OK Gstc
+          (TransNL.translate (rev all_nodes)) envs aux_names = OK Gstc
         /\ SECSTCTYPING.generate_all_sys_signatures_scoped_env
-             (Sched.schedule (TransNL.translate all_nodes)) envs aux_names
+             (Sched.schedule (TransNL.translate (rev all_nodes))) envs aux_names
            = OK Gstcs
         /\ SECOBCTYPING.generate_all_class_signatures_scoped_env
-             (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
+             (TransObc.translate (Sched.schedule (TransNL.translate (rev all_nodes))))
              envs aux_names = OK Gobc.
   Proof.
-    intros all_nodes envs aux_names Gsrc Henvsgen Hwcnl Hwcstc Hsch Hsrc.
+    intros all_nodes envs aux_names Gsrc Henvsgen Hord Hwcnl Hwcstc Hsch Hsrc.
     assert (Haux : NAMEGEN.aux_naming_props aux_names)
       by (eapply NAMEGEN.aux_naming_props_from_scoped_env; exact Henvsgen).
-    assert (Hwcstcs : Stc.Clo.wc_program
-                        (Sched.schedule (TransNL.translate all_nodes)))
-      by (apply Sched.scheduler_wc_program; exact Hwcstc).
+    assert (Hwcstcs : Forall (Stc.Clo.wc_system
+                                (Sched.schedule (TransNL.translate all_nodes)))
+                        (Sched.schedule (TransNL.translate (rev all_nodes))))
+      by (exact (wc_schedule_rev all_nodes Hord Hwcstc)).
     (* the NLustre-to-Stc leg *)
     destruct (NLusStcBridge.generate_all_sys_signatures_scoped_env_ok
-                all_nodes envs aux_names Gsrc Henvsgen Hwcnl Hsrc)
+                all_nodes (rev all_nodes) envs aux_names Gsrc Henvsgen
+                (NLusNI.wc_nodes_rev all_nodes Hord Hwcnl) Hsrc)
       as (Gstc & Hstc).
     (* the scheduling step *)
     assert (Hstcs : exists Gstcs,
                SECSTCTYPING.generate_all_sys_signatures_scoped_env
-                 (Sched.schedule (TransNL.translate all_nodes)) envs aux_names
+                 (Sched.schedule (TransNL.translate (rev all_nodes))) envs aux_names
                = OK Gstcs).
     { eapply generate_all_sys_signatures_reorder_ok_scoped;
         [apply ChainEnv.schedule_reordered
         |eapply ChainEnv.scoped_envs_windowed_from_scoped_env;
          [exact Henvsgen|apply ChainEnv.translate_names]
-        |exact Haux|exact Hwcstc|exact Hwcstcs
+        |exact Haux|exact (wc_translate_rev all_nodes Hord Hwcstc)|exact Hwcstcs
         |apply ChainEnv.scheduled_resets_nodup; exact Hsch
         |exact Hstc]. }
     destruct Hstcs as (Gstcs & Hstcs).
@@ -754,7 +839,7 @@ Module Type SECOBCNONINTERFERENCE
     assert (Hobc : exists Gobc,
                SECOBCTYPING.generate_all_class_signatures_scoped_env
                  (TransObc.translate
-                    (Sched.schedule (TransNL.translate all_nodes)))
+                    (Sched.schedule (TransNL.translate (rev all_nodes))))
                  envs aux_names = OK Gobc).
     { eapply StcObcBridge.generate_all_class_signatures_scoped_env_ok;
         [eapply ChainEnv.scoped_envs_windowed_from_scoped_env;
@@ -777,35 +862,36 @@ Module Type SECOBCNONINTERFERENCE
       chain rather than supplied by the caller. *)
   Corollary class_security_from_node_security_total:
     forall all_nodes Gsrc envs aux_names n dlt_sig dlt_raw,
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
       Stc.Clo.wc_program (TransNL.translate all_nodes) ->
-      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate (rev all_nodes))) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names
         = OK Gsrc ->
       find_node n.(NL.Syn.n_name) all_nodes = Some n ->
       NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw ->
       exists Gstc Gstcs Gobc,
         SECSTCTYPING.generate_all_sys_signatures_scoped_env
-          (TransNL.translate all_nodes) envs aux_names = OK Gstc
+          (TransNL.translate (rev all_nodes)) envs aux_names = OK Gstc
         /\ SECSTCTYPING.generate_all_sys_signatures_scoped_env
-             (Sched.schedule (TransNL.translate all_nodes)) envs aux_names
+             (Sched.schedule (TransNL.translate (rev all_nodes))) envs aux_names
            = OK Gstcs
         /\ SECOBCTYPING.generate_all_class_signatures_scoped_env
-             (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
+             (TransObc.translate (Sched.schedule (TransNL.translate (rev all_nodes))))
              envs aux_names = OK Gobc
         /\ class_security all_nodes Gsrc Gstc Gstcs Gobc envs aux_names
              (TransNL.translate_node n) dlt_sig dlt_raw.
   Proof.
     intros all_nodes Gsrc envs aux_names n dlt_sig dlt_raw
-           Henvsgen Hwcnl Hwcstc Hsch Hsrc Hfindnode Hsec.
+           Henvsgen Hord Hwcnl Hwcstc Hsch Hsrc Hfindnode Hsec.
     destruct (generate_all_signatures_chain_ok all_nodes envs aux_names Gsrc
-                Henvsgen Hwcnl Hwcstc Hsch Hsrc)
+                Henvsgen Hord Hwcnl Hwcstc Hsch Hsrc)
       as (Gstc & Gstcs & Gobc & Hstc & Hstcs & Hobc).
     exists Gstc, Gstcs, Gobc.
     split; [exact Hstc|]. split; [exact Hstcs|]. split; [exact Hobc|].
     eapply class_security_from_node_security;
-      [exact Henvsgen|exact Hwcnl|exact Hwcstc|exact Hsch|exact Hsrc
+      [exact Henvsgen|exact Hord|exact Hwcnl|exact Hwcstc|exact Hsch|exact Hsrc
       |exact Hstc|exact Hstcs|exact Hobc|exact Hfindnode|exact Hsec].
   Qed.
 
@@ -820,24 +906,25 @@ Module Type SECOBCNONINTERFERENCE
       What is left is what the compiler checks instead of proving. *)
   Corollary generate_all_signatures_chain_ok_from_source:
     forall all_nodes envs aux_names Gsrc,
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
-      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate (rev all_nodes))) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names
         = OK Gsrc ->
       exists Gstc Gstcs Gobc,
         SECSTCTYPING.generate_all_sys_signatures_scoped_env
-          (TransNL.translate all_nodes) envs aux_names = OK Gstc
+          (TransNL.translate (rev all_nodes)) envs aux_names = OK Gstc
         /\ SECSTCTYPING.generate_all_sys_signatures_scoped_env
-             (Sched.schedule (TransNL.translate all_nodes)) envs aux_names
+             (Sched.schedule (TransNL.translate (rev all_nodes))) envs aux_names
            = OK Gstcs
         /\ SECOBCTYPING.generate_all_class_signatures_scoped_env
-             (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
+             (TransObc.translate (Sched.schedule (TransNL.translate (rev all_nodes))))
              envs aux_names = OK Gobc.
   Proof.
-    intros all_nodes envs aux_names Gsrc Henvsgen Hwcnl Hsch Hsrc.
+    intros all_nodes envs aux_names Gsrc Henvsgen Hord Hwcnl Hsch Hsrc.
     eapply generate_all_signatures_chain_ok;
-      [exact Henvsgen|exact Hwcnl
+      [exact Henvsgen|exact Hord|exact Hwcnl
       |apply NL2StcClo.translate_wc; exact Hwcnl
       |exact Hsch|exact Hsrc].
   Qed.
@@ -846,29 +933,30 @@ Module Type SECOBCNONINTERFERENCE
       program's clocking likewise derived from the source's. *)
   Corollary class_security_from_node_security_source:
     forall all_nodes Gsrc envs aux_names n dlt_sig dlt_raw,
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
-      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate (rev all_nodes))) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names
         = OK Gsrc ->
       find_node n.(NL.Syn.n_name) all_nodes = Some n ->
       NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw ->
       exists Gstc Gstcs Gobc,
         SECSTCTYPING.generate_all_sys_signatures_scoped_env
-          (TransNL.translate all_nodes) envs aux_names = OK Gstc
+          (TransNL.translate (rev all_nodes)) envs aux_names = OK Gstc
         /\ SECSTCTYPING.generate_all_sys_signatures_scoped_env
-             (Sched.schedule (TransNL.translate all_nodes)) envs aux_names
+             (Sched.schedule (TransNL.translate (rev all_nodes))) envs aux_names
            = OK Gstcs
         /\ SECOBCTYPING.generate_all_class_signatures_scoped_env
-             (TransObc.translate (Sched.schedule (TransNL.translate all_nodes)))
+             (TransObc.translate (Sched.schedule (TransNL.translate (rev all_nodes))))
              envs aux_names = OK Gobc
         /\ class_security all_nodes Gsrc Gstc Gstcs Gobc envs aux_names
              (TransNL.translate_node n) dlt_sig dlt_raw.
   Proof.
     intros all_nodes Gsrc envs aux_names n dlt_sig dlt_raw
-           Henvsgen Hwcnl Hsch Hsrc Hfindnode Hsec.
+           Henvsgen Hord Hwcnl Hsch Hsrc Hfindnode Hsec.
     eapply class_security_from_node_security_total;
-      [exact Henvsgen|exact Hwcnl
+      [exact Henvsgen|exact Hord|exact Hwcnl
       |apply NL2StcClo.translate_wc; exact Hwcnl
       |exact Hsch|exact Hsrc|exact Hfindnode|exact Hsec].
   Qed.
@@ -892,12 +980,12 @@ Module Type SECOBCNONINTERFERENCE
       cls = TransObc.translate_system
               (Sched.schedule_system (TransNL.translate_node n)) ->
       Obc.Syn.find_method step cls.(Obc.Syn.c_methods) = Some stepm ->
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
       NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
       NLCaus.nl_global_causal all_nodes ->
-      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate all_nodes)) ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+      Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate (rev all_nodes))) ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names
         = OK Gsrc ->
       find_node n.(NL.Syn.n_name) all_nodes = Some n ->
       NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw ->
@@ -920,7 +1008,7 @@ Module Type SECOBCNONINTERFERENCE
            Hfindenv Hbeh Hbeh' Hclock_eq Habs Hlowin.
     destruct (class_security_from_node_security_source all_nodes Gsrc envs
                 aux_names n dlt_sig dlt_raw
-                Henvsgen Hwc Hsch Hallsrc Hfindnode Hsec)
+                Henvsgen Hord Hwc Hsch Hallsrc Hfindnode Hsec)
       as (Gstc & Gstcs & Gobc & _ & _ & _ & Hclssec).
     eapply class_noninterference_outputs;
       [exact Hcls|exact Hstepm|exact Henvsgen|exact Hord|exact Hwc|exact Hallsrc
@@ -948,12 +1036,12 @@ Module Type SECOBCNONINTERFERENCE
       cls = TransObc.translate_system
               (Sched.schedule_system (TransNL.translate_node n)) ->
       Obc.Syn.find_method step cls.(Obc.Syn.c_methods) = Some stepm ->
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
       NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
       NLCaus.nl_global_causal all_nodes ->
       Stc.Wdef.Well_defined (Sched.schedule (TransNL.translate all_nodes)) ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names
         = OK Gsrc ->
       find_node n.(NL.Syn.n_name) all_nodes = Some n ->
       NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw ->
@@ -999,7 +1087,7 @@ Module Type SECOBCNONINTERFERENCE
         |exact Hins'|exact Hpres']. }
     eapply translated_node_noninterference_outputs_step;
       [exact Hcls|exact Hstepm|exact Henvsgen|exact Hord|exact Hwc|exact Hcaus
-      |exact (proj1 (proj2 Hwd))|exact Hallsrc|exact Hfindnode|exact Hsec
+      |exact (well_scheduled_rev all_nodes (proj1 (proj2 Hwd)))|exact Hallsrc|exact Hfindnode|exact Hsec
       |exact Hfindenv|exact Hbeh|exact Hbeh'|exact Hclock_eq|exact Habs
       |exact Hlowin].
   Qed.

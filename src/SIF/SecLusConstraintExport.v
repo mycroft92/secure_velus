@@ -265,6 +265,33 @@ Module Check (Lat : Lattice).
   Module U := L.Norm.Norm.Unnesting.
   Module NFm := L.Norm.Norm.NormFby.
 
+  Lemma Ordered_nodes_nodup_names_nl :
+    forall (Q : NL.Syn.global),
+      NL.Ord.Ordered_nodes Q -> NoDup (map NL.Syn.n_name Q).
+  Proof.
+    intros Q Hord. induction Hord as [|nd nds Hord IH Hcalls Hfresh];
+      [constructor|]. simpl. constructor.
+    - intro Hin. apply in_map_iff in Hin as (nd' & Heq & Hin').
+      rewrite Forall_forall in Hfresh.
+      exact (Hfresh _ Hin' (eq_sym Heq)).
+    - exact IH.
+  Qed.
+
+  Lemma find_node_of_In_nl :
+    forall (Q : NL.Syn.global) n,
+      NoDup (map NL.Syn.n_name Q) -> In n Q ->
+      NL.Syn.find_node n.(NL.Syn.n_name) Q = Some n.
+  Proof.
+    induction Q as [|nd Q IH]; intros n Hnd Hin; [inversion Hin|].
+    simpl in Hnd. inversion Hnd as [|x xs Hnotin Hnd']; subst x xs.
+    destruct Hin as [Heq|Hin].
+    - subst nd. simpl. rewrite ident_eqb_refl. reflexivity.
+    - simpl. destruct (ident_eqb nd.(NL.Syn.n_name) n.(NL.Syn.n_name)) eqn:Hname.
+      + exfalso. apply ident_eqb_eq in Hname.
+        apply Hnotin. rewrite Hname. now apply in_map.
+      + apply IH; assumption.
+  Qed.
+
   Theorem source_signatures_entail_nlustre :
     forall (G : L.Syn.global) (Hwl : L.Syn.wl_global G)
            (Hpr : Forall (fun n => L.Syn.n_prefixes n = U.elab_prefs) G)
@@ -287,15 +314,16 @@ Module Check (Lat : Lattice).
           (rev (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1))
           envs aux st = OK GM ->
         TR.Tr.to_global
-          (rev (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1)) Hp
+          (NFm.normfby_global (U.unnest_global G Hwl Hpr) Hunt Hpref1) Hp
           = OK P ->
-        ConcreteNameGen.generate_node_scoped_env P = OK (envs, aux) ->
+        ConcreteNameGen.generate_node_scoped_env (rev P) = OK (envs, aux) ->
+        NL.Ord.Ordered_nodes P ->
         NL.Clo.wc_global P ->
-        SECNLUSTYPING.generate_all_signatures_scoped_env P envs aux = OK GN ->
+        SECNLUSTYPING.generate_all_signatures_scoped_env (rev P) envs aux = OK GN ->
         Leg.Signature_entails GS GN.
   Proof.
     intros G Hwl Hpr Hunt Hpref1 Hwc Hwt envs aux stN st GS GT GM P
-      Hp GN Hnaming Hle Hord HgS HgT HgM Htr Hnames Hwcp HgN.
+      Hp GN Hnaming Hle Hord HgS HgT HgM Htr Hnames HordP Hwcp HgN.
     destruct (LegN.normalization_signatures_preserved G Hwl Hpr Hunt Hpref1
                 Hwc Hwt envs aux stN st GS GT GM Hnaming Hle HgS HgT
                 HgM) as (_ & Hsp).
@@ -307,8 +335,15 @@ Module Check (Lat : Lattice).
     { pose proof (Leg.Ordered_nodes_not_self _ Hord) as Hns.
       rewrite Forall_forall in Hns |- *. intros x Hx.
       apply in_rev in Hx. exact (Hns x Hx). }
-    destruct (Leg.generate_all_signatures_entails_scoped_inv _ P Hp envs aux st
-                GM GN Htr Hnotself Hnames Hwcp HgM HgN)
+    assert (Hwcrev : Forall (NL.Clo.wc_node P) (rev P)).
+    { pose proof (Ordered_nodes_nodup_names_nl P HordP) as Hnd.
+      apply Forall_forall. intros n Hin. apply in_rev in Hin.
+      eapply NL.Clo.wc_find_node'; [exact HordP|exact Hwcp|].
+      apply (find_node_of_In_nl P n Hnd Hin). }
+    destruct (Leg.generate_all_signatures_entails_scoped_inv P _ (rev P) envs aux st
+                GM GN
+                (Leg.transcribed_rev _ _ (Leg.to_global_transcribed _ _ _ Htr))
+                Hnotself Hnames Hwcrev HgM HgN)
       as (Hent & Hsc & _ & _).
     eapply source_signature_entails;
       [exact (fun f sg1 Hf => Hsp f sg1 Hf)|exact Hent

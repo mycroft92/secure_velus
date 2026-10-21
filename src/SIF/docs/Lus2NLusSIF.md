@@ -23,7 +23,8 @@ the generated signatures across the two normalisation passes (unnesting, then
 | `SecLusTypingCorrectness.v` | structural facts about generated Lustre signatures (below) |
 | `SecLusNormalization.v` | node instances of both legs against the naming of the largest program, the program-level lockstep, and `normalization_signatures_preserved` (below) |
 | `SecLusNLusTranslation.v` | Lustre signatures entail the NLustre ones of the transcribed program |
-| `SecLusConstraintExport.v`, `SecLusNonInterference.v`, `SecLusNonInterferenceStreams.v` | the dump driver and the noninterference corollaries |
+| `SecLusConstraintExport.v` | the dump driver and the signature half (`source_signatures_entail_nlustre`, `source_policy_realised`) |
+| `SecNLusNodeSecurity.v` | `node_security_exists_pos`, `policy_node_security`: the `node_security` witness is constructed from a signature-satisfying valuation |
 | `SecLusNormTransport.v` | transport of `lnode_security` along a normalisation pass: the abstract contract `pass_contract` and the proved induction `lnode_security_transports` (below) |
 
 All of these compile with no `Admitted`.
@@ -465,3 +466,32 @@ programs with calls.  The fold lemmas (`generate_all_source_signatures_*_env'`,
 `SecNLusStcTranslation` folds, `SecLusNLusTranslation` lockstep) take `wc_global nodes` of the folded
 list only to extract a per-node `wc_node`; they generalise to `Forall (wc_node P) nodes` for the
 whole program `P`.
+
+
+## Status: node_security constructed, Lustre NI files removed
+
+- `SecNLusNodeSecurity.v` (no admits) proves `node_security_exists_pos` by strong induction
+  on the position of the node in `rev all_nodes`: the raw valuation comes from
+  `signature_satisfied_replays_raw`, the call and reset clauses are read off the satisfied
+  instantiated constraints, and callees are taken at their own witnesses.  `policy_node_security`
+  starts from `signatures_preserved sgS sgN` and a valuation satisfying the source signature;
+  no security-data hypothesis is involved.
+- `SecLusNonInterference.v` and `SecLusNonInterferenceStreams.v` (and earlier the transport and
+  padding files) are deleted; they used the old non-reversed statements and are superseded.
+- All generation/naming hypotheses are over `rev all_nodes`, so programs with calls are no longer
+  vacuous.  `Check.source_signatures_entail_nlustre` takes `NL.Ord.Ordered_nodes P` explicitly.
+- Not yet done: a single theorem composing `policy_node_security` with
+  `class_security_from_node_security` / `class_noninterference_outputs` (they live in separate
+  functors; the composition needs a functor instantiating both), and a full clean build.
+
+## Status: end-to-end theorem
+
+`SecEndToEnd.v` (functor over the Obc chain's parameters plus `SECOBCNONINTERFERENCE`) proves
+`policy_class_noninterference`: for a node `n` in `rev all_nodes`, a source signature `sgS`
+with `signatures_preserved sgS sgN` against the generated NLustre signature, and a valuation
+`d1` satisfying `sgS`, there is `w` agreeing with `d1` on the scope of `sgS` such that the
+Obc step method of the compiled node is low-equivalent on outputs for low-equivalent inputs
+at levels `w`.  Hypotheses are the generator/naming equations, the compiler's own
+well-clocked/well-scheduled facts and causality; no security-data hypothesis.
+`SecNLusNodeSecurity` now takes the NI module as a parameter so `node_security` is shared.
+Full SIF rebuild (vfiles order) passed before this file was added (56 min).

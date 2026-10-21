@@ -235,10 +235,10 @@ Module Type SECNLUSSTCOBCENV
       below instantiates it at the program the compiler reaches. *)
 
   Theorem generated_program_signatures_preserved_obc_chain:
-    forall all_nodes systems envs aux_names G1 G2,
+    forall P all_nodes systems envs aux_names G1 G2,
       generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
       Forall2 (fun n s => s.(Stc.Syn.s_name) = n.(NL.Syn.n_name)) all_nodes systems ->
-      Stc.Clo.wc_program systems ->
+      Forall (Stc.Clo.wc_system P) systems ->
       Stc.Wdef.Well_scheduled systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
         = OK G1 ->
@@ -250,7 +250,7 @@ Module Type SECNLUSSTCOBCENV
           SIG.find_signature f G2 = Some obcsig
           /\ StcObcBridge.Signature_head_consistent_obc stcsig obcsig.
   Proof.
-    intros all_nodes systems envs aux_names G1 G2 Hgen Hnames Hwc Hsch Hstc Hobc.
+    intros P all_nodes systems envs aux_names G1 G2 Hgen Hnames Hwc Hsch Hstc Hobc.
     eapply StcObcBridge.generated_program_signatures_preserved_obc_global;
       [eapply scoped_envs_windowed_from_scoped_env; [exact Hgen|exact Hnames]
       |eapply aux_naming_props_from_scoped_env; exact Hgen
@@ -260,9 +260,9 @@ Module Type SECNLUSSTCOBCENV
   (** The instance the compiler actually reaches. *)
 
   Corollary generated_program_signatures_preserved_obc_scheduled:
-    forall all_nodes envs aux_names G1 G2,
+    forall P all_nodes envs aux_names G1 G2,
       generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-      Stc.Clo.wc_program (Sched.schedule (TransNL.translate all_nodes)) ->
+      Forall (Stc.Clo.wc_system P) (Sched.schedule (TransNL.translate all_nodes)) ->
       Stc.Wdef.Well_scheduled
         (Sched.schedule (TransNL.translate all_nodes)) ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env
@@ -278,7 +278,7 @@ Module Type SECNLUSSTCOBCENV
           SIG.find_signature f G2 = Some obcsig
           /\ StcObcBridge.Signature_head_consistent_obc stcsig obcsig.
   Proof.
-    intros all_nodes envs aux_names G1 G2 Hgen Hwc Hsch Hstc Hobc.
+    intros P all_nodes envs aux_names G1 G2 Hgen Hwc Hsch Hstc Hobc.
     eapply generated_program_signatures_preserved_obc_chain;
       [exact Hgen|apply scheduled_translate_names
       |exact Hwc|exact Hsch|exact Hstc|exact Hobc].
@@ -326,11 +326,12 @@ Module Type SECNLUSSTCOBCENV
   Qed.
 
   Theorem generated_signatures_preserved_by_scheduling:
-    forall all_nodes systems envs aux_names G G',
+    forall P P' all_nodes systems envs aux_names G G',
       generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
       Forall2 (fun n s => s.(Stc.Syn.s_name) = n.(NL.Syn.n_name))
               all_nodes systems ->
-      Stc.Clo.wc_program systems ->
+      Forall (Stc.Clo.wc_system P) systems ->
+      Forall (Stc.Clo.wc_system P') (Sched.schedule systems) ->
       Stc.Wdef.Well_scheduled (Sched.schedule systems) ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
         = OK G ->
@@ -338,13 +339,12 @@ Module Type SECNLUSSTCOBCENV
         (Sched.schedule systems) envs aux_names = OK G' ->
       sig_env_preserved G G'.
   Proof.
-    intros all_nodes systems envs aux_names G G' Hgen Hnames Hwc Hsch Hg Hg'.
+    intros P P' all_nodes systems envs aux_names G G' Hgen Hnames Hwc Hwc' Hsch Hg Hg'.
     eapply generate_all_sys_signatures_reorder_preserved_scoped;
       [apply schedule_reordered
       |eapply scoped_envs_windowed_from_scoped_env; [exact Hgen|exact Hnames]
       |eapply aux_naming_props_from_scoped_env; exact Hgen
-      |exact Hwc
-      |apply Sched.scheduler_wc_program; exact Hwc
+      |exact Hwc|exact Hwc'
       |apply scheduled_resets_nodup; exact Hsch
       |exact Hg|exact Hg'].
   Qed.

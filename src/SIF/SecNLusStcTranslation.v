@@ -2226,13 +2226,13 @@ Module Type SECNLUSSTCTRANSLATION
     Qed.
 
     Corollary generate_all_translated_system_signatures_scoped:
-      forall all_nodes env aux_names G,
-        CloStc.wc_program (translate all_nodes) ->
+      forall P all_nodes env aux_names G,
+        Forall (CloStc.wc_system P) (translate all_nodes) ->
         generate_node_env all_nodes = OK (env, aux_names) ->
         SECSTCTYPING.generate_all_sys_signatures (translate all_nodes) env aux_names = OK G ->
         secglobal_scoped G.
     Proof.
-      intros all_nodes env aux_names G Hwc Henvgen Hgen.
+      intros P all_nodes env aux_names G Hwc Henvgen Hgen.
       eapply SECSTCTYPING.generate_all_sys_signatures_scoped; eauto.
       eapply NAMEGEN.generate_node_env_injective; eauto.
     Qed.
@@ -2323,12 +2323,12 @@ Module Type SECNLUSSTCTRANSLATION
 
     (** This is the main lockstep induction for the translation layer.  It runs the source and target signature generators over the same node-scoped environment, proves that each fresh NLustre/STC signature pair is individually well formed, and extends the accumulator with a [Signature_head_consistent] pair.  The result is a global source/target signature environment with aligned lookups and the target-side scope invariants needed downstream. *)
     Theorem generate_all_signatures_consistent_scoped':
-      forall prefix nodes acc1 acc2 envs aux_names
+      forall P prefix nodes acc1 acc2 envs aux_names
              envs_pref aux_pref st G1 G2,
         NAMEGEN.generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
           = OK ((envs_pref, aux_pref), st) ->
         generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
-        CloNL.wc_global nodes ->
+        Forall (CloNL.wc_node P) nodes ->
         Signature_consistent acc1 acc2 ->
         secglobal_scoped acc1 ->
         secglobal_scoped acc2 ->
@@ -2338,7 +2338,7 @@ Module Type SECNLUSSTCTRANSLATION
         SECSTCTYPING.generate_all_sys_signatures_scoped_env' acc2 (translate nodes) envs aux_names = OK G2 ->
         Signature_consistent G1 G2 /\ secglobal_scoped G2 /\ secglobal_scope_sec G2.
     Proof.
-      intros prefix nodes.
+      intros P prefix nodes.
       revert prefix.
       induction nodes as [|n nodes IH];
         intros prefix acc1 acc2 envs aux_names envs_pref aux_pref st G1 G2
@@ -2346,7 +2346,7 @@ Module Type SECNLUSSTCTRANSLATION
                Hacc2sec Hbound Hnl Hstc.
       - simpl in Hnl, Hstc. inversion Hnl; inversion Hstc; subst.
         repeat split; assumption.
-      - inversion Hwc as [|n' ns Hwc_tail Hwc_head]; subst n' ns.
+      - inversion Hwc as [|n' ns Hwc_head Hwc_tail]; subst n' ns.
         simpl in Hnl, Hstc.
         destruct (SECNLUSTYPING.generate_node_sig_scoped_env acc1 n envs aux_names)
           as [nsig|] eqn:Hnsig; try discriminate.
@@ -2406,7 +2406,7 @@ Module Type SECNLUSSTCTRANSLATION
         { eapply NAMEGEN.generate_local_env_for_node_injective; eauto. }
         assert (Hnsigscoped : signature_scoped nsig).
         {
-          eapply SECNLUSTYPING.generate_node_sig_scoped with (P := nodes).
+          eapply SECNLUSTYPING.generate_node_sig_scoped with (P := P).
           - exact Hacc1scoped.
           - exact Henvinj.
           - exact Hwc_head.
@@ -2414,7 +2414,7 @@ Module Type SECNLUSSTCTRANSLATION
         }
           assert (Hssigscoped : signature_scoped ssig).
           {
-            eapply SECSTCTYPING.generate_sys_signature_scoped with (P := translate nodes).
+            eapply SECSTCTYPING.generate_sys_signature_scoped with (P := translate P).
             - exact Hacc2scoped.
             - exact Henvinj.
             - eapply translate_node_wc_local; eauto.
@@ -2431,7 +2431,7 @@ Module Type SECNLUSSTCTRANSLATION
           assert (Hpres : signatures_preserved nsig ssig).
           {
             eapply generated_signatures_preserved_from_simplify_bridge_local_env
-              with (P := nodes) (env := local_env) (aux_names := aux_names)
+              with (P := P) (env := local_env) (aux_names := aux_names)
                    (rec := rec) (st := st) (st' := st_local); eauto.
           }
           assert (Hclkid : clk_id = rec.(nclk)).
@@ -2448,7 +2448,7 @@ Module Type SECNLUSSTCTRANSLATION
           {
             rewrite Hnsigdef.
             eapply SECNLUSTYPINGCORRECTNESS.generate_node_sig_good_from_local_env
-              with (P := nodes) (rec := rec) (st := st) (st' := st_local)
+              with (P := P) (rec := rec) (st := st) (st' := st_local)
                    (clk_type := clk_type) (rst_type := rst_type)
                    (inp := inp) (out := out) (locals := locals)
                    (raw := nconst) (st_n := st_n).
@@ -2566,19 +2566,19 @@ Module Type SECNLUSSTCTRANSLATION
     Qed.
 
     Corollary generate_all_signatures_consistent_scoped:
-      forall all_nodes envs aux_names G1 G2,
+      forall P all_nodes envs aux_names G1 G2,
         generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-        CloNL.wc_global all_nodes ->
+        Forall (CloNL.wc_node P) all_nodes ->
         SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G1 ->
         SECSTCTYPING.generate_all_sys_signatures_scoped_env (translate all_nodes) envs aux_names = OK G2 ->
         Signature_consistent G1 G2 /\ secglobal_scoped G2 /\ secglobal_scope_sec G2.
       Proof.
-        intros all_nodes envs aux_names G1 G2
+        intros P all_nodes envs aux_names G1 G2
                Henvsgen Hwc Hallnl Hallstc.
         unfold SECNLUSTYPING.generate_all_signatures_scoped_env in Hallnl.
         unfold SECSTCTYPING.generate_all_sys_signatures_scoped_env in Hallstc.
         eapply generate_all_signatures_consistent_scoped'
-          with (prefix := nil) (acc1 := nil) (acc2 := nil)
+          with (P := P) (prefix := nil) (acc1 := nil) (acc2 := nil)
                (envs := envs) (aux_names := aux_names)
                (envs_pref := Env.empty _) (aux_pref := nil)
                (st := NAMEGEN.init_state) (G1 := G1) (G2 := G2).
@@ -2595,27 +2595,27 @@ Module Type SECNLUSSTCTRANSLATION
       Qed.
 
     Corollary generate_all_signatures_consistent:
-      forall all_nodes envs aux_names G1 G2,
+      forall P all_nodes envs aux_names G1 G2,
         generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-        CloNL.wc_global all_nodes ->
+        Forall (CloNL.wc_node P) all_nodes ->
         SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G1 ->
         SECSTCTYPING.generate_all_sys_signatures_scoped_env (translate all_nodes) envs aux_names = OK G2 ->
         Signature_consistent G1 G2.
     Proof.
-      intros all_nodes envs aux_names G1 G2
+      intros P all_nodes envs aux_names G1 G2
              Henvsgen Hwc Hallnl Hallstc.
       destruct (generate_all_signatures_consistent_scoped
-                  all_nodes envs aux_names G1 G2 Henvsgen Hwc Hallnl Hallstc)
+                  P all_nodes envs aux_names G1 G2 Henvsgen Hwc Hallnl Hallstc)
         as [Hcons _].
       exact Hcons.
     Qed.
 
     (** This is the public lookup theorem exported by the translation layer.  Once the two global signature environments are generated from the same scoped naming data, every source signature lookup has a matching target signature lookup with the same visible fields and the call-preservation facts needed later.  The STC noninterference file uses exactly this statement to connect source security witnesses to translated systems. *)
     Corollary generated_program_signatures_preserved_global:
-      forall all_nodes (G1 G2: secglobal)
+      forall P all_nodes (G1 G2: secglobal)
              (envs: node_scoped_env) (aux_names: list node_aux_names),
         generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-        CloNL.wc_global all_nodes ->
+        Forall (CloNL.wc_node P) all_nodes ->
         SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G1 ->
         SECSTCTYPING.generate_all_sys_signatures_scoped_env (translate all_nodes) envs aux_names = OK G2 ->
         forall f nsig,
@@ -2624,11 +2624,11 @@ Module Type SECNLUSSTCTRANSLATION
             SIG.find_signature f G2 = Some ssig
             /\ Signature_head_consistent nsig ssig.
     Proof.
-      intros all_nodes G1 G2 envs aux_names
+      intros P all_nodes G1 G2 envs aux_names
              Henvsgen Hwc Hallnl Hallstc
              f nsig Hfindsig.
       pose proof (generate_all_signatures_consistent
-                    all_nodes envs aux_names G1 G2
+                    P all_nodes envs aux_names G1 G2
                     Henvsgen
                     Hwc Hallnl Hallstc) as Hcons.
       destruct (Hcons f nsig Hfindsig) as (ssig & Hfindstc & Hhead).
@@ -3445,11 +3445,11 @@ Module Type SECNLUSSTCTRANSLATION
       so nothing about the accumulators is assumed. *)
 
   Theorem generate_all_sys_signatures_scoped_env_ok':
-    forall prefix nodes acc1 acc2 envs aux_names envs_pref aux_pref st G1,
+    forall P prefix nodes acc1 acc2 envs aux_names envs_pref aux_pref st G1,
       NAMEGEN.generate_node_scoped_env' prefix (Env.empty _) nil NAMEGEN.init_state
         = OK ((envs_pref, aux_pref), st) ->
       generate_node_scoped_env (prefix ++ nodes) = OK (envs, aux_names) ->
-      CloNL.wc_global nodes ->
+      Forall (CloNL.wc_node P) nodes ->
       Signature_consistent acc1 acc2 ->
       secglobal_scoped acc1 ->
       secglobal_scoped acc2 ->
@@ -3465,13 +3465,13 @@ Module Type SECNLUSSTCTRANSLATION
         SECSTCTYPING.generate_all_sys_signatures_scoped_env' acc2
           (translate nodes) envs aux_names = OK G2.
   Proof.
-    intros prefix nodes. revert prefix.
+    intros P prefix nodes. revert prefix.
     induction nodes as [|n nodes IH];
       intros prefix acc1 acc2 envs aux_names envs_pref aux_pref st G1
              Hprefgen Henvsgen Hwc Hcons Hacc1scoped Hacc2scoped
              Hacc2sec Hbound Hacc1nd Hacc2tgt Hnl.
     - eexists. reflexivity.
-    - inversion Hwc as [|n' ns Hwc_tail Hwc_head]; subst n' ns.
+    - inversion Hwc as [|n' ns Hwc_head Hwc_tail]; subst n' ns.
       simpl in Hnl.
       destruct (SECNLUSTYPING.generate_node_sig_scoped_env acc1 n envs aux_names)
         as [nsig|] eqn:Hnsig; simpl in Hnl; try discriminate.
@@ -3539,13 +3539,13 @@ Module Type SECNLUSSTCTRANSLATION
            & Haux & Hclk & Hrst & Hinp & Hout & Hlocals & Hnconst & Hnsigdef);
         [exact Hnsig|].
       assert (Hnsigscoped : signature_scoped nsig)
-        by (eapply SECNLUSTYPING.generate_node_sig_scoped with (P := nodes);
+        by (eapply SECNLUSTYPING.generate_node_sig_scoped with (P := P);
             [exact Hacc1scoped|exact Henvinj|exact Hwc_head|exact Hnsig]).
-      assert (Hwcsys : CloStc.wc_system (translate nodes) (translate_node n))
+      assert (Hwcsys : CloStc.wc_system (translate P) (translate_node n))
         by (eapply translate_node_wc_local; eauto).
       assert (Hssigscoped : signature_scoped ssig)
         by (eapply SECSTCTYPING.generate_sys_signature_scoped
-              with (P := translate nodes);
+              with (P := translate P);
             [exact Hacc2scoped|exact Henvinj|exact Hwcsys|exact Hssig]).
       assert (Hnamingprops : NAMEGEN.naming_env_props local_env aux_names).
       { split.
@@ -3553,12 +3553,12 @@ Module Type SECNLUSSTCTRANSLATION
         - eapply NAMEGEN.aux_naming_props_from_scoped_env; exact Henvsgen. }
       assert (Hssiggood : signature_good ssig)
         by (eapply SECSTCTYPINGCORRECTNESS.generate_sys_signature_good
-              with (P := translate nodes);
+              with (P := translate P);
             [exact Hnamingprops|exact Hacc2scoped|exact Hwcsys
             |apply translate_node_resets_nodup|exact Hssig]).
       assert (Hpres : signatures_preserved nsig ssig)
         by (eapply generated_signatures_preserved_from_simplify_bridge_local_env
-              with (P := nodes) (env := local_env) (aux_names := aux_names)
+              with (P := P) (env := local_env) (aux_names := aux_names)
                    (rec := rec) (st := st) (st' := st_local); eauto).
       assert (Hclkid : clk_id = rec.(nclk))
         by (rewrite Hauxlocal in Haux; inversion Haux; reflexivity).
@@ -3567,7 +3567,7 @@ Module Type SECNLUSSTCTRANSLATION
       assert (Hnsiggood : signature_good nsig).
       { rewrite Hnsigdef.
         eapply SECNLUSTYPINGCORRECTNESS.generate_node_sig_good_from_local_env
-          with (P := nodes) (rec := rec) (st := st) (st' := st_local)
+          with (P := P) (rec := rec) (st := st) (st' := st_local)
                (clk_type := clk_type) (rst_type := rst_type)
                (inp := inp) (out := out) (locals := locals)
                (raw := nconst) (st_n := st_n);
@@ -3660,20 +3660,20 @@ Module Type SECNLUSSTCTRANSLATION
       succeeds wherever the NLustre one did. *)
 
   Corollary generate_all_sys_signatures_scoped_env_ok:
-    forall all_nodes envs aux_names G1,
+    forall P all_nodes envs aux_names G1,
       generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
-      CloNL.wc_global all_nodes ->
+      Forall (CloNL.wc_node P) all_nodes ->
       SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names
         = OK G1 ->
       exists G2,
         SECSTCTYPING.generate_all_sys_signatures_scoped_env (translate all_nodes)
           envs aux_names = OK G2.
   Proof.
-    intros all_nodes envs aux_names G1 Henvsgen Hwc Hnl.
+    intros P all_nodes envs aux_names G1 Henvsgen Hwc Hnl.
     unfold SECNLUSTYPING.generate_all_signatures_scoped_env in Hnl.
     unfold SECSTCTYPING.generate_all_sys_signatures_scoped_env.
     eapply generate_all_sys_signatures_scoped_env_ok'
-      with (prefix := nil) (acc1 := nil) (acc2 := nil)
+      with (P := P) (prefix := nil) (acc1 := nil) (acc2 := nil)
            (envs_pref := Env.empty _) (aux_pref := nil)
            (st := NAMEGEN.init_state).
     - reflexivity.

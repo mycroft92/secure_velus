@@ -2191,12 +2191,12 @@ Module Type SECSTCTYPINGCORRECTNESS
       which the per-system theorems supply. *)
 
   Theorem generate_all_sys_signatures_reorder_ok_scoped':
-    forall systems systems' acc acc' envs aux_names st G,
+    forall P P' systems systems' acc acc' envs aux_names st G,
       Forall2 sys_reordered systems systems' ->
       scoped_envs_windowed envs st systems ->
       NAMEGEN.aux_naming_props aux_names ->
-      Clo.wc_program systems ->
-      Clo.wc_program systems' ->
+      Forall (Clo.wc_system P) systems ->
+      Forall (Clo.wc_system P') systems' ->
       Forall (fun s => NoDup (map fst (resets_of s.(SynStc.s_tcs)))) systems ->
       sig_env_agrees acc acc' ->
       secglobal_scoped acc ->
@@ -2209,6 +2209,7 @@ Module Type SECSTCTYPINGCORRECTNESS
         SECSTCTYPING.generate_all_sys_signatures_scoped_env' acc' systems' envs
           aux_names = OK G'.
   Proof.
+    intros P P'.
     induction systems as [|s systems IH];
       intros systems' acc acc' envs aux_names st G
              Hreord Hwindow Haux Hwc Hwc' Hsch Hagrees Haccsc Hacc'sc Haccsec
@@ -2217,8 +2218,8 @@ Module Type SECSTCTYPINGCORRECTNESS
     - inversion Hreord as [|s0 s' systems0 systems'0 Hss' Hreordtl]; subst.
       inversion Hwindow as [|st0 st2 s0 systems0 local_env
                              Hfindlocal Henvprops Hwin Htail]; subst.
-      inversion Hwc as [|s0 systems0 Hwctl Hwchd]; subst.
-      inversion Hwc' as [|s0 systems0 Hwctl' Hwchd']; subst.
+      inversion Hwc as [|s0 systems0 Hwchd Hwctl]; subst.
+      inversion Hwc' as [|s0 systems0 Hwchd' Hwctl']; subst.
       inversion Hsch as [|s0 systems0 Hschhd Hschtl]; subst.
       simpl in Hgen.
       destruct (SECSTCTYPING.generate_sys_signature_scoped_env acc s envs
@@ -2244,15 +2245,15 @@ Module Type SECSTCTYPINGCORRECTNESS
       destruct Hss' as (Hname & Hin' & Hout' & Hvars' & Hlasts' & Hperm).
       assert (Hsigsc : signature_scoped sig).
       { eapply SECSTCTYPING.generate_sys_signature_scoped
-          with (P := systems) (s := s) (env := local_env);
+          with (P := P) (s := s) (env := local_env);
           [exact Haccsc|exact (proj1 Henvprops)|exact Hwchd|exact Hsig]. }
       assert (Hsigsc' : signature_scoped sig').
       { eapply SECSTCTYPING.generate_sys_signature_scoped
-          with (P := systems'0) (s := s') (env := local_env);
+          with (P := P') (s := s') (env := local_env);
           [exact Hacc'sc|exact (proj1 Henvprops)|exact Hwchd'|exact Hsig']. }
       assert (Hgood' : signature_good sig').
       { eapply generate_sys_signature_good
-          with (P := systems'0) (s := s') (env := local_env);
+          with (P := P') (s := s') (env := local_env);
           [exact Hprops|exact Hacc'sc|exact Hwchd'
           |eapply sys_reordered_resets_nodup;
            [split; [exact Hname|split; [exact Hin'|split; [exact Hout'|
@@ -2300,12 +2301,12 @@ Module Type SECSTCTYPINGCORRECTNESS
   Qed.
 
   Corollary generate_all_sys_signatures_reorder_ok_scoped:
-    forall systems systems' envs aux_names G,
+    forall P P' systems systems' envs aux_names G,
       Forall2 sys_reordered systems systems' ->
       scoped_envs_windowed envs NAMEGEN.init_state systems ->
       NAMEGEN.aux_naming_props aux_names ->
-      Clo.wc_program systems ->
-      Clo.wc_program systems' ->
+      Forall (Clo.wc_system P) systems ->
+      Forall (Clo.wc_system P') systems' ->
       Forall (fun s => NoDup (map fst (resets_of s.(SynStc.s_tcs)))) systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
         = OK G ->
@@ -2313,11 +2314,11 @@ Module Type SECSTCTYPINGCORRECTNESS
         SECSTCTYPING.generate_all_sys_signatures_scoped_env systems' envs
           aux_names = OK G'.
   Proof.
-    intros systems systems' envs aux_names G
+    intros P P' systems systems' envs aux_names G
            Hreord Hwindow Haux Hwc Hwc' Hsch Hgen.
     unfold SECSTCTYPING.generate_all_sys_signatures_scoped_env in Hgen |- *.
     eapply generate_all_sys_signatures_reorder_ok_scoped'
-      with (systems := systems) (systems' := systems')
+      with (P := P) (P' := P') (systems := systems) (systems' := systems')
            (acc := @nil signature) (acc' := @nil signature)
            (st := NAMEGEN.init_state);
       [exact Hreord|exact Hwindow|exact Haux|exact Hwc|exact Hwc'
@@ -2327,12 +2328,12 @@ Module Type SECSTCTYPINGCORRECTNESS
   Qed.
 
   Theorem generate_all_sys_signatures_reorder_preserved_scoped':
-    forall systems systems' acc acc' envs aux_names st G G',
+    forall P P' systems systems' acc acc' envs aux_names st G G',
       Forall2 sys_reordered systems systems' ->
       scoped_envs_windowed envs st systems ->
       NAMEGEN.aux_naming_props aux_names ->
-      Clo.wc_program systems ->
-      Clo.wc_program systems' ->
+      Forall (Clo.wc_system P) systems ->
+      Forall (Clo.wc_system P') systems' ->
       Forall (fun s => NoDup (map fst (resets_of s.(SynStc.s_tcs)))) systems ->
       sig_env_preserved acc acc' ->
       secglobal_scoped acc ->
@@ -2345,6 +2346,7 @@ Module Type SECSTCTYPINGCORRECTNESS
         aux_names = OK G' ->
       sig_env_preserved G G' /\ secglobal_scoped G'.
   Proof.
+    intros P P'.
     induction systems as [|s systems IH];
       intros systems' acc acc' envs aux_names st G G'
              Hreord Hwindow Haux Hwc Hwc' Hsch Hpres Haccsc Hacc'sc Haccsec
@@ -2355,8 +2357,8 @@ Module Type SECSTCTYPINGCORRECTNESS
     - inversion Hreord as [|s0 s' systems0 systems'0 Hss' Hreordtl]; subst.
       inversion Hwindow as [|st0 st2 s0 systems0 local_env
                              Hfindlocal Henvprops Hwin Htail]; subst.
-      inversion Hwc as [|s0 systems0 Hwctl Hwchd]; subst.
-      inversion Hwc' as [|s0 systems0 Hwctl' Hwchd']; subst.
+      inversion Hwc as [|s0 systems0 Hwchd Hwctl]; subst.
+      inversion Hwc' as [|s0 systems0 Hwchd' Hwctl']; subst.
       inversion Hsch as [|s0 systems0 Hschhd Hschtl]; subst.
       destruct Hss' as (Hname & Hin & Hout & Hvars & Hlasts & Hperm).
       simpl in Hgen, Hgen'.
@@ -2375,11 +2377,11 @@ Module Type SECSTCTYPINGCORRECTNESS
         by (eapply generated_sys_simplify_ready_from_naming_props; exact Hprops).
       assert (Hsigsc : signature_scoped sig).
       { eapply SECSTCTYPING.generate_sys_signature_scoped
-          with (P := systems) (s := s) (env := local_env);
+          with (P := P) (s := s) (env := local_env);
           [exact Haccsc|exact (proj1 Henvprops)|exact Hwchd|exact Hsig]. }
       assert (Hsigsc' : signature_scoped sig').
       { eapply SECSTCTYPING.generate_sys_signature_scoped
-          with (P := systems'0) (s := s') (env := local_env);
+          with (P := P') (s := s') (env := local_env);
           [exact Hacc'sc|exact (proj1 Henvprops)|exact Hwchd'|exact Hsig']. }
       assert (Hfreshenv : sys_scope_fresh_in_env s local_env aux_names acc).
       { eapply sys_scope_fresh_in_env_from_bounds with (st := st).
@@ -2390,13 +2392,13 @@ Module Type SECSTCTYPINGCORRECTNESS
         - exact Haccsec. }
       assert (Hsigpres : signatures_preserved sig sig').
       { eapply generate_sys_signature_reorder_preserved
-          with (P := systems) (s := s) (s' := s') (env := local_env);
+          with (P := P) (s := s) (s' := s') (env := local_env);
           [exact Hname|exact Hin|exact Hout|exact Hvars|exact Hlasts|exact Hperm
           |exact Hready|exact Hschhd|exact Hwchd|exact Hacc'sc|exact Hpres
           |exact Hfreshenv|exact Hsig|exact Hsig']. }
       assert (Hgood : signature_good sig).
       { eapply generate_sys_signature_good
-          with (P := systems) (s := s) (env := local_env);
+          with (P := P) (s := s) (env := local_env);
           [exact Hprops|exact Haccsc|exact Hwchd|exact Hschhd|exact Hsig]. }
       assert (Hnd : NoDup (signature_scope sig))
         by (eapply generate_sys_signature_scope_nodup; [exact Hprops|exact Hsig]).
@@ -2431,12 +2433,12 @@ Module Type SECSTCTYPINGCORRECTNESS
   Qed.
 
   Corollary generate_all_sys_signatures_reorder_preserved_scoped:
-    forall systems systems' envs aux_names G G',
+    forall P P' systems systems' envs aux_names G G',
       Forall2 sys_reordered systems systems' ->
       scoped_envs_windowed envs NAMEGEN.init_state systems ->
       NAMEGEN.aux_naming_props aux_names ->
-      Clo.wc_program systems ->
-      Clo.wc_program systems' ->
+      Forall (Clo.wc_system P) systems ->
+      Forall (Clo.wc_system P') systems' ->
       Forall (fun s => NoDup (map fst (resets_of s.(SynStc.s_tcs)))) systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
         = OK G ->
@@ -2444,11 +2446,11 @@ Module Type SECSTCTYPINGCORRECTNESS
         = OK G' ->
       sig_env_preserved G G'.
   Proof.
-    intros systems systems' envs aux_names G G'
+    intros P P' systems systems' envs aux_names G G'
            Hreord Hwindow Haux Hwc Hwc' Hsch Hgen Hgen'.
     unfold SECSTCTYPING.generate_all_sys_signatures_scoped_env in Hgen, Hgen'.
     edestruct generate_all_sys_signatures_reorder_preserved_scoped'
-      with (systems := systems) (systems' := systems')
+      with (P := P) (P' := P') (systems := systems) (systems' := systems')
            (acc := @nil signature) (acc' := @nil signature)
            (st := NAMEGEN.init_state) as (Hres & _);
       [exact Hreord|exact Hwindow|exact Haux|exact Hwc|exact Hwc'

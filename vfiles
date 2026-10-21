@@ -163,8 +163,6 @@ src/SIF/SecLusTypingCorrectness.v
 src/SIF/SecLusNormalization.v
 src/SIF/SecLusNLusTranslation.v
 src/SIF/SecLusConstraintExport.v
-src/SIF/SecLusNonInterference.v
-src/SIF/SecLusNonInterferenceStreams.v
 src/SIF/SecSTCTyping.v
 src/SIF/SecStcConstraintExport.v
 src/SIF/SecStcTypingCorrectness.v
@@ -179,5 +177,7 @@ src/SIF/SecNLusNonInterferenceSupport.v
 src/SIF/SecNLusNonInterferenceHelpers.v
 src/SIF/SecNLusNonInterferenceClockedStep.v
 src/SIF/SecNLusNonInterference.v
+src/SIF/SecNLusNodeSecurity.v
 src/SIF/SecStcNonInterference.v
 src/SIF/SecObcNonInterference.v
+src/SIF/SecEndToEnd.v

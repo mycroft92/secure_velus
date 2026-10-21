@@ -85,7 +85,7 @@ Module Type SECNLUSNONINTERFERENCESUPPORT
     Variable t : Lat.t.
 
     Hypothesis Henvsgen :
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names).
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names).
     Hypothesis Hfindenv :
       find_node_env n.(n_name) envs = Some ty_env.
 

@@ -84,10 +84,10 @@ Module Type SECNLUSNONINTERFERENCECLOCKEDSTEP
       forall n dlt_sig dlt_raw k
              ty_env sig t bk bk' H H'
              clk_id rst_id clk_type rst_type inp out locals raw st_n,
-        NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+        NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
         Ordered_nodes all_nodes ->
         Clo.wc_global all_nodes ->
-        SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G ->
+        SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names = OK G ->
         NLCaus.nl_global_causal all_nodes ->
         find_node n.(n_name) all_nodes = Some n ->
         find_node_env n.(n_name) envs = Some ty_env ->
@@ -570,9 +570,10 @@ Module Type SECNLUSNONINTERFERENCECLOCKEDSTEP
                  }
                                   assert (HgoodG : SIG.secglobal_good G).
                  {
-                   eapply SECNLUSTYPINGCORRECTNESS.generate_all_source_signatures_good_scoped_env.
+                   eapply SECNLUSTYPINGCORRECTNESS.generate_all_source_signatures_good_scoped_env
+                   with (P := all_nodes).
                    - exact Henvsgen.
-                   - exact Hwcglob.
+                   - exact (wc_nodes_rev all_nodes Hord Hwcglob).
                    - exact Hallsig.
                  }
                  assert (Hsiggood_c : SIG.signature_good callee_sig_cur).
@@ -589,9 +590,9 @@ Module Type SECNLUSNONINTERFERENCECLOCKEDSTEP
                    intros y lhs Hfindlhs.
                    eapply
                      (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_clock_scoped_env
-                        all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                        all_nodes (rev all_nodes) envs aux_names G callee.(n_name) callee_sig_cur y lhs).
                    - exact Henvsgen.
-                   - exact Hwcglob.
+                   - exact (wc_nodes_rev all_nodes Hord Hwcglob).
                    - exact Hallsig.
                    - exact Hfindsigc.
                    - exact Hfindlhs.
@@ -1115,9 +1116,10 @@ pose proof Hspecw as Hcallee_out_raw.
                  }
                  assert (HgoodG : SIG.secglobal_good G).
                  {
-                   eapply SECNLUSTYPINGCORRECTNESS.generate_all_source_signatures_good_scoped_env.
+                   eapply SECNLUSTYPINGCORRECTNESS.generate_all_source_signatures_good_scoped_env
+                   with (P := all_nodes).
                    - exact Henvsgen.
-                   - exact Hwcglob.
+                   - exact (wc_nodes_rev all_nodes Hord Hwcglob).
                    - exact Hallsig.
                  }
                  assert (Hsiggood_c : SIG.signature_good callee_sig_cur).
@@ -1134,9 +1136,9 @@ pose proof Hspecw as Hcallee_out_raw.
                    intros y lhs Hfindlhs.
                    eapply
                      (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_reset_scoped_env
-                        all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                        all_nodes (rev all_nodes) envs aux_names G callee.(n_name) callee_sig_cur y lhs).
                    - exact Henvsgen.
-                   - exact Hwcglob.
+                   - exact (wc_nodes_rev all_nodes Hord Hwcglob).
                    - exact Hallsig.
                    - exact Hfindsigc.
                    - exact Hfindlhs.
@@ -1176,9 +1178,9 @@ pose proof Hspecw as Hcallee_out_raw.
                    intros y lhs Hfindlhs.
                    eapply
                      (SECNLUSTYPINGCORRECTNESS.generated_signature_constraints_mention_clock_scoped_env
-                        all_nodes envs aux_names G callee.(n_name) callee_sig_cur y lhs).
+                        all_nodes (rev all_nodes) envs aux_names G callee.(n_name) callee_sig_cur y lhs).
                    - exact Henvsgen.
-                   - exact Hwcglob.
+                   - exact (wc_nodes_rev all_nodes Hord Hwcglob).
                    - exact Hallsig.
                    - exact Hfindsigc.
                    - exact Hfindlhs.

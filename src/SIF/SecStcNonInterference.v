@@ -205,16 +205,17 @@ Module Type SECSTCNONINTERFERENCE
 
   Lemma system_security_from_node_security:
     forall all_nodes Gsrc Gstc envs aux_names n dlt_sig dlt_raw,
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
+      NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK Gsrc ->
-      SECSTCTYPING.generate_all_sys_signatures_scoped_env (Translation.translate all_nodes) envs aux_names = OK Gstc ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names = OK Gsrc ->
+      SECSTCTYPING.generate_all_sys_signatures_scoped_env (Translation.translate (rev all_nodes)) envs aux_names = OK Gstc ->
       find_node n.(n_name) all_nodes = Some n ->
       NLusNI.node_security all_nodes Gsrc envs aux_names n dlt_sig dlt_raw ->
       system_security all_nodes Gsrc Gstc envs aux_names (Translation.translate_node n) dlt_sig dlt_raw.
   Proof.
     intros all_nodes Gsrc Gstc envs aux_names n dlt_sig dlt_raw
-           Henvsgen Hwc Hallsrc Hallstc Hfindnode Hsec.
+           Henvsgen Hord Hwc Hallsrc Hallstc Hfindnode Hsec.
     destruct Hsec as
       [ty_env nsig
        clk_id rst_id clk_type rst_type inp out locals raw st_n
@@ -223,8 +224,8 @@ Module Type SECSTCNONINTERFERENCE
        Hsigdef Hsatsig Hagree Hsatraw Hcallsec Hresetsec].
     destruct
       (NLusStcBridge.generated_program_signatures_preserved_global
-         all_nodes Gsrc Gstc envs aux_names
-         Henvsgen Hwc Hallsrc Hallstc
+         all_nodes (rev all_nodes) Gsrc Gstc envs aux_names
+         Henvsgen (NLusNI.wc_nodes_rev all_nodes Hord Hwc) Hallsrc Hallstc
          n.(n_name) nsig Hfindsig)
       as (ssig & Hfindstc & Hhead).
     unfold system_security.
@@ -247,10 +248,10 @@ Module Type SECSTCNONINTERFERENCE
   Theorem translated_system_noninterference_outputs:
     forall all_nodes Gsrc Gstc envs aux_names sys ty_env
            dlt_sig dlt_raw t xss xss' yss yss',
-      NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+      NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
       NL.Ord.Ordered_nodes all_nodes ->
       NL.Clo.wc_global all_nodes ->
-      SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK Gsrc ->
+      SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names = OK Gsrc ->
       NLCaus.nl_global_causal all_nodes ->
       find_node_env (Stc.Syn.s_name sys) envs = Some ty_env ->
       system_security all_nodes Gsrc Gstc envs aux_names sys dlt_sig dlt_raw ->

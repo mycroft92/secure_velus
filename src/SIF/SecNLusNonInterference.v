@@ -128,10 +128,10 @@ Module Type SECNLUSNONINTERFERENCE
     (** This is the main NLustre noninterference theorem.  For a generated node signature, a source security witness, and two executions with low-equivalent inputs, it proves that the observable outputs agree at every allowed security level.  The translated STC theorem later reuses this result through the source-to-target bridge instead of reproving noninterference directly on STC. *)
     Theorem node_noninterference_outputs:
       forall n ty_env nsig dlt_sig dlt_raw t bk H H',
-        NAMEGEN.generate_node_scoped_env all_nodes = OK (envs, aux_names) ->
+        NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
         Ordered_nodes all_nodes ->
         Clo.wc_global all_nodes ->
-        SECNLUSTYPING.generate_all_signatures_scoped_env all_nodes envs aux_names = OK G ->
+        SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names = OK G ->
         NLCaus.nl_global_causal all_nodes ->
         find_node n.(n_name) all_nodes = Some n ->
         find_node_env n.(n_name) envs = Some ty_env ->

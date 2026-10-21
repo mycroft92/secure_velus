@@ -5371,10 +5371,10 @@ Module Type SECSTCOBCTRANSLATION
       NLustre nodes. *)
 
   Theorem generate_all_signatures_consistent_obc_scoped':
-    forall systems acc1 acc2 envs aux_names st G1 G2,
+    forall P systems acc1 acc2 envs aux_names st G1 G2,
       SECSTCTYPINGCORRECTNESS.scoped_envs_windowed envs st systems ->
       NAMEGEN.aux_naming_props aux_names ->
-      CloStc.wc_program systems ->
+      Forall (CloStc.wc_system P) systems ->
       WD.Well_scheduled systems ->
       Signature_consistent_obc_full acc1 acc2 ->
       SIG.secglobal_scoped acc1 ->
@@ -5390,7 +5390,7 @@ Module Type SECSTCOBCTRANSLATION
       /\ SIG.secglobal_scoped G2
       /\ SIG.secglobal_scope_sec G2.
   Proof.
-    induction systems as [|s systems IH];
+    intros P. induction systems as [|s systems IH];
       intros acc1 acc2 envs aux_names st G1 G2
              Hwindow Haux Hwc Hsch Hcons Hacc1scoped Hacc2scoped
              Hacc1sec Hacc2sec Hbound Hstc Hobc.
@@ -5399,7 +5399,7 @@ Module Type SECSTCOBCTRANSLATION
     - inversion Hwindow as [|st0 st' s0 systems0 local_env
                              Hfindlocal Henvprops Hwin Htail];
         subst st0 s0 systems0.
-      inversion Hwc as [|s' systems'' Hwc_tail Hwc_head]; subst s' systems''.
+      inversion Hwc as [|s' systems'' Hwc_head Hwc_tail]; subst s' systems''.
       inversion Hsch as [|s' systems'' Hsch_head Hsch_tail]; subst s' systems''.
       simpl in Hstc, Hobc.
       destruct (SECSTCTYPING.generate_sys_signature_scoped_env acc1 s envs aux_names)
@@ -5433,7 +5433,7 @@ Module Type SECSTCOBCTRANSLATION
       (* the two signatures, each scoped in its own layer *)
       assert (Hstcscoped : SIG.signature_scoped stcsig).
       { eapply SECSTCTYPING.generate_sys_signature_scoped
-          with (P := systems) (s := s) (env := local_env);
+          with (P := P) (s := s) (env := local_env);
           [exact Hacc1scoped|exact Henvinj|exact Hwc_head|exact Hstcsig]. }
       assert (Hobcscoped : SIG.signature_scoped obcsig).
       { eapply SECOBCTYPINGCORRECTNESS.generate_class_signature_scoped;
@@ -5441,7 +5441,7 @@ Module Type SECSTCOBCTRANSLATION
         eapply translate_system_well_defined; eauto. }
       assert (Hstcgood : SIG.signature_good stcsig).
       { eapply SECSTCTYPINGCORRECTNESS.generate_sys_signature_good
-          with (P := systems) (s := s) (env := local_env);
+          with (P := P) (s := s) (env := local_env);
           [exact Hprops|exact Hacc1scoped|exact Hwc_head
           |eapply SECSTCTYPINGCORRECTNESS.Is_well_sch_resets_nodup;
            exact Hsch_head
@@ -5461,7 +5461,7 @@ Module Type SECSTCOBCTRANSLATION
         - exact Hbound.
         - exact Hacc1sec. }
       assert (Hpres : signatures_preserved stcsig obcsig).
-      { eapply generated_signatures_preserved_obc with (P := systems); eauto. }
+      { eapply generated_signatures_preserved_obc with (P := P); eauto. }
       assert (Hhead : Signature_head_consistent_obc stcsig obcsig).
       { assert (Hagree : stcsig.(s_name) = obcsig.(s_name)
                          /\ SIG.signature_fields_agree stcsig obcsig)
@@ -5510,10 +5510,10 @@ Module Type SECSTCOBCTRANSLATION
       so nothing about the accumulators is assumed. *)
 
   Theorem generate_all_class_signatures_scoped_env_ok':
-    forall systems acc1 acc2 envs aux_names st G1,
+    forall P systems acc1 acc2 envs aux_names st G1,
       SECSTCTYPINGCORRECTNESS.scoped_envs_windowed envs st systems ->
       NAMEGEN.aux_naming_props aux_names ->
-      CloStc.wc_program systems ->
+      Forall (CloStc.wc_system P) systems ->
       WD.Well_scheduled systems ->
       Forall (fun s => sys_insts_named s aux_names) systems ->
       Signature_consistent_obc_full acc1 acc2 ->
@@ -5532,7 +5532,7 @@ Module Type SECSTCOBCTRANSLATION
         SECOBCTYPING.generate_all_class_signatures_scoped_env' acc2
           (translate systems) envs aux_names = OK G2.
   Proof.
-    induction systems as [|s systems IH];
+    intros P. induction systems as [|s systems IH];
       intros acc1 acc2 envs aux_names st G1
              Hwindow Haux Hwc Hsch Hinsts Hcons Hacc1scoped Hacc2scoped
              Hacc1sec Hacc2sec Hbound Hacc1nd Hacc2tgt Hstc.
@@ -5540,7 +5540,7 @@ Module Type SECSTCOBCTRANSLATION
     - inversion Hwindow as [|st0 st' s0 systems0 local_env
                              Hfindlocal Henvprops Hwin Htail];
         subst st0 s0 systems0.
-      inversion Hwc as [|s' systems'' Hwc_tail Hwc_head]; subst s' systems''.
+      inversion Hwc as [|s' systems'' Hwc_head Hwc_tail]; subst s' systems''.
       inversion Hsch as [|s' systems'' Hsch_head Hsch_tail]; subst s' systems''.
       inversion Hinsts as [|s' systems'' Hinsts_head Hinsts_tail];
         subst s' systems''.
@@ -5562,7 +5562,7 @@ Module Type SECSTCOBCTRANSLATION
             exact Hwin.
         - exact Hbound.
         - exact Hacc1sec. }
-      destruct (generate_class_signature_ok_from_wc systems s acc1 acc2 local_env
+      destruct (generate_class_signature_ok_from_wc P s acc1 acc2 local_env
                   aux_names stcsig Hcons Hfreshenv Hprops Hwc_head Hacc1nd
                   Hacc2tgt Hinsts_head Hstcsig) as (obcsig & Hobcsig).
       assert (Hobcsig' : SECOBCTYPING.generate_class_signature_scoped_env acc2
@@ -5578,7 +5578,7 @@ Module Type SECSTCOBCTRANSLATION
       assert (Henvinj : env_injective local_env) by exact (proj1 Henvprops).
       assert (Hstcscoped : SIG.signature_scoped stcsig)
         by (eapply SECSTCTYPING.generate_sys_signature_scoped
-              with (P := systems) (s := s) (env := local_env);
+              with (P := P) (s := s) (env := local_env);
             [exact Hacc1scoped|exact Henvinj|exact Hwc_head|exact Hstcsig]).
       assert (Hobcscoped : SIG.signature_scoped obcsig).
       { eapply SECOBCTYPINGCORRECTNESS.generate_class_signature_scoped;
@@ -5586,7 +5586,7 @@ Module Type SECSTCOBCTRANSLATION
         eapply translate_system_well_defined; eauto. }
       assert (Hstcgood : SIG.signature_good stcsig)
         by (eapply SECSTCTYPINGCORRECTNESS.generate_sys_signature_good
-              with (P := systems) (s := s) (env := local_env);
+              with (P := P) (s := s) (env := local_env);
             [exact Hprops|exact Hacc1scoped|exact Hwc_head
             |eapply SECSTCTYPINGCORRECTNESS.Is_well_sch_resets_nodup;
              exact Hsch_head
@@ -5595,7 +5595,7 @@ Module Type SECSTCOBCTRANSLATION
         by (eapply SECSTCTYPINGCORRECTNESS.generate_sys_signature_scope_nodup;
             [exact Hprops|exact Hstcsig]).
       assert (Hpres : signatures_preserved stcsig obcsig)
-        by (eapply generated_signatures_preserved_obc with (P := systems); eauto).
+        by (eapply generated_signatures_preserved_obc with (P := P); eauto).
       assert (Hhead : Signature_head_consistent_obc stcsig obcsig).
       { assert (Hagree : stcsig.(s_name) = obcsig.(s_name)
                          /\ SIG.signature_fields_agree stcsig obcsig)
@@ -5663,10 +5663,10 @@ Module Type SECSTCOBCTRANSLATION
       environments are then consistent. *)
 
   Corollary generate_all_class_signatures_scoped_env_ok:
-    forall systems envs aux_names G1,
+    forall P systems envs aux_names G1,
       SECSTCTYPINGCORRECTNESS.scoped_envs_windowed envs NAMEGEN.init_state systems ->
       NAMEGEN.aux_naming_props aux_names ->
-      CloStc.wc_program systems ->
+      Forall (CloStc.wc_system P) systems ->
       WD.Well_scheduled systems ->
       Forall (fun s => sys_insts_named s aux_names) systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
@@ -5675,11 +5675,11 @@ Module Type SECSTCOBCTRANSLATION
         SECOBCTYPING.generate_all_class_signatures_scoped_env (translate systems)
           envs aux_names = OK G2.
   Proof.
-    intros systems envs aux_names G1 Hwindow Haux Hwc Hsch Hinsts Hstc.
+    intros P systems envs aux_names G1 Hwindow Haux Hwc Hsch Hinsts Hstc.
     unfold SECSTCTYPING.generate_all_sys_signatures_scoped_env in Hstc.
     unfold SECOBCTYPING.generate_all_class_signatures_scoped_env.
     eapply generate_all_class_signatures_scoped_env_ok'
-      with (acc1 := nil) (acc2 := nil) (st := NAMEGEN.init_state).
+      with (P := P) (acc1 := nil) (acc2 := nil) (st := NAMEGEN.init_state).
     - exact Hwindow.
     - exact Haux.
     - exact Hwc.
@@ -5697,10 +5697,10 @@ Module Type SECSTCOBCTRANSLATION
   Qed.
 
   Corollary generate_all_signatures_consistent_obc_scoped:
-    forall systems envs aux_names G1 G2,
+    forall P systems envs aux_names G1 G2,
       SECSTCTYPINGCORRECTNESS.scoped_envs_windowed envs NAMEGEN.init_state systems ->
       NAMEGEN.aux_naming_props aux_names ->
-      CloStc.wc_program systems ->
+      Forall (CloStc.wc_system P) systems ->
       WD.Well_scheduled systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
         = OK G1 ->
@@ -5710,11 +5710,11 @@ Module Type SECSTCOBCTRANSLATION
       /\ SIG.secglobal_scoped G2
       /\ SIG.secglobal_scope_sec G2.
   Proof.
-    intros systems envs aux_names G1 G2 Hwindow Haux Hwc Hsch Hstc Hobc.
+    intros P systems envs aux_names G1 G2 Hwindow Haux Hwc Hsch Hstc Hobc.
     unfold SECSTCTYPING.generate_all_sys_signatures_scoped_env in Hstc.
     unfold SECOBCTYPING.generate_all_class_signatures_scoped_env in Hobc.
     eapply generate_all_signatures_consistent_obc_scoped'
-      with (acc1 := nil) (acc2 := nil) (st := NAMEGEN.init_state).
+      with (P := P) (acc1 := nil) (acc2 := nil) (st := NAMEGEN.init_state).
     - exact Hwindow.
     - exact Haux.
     - exact Hwc.
@@ -5730,10 +5730,10 @@ Module Type SECSTCOBCTRANSLATION
   Qed.
 
   Corollary generate_all_signatures_consistent_obc:
-    forall systems envs aux_names G1 G2,
+    forall P systems envs aux_names G1 G2,
       SECSTCTYPINGCORRECTNESS.scoped_envs_windowed envs NAMEGEN.init_state systems ->
       NAMEGEN.aux_naming_props aux_names ->
-      CloStc.wc_program systems ->
+      Forall (CloStc.wc_system P) systems ->
       WD.Well_scheduled systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
         = OK G1 ->
@@ -5741,9 +5741,9 @@ Module Type SECSTCOBCTRANSLATION
         envs aux_names = OK G2 ->
       Signature_consistent_obc_full G1 G2.
   Proof.
-    intros systems envs aux_names G1 G2 Hwindow Haux Hwc Hsch Hstc Hobc.
+    intros P systems envs aux_names G1 G2 Hwindow Haux Hwc Hsch Hstc Hobc.
     destruct (generate_all_signatures_consistent_obc_scoped
-                systems envs aux_names G1 G2
+                P systems envs aux_names G1 G2
                 Hwindow Haux Hwc Hsch Hstc Hobc) as [Hcons _].
     exact Hcons.
   Qed.
@@ -5757,11 +5757,11 @@ Module Type SECSTCOBCTRANSLATION
       only through [scoped_envs_windowed] and [aux_naming_props]. *)
 
   Corollary generated_program_signatures_preserved_obc_global:
-    forall systems (G1 G2: SIG.secglobal)
+    forall P systems (G1 G2: SIG.secglobal)
            (envs: node_scoped_env) (aux_names: list node_aux_names),
       SECSTCTYPINGCORRECTNESS.scoped_envs_windowed envs NAMEGEN.init_state systems ->
       NAMEGEN.aux_naming_props aux_names ->
-      CloStc.wc_program systems ->
+      Forall (CloStc.wc_system P) systems ->
       WD.Well_scheduled systems ->
       SECSTCTYPING.generate_all_sys_signatures_scoped_env systems envs aux_names
         = OK G1 ->
@@ -5773,10 +5773,10 @@ Module Type SECSTCOBCTRANSLATION
           SIG.find_signature f G2 = Some obcsig
           /\ Signature_head_consistent_obc stcsig obcsig.
   Proof.
-    intros systems G1 G2 envs aux_names
+    intros P systems G1 G2 envs aux_names
            Hwindow Haux Hwc Hsch Hstc Hobc f stcsig Hfindsig.
     pose proof (generate_all_signatures_consistent_obc
-                  systems envs aux_names G1 G2
+                  P systems envs aux_names G1 G2
                   Hwindow Haux Hwc Hsch Hstc Hobc) as Hcons.
     destruct (Hcons f stcsig Hfindsig) as (obcsig & Hfindobc & Hhead).
     exists obcsig. split; assumption.

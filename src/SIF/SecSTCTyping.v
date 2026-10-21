@@ -2064,17 +2064,17 @@ Module Type SECSTCTYPING
       generate_all_sys_signatures_scoped_env' [] sys_list envs aux_names.
 
     Theorem generate_all_sys_signatures_scoped':
-      forall systems acc env aux_names G,
-        Clo.wc_program systems ->
+      forall P systems acc env aux_names G,
+        Forall (Clo.wc_system P) systems ->
         secglobal_scoped acc ->
         env_injective env ->
         generate_all_sys_signatures' acc systems env aux_names = OK G ->
         secglobal_scoped G.
     Proof.
-      induction systems as [|s systems IH]; intros acc env aux_names G
+      intros P. induction systems as [|s systems IH]; intros acc env aux_names G
                                                    Hwc Hacc Hinj Hgen.
       - simpl in Hgen. inversion Hgen; subst. exact Hacc.
-      - inversion Hwc as [|s' systems' Hwc_tail Hwc_head]; subst s' systems'.
+      - inversion Hwc as [|s' systems' Hwc_head Hwc_tail]; subst s' systems'.
         simpl in Hgen.
         destruct (generate_sys_signature acc s env aux_names) as [sig|] eqn:Hsig;
           simpl in Hgen; try discriminate.
@@ -2090,13 +2090,13 @@ Module Type SECSTCTYPING
 
     (** This is the main global scopedness theorem for generated STC signatures.  From a well-clocked translated program and an injective naming environment, it proves that the whole target signature environment remains scoped after processing every system.  The translation-preservation file uses this as its target-side global invariant. *)
     Corollary generate_all_sys_signatures_scoped:
-      forall systems env aux_names G,
-        Clo.wc_program systems ->
+      forall P systems env aux_names G,
+        Forall (Clo.wc_system P) systems ->
         env_injective env ->
         generate_all_sys_signatures systems env aux_names = OK G ->
         secglobal_scoped G.
     Proof.
-      intros systems env aux_names G Hwc Hinj Hgen.
+      intros P systems env aux_names G Hwc Hinj Hgen.
       unfold generate_all_sys_signatures in Hgen.
       eapply generate_all_sys_signatures_scoped'; eauto.
       apply secglobal_scoped_nil.

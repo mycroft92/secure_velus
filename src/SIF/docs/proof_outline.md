@@ -140,9 +140,9 @@ through the compiler's own passes rather than through a bespoke translation.
   preservation across transcription, from equations up to whole programs.
   Unconditional, but blind to refinements: `to_lexp` rejects `Eapp`, so by
   the time it runs every call has been lifted and nothing is carried.
-- `SecLusNonInterference.v`, `SecLusNonInterferenceStreams.v`
-  the Lustre-level noninterference statements, and the descent from Lustre
-  semantics through NLustre back to Lustre semantics.
+- `SecNLusNodeSecurity.v`
+  constructs the `node_security` witness from a valuation satisfying a node's
+  signature (replaces the removed Lustre-level noninterference files).
 
 ## Constraint Export
 
