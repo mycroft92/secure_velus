@@ -87,56 +87,87 @@ Theorem normalization_signatures_preserved :
 ```
 with the Lustre→NLustre bridge of `SecLusNLusTranslation.v`.
 
-### 2. Full noninterference: source policy ⟹ Obc step-method noninterference
+### 2. Full noninterference on a Lustre node (`SecLusEndToEnd.v`)
 
-`SecEndToEnd.v`, `policy_class_noninterference`.  For a node `n` of the (NLustre) program, a
-source signature `sgS` related by `signatures_preserved` to the generated signature `sgN` of `n`,
-and a valuation `d1` satisfying `sgS` — a policy on the source node's interface — there is a
-valuation `w` agreeing with `d1` on the scope of `sgS` such that the compiled node's Obc `step`
-method is output-low-equivalent for low-equivalent inputs at levels `w`:
+`LusNI.lustre_noninterference`.  It is about the *source* Lustre program and its own coinductive
+semantics (`L.Sem.sem_node`).  Take a node `nS` of `G` with source signature `sgS` and a valuation
+`d1` satisfying `sgS`'s stored constraints — a security policy on the node's interface.  Then
+there is `w` agreeing with `d1` on the scope of `sgS` such that any two runs of `f` whose input
+streams are low-equal (and share their base clock) have low-equal output streams, where "low"
+is read at levels `w` through the node's security environment `ty_env`:
 
 ```coq
-Theorem policy_class_noninterference:
-  forall all_nodes Gsrc Gstc Gstcs Gobc envs aux_names pre n post sgS sgN d1,
-    NAMEGEN.generate_node_scoped_env (rev all_nodes) = OK (envs, aux_names) ->
-    NL.Ord.Ordered_nodes all_nodes ->
-    NL.Clo.wc_global all_nodes ->
-    Stc.Clo.wc_program (TransNL.translate all_nodes) ->
-    Stc.Wdef.Well_scheduled (Sched.schedule (TransNL.translate (rev all_nodes))) ->
-    SECNLUSTYPING.generate_all_signatures_scoped_env (rev all_nodes) envs aux_names = OK Gsrc ->
-    SECSTCTYPING.generate_all_sys_signatures_scoped_env
-      (TransNL.translate (rev all_nodes)) envs aux_names = OK Gstc ->
-    SECSTCTYPING.generate_all_sys_signatures_scoped_env
-      (Sched.schedule (TransNL.translate (rev all_nodes))) envs aux_names = OK Gstcs ->
-    SECOBCTYPING.generate_all_class_signatures_scoped_env
-      (TransObc.translate (Sched.schedule (TransNL.translate (rev all_nodes))))
-      envs aux_names = OK Gobc ->
-    NLCaus.nl_global_causal all_nodes ->
-    rev all_nodes = pre ++ n :: post ->
-    SIG.find_signature n.(n_name) Gsrc = Some sgN ->
-    SIGPROOFS.signatures_preserved sgS sgN ->
-    NLusSupport.signature_satisfied d1 sgS ->
-    exists w,
-      SecT.agree_on (SIG.signature_scope sgS) d1 w /\
-      forall stepm ty_env t xss xss' yss yss' ins ins' outs outs',
-        Obc.Syn.find_method step
-          (TransObc.translate_system (Sched.schedule_system (TransNL.translate_node n))).(c_methods)
-          = Some stepm ->
-        find_node_env n.(n_name) envs = Some ty_env ->
-        translated_class_behavior all_nodes (TransNL.translate_node n) xss yss ins outs ->
-        translated_class_behavior all_nodes (TransNL.translate_node n) xss' yss' ins' outs' ->
-        eq_str (clock_of xss) (clock_of xss') ->
-        same_low_presence ty_env w t (map fst stepm.(m_in)) xss xss' ->
-        obc_stream_low_eq ty_env w t (map fst stepm.(m_in)) ins ins' ->
-        obc_stream_low_eq ty_env w t (map fst stepm.(m_out)) outs outs'.
+Theorem lustre_noninterference :
+  forall (G : L.Syn.global) (Hwl : L.Syn.wl_global G)
+         (Hpr : Forall (fun n => L.Syn.n_prefixes n = Unnesting.elab_prefs) G)
+         (Hunt : Unnesting.unnested_global (Unnesting.unnest_global G Hwl Hpr))
+         (Hpref1 : Forall (fun n => L.Syn.n_prefixes n = NormFby.norm1_prefs)
+                     (Unnesting.unnest_global G Hwl Hpr)),
+    L.Clo.wc_global G -> L.Typ.wt_global G ->
+    Forall L.Cau.node_causal (Unnesting.unnest_global G Hwl Hpr) ->
+    forall envs aux stN st GS GT GM P Hp GN,
+      ConcreteSecLNameGen.generate_lnode_scoped_env_st
+        (rev (NormFby.normfby_global (Unnesting.unnest_global G Hwl Hpr) Hunt Hpref1))
+        = OK (envs, aux, stN) ->
+      C.LegN.sec_le stN st ->
+      L.Ord.Ordered_nodes
+        (NormFby.normfby_global (Unnesting.unnest_global G Hwl Hpr) Hunt Hpref1) ->
+      ConcreteSecLTyping.generate_all_lsignatures_scoped_env (rev G) envs aux
+        st = OK GS ->
+      ConcreteSecLTyping.generate_all_lsignatures_scoped_env
+        (rev (Unnesting.unnest_global G Hwl Hpr)) envs aux st = OK GT ->
+      ConcreteSecLTyping.generate_all_lsignatures_scoped_env
+        (rev (NormFby.normfby_global (Unnesting.unnest_global G Hwl Hpr) Hunt Hpref1))
+        envs aux st = OK GM ->
+      TR.Tr.to_global
+        (NormFby.normfby_global (Unnesting.unnest_global G Hwl Hpr) Hunt Hpref1) Hp
+        = OK P ->
+      ConcreteNameGen.generate_node_scoped_env (rev P) = OK (envs, aux) ->
+      NL.Ord.Ordered_nodes P ->
+      NL.Clo.wc_global P ->
+      C.SECNLUSTYPING.generate_all_signatures_scoped_env (rev P) envs aux = OK GN ->
+      forall f nS sgS d1,
+        L.Syn.find_node f G = Some nS ->
+        SIG.find_signature f GS = Some sgS ->
+        NI.signature_satisfied d1 sgS ->
+        exists w,
+          C.SecT.agree_on (SIG.signature_scope sgS) d1 w /\
+          forall ty_env t ins outs ins' outs',
+            find_node_env f envs = Some ty_env ->
+            L.Sem.sem_node G f ins outs ->
+            L.Sem.sem_node G f ins' outs' ->
+            L.ClSem.sem_clock_inputs G f ins ->
+            L.ClSem.sem_clock_inputs G f ins' ->
+            CE.Sem.clock_of (CIStr.tr_Streams ins) = CE.Sem.clock_of (CIStr.tr_Streams ins') ->
+            stream_low_eq ty_env w t (List.map fst nS.(L.Syn.n_in))
+              (CIStr.tr_Streams ins) (CIStr.tr_Streams ins') ->
+            stream_low_eq ty_env w t (List.map fst nS.(L.Syn.n_out))
+              (CIStr.tr_Streams outs) (CIStr.tr_Streams outs').
 ```
 
-Hypotheses: the generator/naming equations, the compiler's own facts (translated program
-well-clocked, scheduled program well-scheduled), and causality.  There is **no** hypothesis on
-the security data of the normalised program and no `source_guard`.  The step from the source
-policy to the NLustre signature is `source_policy_realised`; composing it with
-`source_signatures_entail_nlustre` for a whole Lustre program is by instantiating `sgN` with the
-transcribed signature that theorem provides.
+The hypotheses of `source_signatures_entail_nlustre` are repeated verbatim.  `stream_low_eq ty_env w t xs xss xss'` says: for every instant `k` and
+position `i` with variable `x = xs[i]` low at `t` under `w`, the values of `xss` and `xss'` at `k`,
+`i` are equal (presence included).
+
+How it is derived (all proved in the file, no admits):
+
+1. `source_run_nl`: a run of `G` descends to a coinductive NLustre run of `P` — unnesting
+   correctness (`unnest_global_sem`), `fby` normalisation correctness (`normfby_global_sem`),
+   and `TR.Correctness.sem_l_nl`.
+2. `find_node_nl`: the node of `P` has the same input and output names as `nS`.
+3. The signature half gives `sgN` with `signatures_preserved sgS sgN`
+   (`source_signatures_entail_nlustre`, `source_policy_realised`), and
+   `policy_node_security` turns `d1` into `w` with `node_security P GN envs aux n' w w`.
+4. `nl_stream_ni`: both runs go to indexed histories (`NL.CoindToIdx.implies`), the NLustre
+   theorem `node_noninterference_outputs` gives history low-equality of outputs, and
+   `history_low_eq_streams` reads it back as `stream_low_eq`.
+
+`Print Assumptions` shows only the standard Velus ones (identifier interface, Reals,
+classical logic) and the lattice parameter.
+
+The Obc-level corollary `SecEndToEnd.policy_class_noninterference` states the same for the
+compiled node's Obc `step` method, from an NLustre node and a source signature related by
+`signatures_preserved`.
 
 ## Proof methodology
 
@@ -176,7 +207,4 @@ transcribed signature that theorem provides.
 
 ## Scope and remaining work
 
-- The Obc-level theorem is stated for an NLustre node and a source signature related to its
-  generated signature; the source-program-wide instantiation is the combination of the two
-  theorems above (no single Lustre-level statement is packaged).
 - Rebasing onto the original branches and cleanup of obsolete branches remain to be done.
