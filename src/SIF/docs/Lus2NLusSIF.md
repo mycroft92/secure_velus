@@ -1,5 +1,13 @@
 # Lustre → NLustre security preservation (the Lustre leg)
 
+> **Current state (2026-10-21).**  The transport approach described in the middle of this
+> document (`SecLusNormTransport.v`, `lnode_security_transports`, `SecureLNode`, the
+> Lustre-level NI files) was abandoned and the files deleted.  What replaces it:
+> `node_security` of the normalised program is *constructed* from a valuation satisfying the
+> stored source signature (`SecNLusNodeSecurity.v`), and `SecEndToEnd.v` composes this with
+> the Stc/Obc chain.  See the last two sections, "node_security constructed" and "end-to-end
+> theorem".  Earlier sections are kept as a record of the design history.
+
 ## Goal
 
 Security types for Lustre, generated from the elaborated source program, such
@@ -25,7 +33,7 @@ the generated signatures across the two normalisation passes (unnesting, then
 | `SecLusNLusTranslation.v` | Lustre signatures entail the NLustre ones of the transcribed program |
 | `SecLusConstraintExport.v` | the dump driver and the signature half (`source_signatures_entail_nlustre`, `source_policy_realised`) |
 | `SecNLusNodeSecurity.v` | `node_security_exists_pos`, `policy_node_security`: the `node_security` witness is constructed from a signature-satisfying valuation |
-| `SecLusNormTransport.v` | transport of `lnode_security` along a normalisation pass: the abstract contract `pass_contract` and the proved induction `lnode_security_transports` (below) |
+| `SecEndToEnd.v` | `policy_class_noninterference`: source policy ⟹ Obc step-method noninterference, no security-data hypothesis |
 
 All of these compile with no `Admitted`.
 
@@ -155,7 +163,7 @@ variables, guarded by clocking (`lsig_step_ext`).
    and its reading for policies, `Check.source_policy_realised`: a valuation satisfying
    a source signature's stored constraints extends, agreeing on the signature scope, to
    one satisfying the transcribed NLustre signature.  What is **not** done is the
-   transport of `lnode_security` itself (the raw-constraint satisfaction of each node
+   transport of `lnode_security` itself [superseded: see "node_security constructed"] (the raw-constraint satisfaction of each node
    and the callee clauses at the induced valuations) from the source to the normalised
    program: the node-level legs prove entailment of stored signatures, and the
    security predicate looks at raw constraints and at every call site's instance.
@@ -163,7 +171,7 @@ variables, guarded by clocking (`lsig_step_ext`).
    `lnode_noninterference_outputs_generated` at the normalised program, with its
    security data as the hypothesis it already is.
 
-   **Transport, step 2 (`SecLusNormTransport.v`, done).**  The generic half is proved:
+   **[Superseded — file deleted] Transport, step 2 (`SecLusNormTransport.v`).**  The generic half is proved:
    `lnode_gen` is `lnode_security` with the callee clause abstracted
    (`lnode_security_gen`, `lnode_gen_security`, `lnode_gen_mono`), and given
    `pass_contract` for a node correspondence `rel` and a valuation relation `R`,
@@ -480,9 +488,7 @@ whole program `P`.
   padding files) are deleted; they used the old non-reversed statements and are superseded.
 - All generation/naming hypotheses are over `rev all_nodes`, so programs with calls are no longer
   vacuous.  `Check.source_signatures_entail_nlustre` takes `NL.Ord.Ordered_nodes P` explicitly.
-- Not yet done: a single theorem composing `policy_node_security` with
-  `class_security_from_node_security` / `class_noninterference_outputs` (they live in separate
-  functors; the composition needs a functor instantiating both), and a full clean build.
+- The composition with the Stc/Obc chain is `SecEndToEnd.v` (next section).
 
 ## Status: end-to-end theorem
 
