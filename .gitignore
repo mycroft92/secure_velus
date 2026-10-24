@@ -1,4 +1,5 @@
 # Object files, in general
+*.lia.cache
 *.vo
 *.vo.aux
 *.aux
